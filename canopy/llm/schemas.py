@@ -81,6 +81,83 @@ def assert_no_derived_stats(schema: Any, allow: Iterable[str] = (), name: str = 
             f"belong in `reported_*` fields.)")
 
 
+#: JSON-schema keywords the structured-output API rejects
+UNSUPPORTED_KEYWORDS: tuple[str, ...] = ("minimum", "maximum", "minLength", "maxLength",
+                                         "pattern", "format")
+#: an enum of strings must offer one of these, so a model can say "the paper does not say"
+UNKNOWN_ENUM_MEMBERS: frozenset[str] = frozenset({"unknown", "not_reported", "none", "ambiguous"})
+_BRANCH_KEYS = ("items", "prefixItems", "anyOf", "oneOf", "allOf", "additionalItems", "contains")
+#: keys whose value is a *mapping of name -> schema*, not a schema
+_MAP_KEYS = ("$defs", "definitions", "patternProperties")
+
+
+def _is_object_schema(node: dict[str, Any]) -> bool:
+    types = node.get("type")
+    types = [types] if isinstance(types, str) else list(types or [])
+    return "object" in types or isinstance(node.get("properties"), dict)
+
+
+def find_schema_problems(schema: Any) -> list[str]:
+    """Structured-output rules: strict objects, no unsupported keywords, escapable enums."""
+    problems: list[str] = []
+
+    def walk(node: Any, path: str) -> None:
+        if isinstance(node, list):
+            for i, item in enumerate(node):
+                walk(item, f"{path}[{i}]")
+            return
+        if not isinstance(node, dict):
+            return
+
+        for keyword in UNSUPPORTED_KEYWORDS:
+            if keyword in node:
+                problems.append(f"{path or '<root>'}: unsupported keyword {keyword!r} "
+                                f"(structured outputs reject it)")
+
+        enum = node.get("enum")
+        if isinstance(enum, list) and enum and all(isinstance(v, str) for v in enum):
+            if not any(str(v).strip().lower() in UNKNOWN_ENUM_MEMBERS for v in enum):
+                problems.append(
+                    f"{path or '<root>'}: enum {enum} has no unknown-like member — add one of "
+                    f"{sorted(UNKNOWN_ENUM_MEMBERS)} so a model can report an absent value")
+
+        if _is_object_schema(node):
+            props = node.get("properties")
+            if node.get("additionalProperties") is not False:
+                problems.append(f"{path or '<root>'}: object needs additionalProperties: false")
+            if isinstance(props, dict):
+                required = node.get("required")
+                if not isinstance(required, list):
+                    problems.append(f"{path or '<root>'}: object needs a required list")
+                elif set(required) != set(props):
+                    missing = sorted(set(props) - set(required))
+                    extra = sorted(set(required) - set(props))
+                    problems.append(
+                        f"{path or '<root>'}: required must list every property "
+                        f"(missing {missing}, unknown {extra})")
+                for name, sub in props.items():
+                    walk(sub, f"{path}.{name}" if path else str(name))
+
+        for key in _BRANCH_KEYS:
+            if key in node:
+                walk(node[key], f"{path}.{key}" if path else key)
+        for key in _MAP_KEYS:
+            sub_map = node.get(key)
+            if isinstance(sub_map, dict):
+                for name, sub in sub_map.items():
+                    walk(sub, f"{path}.{key}.{name}" if path else f"{key}.{name}")
+
+    walk(schema, "")
+    return problems
+
+
+def assert_valid_output_schema(schema: Any, name: str = "schema") -> None:
+    """Raise AssertionError when a structured-output schema breaks the API/protocol rules."""
+    problems = find_schema_problems(schema)
+    if problems:
+        raise AssertionError(f"invalid output {name}:\n  - " + "\n  - ".join(problems))
+
+
 def agent_schemas() -> dict[str, Any]:
     """All registered agent output schemas: module-level `SCHEMA` / `*_SCHEMA` dicts."""
     out: dict[str, Any] = {}

@@ -58,8 +58,14 @@ def estimate_cost(usage: Mapping[str, Any] | None, model: str) -> float:
             + cr * p.input_per_mtok * CACHE_READ_MULTIPLIER) / _MTOK
 
 
+CHARS_PER_TOKEN = 3.5             # deliberately pessimistic (real text is ~4)
+IMAGE_TOKENS_ESTIMATE = 4784      # the cap prepare_for_claude sizes images to (HIGH_RES tier)
+PDF_TOKENS_PER_BYTE = 0.15        # measured live: a 125 kB, 5-page paper ≈ 17.8k tokens
+FILE_DOCUMENT_TOKENS = 20000      # document sent by file_id: size unknown, assume a whole paper
+
+
 def approx_tokens(*parts: Any) -> int:
-    """Very rough token count (chars/4) — only for budget guards and offline estimates."""
+    """Very rough token count (chars/4) — only for offline estimates."""
     total = 0
     for part in parts:
         if part is None:
@@ -69,7 +75,43 @@ def approx_tokens(*parts: Any) -> int:
     return max(1, total // 4)
 
 
+def _strip_binaries(node: Any, acc: list[int]) -> Any:
+    """Replace base64/file payloads with their token estimate so they are not counted as text."""
+    if isinstance(node, dict):
+        out: dict[str, Any] = {}
+        for k, v in node.items():
+            if k == "source" and isinstance(v, dict):
+                kind = v.get("type")
+                if kind == "base64":
+                    data = v.get("data") or ""
+                    n_bytes = len(data) * 3 // 4
+                    if str(v.get("media_type", "")).startswith("image/"):
+                        acc[0] += IMAGE_TOKENS_ESTIMATE
+                    else:
+                        acc[0] += int(n_bytes * PDF_TOKENS_PER_BYTE)
+                    out[k] = {kk: vv for kk, vv in v.items() if kk != "data"}
+                    continue
+                if kind == "file":
+                    acc[0] += FILE_DOCUMENT_TOKENS
+                    out[k] = v
+                    continue
+            out[k] = _strip_binaries(v, acc)
+        return out
+    if isinstance(node, (list, tuple)):
+        return [_strip_binaries(v, acc) for v in node]
+    return node
+
+
+def estimate_input_tokens(system: Any, messages: Any) -> int:
+    """Conservative input-token estimate: text chars/3.5 plus per-image / per-document tokens."""
+    acc = [0]
+    stripped = _strip_binaries({"system": system, "messages": messages}, acc)
+    text = json.dumps(stripped, default=str, ensure_ascii=False)
+    return max(1, int(len(text) / CHARS_PER_TOKEN) + acc[0])
+
+
 def estimate_request_cost(model: str, system: Any, messages: Any, max_tokens: int) -> float:
-    """Worst-case cost of a call before it is made (input heuristic + full output budget)."""
-    usage = {"input_tokens": approx_tokens(system, messages), "output_tokens": int(max_tokens)}
+    """Worst-case cost of a call before it is made — the amount reserved against the budget."""
+    usage = {"input_tokens": estimate_input_tokens(system, messages),
+             "output_tokens": int(max_tokens)}
     return estimate_cost(usage, model)

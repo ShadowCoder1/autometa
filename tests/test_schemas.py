@@ -1,10 +1,13 @@
 """Amendment A static guard: no agent output schema may contain derived-statistic fields."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from canopy.llm.schemas import (DERIVED_STAT_TOKENS, agent_schemas,
-                                assert_no_derived_stats, is_derived_stat_field)
+                                assert_no_derived_stats, assert_valid_output_schema,
+                                is_derived_stat_field)
 from canopy.models import Candidate, DatasetSpec, StudyMap
 
 CLEAN = {
@@ -98,3 +101,100 @@ def test_registered_agent_schemas_are_clean():
     assert isinstance(schemas, dict)
     for name, schema in schemas.items():
         assert_no_derived_stats(schema), name
+
+
+# ------------------------------------------------------------------ output-schema validity
+GOOD = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["status", "rows"],
+    "properties": {
+        "status": {"type": "string", "enum": ["found", "not_on_these_pages", "unknown"]},
+        "rows": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["mean", "dispersion_type"],
+                "properties": {
+                    "mean": {"type": ["number", "null"]},
+                    "dispersion_type": {"type": "string", "enum": ["SD", "SE", "UNKNOWN"]},
+                },
+            },
+        },
+    },
+}
+
+
+def test_valid_schema_passes():
+    assert_valid_output_schema(GOOD)
+
+
+def test_missing_additional_properties_false():
+    bad = json.loads(json.dumps(GOOD))
+    del bad["additionalProperties"]
+    with pytest.raises(AssertionError, match="additionalProperties"):
+        assert_valid_output_schema(bad)
+    bad2 = json.loads(json.dumps(GOOD))
+    bad2["additionalProperties"] = True
+    with pytest.raises(AssertionError, match="additionalProperties"):
+        assert_valid_output_schema(bad2)
+
+
+def test_required_must_list_every_property():
+    bad = json.loads(json.dumps(GOOD))
+    bad["required"] = ["status"]
+    with pytest.raises(AssertionError, match="required"):
+        assert_valid_output_schema(bad)
+    missing = json.loads(json.dumps(GOOD))
+    del missing["required"]
+    with pytest.raises(AssertionError, match="required"):
+        assert_valid_output_schema(missing)
+
+
+@pytest.mark.parametrize("keyword,value", [("minimum", 0), ("maximum", 10), ("minLength", 1),
+                                           ("maxLength", 5), ("pattern", "^a"), ("format", "date")])
+def test_unsupported_keywords_are_rejected(keyword, value):
+    bad = json.loads(json.dumps(GOOD))
+    bad["properties"]["status"][keyword] = value
+    with pytest.raises(AssertionError, match=keyword):
+        assert_valid_output_schema(bad)
+
+
+def test_nested_objects_are_checked():
+    bad = json.loads(json.dumps(GOOD))
+    del bad["properties"]["rows"]["items"]["additionalProperties"]
+    with pytest.raises(AssertionError, match="rows"):
+        assert_valid_output_schema(bad)
+
+
+def test_string_enums_need_an_unknown_member():
+    bad = json.loads(json.dumps(GOOD))
+    bad["properties"]["status"]["enum"] = ["found", "not_on_these_pages"]
+    with pytest.raises(AssertionError, match="enum"):
+        assert_valid_output_schema(bad)
+    for member in ("unknown", "UNKNOWN", "not_reported", "none", "ambiguous"):
+        ok = json.loads(json.dumps(GOOD))
+        ok["properties"]["status"]["enum"] = ["found", member]
+        assert_valid_output_schema(ok)
+
+
+def test_non_string_enums_are_exempt():
+    ok = json.loads(json.dumps(GOOD))
+    ok["properties"]["status"] = {"type": "integer", "enum": [1, 2]}
+    assert_valid_output_schema(ok)
+
+
+def test_defs_and_anyof_branches_are_checked():
+    schema = {"type": "object", "additionalProperties": False, "required": ["row"],
+              "properties": {"row": {"$ref": "#/$defs/Row"}},
+              "$defs": {"Row": {"type": "object", "required": ["a"],
+                                "properties": {"a": {"type": "string"}}}}}
+    with pytest.raises(AssertionError, match="additionalProperties"):
+        assert_valid_output_schema(schema)
+    branch = {"type": "object", "additionalProperties": False, "required": ["x"],
+              "properties": {"x": {"anyOf": [{"type": "null"},
+                                             {"type": "object", "properties": {"y": {"type": "string"}},
+                                              "required": ["y"]}]}}}
+    with pytest.raises(AssertionError):
+        assert_valid_output_schema(branch)

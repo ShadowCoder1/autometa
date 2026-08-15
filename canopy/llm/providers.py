@@ -24,6 +24,15 @@ def supports_effort(model: str) -> bool:
     return not any(name.startswith(m) for m in MODELS_WITHOUT_EFFORT)
 
 
+#: only these models accept server-side `fallbacks` (with the server-side-fallback beta)
+FALLBACK_MODELS: frozenset[str] = frozenset({"claude-fable-5"})
+
+
+def supports_fallbacks(model: str) -> bool:
+    name = model.split("/")[-1]
+    return any(name.startswith(m) for m in FALLBACK_MODELS)
+
+
 @dataclass
 class LLMRequest:
     model: str
@@ -123,6 +132,10 @@ class AnthropicProvider:
         return self._client
 
     def _kwargs(self, req: LLMRequest) -> dict[str, Any]:
+        if req.fallbacks and not supports_fallbacks(req.model):
+            raise ValueError(
+                f"fallbacks={req.fallbacks!r} is only supported for {sorted(FALLBACK_MODELS)}, "
+                f"not {req.model!r} (betas are fine on any model)")
         output_config: dict[str, Any] = {}
         if req.effort and supports_effort(req.model):
             output_config["effort"] = req.effort

@@ -123,6 +123,12 @@ def test_stats_settings_defaults_follow_amendment():
     assert s.multi_group_policy == "closest_to_definition"
     assert s.digitization_variance == "sensitivity"
     assert s.one_row_per_paper is True
+    # the pre-amendment duplicates are gone: late_window_sd / digitization_variance are the
+    # authoritative fields
+    assert "late_window_rule" not in StatsSettings.model_fields
+    assert "add_digitization_variance" not in StatsSettings.model_fields
+    with pytest.raises(Exception):
+        StatsSettings(late_window_rule="paper_reported_block_else_last_point")
 
 
 def test_stats_settings_rejects_bad_enum():

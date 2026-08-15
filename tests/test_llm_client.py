@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import base64
 import json
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -459,3 +461,119 @@ def test_effort_is_dropped_for_models_that_reject_it(tmp_path, monkeypatch):
     assert "output_config" not in sdk.calls[1]          # empty config is omitted entirely
     c.structured(model="claude-opus-5", system="s", messages=MSGS, schema=SCHEMA)
     assert sdk.calls[2]["output_config"]["effort"] == "high"
+
+
+# ------------------------------------------------------------------ budget reservation (fix 1)
+class SlowProvider(FakeProvider):
+    """FakeProvider that blocks inside `complete` so two callers overlap in flight."""
+
+    def __init__(self, payload=None, delay: float = 0.25):
+        super().__init__(payload or {"ok": True})
+        self.delay = delay
+        self.entered = threading.Event()
+
+    def complete(self, request):
+        self.entered.set()
+        time.sleep(self.delay)
+        return super().complete(request)
+
+
+def _spend(client, results, index, **kw):
+    try:
+        results[index] = client.structured(model="claude-opus-5", system=f"s{index}",
+                                           messages=MSGS, schema=SCHEMA, max_tokens=1000, **kw)
+    except Exception as exc:                      # noqa: BLE001 - the test inspects the type
+        results[index] = exc
+
+
+def test_budget_is_reserved_not_just_checked(tmp_path):
+    """Two concurrent calls must not jointly overspend: the second is refused while the
+    first is still in flight (its cost is not yet recorded)."""
+    provider = SlowProvider(delay=0.3)
+    # one call reserves ~$0.025 (1000 output tokens on opus-5); the budget allows exactly one
+    c = LLMClient(cache_dir=None, provider=provider, budget_usd=0.03, max_concurrency=4)
+    results: dict[int, object] = {}
+    t1 = threading.Thread(target=_spend, args=(c, results, 1))
+    t1.start()
+    assert provider.entered.wait(2.0)             # thread 1 is inside the provider call
+    _spend(c, results, 2)                         # thread 2 asks while thread 1 is in flight
+    t1.join(5)
+    assert isinstance(results[1], LLMResult)
+    assert isinstance(results[2], BudgetExceeded)
+    assert len(provider.requests) == 1            # the refused call never reached the provider
+    assert c.total_cost() <= 0.03
+
+
+def test_reservation_is_released_after_the_call(tmp_path):
+    provider = FakeProvider([{"ok": True}] * 5)
+    # one reservation is ~$0.025; $0.05 fits two calls only when the first one is released
+    c = LLMClient(cache_dir=None, provider=provider, budget_usd=0.05)
+    a = c.structured(model="claude-opus-5", system="a", messages=MSGS, schema=SCHEMA,
+                     max_tokens=1000)
+    assert a.cost_usd == pytest.approx(0.0075)    # actual usage, far below the reservation
+    b = c.structured(model="claude-opus-5", system="b", messages=MSGS, schema=SCHEMA,
+                     max_tokens=1000)             # only possible if the reservation was freed
+    assert b.parsed == {"ok": True}
+    assert len(provider.requests) == 2
+    assert c.total_cost() == pytest.approx(0.015)
+
+
+def test_reservation_is_released_when_the_call_raises(tmp_path):
+    class Boom(FakeProvider):
+        def complete(self, request):
+            self.requests.append(request)
+            raise RuntimeError("network down")
+
+    provider = Boom()
+    c = LLMClient(cache_dir=None, provider=provider, budget_usd=0.03)
+    with pytest.raises(RuntimeError):
+        c.structured(model="claude-opus-5", system="a", messages=MSGS, schema=SCHEMA,
+                     max_tokens=1000)
+    assert c.reserved_usd() == 0.0
+    c.check_budget(0.02)                          # budget is free again
+
+
+def test_estimate_counts_images_without_counting_base64(tmp_path):
+    from canopy.llm.costs import estimate_input_tokens
+
+    png = tmp_path / "i.png"
+    png.write_bytes(b"\x89PNG" + b"x" * 400_000)          # ~533 kB of base64
+    msgs = [{"role": "user", "content": [image_block(png), {"type": "text", "text": "hello"}]}]
+    tokens = estimate_input_tokens("sys", msgs)
+    assert 1_000 < tokens < 20_000                        # image priced as an image, not as text
+
+
+# ------------------------------------------------------------------ fallbacks (fix 2)
+def test_fallbacks_only_allowed_for_fable(tmp_path, monkeypatch):
+    monkeypatch.setenv("CANOPY_LIVE", "1")
+
+    class FakeBeta(FakeSDK):
+        def __init__(self):
+            super().__init__({"ok": True})
+            self.beta = type("B", (), {})()
+            self.beta.messages = _Messages(self)
+
+    sdk = FakeBeta()
+    c = LLMClient(cache_dir=None, client=sdk)
+    with pytest.raises(ValueError, match="fallbacks"):
+        c.structured(model="claude-opus-5", system="s", messages=MSGS, schema=SCHEMA,
+                     betas=["server-side-fallback-2026-07-01"], fallbacks="default")
+    assert sdk.calls == []
+    # betas alone stay legal for every model (e.g. the Files API beta)
+    c.structured(model="claude-opus-5", system="s", messages=MSGS, schema=SCHEMA,
+                 betas=["files-api-2025-04-14"])
+    assert sdk.calls[0]["betas"] == ["files-api-2025-04-14"]
+    assert "fallbacks" not in sdk.calls[0]
+
+
+# ------------------------------------------------------------------ schema validation (fix 5)
+def test_structured_validates_the_output_schema(tmp_path):
+    provider = FakeProvider([{"ok": True}])
+    c = LLMClient(cache_dir=None, provider=provider)
+    loose = {"type": "object", "properties": {"ok": {"type": "boolean"}}}   # no required/apf
+    with pytest.raises(AssertionError):
+        c.structured(model="claude-opus-5", system="s", messages=MSGS, schema=loose)
+    assert provider.requests == []                        # refused before spending anything
+    r = c.structured(model="claude-opus-5", system="s", messages=MSGS, schema=loose,
+                     validate_schema=False)               # explicit escape hatch
+    assert r.parsed == {"ok": True}

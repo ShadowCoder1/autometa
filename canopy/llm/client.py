@@ -21,6 +21,7 @@ from .errors import (BudgetExceeded, LiveCallsDisabled, LLMError, MissingFixture
                      RefusalError, TruncatedOutput)
 from .providers import (AnthropicProvider, LLMProvider, LLMRequest, ReplayProvider,
                         response_from_record)
+from .schemas import assert_no_derived_stats, assert_valid_output_schema
 
 __all__ = ["LLMClient", "LLMResult", "LLMCall", "image_block", "pdf_block", "MissingFixture",
            "RefusalError", "TruncatedOutput", "BudgetExceeded", "LiveCallsDisabled", "ParseError",
@@ -126,6 +127,7 @@ class LLMClient:
         self._sem = threading.Semaphore(max_concurrency)
         self._lock = threading.Lock()
         self._total_cost = 0.0
+        self._reserved = 0.0
         self._calls: list[LLMCall] = []
 
     # ------------------------------------------------------------------ helpers
@@ -148,13 +150,40 @@ class LLMClient:
         with self._lock:
             return [c.to_dict() for c in self._calls]
 
+    def reserved_usd(self) -> float:
+        """USD currently reserved by calls that are in flight."""
+        with self._lock:
+            return self._reserved
+
     def check_budget(self, estimated_usd: float) -> None:
+        """Raise if a call of this size would not fit — without taking the money."""
+        with self._lock:
+            self._assert_affordable(estimated_usd)
+
+    def _assert_affordable(self, estimated_usd: float) -> None:
+        """Caller must hold `self._lock`."""
         if self.budget_usd is None:
             return
-        if self.total_cost() + estimated_usd > self.budget_usd:
+        committed = self._total_cost + self._reserved
+        if committed + estimated_usd > self.budget_usd:
             raise BudgetExceeded(
-                f"call would cost about ${estimated_usd:.4f}; spent ${self.total_cost():.4f} of "
-                f"${self.budget_usd:.4f}")
+                f"call would cost about ${estimated_usd:.4f}; ${self._total_cost:.4f} spent and "
+                f"${self._reserved:.4f} reserved of ${self.budget_usd:.4f}")
+
+    def _reserve(self, estimated_usd: float) -> float:
+        """Atomically take `estimated_usd` from the budget for a call about to be made.
+
+        Reservation (not check-then-act) is what keeps concurrent calls from jointly
+        overspending: the money is held until the real cost is known.
+        """
+        with self._lock:
+            self._assert_affordable(estimated_usd)
+            self._reserved += estimated_usd
+        return estimated_usd
+
+    def _release(self, estimated_usd: float) -> None:
+        with self._lock:
+            self._reserved = max(0.0, self._reserved - estimated_usd)
 
     def count_tokens(self, *, model: str, system: Any, messages: list[Any]) -> int:
         """Exact count when live calls are allowed, otherwise a chars/4 estimate."""
@@ -171,7 +200,16 @@ class LLMClient:
                    schema: dict, effort: str | None = None, max_tokens: int = 16000,
                    cache_key_extra: str = "", betas: list[str] | None = None,
                    fallbacks: str | None = None, prompt_version: str = "",
-                   cell_key: str = "") -> LLMResult:
+                   cell_key: str = "", validate_schema: bool = True) -> LLMResult:
+        """One structured-output call.
+
+        The schema is validated before anything is sent: strict objects (amendment/API rules) and
+        no derived-statistic fields (amendment A) — agents return raw extracted values, effect
+        sizes are computed in `canopy.stats`. Pass `validate_schema=False` to bypass.
+        """
+        if validate_schema:
+            assert_valid_output_schema(schema)
+            assert_no_derived_stats(schema)
         return self._call(model=model, system=system, messages=messages, schema=schema,
                           effort=effort, max_tokens=max_tokens, cache_key_extra=cache_key_extra,
                           betas=betas, fallbacks=fallbacks, prompt_version=prompt_version,
@@ -211,14 +249,18 @@ class LLMClient:
         request = LLMRequest(model=model, system=system, messages=messages, schema=schema,
                              effort=effort, max_tokens=max_tokens, betas=betas,
                              fallbacks=fallbacks, stream=max_tokens > STREAM_MAX_TOKENS, key=key)
-        self.check_budget(estimate_request_cost(model, system, messages, max_tokens))
 
-        started = time.perf_counter()
-        with self._sem:
-            response = self.provider.complete(request)
-        latency = time.perf_counter() - started
-        cost = estimate_cost(response.usage, response.model or model)
-        self._log(meta, response=response, latency=latency, cost=cost, cached=False, source="live")
+        reservation = self._reserve(estimate_request_cost(model, system, messages, max_tokens))
+        try:
+            started = time.perf_counter()
+            with self._sem:
+                response = self.provider.complete(request)
+            latency = time.perf_counter() - started
+            cost = estimate_cost(response.usage, response.model or model)
+            self._log(meta, response=response, latency=latency, cost=cost, cached=False,
+                      source="live")
+        finally:
+            self._release(reservation)
 
         if response.stop_reason == "refusal":
             raise RefusalError(f"model refused (request {response.request_id or key})")

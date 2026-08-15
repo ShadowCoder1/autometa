@@ -38,7 +38,12 @@ def load_profile(name: str) -> dict[str, Any]:
 def apply_profile(settings: StatsSettings) -> StatsSettings:
     """Fill settings from `settings.profile`; values the caller set explicitly always win.
 
-    Idempotent: applying to an already-resolved settings object returns the same values.
+    "Explicit" means present in `model_fields_set` — the fields the caller actually passed (or
+    that were present in the protocol YAML). Because the returned object is rebuilt from a full
+    dump, *every* field counts as explicit afterwards, which makes this idempotent but also means
+    a resolved `StatsSettings` will not pick up a different profile if you mutate `.profile` in
+    place. Change the profile by re-loading the protocol (`load_protocol`) or by constructing a
+    fresh `StatsSettings(profile=...)`, which is what the CLI, the UI and the tests all do.
     """
     profile = load_profile(settings.profile)
     explicit = set(settings.model_fields_set) - {"profile"}

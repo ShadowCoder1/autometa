@@ -104,7 +104,6 @@ class StatsSettings(CanopyModel):
     pi_method: PIMethod = "V"
     route_precedence: list[str] = Field(default_factory=lambda: [
         "text_mean_sd", "table", "text_mean_se_ci", "figure", "test_statistic", "p_value", "reported_d"])
-    late_window_rule: str = "paper_reported_block_else_last_point"
     late_window_sd: Literal["paper_reported_block", "block_closest_to_end", "mean_of_block_sd"] = "paper_reported_block"
     ci_to_sd_dist: Literal["auto", "z", "t"] = "auto"          # t(n-1) when n < 100
     primary_analysis_includes: list[ConfidenceBucket] = Field(
@@ -113,7 +112,6 @@ class StatsSettings(CanopyModel):
     multi_group_policy: Literal["extremes", "combine_matching", "closest_to_definition", "needs_human"] = \
         "closest_to_definition"
     digitization_variance: Literal["off", "sensitivity", "primary"] = "sensitivity"
-    add_digitization_variance: bool = False
     one_row_per_paper: bool = True
     ci_level: float = 0.95
 
