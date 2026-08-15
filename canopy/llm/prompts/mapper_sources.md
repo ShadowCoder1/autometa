@@ -30,7 +30,7 @@ Use these ids verbatim in `figure_id` / `table_id` (leave them empty for text so
 ### Page numbers
 `page` is the 1-based position of the sheet inside the attached PDF: the first sheet is page 1,
 whatever number is printed on it. Journals often print a different page number (an article may
-start at printed page 259) — ignore the printed numbers, count sheets. Check every page number you
+start at printed page 1057) — ignore the printed numbers, count sheets. Check every page number you
 report; a source on the wrong page is worse than no source.
 
 ### Outcomes
@@ -64,8 +64,9 @@ in both groups") is not a source — it belongs in `operationalization` or in th
 
 For every source give `page` (see above), `locator`, and a short verbatim `quote` (≤ 300
 characters) that a human can search for. Put values in `values_in_text` only when they are printed
-as text or in a table — never a value you read off a plot. Use the closest `kind`; use `unknown`
-only when nothing fits.
+as text or in a table — never a value you read off a plot. Use the closest `kind`. `unknown` is for a location that does print
+numbers of a sort no other kind describes (fitted-model parameters, for example) — a human will
+route it, so quote it well.
 
 `analysis_metric` says what the numbers at that location are: raw endpoint values, changes from
 baseline, baseline-corrected values, values expressed as a percentage of the manipulation, or

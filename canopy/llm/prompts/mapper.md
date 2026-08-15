@@ -67,7 +67,7 @@ appearance, and apply the protocol's dataset rules.
 * The same participants appearing in more than one experiment, condition or phase (repeated
   exposure): only the first exposure is an independent contrast.
 * A change of context between the phase used for one outcome and the phase used for another (a
-  different effector, direction, size, task or instruction) — say which outcomes it affects,
+  different task, apparatus, side, direction, size or instruction) — say which outcomes it affects,
   because the protocol may exclude that dataset.
 * Several rounds of the same manipulation: the initial round is the one the protocol usually wants.
 * Groups combined or split differently in different figures than in the text.

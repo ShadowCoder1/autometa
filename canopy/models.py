@@ -37,6 +37,8 @@ class SourceKind(str, Enum):
     test_statistic = "test_statistic"
     reported_effect_size = "reported_effect_size"
     author_data = "author_data"
+    unknown = "unknown"                 # a numeric source of a kind not listed above,
+    #                                     e.g. fitted-model parameters — a human routes it
 
 
 class DispersionType(str, Enum):
@@ -57,6 +59,7 @@ RawValueSemantics = Literal["higher_more_construct", "higher_more_error", "signe
 AnalysisMetric = Literal["endpoint", "change_from_baseline", "baseline_corrected",
                          "percent_of_perturbation", "unknown"]
 ErrorBarScope = Literal["between_subject", "within_subject_normalized", "unknown"]
+ErrorBarAgreement = Literal["agreed", "conflict", "unconfirmed"]
 WhiskerDefinition = Literal["min_max", "iqr_1_5", "percentile_5_95", "sd", "se", "ci", "unknown"]
 TestDesign = Literal["independent_t", "one_way_between", "mixed_main_effect", "interaction",
                      "ancova", "paired", "welch", "unknown"]
@@ -174,8 +177,8 @@ class Source(CanopyModel):
     error_bar_evidence: str = ""
     analysis_metric: AnalysisMetric = "unknown"
     values_in_text: str = ""                    # verbatim values if printed
-    relevant: bool = True                       # mapper decides for every figure/table
-    relevance_reason: str = ""
+    #: set in code: did a second agent independently confirm `error_bar_type` for this location?
+    error_bar_agreement: ErrorBarAgreement = "unconfirmed"
     notes: str = ""
 
 

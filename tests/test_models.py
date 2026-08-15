@@ -266,7 +266,8 @@ def test_studymap_round_trip():
 def test_source_kinds_and_dispersion_members():
     assert {k.value for k in SourceKind} == {
         "text_mean_sd", "text_mean_se", "text_mean_ci", "table", "figure_bar", "figure_line",
-        "figure_points", "figure_box", "test_statistic", "reported_effect_size", "author_data"}
+        "figure_points", "figure_box", "test_statistic", "reported_effect_size", "author_data",
+        "unknown"}
     assert {d.value for d in DispersionType} == {
         "SD", "SE", "CI95", "CI90", "IQR", "RANGE", "NONE", "UNKNOWN"}
 

@@ -19,6 +19,11 @@ Rule on:
 Where the two maps agree, keep the agreed answer unless the paper contradicts it. Do not extract,
 digitize or compute any value.
 
+`page` is the 1-based position of the sheet inside the attached PDF: the first sheet is page 1,
+whatever number is printed on it (an article may start at printed page 1057). Ignore the printed
+numbers, count sheets — including in the error-bar rulings, whose page and ids must match the
+location being ruled on.
+
 ## PROTOCOL
 
 {{PROTOCOL}}

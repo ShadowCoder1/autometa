@@ -17,6 +17,7 @@ from canopy.agents.mapper import (MAPPER_SCHEMA, MAPPER_SOURCES_SCHEMA, PROMPT_V
 from canopy.config import MODELS, live_enabled, load_env, record_enabled
 from canopy.ingest.pdf import PaperRecord, ingest_pdf
 from canopy.llm.client import LLMClient
+from canopy.llm.errors import RefusalError
 from canopy.llm.providers import FakeProvider
 from canopy.llm.schemas import assert_no_derived_stats, assert_valid_output_schema
 from canopy.models import DatasetSpec, DispersionType, Source, SourceKind, StudyMap
@@ -27,12 +28,9 @@ PDF = ROOT / "tests" / "fixtures" / "pdfs" / "bock2005.pdf"
 REPLAY = ROOT / "tests" / "fixtures" / "llm"
 PROTOCOL_PATH = ROOT / "examples" / "protocols" / "aging_sensorimotor_adaptation.yaml"
 
-# Read at import time: the autouse `offline_by_default` fixture clears both for every test that is
-# not marked `live`, and the session fixtures below are built inside a test.
-LIVE = live_enabled()
-RECORD = record_enabled()
-if LIVE:
-    load_env()
+#: every Bock test replays fixtures; `@pytest.mark.replay` is what keeps `CANOPY_LIVE`/
+#: `CANOPY_RECORD` visible during a recording run (see tests/conftest.py).
+replayed = pytest.mark.replay
 
 
 @pytest.fixture(scope="session")
@@ -47,10 +45,13 @@ def protocol():
 
 @pytest.fixture(scope="session")
 def bock_map(paper, protocol) -> StudyMap:
-    client = LLMClient(replay_dir=REPLAY, record_dir=REPLAY if RECORD else None,
-                       allow_live=LIVE, cache_dir=None)
+    live, record = live_enabled(), record_enabled()      # read here, not at import
+    if live:
+        load_env()
+    client = LLMClient(replay_dir=REPLAY, record_dir=REPLAY if record else None,
+                       allow_live=live, cache_dir=None)
     study = map_study(client, paper, protocol)
-    if LIVE:                                    # recording run: report what it cost
+    if live:                                    # recording run: report what it cost
         print(f"\n[mapper] ${client.total_cost():.4f} over {len(client.calls())} calls: "
               f"{[c['model'] for c in client.calls()]}")
     return study
@@ -113,12 +114,14 @@ def test_roster_text_lists_every_ingested_figure_and_table(paper):
 
 
 # ------------------------------------------------------------------ replayed Bock 2005 map
+@replayed
 def test_bock_is_eligible(bock_map):
     assert bock_map.eligible is True
     assert bock_map.eligibility_rationale.strip()
     assert not bock_map.exclusion_reason
 
 
+@replayed
 def test_bock_has_a_dataset_with_twelve_per_group(bock_map, paper):
     sizes = [(d.group_a.n, d.group_b.n) for d in bock_map.datasets]
     assert (12, 12) in sizes, sizes
@@ -129,6 +132,7 @@ def test_bock_has_a_dataset_with_twelve_per_group(bock_map, paper):
     assert len(dataset.all_groups_listed) >= 2
 
 
+@replayed
 def test_bock_late_adaptation_has_a_figure_source_on_page_three_with_sd_error_bars(bock_map):
     figures = [s
                for d in bock_map.datasets
@@ -146,16 +150,45 @@ def test_bock_late_adaptation_has_a_figure_source_on_page_three_with_sd_error_ba
     assert all(s.figure_id in roster_ids for s in page3 if s.figure_id)
 
 
+@replayed
 def test_bock_outcome_keys_and_directions_come_from_the_protocol(bock_map, protocol):
     keys = {o.outcome_key for d in bock_map.datasets for o in d.outcomes}
     assert keys <= {o.key for o in protocol.outcomes} and keys
     for dataset in bock_map.datasets:
         for outcome in dataset.outcomes:
-            assert outcome.measure_name
-            assert outcome.higher_is_better is not None
-            assert outcome.higher_is_better_evidence
+            assert outcome.measure_name and outcome.operationalization
+            # a direction is either decided *with* a quote or honestly left unknown: Bock reports
+            # the after-effect as a signed error, so its direction is not settled by the text
+            assert (outcome.higher_is_better is None) == (not outcome.higher_is_better_evidence)
 
 
+@replayed
+def test_bock_figure_error_bars_were_independently_confirmed(bock_map):
+    """Amendment D end-to-end: the second agent read every roster item, so figure bars are agreed."""
+    late = bock_map.datasets[0].outcome("late_adaptation")
+    figure = next(s for s in late.sources if s.figure_id == "fig01")
+    assert figure.error_bar_type is DispersionType.SD
+    assert figure.error_bar_agreement == "agreed"
+    for dataset in bock_map.datasets:
+        for outcome in dataset.outcomes:
+            for source in outcome.sources:
+                if source.figure_id or source.table_id:
+                    assert source.error_bar_agreement in ("agreed", "conflict")
+                else:                                   # text sources are Task 8's job
+                    assert source.error_bar_agreement == "unconfirmed"
+    assert not [f for f in bock_map.needs_human if "error-bar" in f], bock_map.needs_human
+
+
+@replayed
+def test_bock_keeps_the_curve_fit_the_taxonomy_cannot_route(bock_map):
+    """The paper's exponential fits are numbers no `SourceKind` describes — kept, not dropped."""
+    unknown = [s for d in bock_map.datasets for o in d.outcomes for s in o.sources
+               if s.kind is SourceKind.unknown]
+    assert unknown and any("exp" in s.quote.lower() or "fit" in s.locator.lower()
+                           for s in unknown), [(s.locator, s.quote[:60]) for s in unknown]
+
+
+@replayed
 def test_bock_roster_decides_every_ingested_figure_and_table(bock_map, paper):
     decided = {r.id: r for r in bock_map.roster}
     assert set(decided) == {f.id for f in paper.figures} | {t.id for t in paper.tables}
@@ -164,6 +197,7 @@ def test_bock_roster_decides_every_ingested_figure_and_table(bock_map, paper):
     assert decided["fig01"].relevant is True and decided["fig01"].outcome_keys
 
 
+@replayed
 def test_bock_bookkeeping_is_filled_by_code(bock_map, paper):
     assert bock_map.paper_id == paper.sha256
     assert bock_map.model == MODELS["primary"]
@@ -233,9 +267,15 @@ def _check_source(**over):
     return src
 
 
-def _check(datasets=None, **over):
+def _roster_bars(bars=(("fig01", "SD"),)):
+    return [{"id": rid, "error_bar_type": kind, "error_bar_scope": "between_subject",
+             "evidence": "Also shown are the standard deviations"} for rid, kind in bars]
+
+
+def _check(datasets=None, bars=(("fig01", "SD"),), **over):
     payload = {
         "eligible": True, "eligibility_rationale": "rotation, two age groups",
+        "roster_error_bars": _roster_bars(bars),
         "datasets": datasets if datasets is not None else [{
             "label": "pointing", "experiment": "1", "condition": "rotation",
             "group_a": {"label": "old", "n": 12, "n_evidence": "twelve old"},
@@ -247,10 +287,11 @@ def _check(datasets=None, **over):
     return payload
 
 
-def _adjudication(n_a=12, n_b=12, rulings=(), **over):
+def _adjudication(n_a=12, n_b=12, rulings=(), over_datasets=None, **over):
     payload = {
         "eligible": True, "eligibility_rationale": "two age groups, rotated feedback",
-        "datasets": [{"primary_dataset_index": 1, "label": "pointing",
+        "datasets": over_datasets if over_datasets is not None else [
+                     {"primary_dataset_index": 1, "label": "pointing",
                       "group_a": {"label": "old", "n": n_a,
                                   "n_evidence": f"{n_a} analysed after exclusions"},
                       "group_b": {"label": "young", "n": n_b,
@@ -372,37 +413,83 @@ def test_eligibility_disagreement_is_adjudicated(paper, protocol):
     assert not study.needs_human
 
 
-def test_error_bar_disagreement_without_adjudication_keeps_primary_and_asks_for_a_human(
+def test_error_bar_conflict_without_adjudication_keeps_primary_and_asks_for_a_human(
         paper, protocol):
+    """The cross-check read the same figure differently — nobody confirmed the primary's SD."""
     study, provider = _mapped(paper, protocol,
-                              [_primary(), _sources(), _check(datasets=[{
-                                  "label": "pointing", "experiment": "1", "condition": "rotation",
-                                  "group_a": {"label": "old", "n": 12, "n_evidence": ""},
-                                  "group_b": {"label": "young", "n": 12, "n_evidence": ""},
-                                  "outcomes": [{"outcome_key": "late_adaptation",
-                                                "sources": [_check_source(error_bar_type="SE")]}]}])])
+                              [_primary(), _sources(), _check(bars=(("fig01", "SE"),))])
     assert len(provider.requests) == 3                       # no adjudication: eligibility+Ns agree
     source = study.datasets[0].outcomes[0].sources[0]
     assert source.error_bar_type is DispersionType.SD        # primary value survives
+    assert source.error_bar_agreement == "conflict"
     flags = [f for f in study.needs_human if "error-bar" in f]
     assert flags and "SD" in flags[0] and "SE" in flags[0], study.needs_human
     assert "late_adaptation" in flags[0] and study.datasets[0].dataset_id in flags[0]
     assert [d for d in study.disagreements if "error bar" in d]
 
 
-def test_adjudicated_error_bar_ruling_resolves_the_disagreement(paper, protocol):
-    check = _check(datasets=[{
+def test_error_bar_agreement_needs_coverage_not_just_absence_of_conflict(paper, protocol):
+    """A roster id the cross-check said nothing about is `unconfirmed`, not silently accepted."""
+    study, _ = _mapped(paper, protocol, [_primary(), _sources(), _check(bars=(("fig02", "SD"),))])
+    source = study.datasets[0].outcomes[0].sources[0]
+    assert source.error_bar_agreement == "unconfirmed"
+    assert source.error_bar_type is DispersionType.SD
+    flags = [f for f in study.needs_human if "unconfirmed" in f]
+    assert flags and "fig01" not in flags[0]                 # the cell is named, not the id
+    assert "Fig 1 adaptation episodes" in flags[0], study.needs_human
+
+
+def test_error_bar_agreed_when_the_second_agent_read_the_same_type(paper, protocol):
+    study, _ = _mapped(paper, protocol, [_primary(), _sources(), _check()])
+    source = study.datasets[0].outcomes[0].sources[0]
+    assert source.error_bar_agreement == "agreed"
+    assert not study.needs_human
+
+
+def test_error_bar_scope_mismatch_is_recorded_but_does_not_block(paper, protocol):
+    bars = [{"id": "fig01", "error_bar_type": "SD", "error_bar_scope": "within_subject_normalized",
+             "evidence": "normalised within subjects"}]
+    study, _ = _mapped(paper, protocol,
+                       [_primary(), _sources(), _check(roster_error_bars=bars)])
+    assert study.datasets[0].outcomes[0].sources[0].error_bar_agreement == "agreed"
+    assert [d for d in study.disagreements if "scope" in d], study.disagreements
+    assert not study.needs_human
+
+
+def test_text_sources_are_exempt_from_the_coverage_rule(paper, protocol):
+    """Text sources carry no roster id; Task 8's verifier is what checks them."""
+    quote = "the young group averaged 9.9 ± 2.1 deg over the last two episodes"
+    text_source = dict(FIG_SOURCE, kind="text_mean_sd", figure_id="", locator="Results ¶2",
+                       quote=quote)
+    check = _check(bars=(), datasets=[{
+        "label": "pointing", "experiment": "1", "condition": "rotation",
+        "group_a": {"label": "old", "n": 12, "n_evidence": ""},
+        "group_b": {"label": "young", "n": 12, "n_evidence": ""},
+        "outcomes": [{"outcome_key": "late_adaptation",
+                      "sources": [_check_source(kind="text_mean_sd", figure_id="",
+                                                locator="Results, second paragraph",
+                                                quote=quote)]}]}])
+    study, _ = _mapped(paper, protocol,
+                       [_primary(), _sources(outcomes=[_outcome(sources=(text_source,))]), check])
+    assert study.datasets[0].outcomes[0].sources[0].error_bar_agreement == "unconfirmed"
+    assert not [f for f in study.needs_human if "error-bar" in f], study.needs_human
+
+
+def test_adjudicated_error_bar_ruling_resolves_the_conflict(paper, protocol):
+    check = _check(bars=(("fig01", "SE"),), datasets=[{
         "label": "pointing", "experiment": "1", "condition": "rotation",
         "group_a": {"label": "old", "n": 11, "n_evidence": "eleven old"},
         "group_b": {"label": "young", "n": 12, "n_evidence": "twelve young"},
-        "outcomes": [{"outcome_key": "late_adaptation",
-                      "sources": [_check_source(error_bar_type="SE")]}]}])
-    ruling = {"dataset_index": 1, "outcome_key": "late_adaptation", "page": 3, "locator": "Fig 1",
-              "figure_id": "fig01", "table_id": "", "error_bar_type": "SE",
-              "evidence": "the legend says standard errors"}
+        "outcomes": [{"outcome_key": "late_adaptation", "sources": [_check_source()]}]}])
+    ruling = {"dataset_index": 1, "outcome_key": "late_adaptation", "page": 3,
+              "locator": "Fig 1 adaptation episodes", "figure_id": "fig01", "table_id": "",
+              "error_bar_type": "SE", "evidence": "the legend says standard errors"}
     study, _ = _mapped(paper, protocol,
                        [_primary(), _sources(), check, _adjudication(rulings=[ruling])])
-    assert study.datasets[0].outcomes[0].sources[0].error_bar_type is DispersionType.SE
+    source = study.datasets[0].outcomes[0].sources[0]
+    assert source.error_bar_type is DispersionType.SE
+    assert source.error_bar_agreement == "agreed"
+    assert source.error_bar_evidence == "the legend says standard errors"
     assert not [f for f in study.needs_human if "error-bar" in f], study.needs_human
 
 
@@ -446,17 +533,69 @@ def test_the_same_text_source_quoted_differently_is_not_duplicated(paper, protoc
     assert not [d for d in study.disagreements if "added by cross-check" in d]
 
 
-def test_swapped_group_mapping_is_flagged_for_a_human(paper, protocol):
-    check = _check(datasets=[{
+def _swapped_check(**over):
+    return _check(datasets=[{
         "label": "pointing", "experiment": "1", "condition": "rotation",
         "group_a": {"label": "young", "n": 12, "n_evidence": "twelve young"},
         "group_b": {"label": "old", "n": 12, "n_evidence": "twelve old"},
-        "outcomes": [{"outcome_key": "late_adaptation", "sources": [_check_source()]}]}])
-    study, provider = _mapped(paper, protocol, [_primary(), _sources(), check])
-    assert len(provider.requests) == 3                        # Ns agree, so no adjudication
-    assert study.datasets[0].group_a.label == "old"           # primary mapping survives
+        "outcomes": [{"outcome_key": "late_adaptation", "sources": [_check_source()]}]}], **over)
+
+
+def test_swapped_group_mapping_is_adjudicated_and_can_swap_the_groups(paper, protocol):
+    swapped = _adjudication(over_datasets=[{
+        "primary_dataset_index": 1, "label": "pointing",
+        "group_a": {"label": "young", "n": 12, "n_evidence": "twelve young"},
+        "group_b": {"label": "old", "n": 12, "n_evidence": "twelve old"},
+        "rationale": "the protocol calls the younger group A"}])
+    study, provider = _mapped(paper, protocol,
+                              [_primary(), _sources(), _swapped_check(), swapped])
+    assert len(provider.requests) == 4                        # a mapping conflict is adjudicated
+    assert provider.requests[3].model == MODELS["adjudicator"]
+    assert (study.datasets[0].group_a.label, study.datasets[0].group_b.label) == ("young", "old")
+    assert [d for d in study.disagreements if "swapped to" in d], study.disagreements
+    assert not [f for f in study.needs_human if "group mapping" in f]
+
+
+def test_swapped_group_mapping_can_be_settled_for_the_primary(paper, protocol):
+    study, _ = _mapped(paper, protocol,
+                       [_primary(), _sources(), _swapped_check(), _adjudication()])
+    assert study.datasets[0].group_a.label == "old"            # primary mapping confirmed
+    assert [d for d in study.disagreements if "primary confirmed" in d]
+    assert not [f for f in study.needs_human if "group mapping" in f], study.needs_human
+
+
+def test_group_mapping_the_adjudicator_does_not_settle_needs_a_human(paper, protocol):
+    unrelated = _adjudication(over_datasets=[{
+        "primary_dataset_index": 1, "label": "pointing",
+        "group_a": {"label": "left hand", "n": 12, "n_evidence": ""},
+        "group_b": {"label": "right hand", "n": 12, "n_evidence": ""},
+        "rationale": "different pair entirely"}])
+    study, _ = _mapped(paper, protocol,
+                       [_primary(), _sources(), _swapped_check(), unrelated])
+    assert study.datasets[0].group_a.label == "old"            # primary kept
     assert [f for f in study.needs_human if "group mapping" in f], study.needs_human
-    assert [d for d in study.disagreements if "group mapping" in d]
+
+
+def test_group_mapping_without_a_counterpart_dataset_is_unconfirmed(paper, protocol):
+    study, _ = _mapped(paper, protocol,
+                       [_primary(datasets=[_dataset(), _dataset()]), _sources(), _check()])
+    flags = [f for f in study.needs_human if "group mapping unconfirmed" in f]
+    assert flags and study.datasets[1].dataset_id in flags[0], study.needs_human
+
+
+def test_a_dataset_only_the_cross_check_found_is_described_not_invented(paper, protocol):
+    extra = {"label": "force field", "experiment": "2", "condition": "curl field",
+             "group_a": {"label": "old", "n": 9, "n_evidence": "nine older adults"},
+             "group_b": {"label": "young", "n": 10, "n_evidence": "ten younger adults"},
+             "outcomes": [{"outcome_key": "aftereffect",
+                           "sources": [_check_source(page=4, locator="Fig 2", figure_id="fig02")]}]}
+    check = _check(datasets=[_check()["datasets"][0], extra])
+    study, _ = _mapped(paper, protocol, [_primary(), _sources(), check])
+    assert len(study.datasets) == 1                            # never invented into the map
+    described = [d for d in study.disagreements if "not in the map" in d]
+    assert described and "force field" in described[0] and "n=9" in described[0]
+    assert "aftereffect" in described[0] and "fig02" in described[0], described
+    assert [f for f in study.needs_human if "does not contain" in f], study.needs_human
 
 
 def test_dataset_count_mismatch_is_recorded(paper, protocol):
@@ -467,14 +606,27 @@ def test_dataset_count_mismatch_is_recorded(paper, protocol):
     assert [d.dataset_id[-2:] for d in study.datasets] == ["d1", "d2"]
 
 
-def test_unclassifiable_source_kind_is_flagged_not_dropped_silently(paper, protocol):
-    unknown = dict(FIG_SOURCE, kind="unknown", locator="appendix plot")
+def test_unknown_kind_sources_are_kept_and_flagged_when_they_stand_alone(paper, protocol):
+    """A numeric location we cannot route (a fitted curve, say) is a human's problem, not a drop."""
+    unknown = dict(FIG_SOURCE, kind="unknown", locator="Results, exponential fit",
+                   figure_id="", quote="y=9.92+53.51*exp(-x/5.89) for young subjects")
     study, _ = _mapped(paper, protocol,
-                       [_primary(), _sources(outcomes=[_outcome(sources=(unknown,))]), _check()])
-    sources = study.datasets[0].outcomes[0].sources
-    assert "appendix plot" not in [s.locator for s in sources]      # not silently kept as a guess
-    assert [f for f in study.needs_human if "appendix plot" in f], study.needs_human
-    assert [s.notes for s in sources] == ["added by cross-check"]   # the location survives
+                       [_primary(), _sources(outcomes=[_outcome(sources=(unknown,))]),
+                        _check(datasets=[])])
+    kept = study.datasets[0].outcomes[0].sources
+    assert [s.kind for s in kept] == [SourceKind.unknown]
+    assert kept[0].locator == "Results, exponential fit"
+    flags = [f for f in study.needs_human if "unlisted kind" in f]
+    assert flags and "y=9.92" in flags[0], study.needs_human      # the quote travels with the flag
+
+
+def test_unknown_kind_alongside_a_usable_source_is_not_flagged(paper, protocol):
+    unknown = dict(FIG_SOURCE, kind="unknown", locator="Results, exponential fit", figure_id="")
+    study, _ = _mapped(paper, protocol,
+                       [_primary(), _sources(outcomes=[_outcome(sources=(FIG_SOURCE, unknown))]),
+                        _check()])
+    assert len(study.datasets[0].outcomes[0].sources) == 2
+    assert not [f for f in study.needs_human if "unlisted kind" in f], study.needs_human
 
 
 def test_outcome_key_outside_the_protocol_is_flagged(paper, protocol):
@@ -499,3 +651,195 @@ def test_ineligible_paper_keeps_its_exclusion_reason(paper, protocol):
     assert study.datasets == []
     assert len(provider.requests) == 2      # no datasets, so no source pass; the check still runs
     assert [r.model for r in provider.requests] == [MODELS["primary"], MODELS["secondary"]]
+
+
+# ------------------------------------------------------------------ silent-failure paths
+def test_empty_source_pass_is_retried_then_flagged(paper, protocol):
+    empty = {"datasets": [], "notes": "nothing found"}
+    study, provider = _mapped(paper, protocol, [_primary(), empty, empty, _check(datasets=[])])
+    assert len(provider.requests) == 4                     # study map, source map, retry, check
+    assert provider.requests[1].key != provider.requests[2].key      # the retry is a real call
+    assert provider.requests[1].model == provider.requests[2].model == MODELS["primary"]
+    assert study.datasets[0].outcomes == []
+    flags = [f for f in study.needs_human if "no sources found" in f]
+    assert flags and study.datasets[0].dataset_id in flags[0], study.needs_human
+    assert len([d for d in study.disagreements if "no locations" in d]) == 2
+
+
+def test_source_pass_retry_that_succeeds_is_used(paper, protocol):
+    study, provider = _mapped(paper, protocol,
+                              [_primary(), {"datasets": [], "notes": ""}, _sources(), _check()])
+    assert len(provider.requests) == 4
+    assert [o.outcome_key for o in study.datasets[0].outcomes] == ["late_adaptation"]
+    assert not [f for f in study.needs_human if "no sources" in f], study.needs_human
+    assert [d for d in study.disagreements if "no locations" in d]
+
+
+def test_a_figure_id_ingestion_never_produced_is_cleared_and_flagged(paper, protocol):
+    """`llm.context` raises on an unknown id, so a hallucinated one must never reach an extractor."""
+    invented = dict(FIG_SOURCE, figure_id="fig99", locator="Fig 9, right panel",
+                    quote="Fig. 9 shows the group means")
+    study, _ = _mapped(paper, protocol,
+                       [_primary(), _sources(outcomes=[_outcome(sources=(invented,))]),
+                        _check(datasets=[])])
+    source = study.datasets[0].outcomes[0].sources[0]
+    assert source.figure_id is None                        # cleared, but the location is kept
+    assert source.locator == "Fig 9, right panel"
+    assert "not in the ingestion roster" in source.notes
+    flags = [f for f in study.needs_human if "not in the ingestion roster" in f]
+    assert flags and "fig99" in flags[0] and "Fig. 9 shows" in flags[0], study.needs_human
+
+
+def test_a_bad_id_from_the_cross_check_is_validated_the_same_way(paper, protocol):
+    check = _check(datasets=[{
+        "label": "pointing", "experiment": "1", "condition": "rotation",
+        "group_a": {"label": "old", "n": 12, "n_evidence": ""},
+        "group_b": {"label": "young", "n": 12, "n_evidence": ""},
+        "outcomes": [{"outcome_key": "late_adaptation",
+                      "sources": [_check_source(figure_id="fig42", locator="Fig 42", page=5)]}]}])
+    study, _ = _mapped(paper, protocol, [_primary(), _sources(), check])
+    added = [s for o in study.datasets[0].outcomes for s in o.sources if "cross-check" in s.notes]
+    assert added and added[0].figure_id is None
+    assert [f for f in study.needs_human if "fig42" in f], study.needs_human
+
+
+def test_an_outcome_key_from_the_cross_check_is_validated_the_same_way(paper, protocol):
+    check = _check(datasets=[{
+        "label": "pointing", "experiment": "1", "condition": "rotation",
+        "group_a": {"label": "old", "n": 12, "n_evidence": ""},
+        "group_b": {"label": "young", "n": 12, "n_evidence": ""},
+        "outcomes": [{"outcome_key": "reaction_time", "sources": [_check_source()]}]}])
+    study, _ = _mapped(paper, protocol, [_primary(), _sources(), check])
+    assert [o.outcome_key for o in study.datasets[0].outcomes] == ["late_adaptation"]
+    assert [f for f in study.needs_human if "reaction_time" in f], study.needs_human
+
+
+def test_a_failing_roster_follow_up_does_not_kill_the_map(paper, protocol):
+    def explode(request):
+        raise RefusalError("the model refused")
+
+    study, provider = _mapped(paper, protocol,
+                              [_primary(roster=("fig01",)), _sources(), explode, _check()])
+    assert len(provider.requests) == 4
+    assert study.eligible is True                          # the map survived
+    decided = {r.id: r for r in study.roster}
+    assert set(decided) == {"fig01", "fig02", "p1t1"}
+    assert decided["fig02"].reason == "mapper did not decide"
+    assert [d for d in study.disagreements if "roster follow-up failed" in d], study.disagreements
+    assert len([f for f in study.needs_human if "did not decide" in f]) == 2
+
+
+def test_adjudicated_n_that_agrees_with_neither_agent_is_not_adopted(paper, protocol):
+    check = _check(datasets=[{
+        "label": "pointing", "experiment": "1", "condition": "rotation",
+        "group_a": {"label": "old", "n": 11, "n_evidence": "eleven old"},
+        "group_b": {"label": "young", "n": 12, "n_evidence": "twelve young"},
+        "outcomes": [{"outcome_key": "late_adaptation", "sources": [_check_source()]}]}])
+    study, _ = _mapped(paper, protocol, [_primary(), _sources(), check, _adjudication(n_a=7)])
+    assert study.datasets[0].group_a.n == 12                # primary kept, nothing invented
+    assert [d for d in study.disagreements if "agrees with neither" in d], study.disagreements
+    flags = [f for f in study.needs_human if "n disagreement unresolved" in f]
+    assert flags and "adjudicator=7" in flags[0], study.needs_human
+
+
+def test_adjudicated_dataset_index_the_map_lacks_is_flagged(paper, protocol):
+    check = _check(datasets=[{
+        "label": "pointing", "experiment": "1", "condition": "rotation",
+        "group_a": {"label": "old", "n": 11, "n_evidence": "eleven old"},
+        "group_b": {"label": "young", "n": 12, "n_evidence": "twelve young"},
+        "outcomes": [{"outcome_key": "late_adaptation", "sources": [_check_source()]}]}])
+    stray = _adjudication(over_datasets=[{
+        "primary_dataset_index": 9, "label": "second experiment",
+        "group_a": {"label": "old", "n": 8, "n_evidence": ""},
+        "group_b": {"label": "young", "n": 8, "n_evidence": ""}, "rationale": "extra"}])
+    study, _ = _mapped(paper, protocol, [_primary(), _sources(), check, stray])
+    assert len(study.datasets) == 1 and study.datasets[0].group_a.n == 12
+    assert [f for f in study.needs_human
+            if "adjudicator" in f and "second experiment" in f], study.needs_human
+
+
+# ------------------------------------------------------------------ source matching (R4)
+def test_two_panels_of_one_figure_are_not_the_same_location(paper, protocol):
+    caption = "Fig. 2 Mean tracking errors of young (triangles) and old (squares) subjects"
+    panel_a = dict(FIG_SOURCE, page=4, figure_id="fig02", quote=caption,
+                   locator="Fig 2A, last block, filled squares")
+    panel_b = _check_source(page=4, figure_id="fig02", quote=caption,
+                            locator="Fig 2B, last block, open circles")
+    check = _check(bars=(("fig02", "SD"),), datasets=[{
+        "label": "pointing", "experiment": "1", "condition": "rotation",
+        "group_a": {"label": "old", "n": 12, "n_evidence": ""},
+        "group_b": {"label": "young", "n": 12, "n_evidence": ""},
+        "outcomes": [{"outcome_key": "late_adaptation", "sources": [panel_b]}]}])
+    study, _ = _mapped(paper, protocol,
+                       [_primary(), _sources(outcomes=[_outcome(sources=(panel_a,))]), check])
+    locators = [s.locator for s in study.datasets[0].outcomes[0].sources]
+    assert locators == ["Fig 2A, last block, filled squares", "Fig 2B, last block, open circles"]
+
+
+def test_two_rows_of_one_table_are_not_the_same_location(paper, protocol):
+    row_old = dict(FIG_SOURCE, kind="table", figure_id="", table_id="p1t1", page=1,
+                   locator="Table 1, row 'old'", quote="Table 1 Group means")
+    row_young = _check_source(kind="table", figure_id="", table_id="p1t1", page=1,
+                              locator="Table 1, row 'young'", quote="Table 1 Group means")
+    check = _check(bars=(("p1t1", "SD"),), datasets=[{
+        "label": "pointing", "experiment": "1", "condition": "rotation",
+        "group_a": {"label": "old", "n": 12, "n_evidence": ""},
+        "group_b": {"label": "young", "n": 12, "n_evidence": ""},
+        "outcomes": [{"outcome_key": "late_adaptation", "sources": [row_young]}]}])
+    study, _ = _mapped(paper, protocol,
+                       [_primary(), _sources(outcomes=[_outcome(sources=(row_old,))]), check])
+    assert [s.locator for s in study.datasets[0].outcomes[0].sources] == [
+        "Table 1, row 'old'", "Table 1, row 'young'"]
+
+
+def test_the_same_panel_described_differently_is_one_location(paper, protocol):
+    panel = dict(FIG_SOURCE, page=4, figure_id="fig02", locator="Fig 2B, last block")
+    same = _check_source(page=4, figure_id="fig02", locator="panel B of Figure 2, final block")
+    check = _check(bars=(("fig02", "SD"),), datasets=[{
+        "label": "pointing", "experiment": "1", "condition": "rotation",
+        "group_a": {"label": "old", "n": 12, "n_evidence": ""},
+        "group_b": {"label": "young", "n": 12, "n_evidence": ""},
+        "outcomes": [{"outcome_key": "late_adaptation", "sources": [same]}]}])
+    study, _ = _mapped(paper, protocol,
+                       [_primary(), _sources(outcomes=[_outcome(sources=(panel,))]), check])
+    assert len(study.datasets[0].outcomes[0].sources) == 1
+
+
+# ------------------------------------------------------------------ misc
+def test_one_outcome_reported_twice_keeps_both_rows_and_all_metadata(paper, protocol):
+    first = dict(_outcome(sources=(FIG_SOURCE,)), units="", higher_is_better="unknown")
+    second = dict(_outcome(sources=(dict(FIG_SOURCE, page=4, figure_id="fig02",
+                                         locator="Fig 2, last block"),)),
+                  measure_name="", units="deg", higher_is_better="lower_is_better",
+                  operationalization="last adaptation episode")
+    study, _ = _mapped(paper, protocol,
+                       [_primary(), _sources(outcomes=[first, second]), _check()])
+    outcome = study.datasets[0].outcomes[0]
+    assert len(study.datasets[0].outcomes) == 1
+    assert [s.locator for s in outcome.sources] == ["Fig 1 adaptation episodes",
+                                                    "Fig 2, last block"]
+    assert outcome.measure_name == "pointing error"        # kept from the first row
+    assert outcome.units == "deg"                          # filled in from the second
+    assert outcome.higher_is_better is False               # filled in from the second
+    assert not [f for f in study.needs_human if "reported twice" in f], study.needs_human
+
+
+def test_conflicting_metadata_across_two_rows_of_one_outcome_is_flagged(paper, protocol):
+    first = _outcome(sources=(FIG_SOURCE,))
+    second = dict(_outcome(sources=()), measure_name="percent compensation",
+                  higher_is_better="higher_is_better")
+    study, _ = _mapped(paper, protocol,
+                       [_primary(), _sources(outcomes=[first, second]), _check()])
+    assert [f for f in study.needs_human if "measure_name" in f], study.needs_human
+    assert [f for f in study.needs_human if "higher_is_better" in f], study.needs_human
+
+
+def test_prompt_version_tracks_the_prompt_files(tmp_path, monkeypatch):
+    from canopy.agents import mapper
+
+    assert PROMPT_VERSION.startswith("mapper/1@") and len(PROMPT_VERSION) == len("mapper/1@") + 8
+    assert mapper.prompt_fingerprint() == PROMPT_VERSION.split("@")[1]
+    original = mapper.load_prompt
+
+    monkeypatch.setattr(mapper, "load_prompt", lambda name: original(name) + "\nedited")
+    assert mapper.prompt_fingerprint() != PROMPT_VERSION.split("@")[1]
