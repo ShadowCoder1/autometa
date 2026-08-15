@@ -262,6 +262,30 @@ def test_structured_and_text_calls_send_no_tools():
     assert provider.requests[0].tool_choice is None
 
 
-def test_provider_response_text_is_the_first_text_block():
-    res = ProviderResponse(text="", content=[_use("submit", {}), _text("after")])
-    assert res.content[1]["text"] == "after"
+def test_first_text_picks_the_first_text_block_past_thinking_and_tool_use():
+    from canopy.llm.providers import _first_text
+
+    message = {"content": [{"type": "thinking", "thinking": "hmm"}, _use("submit", {}),
+                           _text("the answer"), _text("ignored")]}
+    assert _first_text(message) == "the answer"
+    assert _first_text({"content": [_use("submit", {})]}) == ""
+
+
+def test_fake_provider_text_is_the_first_text_block_of_a_canned_turn():
+    provider = FakeProvider([[{"type": "thinking", "thinking": "hmm"}, _text("first"),
+                              _use("crop_image", {}), _text("second")]])
+    res = provider.complete(LLMRequest(model="claude-opus-5", messages=MSGS))
+    assert res.text == "first"
+    assert [b["type"] for b in res.content] == ["thinking", "text", "tool_use", "text"]
+
+
+def test_kwargs_refuses_tools_and_a_structured_schema_together():
+    from canopy.llm.providers import AnthropicProvider
+
+    req = LLMRequest(model="claude-opus-5", messages=MSGS, tools=TOOLS, schema=SUBMIT_SCHEMA)
+    with pytest.raises(ValueError, match="cannot be combined"):
+        AnthropicProvider()._kwargs(req)
+    # each on its own is fine
+    AnthropicProvider()._kwargs(LLMRequest(model="claude-opus-5", messages=MSGS, tools=TOOLS))
+    AnthropicProvider()._kwargs(LLMRequest(model="claude-opus-5", messages=MSGS,
+                                           schema=SUBMIT_SCHEMA))

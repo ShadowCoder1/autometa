@@ -161,6 +161,11 @@ class AnthropicProvider:
             raise ValueError(
                 f"fallbacks={req.fallbacks!r} is only supported for {sorted(FALLBACK_MODELS)}, "
                 f"not {req.model!r} (betas are fine on any model)")
+        if req.tools and req.schema is not None:
+            raise ValueError(
+                "tools and a structured-output schema cannot be combined: the API rejects "
+                "`output_config.format` alongside `tools`. Put the answer schema on a terminal "
+                "tool with `strict: true` instead (see LLMClient.tool_loop).")
         output_config: dict[str, Any] = {}
         if req.effort and supports_effort(req.model):
             output_config["effort"] = req.effort

@@ -16,24 +16,22 @@ Two kinds of test here:
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from canopy.config import live_enabled, load_env, record_enabled
-from canopy.digitize.digitizer import (RouteSample, digitize, dual_tolerance, ensemble_stats,
+from canopy.digitize.digitizer import (ReadoutSpec, RouteSample, digitize, dual_tolerance,
+                                       ensemble_stats, _absent_status, _drop_zero_confidence,
                                        _legend_dispersion, _overlay_marks, _readout_plan)
-from canopy.digitize.vlm import (FigureView, MAX_ZOOM, READOUT_SCHEMA, TargetSpec, coords,
-                                 overlay_verify, read_out, render_prompt)
+from canopy.digitize.vlm import (FigureView, MAX_ZOOM, READOUT_SCHEMA, READOUT_VARIANTS,
+                                 TargetSpec, coords, overlay_verify, read_out, render_prompt)
 from canopy.ingest.pdf import Bbox, FigureRegion, PaperRecord, ingest_pdf
 from canopy.llm.client import LLMClient, MissingFixture
 from canopy.llm.providers import FakeProvider
 from canopy.llm.schemas import assert_no_derived_stats, assert_valid_output_schema
 from canopy.models import DatasetSpec, DispersionType, GroupSpec, Source, SourceKind
-
-#: read at import time — conftest's `offline_by_default` clears these env vars per test, so a
-#: fixture body would always see "offline" even during a recording run.
-LIVE, RECORD = live_enabled(), record_enabled()
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 REPLAY = FIXTURES / "llm"
@@ -211,10 +209,32 @@ def test_prompts_render_with_the_target_and_refuse_unfilled_placeholders():
 
 def test_readout_plan_is_two_model_families_and_two_variants():
     assert _readout_plan(("claude-opus-5",), 3) == [
-        ("claude-opus-5", "direct"), ("claude-opus-5", "ticks_first"),
-        ("claude-sonnet-5", "direct")]
-    assert len(_readout_plan(("claude-opus-5",), 5)) == 5
+        ReadoutSpec("claude-opus-5", "direct"), ReadoutSpec("claude-opus-5", "ticks_first"),
+        ReadoutSpec("claude-sonnet-5", "direct")]
     assert _readout_plan(("claude-opus-5",), 0) == []
+
+
+@pytest.mark.parametrize("models", [("claude-opus-5",), ("claude-opus-5", "claude-sonnet-5"),
+                                    ("claude-opus-5", "claude-haiku-4-5")])
+@pytest.mark.parametrize("n", [1, 3, 5, 6, 7, 11])
+def test_readout_plan_never_asks_the_same_prompt_twice_unflagged(models, n):
+    plan = _readout_plan(models, n)
+    assert len(plan) == n
+    keys = [(s.model, s.variant, s.sample) for s in plan]
+    assert len(set(keys)) == n, f"duplicate sample in {keys}"
+    firsts = [(s.model, s.variant) for s in plan if not s.resample]
+    assert len(set(firsts)) == len(firsts), "a (model, variant) pair was used twice unflagged"
+    # re-samples only appear once every distinct pair is spent
+    if any(s.resample for s in plan):
+        distinct = len({(s.model, s.variant) for s in plan})
+        assert len(firsts) == distinct
+
+
+def test_readout_plan_spends_every_variant_before_repeating_a_prompt():
+    plan = _readout_plan(("claude-opus-5",), 6)
+    assert {s.variant for s in plan} == set(READOUT_VARIANTS)
+    assert not any(s.resample for s in plan)
+    assert _readout_plan(("claude-opus-5",), 7)[-1].resample is True
 
 
 # ------------------------------------------------------------------ FigureView / zoom tools
@@ -572,13 +592,21 @@ def bock(tmp_path_factory) -> PaperRecord:
     return ingest_pdf(PDF_DIR / "bock2005.pdf", tmp_path_factory.mktemp("bock"))
 
 
+@pytest.fixture(scope="session")
+def live_flags() -> tuple[bool, bool]:
+    """Whether this run may call the API and record. Read here, not at import: conftest keeps
+    `CANOPY_LIVE`/`CANOPY_RECORD` only for tests marked `live` or `replay`."""
+    return live_enabled(), record_enabled()
+
+
 @pytest.fixture()
-def replay_client() -> LLMClient:
-    if LIVE:
+def replay_client(live_flags) -> LLMClient:
+    live, record = live_flags
+    if live:
         load_env()
-    return LLMClient(replay_dir=REPLAY, record_dir=REPLAY if RECORD else None,
-                     allow_live=LIVE, cache_dir=None,
-                     budget_usd=6.0 if LIVE else None)    # recording guard; fixtures are free
+    return LLMClient(replay_dir=REPLAY, record_dir=REPLAY if record else None,
+                     allow_live=live, cache_dir=None,
+                     budget_usd=6.0 if live else None)    # recording guard; fixtures are free
 
 
 BOCK_TARGET = TargetSpec(
@@ -595,6 +623,7 @@ BOCK_DATASET = DatasetSpec(dataset_id="bock2005:main",
                            group_b=GroupSpec(label="young", n=10))
 
 
+@pytest.mark.replay
 def test_bock_fig1_read_outs_match_the_human_digitisation(bock, replay_client, tmp_path):
     """Path D on the real figure: every recorded read-out variant, against the human numbers."""
     fig = next(f for f in bock.figures if f.id == "fig01")
@@ -627,6 +656,7 @@ def test_bock_fig1_read_outs_match_the_human_digitisation(bock, replay_client, t
         assert reading.turns >= 2 and reading.call_ids
 
 
+@pytest.mark.replay
 def test_bock_fig1_matches_the_human_digitisation(bock, replay_client, tmp_path):
     """The whole of `digitize()` on the real figure (skips until the fixture set is complete)."""
     fig = next(f for f in bock.figures if f.id == "fig01")
@@ -650,3 +680,198 @@ def test_bock_fig1_matches_the_human_digitisation(bock, replay_client, tmp_path)
         assert prov["late_window_rule"] == "block_closest_to_end"
     per_route = [c for c in candidates if c.extractor_id != "digitize:ensemble"]
     assert len({c.extractor_id for c in per_route}) >= 4
+
+
+# ------------------------------------------------------------------ item 1: fixture hygiene
+#: Every recorded Bock fixture must be reachable by one of these documented calls. A fixture no
+#: call can reach is an orphan: dead weight in the repo that also inflates the "already recorded"
+#: figure in the report. Loops that are only partly recorded still reach their first N turns.
+DOCUMENTED_BOCK_CALLS = [("read_out", "claude-opus-5", "direct"),
+                         ("read_out", "claude-opus-5", "ticks_first")]
+
+
+@pytest.mark.replay
+def test_every_recorded_fixture_is_reachable_by_a_documented_call(bock, tmp_path):
+    committed = {path.stem for path in REPLAY.glob("*.json")}
+    if not committed:
+        pytest.skip("no fixtures recorded yet")
+    fig = next(f for f in bock.figures if f.id == "fig01")
+    crop = Path(bock.out_dir) / fig.crop_png
+    reached: set[str] = set()
+    for kind, model, variant in DOCUMENTED_BOCK_CALLS:
+        assert kind == "read_out"
+        client = LLMClient(replay_dir=REPLAY, cache_dir=None)
+        view = FigureView(crop, work_dir=tmp_path / f"{model}-{variant}")
+        try:
+            read_out(client, crop, fig.caption, BOCK_TARGET, model, variant, view=view)
+        except MissingFixture:
+            pass                                    # a partly-recorded loop still reaches its head
+        reached |= {call["key"] for call in client.calls()}
+    orphans = sorted(committed - reached)
+    assert not orphans, (
+        f"{len(orphans)} recorded fixture(s) no documented call can reach: {orphans}. "
+        f"Either delete them or add the call that uses them to DOCUMENTED_BOCK_CALLS.")
+
+
+# ------------------------------------------------------------------ item 2: no duplicated votes
+def test_digitize_gives_every_sample_a_distinct_extractor_and_candidate_id(bar_figure, tmp_path):
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    provider = _scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                         _coord_payload(bar_figure, view.scale))
+    out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, n_readouts=7, result=True)          # forces re-samples
+    ids = [c.candidate_id for c in out.candidates]
+    assert len(set(ids)) == len(ids), "candidate ids collided"
+    for group in ("A", "B"):
+        mine = [s for s in out.samples if s.group == group]
+        assert len({s.extractor_id for s in mine}) == len(mine), "extractor ids collided"
+    resampled = [s for s in out.samples if s.route == "D" and s.sample > 0]
+    assert resampled, "n_readouts=7 must exhaust the distinct prompts and re-sample"
+    assert all(s.extra["same_prompt_resample"] for s in resampled)
+    assert all(s.extractor_id.endswith(("#2", "#3")) for s in resampled)
+    prov = next(c for c in out.candidates
+                if c.extractor_id == "digitize:ensemble" and c.group == "A").pixel_provenance
+    assert prov["resampled_routes"], "a re-sample must be visible to task 8"
+    assert len(prov["readout_plan"]) == 7
+
+
+# ------------------------------------------------------------------ item 3: absent vs unreadable
+def test_absent_status_separates_not_on_the_page_from_unreadable():
+    absent = [RouteSample(route="D", group="A", status="not_on_these_pages")]
+    status, why = _absent_status(absent)
+    assert status == "not_on_these_pages" and "not plotted" in why
+
+    dropped = [RouteSample(route="C", group="A", mean=1.0, dropped=True, drop_reason="x")]
+    status, why = _absent_status(dropped)
+    assert status == "ambiguous" and "overlay verification" in why
+
+    assert _absent_status([])[0] == "ambiguous"
+
+
+def test_digitize_is_ambiguous_not_absent_when_verification_drops_every_route(bar_figure,
+                                                                             tmp_path):
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+
+    def respond(request):
+        system = _system_of(request)
+        if "read numeric values" in system:
+            return _submit(_readout_payload(31.5, 11.0, 12.25, 11.75))
+        if "locate features" in system:
+            return _submit(_coord_payload(bar_figure, view.scale))
+        verdicts = [{"number": int(line.split(".")[0]), "verdict": "wrong_series",
+                     "reason": "that is the other group"}
+                    for line in system.splitlines() if line.split(".")[0].strip().isdigit()]
+        return _submit({"marks": verdicts, "notes": ""})
+
+    out = digitize(_client(FakeProvider([respond])), paper, fig, TARGET, source=SOURCE,
+                   dataset=DATASET, out_dir=tmp_path, result=True)
+    ensemble = {c.group: c for c in out.candidates if c.extractor_id == "digitize:ensemble"}
+    for group in ("A", "B"):
+        assert ensemble[group].status == "ambiguous", "a failed read is not 'not on these pages'"
+        assert ensemble[group].mean is None
+        prov = ensemble[group].pixel_provenance
+        assert prov["needs_review"] is True
+        assert "overlay verification" in prov["needs_review_reason"]
+        assert prov["dropped_samples"] and prov["tool_calls"]
+
+
+# ------------------------------------------------------------------ items 4-7: provenance
+def test_ensemble_provenance_carries_the_aggregated_tool_calls(bar_figure, tmp_path):
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    out = digitize(_client(_scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                                     _coord_payload(bar_figure, view.scale))),
+                   paper, fig, TARGET, source=SOURCE, dataset=DATASET, out_dir=tmp_path,
+                   result=True)
+    prov = next(c for c in out.candidates
+                if c.extractor_id == "digitize:ensemble" and c.group == "A").pixel_provenance
+    calls = prov["tool_calls"]
+    assert calls and all("route" in c and "name" in c for c in calls)
+    assert {c["name"] for c in calls} == {"submit"}          # the scripted model calls no zoom tool
+    assert any(c["route"].startswith("digitize:readout") for c in calls)
+
+
+def test_late_window_provenance_records_the_rule_applied_and_the_x_read(bar_figure, tmp_path):
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    out = digitize(_client(_scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                                     _coord_payload(bar_figure, view.scale))),
+                   paper, fig, TARGET, source=SOURCE, dataset=DATASET, out_dir=tmp_path,
+                   result=True)
+    prov = out.provenance
+    assert prov["late_window_rule"] == "block_closest_to_end"          # x_hint set -> applied
+    assert prov["late_window_rule_configured"] == "block_closest_to_end"
+    assert prov["late_window_x_read"] == ["old", "young"]              # what the model says it read
+    assert prov["late_window_x_agrees"] is False                       # two groups, two x labels
+
+    still = replace(TARGET, x_hint="")                                 # not a time series
+    out2 = digitize(_client(_scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                                      _coord_payload(bar_figure, view.scale))),
+                    paper, fig, still, source=SOURCE, dataset=DATASET, out_dir=tmp_path,
+                    result=True)
+    assert out2.provenance["late_window_rule"] == "not_a_time_series"
+    assert out2.provenance["late_window_rule_configured"] == "block_closest_to_end"
+
+
+def test_axis_range_uses_the_plotted_span_and_says_so(bar_figure, tmp_path):
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    out = digitize(_client(_scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                                     _coord_payload(bar_figure, view.scale))),
+                   paper, fig, TARGET, source=SOURCE, dataset=DATASET, out_dir=tmp_path,
+                   result=True)
+    assert out.provenance["axis_range_source"] == "plot_bbox"
+    # the ticks span 0..60, and the drawn plot box is a little taller than the outermost ticks
+    assert out.provenance["axis_range"] >= 60.0
+    assert out.provenance["axis_range"] < 75.0
+
+
+def test_zero_confidence_snaps_are_excluded_unless_they_are_all_we_have():
+    good = [RouteSample(route="D", group="A", mean=30.0, snap_conf=0.9),
+            RouteSample(route="C", group="A", mean=30.1, snap_conf=0.8),
+            RouteSample(route="B", group="A", mean=99.0, snap_conf=0.0)]
+    kept, notes = _drop_zero_confidence(good)
+    assert [s.route for s in kept] == ["D", "C"]
+    assert notes and "no ink" in notes[0]
+
+    thin = [RouteSample(route="C", group="A", mean=30.0, snap_conf=0.0),
+            RouteSample(route="B", group="A", mean=30.2, snap_conf=0.0)]
+    kept, notes = _drop_zero_confidence(thin)
+    assert len(kept) == 2, "never drop everything — flag instead"
+    assert all("too few routes left" in n for n in notes)
+
+    # a read-out's confidence is the model's own, not a snap: never used to exclude
+    only_d = [RouteSample(route="D", group="A", mean=30.0, snap_conf=0.0),
+              RouteSample(route="D", group="A", mean=30.1, snap_conf=0.0),
+              RouteSample(route="D", group="A", mean=30.2, snap_conf=0.0)]
+    assert _drop_zero_confidence(only_d) == (only_d, [])
+
+
+def test_conftest_keeps_the_recording_env_only_for_live_and_replay(monkeypatch):
+    """Item 11's mechanism: without this, a recording run silently records nothing."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "canopy_test_conftest", Path(__file__).resolve().parent / "conftest.py")
+    conftest = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(conftest)
+    fixture_fn = conftest.offline_by_default.__wrapped__
+
+    class _Request:
+        def __init__(self, marker: str | None):
+            self.marker = marker
+            self.node = self
+
+        def get_closest_marker(self, name: str):
+            return object() if name == self.marker else None
+
+    for marker in ("live", "replay"):
+        monkeypatch.setenv("CANOPY_LIVE", "1")
+        fixture_fn(_Request(marker), monkeypatch)
+        assert live_enabled(), f"{marker}-marked tests must still see CANOPY_LIVE"
+
+    monkeypatch.setenv("CANOPY_LIVE", "1")
+    fixture_fn(_Request(None), monkeypatch)
+    assert not live_enabled(), "an unmarked test must be forced offline"

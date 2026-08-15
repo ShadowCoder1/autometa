@@ -43,8 +43,10 @@ __all__ = ["PROMPT_VERSION", "TargetSpec", "FigureView", "GroupReadOut", "ReadOu
 
 #: bump when a prompt or a schema changes (fixtures are content-addressed, so they follow anyway)
 PROMPT_VERSION = "digitize/1"
-#: read-out variants; each is a `digitize_readout_<name>.md` delta appended to the base prompt
-READOUT_VARIANTS: tuple[str, ...] = ("direct", "ticks_first")
+#: read-out variants; each is a `digitize_readout_<name>.md` delta appended to the base prompt.
+#: Order matters: `_readout_plan` fills a figure's samples from distinct (model, variant) pairs in
+#: this order, and only re-samples an already-used pair once every pair is spent.
+READOUT_VARIANTS: tuple[str, ...] = ("direct", "ticks_first", "zoom_first")
 MAX_ZOOM = 4.0                      # amendment F: a zoom tool never magnifies more than 4x
 MAX_TOOL_CALLS = 8                  # amendment F
 MAX_TOKENS = 16000                  # enough for adaptive thinking + the submit call, no retry
@@ -220,6 +222,7 @@ class ReadOut:
     notes: str = ""
     model: str = ""
     variant: str = ""
+    sample: int = 0                              # >0 = a re-sample of an already-used prompt
     call_ids: list[str] = field(default_factory=list)
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     cost_usd: float = 0.0
@@ -559,11 +562,19 @@ def _run(client: LLMClient, *, model: str, system: str, view: FigureView, ask: s
 
 
 def read_out(client: LLMClient, crop_png: str | Path, caption: str, target: TargetSpec,
-             model: str = "claude-opus-5", variant: str = "direct", *,
+             model: str = "claude-opus-5", variant: str = "direct", *, sample: int = 0,
              view: FigureView | None = None, cell_key: str = "") -> ReadOut:
-    """Path D: ask the model to read the values off the figure (one sample of one variant)."""
+    """Path D: ask the model to read the values off the figure (one sample of one variant).
+
+    `sample > 0` re-asks an *already used* (model, variant) pair. The prompt is identical, so the
+    only thing that differs is the sampling — a weaker vote than a different variant or a different
+    model family, and marked as such in provenance. It changes the cache key (so the second sample
+    is a real second call rather than a replay of the first), and `sample=0` keeps the original key.
+    """
     if variant not in READOUT_VARIANTS:
         raise ValueError(f"unknown read-out variant {variant!r}; have {list(READOUT_VARIANTS)}")
+    if sample < 0:
+        raise ValueError(f"sample must be >= 0, got {sample}")
     view = view or FigureView(crop_png)
     system = render_prompt("digitize_readout", TARGET=target.describe(),
                            CAPTION=(caption or "").strip() or "(no caption found by ingestion)",
@@ -572,11 +583,14 @@ def read_out(client: LLMClient, crop_png: str | Path, caption: str, target: Targ
                   ask="Work through the steps above, then call `submit`.",
                   schema=READOUT_SCHEMA,
                   submit_description="Report the values you read off the figure.",
-                  cell_key=cell_key, cache_key_extra=f"{PROMPT_VERSION}|readout|{variant}")
-    return _parse_readout(result, model=model, variant=variant)
+                  cell_key=cell_key,
+                  cache_key_extra=f"{PROMPT_VERSION}|readout|{variant}"
+                                  + (f"|sample{sample}" if sample else ""))
+    return _parse_readout(result, model=model, variant=variant, sample=sample)
 
 
-def _parse_readout(result: ToolLoopResult, model: str, variant: str) -> ReadOut:
+def _parse_readout(result: ToolLoopResult, model: str, variant: str,
+                   sample: int = 0) -> ReadOut:
     data = result.parsed or {}
     groups = []
     for row in data.get("groups") or []:
@@ -599,7 +613,7 @@ def _parse_readout(result: ToolLoopResult, model: str, variant: str) -> ReadOut:
         pixel_resolution_estimate=_number(data.get("pixel_resolution_estimate")),
         unit=str(data.get("unit") or ""), panel=str(data.get("panel") or ""),
         confidence=float(_number(data.get("confidence")) or 0.0),
-        notes=str(data.get("notes") or ""), model=model, variant=variant,
+        notes=str(data.get("notes") or ""), model=model, variant=variant, sample=sample,
         call_ids=list(result.call_ids), tool_calls=list(result.tool_calls),
         cost_usd=result.cost_usd, turns=result.turns)
 

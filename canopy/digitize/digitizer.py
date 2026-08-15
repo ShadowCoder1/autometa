@@ -31,11 +31,11 @@ from .cv import (Axes, Bar, Marker, MIN_BAR_WIDTH_PX, detect_bars, detect_marker
                  snap_horizontal_edge, snap_window_for)
 from .vector import VectorScene, calibrate_from_scene, snap_to_vector, vector_candidates, \
     whisker_ends
-from .vlm import (CoordReadout, FigureView, PROMPT_VERSION, ReadOut, TargetSpec, coords,
-                  overlay_verify, read_out, summarize_tool_calls)
+from .vlm import (READOUT_VARIANTS, CoordReadout, FigureView, PROMPT_VERSION, ReadOut,
+                  TargetSpec, coords, overlay_verify, read_out, summarize_tool_calls)
 
-__all__ = ["digitize", "RouteSample", "DigitizeResult", "ensemble_stats", "dual_tolerance",
-           "ROUTE_LABELS"]
+__all__ = ["digitize", "RouteSample", "ReadoutSpec", "DigitizeResult", "ensemble_stats",
+           "dual_tolerance", "ROUTE_LABELS"]
 
 ROUTE_LABELS = {"A": "vector", "B": "raster_cv", "C": "vlm_coords", "D": "readout"}
 GROUPS = ("A", "B")
@@ -47,6 +47,23 @@ _MAD_TO_SIGMA = 1.4826
 
 
 # ----------------------------------------------------------------------------- samples
+@dataclass(frozen=True)
+class ReadoutSpec:
+    """One planned path-D sample: which model, which prompt variant, which repeat of that prompt."""
+
+    model: str
+    variant: str
+    sample: int = 0                              # 0 = first use of this (model, variant) pair
+
+    @property
+    def resample(self) -> bool:
+        return self.sample > 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return dict(model=self.model, variant=self.variant, sample=self.sample,
+                    resample=self.resample)
+
+
 @dataclass
 class RouteSample:
     """One route's answer for one group. `route` is A/B/C/D; `mean`/`error` are in data units."""
@@ -55,6 +72,7 @@ class RouteSample:
     group: str
     model: str = ""
     variant: str = ""
+    sample: int = 0                              # path D only: >0 = a re-ask of the same prompt
     mean: float | None = None
     error: float | None = None                   # error-bar HALF-length
     x_px: float | None = None
@@ -81,7 +99,8 @@ class RouteSample:
             parts.append(self.model)
         if self.variant:
             parts.append(self.variant)
-        return ":".join(parts)
+        name = ":".join(parts)
+        return f"{name}#{self.sample + 1}" if self.sample else name
 
     @property
     def usable(self) -> bool:
@@ -195,6 +214,27 @@ def _cv_core(crop_png: Path) -> _Core:
                  ocr_status=status, bars=bars, markers=markers)
 
 
+def _axis_range(cal: AxisCalibration | None, core: "_Core") -> tuple[float, str]:
+    """The y range the tolerance is a percentage OF — the plotted axis span when we can measure it.
+
+    The tick-value range only covers the labelled ticks; a figure whose data runs past its top tick
+    (or whose axis is drawn well beyond it) has a larger real range, and using the smaller number
+    makes the 2 % tolerance too tight. Prefer the calibrated span of the detected plot box, and say
+    in provenance which one was used.
+    """
+    if cal is not None:
+        x0, y0, x1, y1 = core.axes.plot_bbox
+        if y1 - y0 > 1:
+            try:
+                span = abs(px_to_value(cal, y0) - px_to_value(cal, y1))
+            except Exception:                                 # pragma: no cover - defensive
+                span = 0.0
+            if span > 0:
+                return span, "plot_bbox"
+    span, _ = _tick_stats(cal)
+    return span, "tick_range"
+
+
 def _tick_stats(cal: AxisCalibration | None) -> tuple[float, float]:
     """(value range, median spacing) of a calibration's surviving ticks."""
     if cal is None or len(cal.ticks) < 2:
@@ -250,22 +290,39 @@ def _choose_calibration(core: _Core, coord: CoordReadout | None
 
 
 # ----------------------------------------------------------------------------- read-out plan
-def _readout_plan(models: Sequence[str], n_readouts: int) -> list[tuple[str, str]]:
-    """Vote within route = modality x model family (amendment G): opus x2 variants + sonnet."""
+def _readout_plan(models: Sequence[str], n_readouts: int) -> list[ReadoutSpec]:
+    """Vote within route = modality x model family (amendment G), with no vote counted twice.
+
+    Samples are taken from DISTINCT (model, variant) pairs — primary/direct, primary/ticks-first,
+    then one variant per other model family, then the remaining variants. Only when every pair is
+    spent does a pair get re-sampled, and such a sample is flagged `resample` so the ensemble and
+    task 8 can see that it is a weaker vote: an identical prompt on an identical image is the same
+    question asked twice, and under replay it would be a byte-identical copy that silently pins the
+    median and deflates the MAD.
+    """
     from ..config import MODELS
 
     primary = models[0] if models else MODELS["primary"]
-    secondary = MODELS["secondary"]
-    plan = [(primary, "direct"), (primary, "ticks_first"), (secondary, "direct")]
-    for extra in models[1:]:
-        plan.append((extra, "direct"))
-        plan.append((extra, "ticks_first"))
+    families = [primary]
+    for model in list(models[1:]) + [MODELS["secondary"]]:
+        if model not in families:
+            families.append(model)
+    others = families[1:]
+    first, second, *rest = READOUT_VARIANTS
+    pairs = [(primary, first), (primary, second)]
+    pairs += [(m, first) for m in others]
+    pairs += [(primary, v) for v in rest]
+    pairs += [(m, v) for m in others for v in (second, *rest)]
+
     if n_readouts <= 0:
         return []
-    while len(plan) < n_readouts:
-        model, variant = plan[len(plan) % 3]
-        plan.append((model, "ticks_first" if variant == "direct" else "direct"))
-    return plan[:n_readouts]
+    specs = [ReadoutSpec(m, v) for m, v in pairs[:n_readouts]]
+    overflow = 0
+    while len(specs) < n_readouts:                      # every distinct pair is spent
+        model, variant = pairs[overflow % len(pairs)]
+        specs.append(ReadoutSpec(model, variant, sample=1 + overflow // len(pairs)))
+        overflow += 1
+    return specs
 
 
 # ----------------------------------------------------------------------------- route D
@@ -282,6 +339,7 @@ def _samples_from_readout(reading: ReadOut) -> list[RouteSample]:
             error = statistics.mean(arms) if arms else None
         out.append(RouteSample(
             route="D", group=group, model=reading.model, variant=reading.variant,
+            sample=reading.sample,
             mean=row.mean, error=abs(error) if error is not None else None,
             label_read=row.label_read, status=reading.status,
             notes=row.notes, snap_conf=row.confidence,
@@ -289,7 +347,7 @@ def _samples_from_readout(reading: ReadOut) -> list[RouteSample]:
             cost_usd=reading.cost_usd / max(1, len(reading.groups)),
             extra={"legend_says": reading.legend_says, "x_read": row.x_read,
                    "tick_labels": list(reading.tick_labels), "unit": reading.unit,
-                   "panel": reading.panel}))
+                   "panel": reading.panel, "same_prompt_resample": reading.sample > 0}))
     return out
 
 
@@ -620,9 +678,12 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     # --- path D: read-outs (several model x variant samples)
     readouts: list[ReadOut] = []
     samples: list[RouteSample] = []
-    for model, variant in _readout_plan(models, n_readouts):
-        reading = read_out(client, crop, text, target, model, variant, view=view,
-                           cell_key=f"{key}/D/{variant}")
+    plan = _readout_plan(models, n_readouts)
+    for spec in plan:
+        suffix = f"/{spec.sample}" if spec.resample else ""
+        reading = read_out(client, crop, text, target, spec.model, spec.variant,
+                           sample=spec.sample, view=view,
+                           cell_key=f"{key}/D/{spec.variant}{suffix}")
         readouts.append(reading)
         samples.extend(_samples_from_readout(reading))
 
@@ -639,7 +700,8 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     vec_samples, vec_info = _samples_from_vector(paper, fig, coord, core, readouts)
     samples.extend(vec_samples)
 
-    axis_range, tick_spacing = _tick_stats(cal)
+    _, tick_spacing = _tick_stats(cal)
+    axis_range, axis_range_source = _axis_range(cal, core)
     px_units = abs(pixel_resolution(cal)) if cal is not None else 0.0
     _corroborate_vector_whiskers(samples, px_units)
 
@@ -676,6 +738,9 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
 
     provenance = _base_provenance(fig, core, cal, cal_source, cal_why, coord, vec_info,
                                   verify_log, target)
+    provenance["axis_range"] = axis_range
+    provenance["axis_range_source"] = axis_range_source
+    provenance.update(_late_window_provenance(target, samples, plan))
     candidates = _build_candidates(samples, target=target, fig=fig, paper=paper, source=source,
                                    dataset=dataset, core=core, cal=cal, crop=crop,
                                    overlay_path=overlay_path, base=provenance,
@@ -688,6 +753,25 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
         return DigitizeResult(candidates=candidates, samples=samples, calibration=cal,
                               overlay_path=overlay_path, cost_usd=cost, provenance=provenance)
     return candidates
+
+
+def _late_window_provenance(target: TargetSpec, samples: Sequence[RouteSample],
+                            plan: Sequence[ReadoutSpec]) -> dict[str, Any]:
+    """Which time-series rule was actually APPLIED, and what x the models say they read at.
+
+    The configured rule is only an instruction; what matters downstream is whether it applied at
+    all (it does not on a non-time-series figure) and which point the read-outs actually landed on.
+    """
+    x_reads = sorted({str(s.extra.get("x_read", "")).strip()
+                      for s in samples if str(s.extra.get("x_read", "")).strip()})
+    applied = target.late_window_sd if target.x_hint else "not_a_time_series"
+    return {
+        "late_window_rule": applied,
+        "late_window_rule_configured": target.late_window_sd,
+        "late_window_x_read": x_reads,
+        "late_window_x_agrees": len(x_reads) <= 1,
+        "readout_plan": [spec.to_dict() for spec in plan],
+    }
 
 
 def _asset(paper: PaperRecord, rel: str) -> Path:
@@ -714,7 +798,6 @@ def _base_provenance(fig: FigureRegion, core: _Core, cal: AxisCalibration | None
         "vector": vec_info,
         "vector_warnings": vec_info.get("warnings", []),
         "overlay_iterations": verify_log,
-        "late_window_rule": target.late_window_sd if target.x_hint else "not_a_time_series",
         "x_hint": target.x_hint,
         "prompt_version": PROMPT_VERSION,
     }
@@ -778,18 +861,20 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
 
         live = [s for s in mine if s.usable]
         if not live:
+            status, reason = _absent_status(mine)
             out.append(_candidate(
                 None, None, group=group, sample=None, target=target, fig=fig, paper=paper,
                 dataset=dataset, source=source, kind=kind, mapper_type=mapper_type, unit=unit,
                 page=page, locator=locator, crop=crop, overlay_path=overlay_path,
-                extractor_id="digitize:ensemble", sigma=None, status="not_on_these_pages",
-                notes="no route produced a value for this group",
-                provenance={**base, "needs_review": True,
-                            "needs_review_reason": "no usable route sample",
-                            "per_route": [s.to_dict() for s in mine]},
+                extractor_id="digitize:ensemble", sigma=None, status=status, notes=reason,
+                provenance={**base, "needs_review": True, "needs_review_reason": reason,
+                            "per_route": [s.to_dict() for s in mine],
+                            "dropped_samples": [s.to_dict() for s in mine if s.dropped],
+                            "tool_calls": _aggregate_tool_calls(mine)},
                 call_id=_verify_call_id(base), model=""))
             continue
 
+        live, zero_notes = _drop_zero_confidence(live)
         means = [s.mean for s in live]
         errors = [s.error for s in live if s.error is not None]
         mean, mad_sigma = ensemble_stats(means)
@@ -805,6 +890,7 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
         conflict = (legend_type is not None and mapper_type != DispersionType.UNKNOWN
                     and legend_type != mapper_type)
         reasons = list(agreement["reasons"])
+        reasons += [n for n in zero_notes if "excluded" not in n]
         if conflict:
             reasons.append(f"the figure's legend reads {legend_type.value} but the mapper recorded "
                            f"{mapper_type.value}")
@@ -820,6 +906,9 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
                                  if s.snap_conf is not None},
             "n_routes": len(live), "mad_sigma": mad_sigma,
             "agreement": agreement,
+            "zero_confidence_snaps": zero_notes,
+            "resampled_routes": [s.extractor_id for s in live if s.sample > 0],
+            "tool_calls": _aggregate_tool_calls(mine),
             "needs_review": status == "ambiguous",
             "needs_review_reason": "; ".join(reasons),
             "dropped_samples": [s.to_dict() for s in mine if s.dropped],
@@ -831,6 +920,52 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             extractor_id="digitize:ensemble", sigma=sigma, status=status,
             notes="; ".join(reasons), provenance=provenance,
             call_id=_verify_call_id(base), model=live[0].model or ""))
+    return out
+
+
+def _drop_zero_confidence(live: list[RouteSample]) -> tuple[list[RouteSample], list[str]]:
+    """A pixel route whose snap found no ink at all is not a vote — it is a miss.
+
+    `snap_horizontal_edge` returns confidence 0 when the window is off-image or blank, so the row
+    it hands back is the row we asked about, unrefined. Excluded from the median whenever at least
+    two other samples survive; kept (and flagged) when dropping it would leave us with nothing.
+    """
+    zero = [s for s in live if s.route != "D" and s.snap_conf == 0.0]
+    if not zero:
+        return live, []
+    kept = [s for s in live if not any(s is z for z in zero)]
+    if len(kept) < 2:
+        return live, [f"{s.extractor_id} snapped with zero confidence (kept: too few routes left)"
+                      for s in zero]
+    return kept, [f"{s.extractor_id} excluded: snap found no ink (confidence 0)" for s in zero]
+
+
+def _absent_status(mine: Sequence[RouteSample]) -> tuple[str, str]:
+    """Why a group has no value — and, crucially, whether that means the datum is not on the page.
+
+    `not_on_these_pages` is a claim about the PAPER: the models looked and the quantity is not in
+    this figure. Losing every route to overlay verification is a claim about US: the datum is there,
+    we could not read it reliably. That is `ambiguous`, and conflating the two would let a failed
+    read silently exclude a study from the meta-analysis.
+    """
+    if not mine:
+        return "ambiguous", "no route sample was produced for this group"
+    if any(s.dropped for s in mine):
+        dropped = [s.extractor_id for s in mine if s.dropped]
+        return "ambiguous", ("every usable route sample was dropped by overlay verification "
+                             f"({', '.join(dropped)}); the datum is on the page but we could not "
+                             f"read it reliably")
+    if all(s.status == "not_on_these_pages" for s in mine):
+        return "not_on_these_pages", "every route reported this group is not plotted in this figure"
+    return "ambiguous", "no route produced a value for this group"
+
+
+def _aggregate_tool_calls(mine: Sequence[RouteSample]) -> list[dict[str, Any]]:
+    """Every tool call behind a group's routes, tagged with the route that made it."""
+    out: list[dict[str, Any]] = []
+    for s in mine:
+        for call in summarize_tool_calls(s.tool_calls):
+            out.append({"route": s.extractor_id, **call})
     return out
 
 
