@@ -445,3 +445,17 @@ def test_count_tokens_live_uses_sdk(tmp_path, monkeypatch):
     sdk = FakeSDK({"ok": True})
     c = LLMClient(cache_dir=None, client=sdk)
     assert c.count_tokens(model="claude-opus-5", system="s", messages=MSGS) == 4242
+
+
+# ------------------------------------------------------------------ per-model capabilities
+def test_effort_is_dropped_for_models_that_reject_it(tmp_path, monkeypatch):
+    """Verified live: claude-haiku-4-5 returns 400 for output_config.effort."""
+    monkeypatch.setenv("CANOPY_LIVE", "1")
+    sdk = FakeSDK({"ok": True})
+    c = LLMClient(cache_dir=None, client=sdk)
+    c.structured(model="claude-haiku-4-5", system="s", messages=MSGS, schema=SCHEMA)
+    assert sdk.calls[0]["output_config"] == {"format": {"type": "json_schema", "schema": SCHEMA}}
+    c.text(model="claude-haiku-4-5", system="s", messages=MSGS)
+    assert "output_config" not in sdk.calls[1]          # empty config is omitted entirely
+    c.structured(model="claude-opus-5", system="s", messages=MSGS, schema=SCHEMA)
+    assert sdk.calls[2]["output_config"]["effort"] == "high"

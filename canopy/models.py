@@ -60,7 +60,7 @@ ErrorBarScope = Literal["between_subject", "within_subject_normalized", "unknown
 WhiskerDefinition = Literal["min_max", "iqr_1_5", "percentile_5_95", "sd", "se", "ci", "unknown"]
 TestDesign = Literal["independent_t", "one_way_between", "mixed_main_effect", "interaction",
                      "ancova", "paired", "welch", "unknown"]
-PKind = Literal["exact", "less_than", "greater_than", "ns"]
+PKind = Literal["exact", "less_than", "greater_than", "ns", "unknown"]
 Standardizer = Literal["pooled_sd_between", "dz_paired", "glass_delta", "partial_eta", "unknown"]
 ReportedScale = Literal["cohens_d", "hedges_g", "glass_delta", "partial_eta_squared", "unknown"]
 Direction = Literal["a_greater", "b_greater", "unknown"]

@@ -15,6 +15,14 @@ from typing import Any, Protocol, runtime_checkable
 
 from .errors import MissingFixture
 
+#: models that reject `output_config.effort` (verified live: haiku returns 400 for it)
+MODELS_WITHOUT_EFFORT: frozenset[str] = frozenset({"claude-haiku-4-5"})
+
+
+def supports_effort(model: str) -> bool:
+    name = model.split("/")[-1]
+    return not any(name.startswith(m) for m in MODELS_WITHOUT_EFFORT)
+
 
 @dataclass
 class LLMRequest:
@@ -116,7 +124,7 @@ class AnthropicProvider:
 
     def _kwargs(self, req: LLMRequest) -> dict[str, Any]:
         output_config: dict[str, Any] = {}
-        if req.effort:
+        if req.effort and supports_effort(req.model):
             output_config["effort"] = req.effort
         if req.schema is not None:
             output_config["format"] = {"type": "json_schema", "schema": req.schema}
@@ -124,8 +132,9 @@ class AnthropicProvider:
             "model": req.model,
             "max_tokens": req.max_tokens,
             "messages": req.messages,
-            "output_config": output_config,
         }
+        if output_config:
+            kwargs["output_config"] = output_config
         if req.system:
             kwargs["system"] = req.system
         if req.betas:
