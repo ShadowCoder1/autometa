@@ -45,16 +45,19 @@ class LLMRequest:
     fallbacks: str | None = None
     stream: bool = False
     key: str = ""
+    tools: list[dict] | None = None                 # tool-use loop only (see LLMClient.tool_loop)
+    tool_choice: dict | None = None
 
 
 @dataclass
 class ProviderResponse:
-    text: str
+    text: str                                       # the FIRST text block (unchanged contract)
     stop_reason: str = "end_turn"
     model: str = ""
     usage: dict[str, Any] = field(default_factory=dict)
     request_id: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
+    content: list[dict[str, Any]] = field(default_factory=list)   # every content block, as plain dicts
 
 
 @runtime_checkable
@@ -91,6 +94,28 @@ def _first_text(message: Any) -> str:
         if btype == "text":
             return getattr(block, "text", None) or (block.get("text") if isinstance(block, dict) else "") or ""
     return ""
+
+
+def _content_blocks(message: Any, raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every content block of a response as plain JSON dicts (tool_use blocks included)."""
+    blocks = raw.get("content")
+    if isinstance(blocks, list) and all(isinstance(b, dict) for b in blocks):
+        return blocks
+    content = getattr(message, "content", None)
+    if content is None and isinstance(message, dict):
+        content = message.get("content")
+    out: list[dict[str, Any]] = []
+    for block in content or []:
+        if isinstance(block, dict):
+            out.append(block)
+            continue
+        dump = getattr(block, "model_dump", None)
+        if callable(dump):
+            try:
+                out.append(dump(mode="json"))
+            except TypeError:                              # pragma: no cover - defensive
+                out.append(dump())
+    return out
 
 
 def _raw_dict(message: Any) -> dict[str, Any]:
@@ -136,6 +161,11 @@ class AnthropicProvider:
             raise ValueError(
                 f"fallbacks={req.fallbacks!r} is only supported for {sorted(FALLBACK_MODELS)}, "
                 f"not {req.model!r} (betas are fine on any model)")
+        if req.tools and req.schema is not None:
+            raise ValueError(
+                "tools and a structured-output schema cannot be combined: the API rejects "
+                "`output_config.format` alongside `tools`. Put the answer schema on a terminal "
+                "tool with `strict: true` instead (see LLMClient.tool_loop).")
         output_config: dict[str, Any] = {}
         if req.effort and supports_effort(req.model):
             output_config["effort"] = req.effort
@@ -152,6 +182,10 @@ class AnthropicProvider:
             kwargs["system"] = req.system
         if req.betas:
             kwargs["betas"] = list(req.betas)
+        if req.tools:
+            kwargs["tools"] = list(req.tools)
+        if req.tool_choice:
+            kwargs["tool_choice"] = dict(req.tool_choice)
         if req.fallbacks:
             kwargs["fallbacks"] = req.fallbacks
         # NOTE: never pass `temperature` or `thinking` — these models think adaptively.
@@ -170,13 +204,15 @@ class AnthropicProvider:
                 message = stream.get_final_message()
         else:
             message = endpoint.create(**kwargs)
+        raw = _raw_dict(message)
         return ProviderResponse(
             text=_first_text(message),
             stop_reason=getattr(message, "stop_reason", "") or "",
             model=getattr(message, "model", "") or request.model,
             usage=_usage_dict(getattr(message, "usage", None)),
             request_id=str(getattr(message, "_request_id", "") or getattr(message, "id", "") or ""),
-            raw=_raw_dict(message),
+            raw=raw,
+            content=_content_blocks(message, raw),
         )
 
     def count_tokens(self, *, model: str, system: Any, messages: list[Any]) -> int:
@@ -230,13 +266,19 @@ def response_from_record(record: dict[str, Any], default_model: str = "") -> Pro
     text = record.get("text")
     if text is None and record.get("parsed") is not None:
         text = json.dumps(record["parsed"])
+    raw = record.get("response") or {}
+    content = record.get("content")
+    if not isinstance(content, list):
+        blocks = raw.get("content") if isinstance(raw, dict) else None
+        content = blocks if isinstance(blocks, list) else []
     return ProviderResponse(
         text=text or "",
         stop_reason=record.get("stop_reason", "end_turn"),
         model=record.get("served_model") or record.get("model") or default_model,
         usage=record.get("usage") or {},
         request_id=record.get("request_id", ""),
-        raw=record.get("response") or {},
+        raw=raw,
+        content=[b for b in content if isinstance(b, dict)],
     )
 
 
@@ -263,15 +305,25 @@ class FakeProvider:
 
     def complete(self, request: LLMRequest) -> ProviderResponse:
         self.requests.append(request)
+        if not self.payloads:
+            raise IndexError("FakeProvider has no payloads left")
         i = min(len(self.requests) - 1, len(self.payloads) - 1)
         payload = self.payloads[i]
         if callable(payload):
             payload = payload(request)
-        text = payload if isinstance(payload, str) else json.dumps(payload)
-        return ProviderResponse(text=text, stop_reason=self.stop_reason,
+        if isinstance(payload, list):                    # a canned multi-block turn
+            content = [dict(b) for b in payload]
+            text = next((b.get("text", "") for b in content if b.get("type") == "text"), "")
+            stop = "tool_use" if any(b.get("type") == "tool_use" for b in content) else self.stop_reason
+        else:
+            text = payload if isinstance(payload, str) else json.dumps(payload)
+            content = [{"type": "text", "text": text}]
+            stop = self.stop_reason
+        rid = f"fake_{len(self.requests)}"
+        return ProviderResponse(text=text, stop_reason=stop,
                                 model=self.model or request.model, usage=dict(self.usage),
-                                request_id=f"fake_{len(self.requests)}",
-                                raw={"id": f"fake_{len(self.requests)}"})
+                                request_id=rid, raw={"id": rid, "content": content},
+                                content=content)
 
     def count_tokens(self, *, model: str, system: Any, messages: list[Any]) -> int:
         from .costs import approx_tokens
