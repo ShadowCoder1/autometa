@@ -164,6 +164,30 @@ def test_the_distribution_can_be_forced():
                                                   abs=1e-9)
 
 
+def test_an_interval_whose_level_has_no_enum_member_is_still_converted():
+    """`DispersionType` names only the 95% and 90% intervals; a 99% interval arrives with an
+    UNKNOWN type and its level in `ci_level`, which is enough to convert it."""
+    values = ResolvedValues(
+        higher_is_better=True,
+        group_a=GroupValues(n=12, mean=31.51, ci_low=20.0, ci_high=43.02, ci_level=0.99,
+                            route="text"),
+        group_b=GroupValues(n=12, mean=12.28, ci_low=1.0, ci_high=23.56, ci_level=0.99,
+                            route="text"))
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.inputs["sd_a"] == pytest.approx(
+        es.sd_from_ci(20.0, 43.02, 12, level=0.99, dist="t"), abs=1e-9)
+    assert "99%" in record.conversion_chain and "t(11)" in record.conversion_chain
+
+
+def test_a_genuinely_unknown_spread_is_not_reinterpreted():
+    values = ResolvedValues(
+        higher_is_better=True,
+        group_a=GroupValues(n=12, mean=31.51, dispersion_value=6.0, route="text"),
+        group_b=GroupValues(n=12, mean=12.28, dispersion_value=6.0, route="text"))
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.route == "not_convertible"
+
+
 def test_a_median_and_quartiles_become_a_mean_and_sd():
     values = ResolvedValues(
         higher_is_better=True,

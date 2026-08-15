@@ -175,13 +175,25 @@ def _modality(route: str) -> str:
     return "text" if name in _TEXT_ROUTES else "text"
 
 
+def _stated_level(group: GroupValues) -> float | None:
+    """An interval whose confidence level the extractor stated but whose type has no enum member.
+
+    `DispersionType` names the 95% and 90% intervals; a paper that prints a 99% interval reaches
+    here with `dispersion_type=UNKNOWN` and an explicit `ci_level`, and that is enough to convert
+    it. Nothing sets `ci_level` by accident, so this never reinterprets a genuinely unknown spread.
+    """
+    if group.ci_level and (group.ci_low is not None or group.dispersion_value is not None):
+        return float(group.ci_level)
+    return None
+
+
 def _has_spread(group: GroupValues) -> bool:
     kind = group.dispersion_type
     if len(group.points) >= 2:
         return True
     if kind is DispersionType.SD or kind is DispersionType.SE:
         return group.dispersion_value is not None and group.dispersion_value > 0
-    if kind in _CI_LEVELS:
+    if kind in _CI_LEVELS or _stated_level(group) is not None:
         return ((group.ci_low is not None and group.ci_high is not None)
                 or (group.dispersion_value is not None and group.dispersion_value > 0))
     if kind is DispersionType.IQR:
@@ -279,8 +291,8 @@ def _mean_sd(group: GroupValues, side: str, settings: StatsSettings, steps: list
         steps.append(f"SD_{side} = SE {_fmt(group.dispersion_value)} × √{n} = {_fmt(sd)}")
         return float(group.mean), sd, n
 
-    if kind in _CI_LEVELS:
-        level = group.ci_level or _CI_LEVELS[kind]
+    if kind in _CI_LEVELS or _stated_level(group) is not None:
+        level = group.ci_level or _CI_LEVELS.get(kind) or 0.95
         dist = _ci_dist(n, settings)
         label = f"t({n - 1})" if dist == "t" else "z"
         if group.ci_low is not None and group.ci_high is not None:
