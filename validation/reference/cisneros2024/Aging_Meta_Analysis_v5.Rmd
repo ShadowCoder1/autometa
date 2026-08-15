@@ -1,0 +1,471 @@
+---
+title:"Aging Meta_Analysis Forest Plot"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r Load Libraries}
+
+library(meta)
+library(gsheet)
+library(tidyverse) 
+library(metafor)
+library(metasens)
+library(weightr)
+library(lemon)
+library(pwr)
+library(showtext)
+```
+
+```{r}
+call_aesthethics <- function(text_size){
+  
+  th <- theme(   panel.grid.major = element_blank(),
+                 panel.grid.minor = element_blank(),
+                 panel.border = element_blank(),
+                 panel.background = element_blank(),
+                 axis.line = element_line(size = 0.5), 
+                 legend.position = 'right', 
+                 legend.text = element_text(size= text_size, family="Arial"),
+                 text = element_text(size= text_size, family="Arial"), 
+                 strip.text.x = element_text(size = rel(0.90)), 
+                 strip.text.y = element_text(size = rel(0.90)), 
+                 axis.title.x = element_text(vjust=-0.3), 
+                 plot.title = element_text(hjust = 0.5, vjust = 0), 
+                 axis.ticks = element_line(size = 0.4), 
+                 axis.text.x.bottom  = element_text(size = rel(0.90), margin = unit(c(t = 2.5, r = 0, b = 0, l = 0), "mm")),
+                 axis.title.y = element_text(vjust = 1),
+                 axis.text.y = element_text(size = rel(0.90), margin = unit(c(t = 0, r = 2.5, b = 0, l = 0), "mm")),
+                 axis.ticks.length = unit(-1.2, "mm"),
+                 axis.text.x.top = element_text(size = rel(0.90), margin = unit(c(t = 0, r = 0, b = 2.5, l = 0), "mm")))
+  
+  return(th)
+}
+
+text_size <- 12
+th <- call_aesthethics(text_size)
+```
+
+```{r Aftereffects in VMR Forest Plot}
+
+pdf(file = "aftereffects.pdf", width = 11, height = 10.2)
+
+# Updated spreadsheet (use this and not excel spreadsheet)
+aft.tab <- gsheet2tbl("https://docs.google.com/spreadsheets/d/1zYRRP5PGLzevK5Pwhsur1Z9YqIav3n8HaXHplKctrRQ/edit?usp=sharing") %>%
+    mutate(Task = case_when(Task == "VMA" ~ "V",
+                            Task == "FFA" ~ "F")) 
+
+t.test(aft.tab$TE, mu = 0)
+
+### For power restricted analysis 
+# aft_results <- pwr.t.test(d = aft.tab$TE, n = aft.tab$Average_Sample, sig.level = 0.05, type = "two.sample")
+# aft.tab$Power <- aft_results$power
+# 
+# aft.tab <- aft.tab %>%
+#   mutate(Statistical_Power = case_when(Power >= 0.8 ~ "High",
+#                                  Power < 0.8 ~ "Low")) %>%
+#   filter(Statistical_Power == "High")
+
+
+aft.forest <- metagen(TE = TE,
+                 seTE = seTE,
+                 studlab = Author,
+                 data = aft.tab,
+                 sm = "SMD",
+                 fixed = FALSE,
+                 random = TRUE,
+                 method.tau = "REML",
+                 hakn = FALSE,
+                 title = "Washout")
+
+forest.meta(aft.forest,
+            sortvar = TE,
+            xlim = c(-4, 4),
+            prediction = TRUE,
+            print.tau2 = FALSE,
+            digits = 1L,
+            fontfamily = "Helvetica",
+            label.left = "Reduced in Old",
+            label.right = "Enhanced in Old",
+            rightcols = c("effect", "ci", "w.random"),
+            rightlabs = c("Cohen's d", "95% CI", "Weight"),
+            leftcols = c("studlab", "Year", "Task", "N_yng_old", "Rotation_Size", "Target_N"),
+            leftlabs = c("Author", "Year", "Task", "N(y/o)", "Perturbation", "Targets"),
+            colgap.forest.left = "5mm")
+
+# Rotation size meta regression
+meta_regression_model <- metareg(aft.forest, ~ Rotation_Size)
+summary(meta_regression_model)
+bubble(meta_regression_model, studlab = TRUE)
+
+# Target number meta regression
+meta_regression_model <- metareg(aft.forest, ~ Target_N)
+meta_regression_model
+bubble(meta_regression_model, studlab = TRUE)
+
+# SUBGROUP ANALYSIS
+update.meta(aft.forest,
+            subgroup = Task,
+            tau.common = FALSE)
+
+# Data somewhat asymmetrical
+# Small study (Seidler) with very low standard error and no equivalent in negative direction
+# Studies with highest precision follow funnel pattern 
+
+# Egger’s test 
+aft.forest$data %>% 
+  mutate(y = TE/seTE, x = 1/seTE) %>% 
+  lm(y ~ x, data = .) %>% 
+  summary()
+
+# Step Function Selection Model (Vevea and Hedges (1995) Weight-Function Model; Quintana strategy)
+# Likelihood of publication bias is non-significant 
+# Use unadjusted results moving forward 
+aft.forest.var <- aft.forest$data %>% 
+  mutate(vTE = seTE^2) ## add variance of TE to df
+
+weightfunct(aft.forest.var$TE,aft.forest.var$vTE)
+
+
+# Power analysis 
+# sd computed with confidence interval using following formula:
+#       sd = sqrt(N) x (upper limit - lower limit)/3.92 
+#       N = number of studies in out meta-analysis
+power.t.test(delta = 0.4022, sd = 0.6207, sig.level = 0.05, power = 0.8)
+
+dev.off()
+
+aft.forest
+```
+
+```{r}
+studlab <- aft.forest$studlab
+TE <- aft.forest$TE
+df <- data.frame(studlab,TE)  
+
+
+myTE_plot <- df %>% 
+  ggplot(aes(x = NA, y = TE)) +
+  geom_hline(yintercept = 0, color = "black", linetype = "dashed") + 
+  geom_violin(alpha = 0.25, fill = "#73a6b7", color = NA, trim = FALSE) +
+  geom_point(alpha = 0.6, size = 2.5, position = position_jitter(width = 0.16), fill = "#73a6b7", color = "#73a6b7") +
+  stat_summary(fun.data=mean_cl_normal,geom="errorbar", width = 0.1,color = "black") +
+  stat_summary(fun=mean,geom="point", fill = "black", color = "black",stroke = 1.2,shape=21,size = 3) +
+  th + 
+  theme(text = element_text(size =18),axis.text.x=element_text(size=18),axis.text.y=element_text(size=18)) + 
+  labs(x = 'Task', y = "Effect Size (Cohen's d)") +
+  coord_capped_cart(ylim = c(-3.2, 3.2))
+print(myTE_plot)
+
+```
+
+
+```{r}
+#Funnel plot 
+pdf(file = "aftereffects_funnel.pdf", width = 3.5, height = 3.5)
+
+# Produce funnel plot
+funnel.meta(aft.forest,
+       xlim = c(-2, 2.5),
+       lwd = 1.75)
+
+dev.off()
+```
+
+
+
+```{r Late Adaptation Forest Plot}
+pdf(file = "late_adapt.pdf", width = 11, height = 12.3)
+
+# Updated spreadsheet (use this and not excel spreadsheet)
+late.tab <- gsheet2tbl("https://docs.google.com/spreadsheets/d/1Mi6-v76DQOPUA3JbyoDXyrs2QRBACRL3E8_IGGDXEls/edit?usp=sharing") %>% 
+  mutate(Task = case_when(Task == "VMA" ~ "V",
+                          Task == "FFA" ~ "F"))
+
+### For power restricted analysis 
+# aft_results <- pwr.t.test(d = late.tab$TE, n = late.tab$Average_Sample, sig.level = 0.05, type = "two.sample")
+# late.tab$Power <- aft_results$power
+# 
+# late.tab <- late.tab %>%
+#   mutate(Statistical_Power = case_when(Power >= 0.8 ~ "High",
+#                                  Power < 0.8 ~ "Low")) %>%
+#   filter(Statistical_Power == "High")
+
+late.forest <- metagen(TE = TE,
+                 seTE = seTE,
+                 studlab = Author,
+                 data = late.tab,
+                 sm = "SMD",
+                 fixed = FALSE,
+                 random = TRUE,
+                 method.tau = "REML",
+                 hakn = FALSE,
+                 title = "Late Adapt")
+
+forest.meta(late.forest,
+            sortvar = TE,
+            prediction = TRUE, 
+            print.tau2 = FALSE,
+            xlim = c(-4, 4),
+            digits = 1L,
+            fontfamily = "Helvetica",
+            label.left = "Reduced in Old",
+            label.right = "Enhanced in Old",
+            rightcols = c("effect", "ci", "w.random"),
+            rightlabs = c("Cohen's d", "95% CI", "Weight"),
+            leftcols = c("studlab", "Year", "Task", "N_yng_old", "Rotation_Size", "Target_N"),
+            leftlabs = c("Author", "Year", "Task", "N(y/o)", "Perturbation", "Targets"),
+            colgap.forest.left = "5mm",
+            colgap.forest.right = "6mm") 
+      
+
+# Define fill colors for contour
+col.contour = c("gray75", "gray85", "gray95")
+
+# SUBGROUP ANALYSIS
+update.meta(late.forest, 
+            subgroup = Task, 
+            tau.common = FALSE)
+
+# Rotation size meta regression
+meta_regression_model <- metareg(late.forest, ~ Rotation_Size)
+bubble(meta_regression_model, studlab = TRUE)
+
+# Target number meta regression
+meta_regression_model <- metareg(late.forest, ~ Target_N)
+bubble(meta_regression_model, studlab = TRUE)
+
+# Egger’s test 
+late.forest$data %>% 
+  mutate(y = TE/seTE, x = 1/seTE) %>% 
+  lm(y ~ x, data = .) %>% 
+  summary()
+
+
+# Step Function Selection Model (Vevea and Hedges (1995) Weight-Function Model; Quintana strategy)
+# Likelihood of publication bias is non-significant 
+# Use unadjusted results moving forward 
+late.forest.var <- late.forest$data %>% 
+  mutate(vTE = seTE^2) ## add variance of TE to df
+
+weightfunct(effect = late.forest.var$TE, v = late.forest.var$vTE)
+
+# Power analysis 
+# sd computed with confidence interval using following formula:
+#       sd = sqrt(N) x (upper limit - lower limit)/3.92 
+#       N = number of studies in out meta-analysis
+power.t.test(delta = -0.4563, sd = 0.7215, sig.level = 0.05, power = 0.8)
+power.t.test(n = 16, delta = -0.766, sig.level = 0.05)
+
+late.forest
+
+dev.off()
+
+
+```
+
+```{r}
+# Divide data by phase
+studlab <- late.forest$studlab
+TE <- late.forest$TE
+df <- data.frame(studlab,TE)
+
+
+myTE_plot <- df %>% 
+  ggplot(aes(x = NA, y = TE, col = Task)) +
+  geom_hline(yintercept = 0, color = "black", linetype = "dashed") + 
+  geom_violin(alpha = 0.25, fill = "#73a6b7", color = NA, trim = FALSE) +
+  geom_point(alpha = 0.6, size = 2.5, position = position_jitter(width = 0.16), color = "#73a6b7") +
+  stat_summary(fun.data=mean_cl_normal,geom="errorbar", width = 0.1,color = "black") +
+  stat_summary(fun=mean,geom="point", fill = "black", color = "black",stroke = 1.2,shape=21,size = 3) +
+  th + 
+  theme(text = element_text(size =18),axis.text.x=element_text(size=18),axis.text.y=element_text(size=18)) + 
+  labs(y = "Effect Size (Cohen's d)") + 
+  coord_capped_cart(ylim = c(-3.2, 3.2))
+print(myTE_plot)
+```
+
+
+```{r}
+pdf(file = "lateAdaptation_funnel.pdf", width = 3.5, height = 3.5)
+
+# Produce funnel plot
+funnel.meta(late.forest,
+            xlim = c(-2, 2.5),
+            lwd = 1.75)
+
+dev.off()
+```
+
+
+```{r}
+combined_df <- gsheet2tbl("https://docs.google.com/spreadsheets/d/1wk3eavpdR-5mtU-oQ3rfAM1ZXCTcdOSQI1bVlK__tjk/edit?usp=sharing") %>% 
+    mutate(Task = case_when(Task == "VMA" ~ "Visuomotor",
+                            Task == "FFA" ~ "Force Field"))
+```
+
+
+```{r}
+df_long <- combined_df %>%
+  pivot_longer(cols = c(N_yng, N_old), names_to = "Group", values_to = "N")
+
+hist_plot <- df_long %>% 
+  ggplot(aes(x = N, fill = Group)) + 
+  geom_histogram(binwidth = 2, position = "stack", color = "white", alpha = 0.9) +
+  geom_vline(xintercept = 19.5, linetype = "dashed", color = "black", size = 0.7) +
+  scale_fill_manual(values = c("#730073", "#92AD66")) +
+  labs(x = "Sample Size (#)", y = "# of Participants") +
+  scale_y_continuous(limits = c(0, 20)) +
+  th +
+  theme(text = element_text(size = 14), 
+        axis.text.x = element_text(size = 14, color = "black"), 
+        axis.text.y = element_text(size = 14, color = "black"), 
+        legend.position = "none") 
+print(hist_plot)
+```
+
+```{r}
+df_long <- combined_df %>%
+  pivot_longer(cols = c(Age_yng, Age_old), names_to = "Group", values_to = "Age")
+
+age_hist <- df_long %>% 
+  ggplot(aes(x = Age, fill = Group)) +
+  geom_histogram(binwidth = 2, position = "identity", color = "white", alpha = 0.9) +
+  geom_vline(xintercept = 23.2, linetype = "dashed", color = "black", size = 0.7) +
+  geom_vline(xintercept = 70, linetype = "dashed", color = "black", size = 0.7) +
+  scale_fill_manual(values = c("#730073","#92AD66")) +
+  labs(x = "Age (Years)", y = "# of Datasets") +
+  guides(fill = FALSE) + 
+  th +
+  theme(text = element_text(size = 14), 
+        axis.text.x = element_text(size = 14, color = "black"), 
+        axis.text.y = element_text(size = 14, color = "black"),
+        legend.position = "none") +
+  scale_y_continuous(limits = c(0, 25)) 
+print(age_hist)
+```
+
+```{r}
+df_year <- data.frame(year = c("2000-2004","2005-2009","2010-2014","2015-2019","2020-Present"),
+                      count = c(3,5,15,11,14))
+
+bar_plot <- df_year %>%
+  ggplot(aes(x = year, y = count)) +
+  geom_bar(stat = "identity", position = "identity", fill = "#a8b3aa",width = 0.95, alpha = 0.55) +
+  guides(fill = FALSE, color = FALSE) + 
+  th +
+  theme(text = element_text(size = 16, color = "black"), 
+        axis.text.x = element_text(size = 14.5, color = "black"), 
+        axis.text.y = element_text(size = 14.5, color = "black"), 
+        legend.position = "none") + 
+  labs(x = "Year", y = "# of Datasets") +
+  scale_x_discrete(labels = c("2000-\n2004", "2005-\n2009", "2010-\n2014", "2015-\n2019", "2020-\nPresent"))
+plot(bar_plot)
+```
+
+```{r}
+df_long <- combined_df %>%
+  pivot_longer(cols = c(TE_Aft, TE_Late), names_to = "Phase", values_to = "TE") %>% 
+  mutate(Phase = case_when(Phase == "TE_Aft" ~ "Aftereffect",
+                           Phase == "TE_Late" ~ "Late Adaptation"))
+
+df_long$Task <- factor(df_long$Task, levels = c("Visuomotor", "Force Field"))
+df_long$Phase <- factor(df_long$Phase, levels = c("Late Adaptation", "Aftereffect"))
+
+myTE_plot <- df_long %>% 
+  ggplot(aes(x = Phase, y = TE, group = Phase, color = Phase, fill = Phase)) +
+  geom_hline(yintercept = 0, color = "black", linetype = "dashed") + 
+  geom_violin(alpha = 0.35, color = NA) +
+  geom_point(alpha = 0.65, size = 2.7, position = position_jitterdodge(dodge.width = 0.9, jitter.width = 0.5)) +
+  geom_point(aes(x = 2, y = 0.4), size = 3.2, color = "black") +
+  geom_errorbar(aes(x = 2, ymin = 0.2, ymax = 0.6), width = 0.1, color = "black") +
+  geom_point(aes(x = 1, y = -0.5), size = 3.2, color = "black") +
+  geom_errorbar(aes(x = 1, ymin = -0.7, ymax = -0.3), width = 0.1, color = "black") +
+  th + 
+  scale_fill_manual(values = c("#a8b3aa","#a8b3aa")) +
+  scale_color_manual(values = c("#a8b3aa","#a8b3aa")) +
+  scale_alpha_manual(values = c(0.9, 0.1)) +
+  theme(text = element_text(size =14, color  = "black"),
+        axis.text.x=element_text(size=14, color  = "black"),
+        axis.text.y=element_text(size=14, color  = "black"), 
+        legend.position = "none") + 
+  labs(x = 'Phase', y = "Effect Size (Cohen's d)") + 
+  coord_capped_cart(ylim = c(-2.5, 2.5)) 
+print(myTE_plot)
+```
+
+
+
+```{r}
+# Function to simulate an asymptotic learning curve
+simulate_asymptotic_learning_curve <- function(trials, a, b, c) {
+  return(a / (1 + exp(-b * (trials - c))))
+}
+
+# Generate trial numbers
+base_trials <- seq(1,10, by = 1)
+trials <- seq(11, 90, by = 1)
+aft_trials <- seq(91,100, by = 1)
+
+# Set parameters for the logistic function
+a1 <- 0.9  # Asymptotic value for the first curve
+a2 <- 0.6  # Asymptotic value for the second curve
+b <- 0.2   # Growth rate
+c <- 20    # Trials at which performance is halfway to asymptote
+
+# Simulate learning curve data
+baseline_data <- data.frame(
+  Trials = base_trials, 
+  HandAngle_a1 = rnorm(10, mean = 0, sd = 0),
+  # HandAngle_a2 = rnorm(10, mean = 0, sd = .005),
+  Block = 1
+)
+
+learning_curve_data <- data.frame(
+  Trials = trials,
+  HandAngle_a1 = simulate_asymptotic_learning_curve(trials, a1, b, c) + rnorm(length(trials), mean = 0, sd = 0),
+  Block = 2
+)
+
+aft_data <- data.frame(
+  Trials = aft_trials, 
+  HandAngle_a1 = rev(simulate_asymptotic_learning_curve(seq(91, 100, by = 1), 0.7, 0.0, 100)) + rnorm(10, mean = 0, sd = 0),
+  Block = 3
+)
+
+some_Data <- full_join(baseline_data, learning_curve_data)
+all_Data <- full_join(some_Data, aft_data)
+
+# Plot the simulated data using ggplot2
+sim_data <- all_Data %>% 
+  ggplot(aes(x = Trials, group = Block)) +
+  geom_line(aes(y = HandAngle_a1), color = "black", linetype = "solid", size = 0.9) +
+  labs(x = "Trial #",
+       y = "Performance (a.u.)") +
+  geom_vline(xintercept = 10, alpha = 0.2) +
+  geom_vline(xintercept = 90, alpha = 0.2) +
+  geom_hline(yintercept = 1, alpha = 0.2) +
+  geom_hline(yintercept = 0, alpha = 0.2) +
+  th +
+  theme(text = element_text(size = 14), axis.text.x = element_text(size = 14), axis.text.y = element_text(size = 14), legend.position = "none") +
+  scale_y_continuous(limits = c(-0.1, 1), breaks = c(0, 1)) +
+  scale_x_continuous(breaks = c(0, 50, 100)) 
+print(sim_data)
+
+```
+
+
+
+
+
+
+
+
+
+
+

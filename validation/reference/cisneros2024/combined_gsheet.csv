@@ -1,0 +1,55 @@
+Author,Title,Year,Task,Task_Subtype,Experiment,N_yng,N_old,Total_sample_n,Average_sample,Age_yng,Age_old,Analysis,VMA task,PA task,FFA task,TE_Aft,TE_Late
+Vachon et al.,The effect of age on the visuomotor learning processes,2020,VMA,VMA,2,21,19,40,20,20.9,70,Both,1,0,0,0.1178,0.3245
+Vachon et al.,The effect of age on the visuomotor learning processes,2020,VMA,VMA,2,20,19,39,19.5,20.9,70,Both,1,0,0,1.1797,0.2149
+Seidler,Differential effects of age on sequence learning and sensorimotor adaptation,2006,VMA,VMA,3,10,10,20,10,24.6,73.3,After,1,0,0,2.135,
+Seidler,Differential effects of age on sequence learning and sensorimotor adaptation,2006,VMA,VMA,4,10,10,20,10,20.8,76.8,After,1,0,0,2.236,
+Buch et al.,Visuomotor Adaptation in Normal Aging,2003,VMA,VMA,1,10,10,20,10,21,73.3,Both,1,0,0,0.165,-0.3093
+Heuer & Hegele,Generalization of implicit and explicit adjustments to visuomotor rotations across the workspace in younger and older adults,2011,VMA,VMA,1,22,18,40,20,24,57.3,Both,1,0,0,0.785,-0.06641
+Heuer & Hegele,Age-Related Variations of Visuomotor Adaptation Result From Both the Acquisition and the Application of Explicit Knowledge,2013,VMA,VMA,1,19,19,19,19,23.7,59.6,Both,1,0,0,0.3839,-0.6893
+Vandevoorde et al.,Internal Model Recalibration Does Not Deteriorate with Age While Motor Adaptation Does.,2019,VMA,VMA,1a,20,20,40,20,22.2,66.6,Both,1,0,0,0.2234,-1.513
+"Vandevoorde et al.,",Internal Model Recalibration Does Not Deteriorate with Age While Motor Adaptation Does.,2019,VMA,VMA,1b,31,31,62,31,23.3,67.2,Both,1,0,0,0.2892,-0.4008
+Bock,Components of sensorimotor adaptation in young and elderly subjects,2005,VMA,VMA,1,12,12,24,12,26,69.5,Both,1,0,0,-0.5369,-1.676
+Bindra et al.,"Normal aging affects the short-term temporal stability of implicit, but not explicit, motor learning following visuomotor adaptation",2021,VMA,VMA,1,20,19,39,19.5,24,74,Both,1,0,0,0.7815,-0.843
+Cressman et al.,Visuomotor adaptation and proprioceptive recalibration in older adults,2010,VMA,VMA,1,10,9,19,9.5,27.3,66.3,Both,1,0,0,-0.096,-0.224
+Fernández-Ruiz et al.,Prism adaptation in normal aging: slower adaptation rate and larger aftereffect,2000,VMA,PA,1,20,20,40,20,20,64,Both,0,1,0,1.139,0.2493
+Cornelis et al. ,Impaired Sensorimotor Adaption in Schizophrenia in Comparison to Age-Matched and Elderly Controls,2021,VMA,VMA,1,30,30,60,30,36.8,69.3,Both,1,0,0,-0.2359,-0.294
+Nemanich & Earhart,How do age and nature of the motor task influence visuomotor adaptation?,2015,VMA,PA,1,13,15,28,14,25,70.1,Both,0,1,0,0.775,-0.24
+Panouilleres et al.,Reversing motor adaptation deficits in the ageing brain using non-invasive stimulation,2015,VMA,VMA,1,14,13,27,13.5,22.5,63.2,Both,1,0,0,1.413,-0.2308
+Reuter et al.,Task Feedback Processing Differs Between Young and Older Adults in Visuomotor Rotation Learning Despite Similar Initial Adaptation and Savings,2020,VMA,VMA,1,24,25,49,24.5,21.3,69.2,Both,1,0,0,0.0707,0.0521
+Hardwick & Celnik,Cerebellar direct current stimulation enhances motor learning in older adults,2013,VMA,VMA,1,11,11,22,11,20.7,56.3,Both,1,0,0,-0.0647,-0.1907
+Uresti-Cabrera et al.,Effects of aging on strategic-based visuomotor learning,2015,VMA,PA,1,41,41,82,41,19.6,72.3,Both,0,1,0,0.5861,-0.1462
+Simon & Bock,Influence of divergent and convergent thinking on visuomotor adaptation in young and older adults,2015,VMA,VMA,1,25,25,50,25,25.2,65.2,Both,1,0,0,-0.1039,-0.492
+Simon & Bock,The role of cognition for different stages of visuomotor adaptation in younger and older adults,2017,VMA,VMA,1,20,20,40,20,23.2,69.99,Both,1,0,0,-0.0849,-0.9365
+Hegele & Heuer,Age-Related Variations of Visuomotor Adaptation Result From Both the Acquisition and the Application of Explicit Knowledge,2013,VMA,VMA,1,38,38,76,38,23.7,59.6,After,1,0,0,0.3566,
+Heuer & Hegele,Adaptation to Visuomotor Rotations in Younger and Older Adults,2008,VMA,VMA,1,20,20,40,20,23.3,56.2,Both,1,0,0,0.1632,-0.7261
+Weightman et al.,Targeted tDCS selectively improves motor adaptation with the proximal and distal upper limb,2020,VMA,VMA,1,15,12,27,13.5,19.5,74.9,Both,1,0,0,0.4777,-1.685
+Weightman et al.,Targeted tDCS selectively improves motor adaptation with the proximal and distal upper limb,2020,VMA,VMA,1,15,12,27,13.5,19.5,74.9,Both,1,0,0,-0.2216,-2.374
+Uresti-Cabrera et al.,The Effect of Spatial Working Memory Deterioration on Strategic Visuomotor Learning across Aging,2015,VMA,PA,1,25,22,47,23.5,22.1,71.5,Both,0,1,0,0.3371,-0.6544
+Vandevoorde & de Xivry,Why is the explicit component of motor adaptation limited in elderly adults?,2020,VMA,VMA,1,41,40,81,40.5,23.1,67.5,Both,1,0,0,0.3913,-0.6479
+Vandevoorde & de Xivry,Why is the explicit component of motor adaptation limited in elderly adults?,2020,VMA,VMA,2,32,30,62,31,23.1,67.5,Both,1,0,0,0.3215,-0.7915
+Huang & Ahmed,"Older adults learn less, but still reduce metabolic cost, during motor adaptation",2013,FFA,FFA,1,11,11,22,11,23.8,73.8,Both,0,0,1,-1.394,-1.1575
+Kitchen & Miall,Adaptation of reach action to a novel force‑field is not predicted by acuity of dynamic proprioception in either older or younger adults,2021,FFA,FFA,1,17,17,34,17,18.9,75.2,Both,0,0,1,1.127,0.1466
+Kitchen & Miall,Adaptation of reach action to a novel force‑field is not predicted by acuity of dynamic proprioception in either older or younger adults,2021,FFA,FFA,1,18,17,35,17.5,19.4,75.9,Both,0,0,1,0.1858,-0.2582
+Hegele & Heuer,The impact of augmented information on visuo-motor adaptation in younger and older adults,2010,VMA,VMA,1,18,18,36,18,24.1,59.2,Both,1,0,0,0.942,-0.3533
+Langan & Seidler,Age differences in spatial working memory contributions to visuomotor adaptation and transfer,2011,VMA,VMA,1,9,9,18,9,20.8,72.3,Both,1,0,0,0.58,0.654
+Langan & Seidler,Age differences in spatial working memory contributions to visuomotor adaptation and transfer,2011,VMA,VMA,1,9,9,18,9,20.8,72.3,Both,1,0,0,0.9717,-1.275
+Pacheco et al.,TBD1,Unpub,VMA,VMA,,32,30,62,31,,,After,1,0,0,-0.185,
+Van De Plas et al.,TBD2,Unpub,VMA,VMA,,37,35,72,36,,,After,1,0,0,-0.118,
+Hermans et al,TBD3,Unpub,FFA,FFA,,28,20,48,24,,,Both,0,0,1,-0.3038,0.0369
+Bansal et al,Motor adaptation does not differ when a perturbation is introduced abruptly or gradually,2022,VMA,VMA,2,30,25,55,27.5,20,60,Both,1,0,0,-0.0754,0.1389
+Khanafer et al ,The Influence of Age on the Intermanual Transferand Retention of Implicit Visuomotor Adaptation,2022,VMA,VMA,1,10,9,19,9.5,24.3,72.1,Both,1,0,0,-0.2603,-0.3275
+Lazar-Kurz et al,Age-related changes to electroencephalographic markers of visuomotor error processing and learning in prism adaptation,2023,VMA,PA,1,20,20,40,20,23.4,77,Both,0,1,0,3.0621,0.0428
+Li et al.,Aging Effect on Visuomotor Adaptation: Mediated by Cognitive Decline,2021,VMA,VMA,1,20,100,120,60,26,69.5,Late,1,0,0,,-0.5729
+Vandevoorde et al.,Internal Model Recalibration Does Not Deteriorate with Age While Motor Adaptation Does.,2019,VMA,VMA,3,21,20,41,20.5,22.5,66.7,Late,1,0,0,,-0.9216
+Wolpe et al.,Age-related reduction in motor adaptation: brain structural correlates and the role of explicit memory,2020,VMA,VMA,1,109,108,217,108.5,31.5,77.5,Late,1,0,0,,-0.374
+Roller et al.,Effects of normal aging on visuo-motor plasticity,2001,VMA,PA,1,16,8,24,12,24.5,75,Late,0,1,0,,-0.5357
+Anguera et al.,Failure to engage spatial working memory contributes to age-related declines in visuomotor learning,2010,VMA,VMA,1,18,18,36,18,21.1,71.4,Late,1,0,0,,-1.087
+Lei et al. ,The effect of proprioceptive acuity variability on motor adaptation in older adults,2018,VMA,VMA,1,18,12,30,15,29.8,67.8,Late,1,0,0,,-0.6793
+Messier et al.,Visuomotor learning in immersive 3D virtual reality in Parkinson's disease and in aging,2007,VMA,VMA,1,10,10,20,10,27,71,Late,1,0,0,,-0.6798
+Pan & Van Gemmert,The effects of aging on the asymmetry of inter‑limb transfer in a visuomotor task,2013,VMA,VMA,1,14,14,28,14,21.64,70.7,Late,1,0,0,,0.6418
+Pan & Van Gemmert,The effects of aging on the asymmetry of inter‑limb transfer in a visuomotor task,2013,VMA,VMA,1,14,14,28,14,21.64,70.7,Late,1,0,0,,0.913
+Wang et al.,Aging reduces asymmetries in interlimb transfer of visuomotor adaptation,2011,VMA,VMA,1,8,8,16,8,25,71,Late,1,0,0,,-1.067
+Wang et al.,Aging reduces asymmetries in interlimb transfer of visuomotor adaptation,2011,VMA,VMA,1,8,8,16,8,25,71,Late,1,0,0,,-0.7166
+T. Wang et al.,Age‑related enhancement  in visuomotor learning by a dual‑task,2022,VMA,VMA,1,14,15,29,14.5,20.1,71.67,Late,1,0,0,,-2.62
+Binyamin-Netser et al.,Cognitive Impairments After Stroke Do Not Attenuate Explicit Visuomotor Adaptation in Reaching and Savings With the Unaffected Arm,2023,VMA,VMA,1,30,31,61,30.5,25.2,67.3,Late,1,0,0,,-1.7101
+Trewartha et al.,Fast But Fleeting: Adaptive Motor Learning Processes Associated with Aging and Cognitive Decline,2014,FFA,FFA,1,21,21,42,21,23.1,71.1,,0,0,1,,-0.1414
