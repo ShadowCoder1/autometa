@@ -606,3 +606,17 @@ def test_footer_does_not_claim_a_prediction_interval_it_could_not_compute(gold_r
                                  method=settings.tau2_method)
     lines = "\n".join(conventions_footer(settings, pooled_many, k_papers=6, k_datasets=6))
     assert "prediction interval: HTS" in lines
+
+
+def test_forest_weights_are_the_pooled_models_own_weights(gold_rows, pooled_gold, settings):
+    """The plot must not invent a weighting: every square is `1/(vi + tau2)` from the MetaResult."""
+    import numpy as np
+
+    from canopy.report.forest import forest_layout
+
+    layout = forest_layout(gold_rows, pooled_gold, settings)
+    by_dataset = {row.record.dataset_id: row.weight_pct for row in layout.rows}
+    expected = {r.dataset_id: w for r, w in zip(gold_rows, pooled_gold.weights_pct)}
+    for dataset_id, weight in expected.items():
+        assert by_dataset[dataset_id] == pytest.approx(float(weight), rel=1e-9)
+    assert np.isclose(sum(by_dataset.values()), 100.0)

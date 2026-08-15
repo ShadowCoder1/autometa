@@ -568,3 +568,20 @@ def test_bock_end_to_end_from_recorded_fixtures(tmp_path, papers_dir, replay_cli
                          resume=True)
     assert len(replay_client.calls()) == calls_before      # a resumed run asks nothing
     assert again.n_llm_calls == 0
+
+
+def test_the_run_writes_a_provenance_bundle_the_report_links(tmp_path, papers_dir, fake_client):
+    """Every value that reached a verdict gets an image showing where it was read."""
+    from canopy.pipeline.run import run_pipeline
+
+    out = tmp_path / "run"
+    run_pipeline(papers_dir, PROTOCOL, out, client=fake_client, concurrency=1)
+    bundle = json.loads((out / "provenance" / "provenance.json").read_text())
+    assert bundle, "the run resolved values but recorded no provenance for them"
+    entry = next(iter(bundle.values()))
+    assert entry["quote"] and entry["page"]
+    assert Path(entry["crop"]).exists()
+    assert entry["matched"] is True                        # the quote was found on the page
+
+    html = (out / "report.html").read_text(encoding="utf-8")
+    assert "Provenance" in html and "provenance/" in html

@@ -25,7 +25,8 @@ from ..stats.meta import MetaResult, prediction_interval
 from . import theme
 from .theme import estimator_label, pi_label, variance_label
 
-__all__ = ["write_html_report", "methods_paragraph", "human_review_table", "REPORT_CSS"]
+__all__ = ["write_html_report", "methods_paragraph", "human_review_table",
+           "provenance_table", "REPORT_CSS"]
 
 REPORT_CSS = """
 :root { color-scheme: light dark;
@@ -244,10 +245,37 @@ def methods_paragraph(manifest: RunManifest, protocol: Protocol,
 
 
 # ----------------------------------------------------------------------------- the report
+def provenance_table(entries: Mapping[str, Mapping[str, Any]], run_dir: Path) -> str:
+    """One row per value that reached the analysis, linking the image its evidence lives in."""
+    rows = []
+    for entry in sorted(entries.values(), key=lambda e: (str(e.get("dataset_id", "")),
+                                                         str(e.get("outcome_key", "")),
+                                                         str(e.get("group", "")))):
+        crop = entry.get("crop") or ""
+        link = (f'<a href="{_e(_rel(crop, run_dir))}">evidence</a>' if crop
+                else _e(entry.get("note", "") or "—"))
+        value = entry.get("mean")
+        spread = entry.get("dispersion_value")
+        printed = "—" if value is None else (
+            f"{value}" + (f" ± {spread} {entry.get('dispersion_type', '')}"
+                          if spread is not None else ""))
+        rows.append((entry.get("dataset_id", ""), entry.get("outcome_key", ""),
+                     entry.get("group", ""), printed, entry.get("route", ""),
+                     entry.get("page", ""), entry.get("quote", ""), link))
+    head = "".join(f"<th>{_e(h)}</th>" for h in
+                   ("Dataset", "Outcome", "Group", "Value", "Route", "Page", "Quote", ""))
+    body = "".join(
+        "<tr>" + "".join(f"<td>{_e(c)}</td>" for c in row[:-1]) + f"<td>{row[-1]}</td></tr>"
+        for row in rows) or '<tr><td colspan="8">nothing to show</td></tr>'
+    return (f'<div class="tablewrap"><table><thead><tr>{head}</tr></thead>'
+            f"<tbody>{body}</tbody></table></div>")
+
+
 def write_html_report(run_dir: str | Path, manifest: RunManifest, protocol: Protocol, *,
                       results: Mapping[str, Mapping[str, Any]] | None = None,
                       review_queue: Sequence[Mapping[str, Any]] = (),
                       exclusions: Sequence[Mapping[str, Any]] = (),
+                      provenance: Mapping[str, Mapping[str, Any]] | None = None,
                       run_outputs: Mapping[str, Any] | None = None,
                       filename: str = "report.html") -> dict[str, Path]:
     """Write `report.html` and `methods.md` into the run directory; returns both paths."""
@@ -338,6 +366,16 @@ def write_html_report(run_dir: str | Path, manifest: RunManifest, protocol: Prot
     parts.append("<p>Sorted by how far the pooled estimate would move if the value changed, so "
                  "the top of this list is where a reviewer's time is worth most.</p>")
     parts.append(human_review_table(review_queue))
+
+    if provenance:
+        parts.append("<h2>Provenance</h2>")
+        parts.append("<p>Every value that reached the analysis, with the page crop its quote is "
+                     "highlighted on or the overlay the digitiser measured.</p>")
+        parts.append(provenance_table(provenance, directory))
+        prov_json = run_outputs.get("provenance_json")
+        if prov_json is not None:
+            parts.append(f'<p class="files"><a href="{_e(_rel(prov_json, directory))}">'
+                         f"provenance.json</a></p>")
 
     parts.append("<h2>Exclusions</h2>")
     parts.append(_table(

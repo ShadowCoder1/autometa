@@ -49,8 +49,8 @@ from ..models import (Adjudication, Candidate, DatasetSpec, EffectSizeRecord, Or
                       OutcomeSources, PaperStatus, Protocol, RunManifest, SourceKind, Source,
                       StatsSettings, StudyMap, Verdict)
 from ..protocol import load_protocol
-from ..report import (exclusions_table, methods_figure, prisma_flow, route_examples, write_rows,
-                      write_html_report, write_outcome_outputs)
+from ..report import (exclusions_table, methods_figure, prisma_flow, provenance_bundle,
+                      route_examples, write_html_report, write_outcome_outputs, write_rows)
 from ..stats.meta import MetaResult, random_effects
 from ..verify.checks import run_checks
 from ..verify.confidence import resolve_cell
@@ -713,10 +713,19 @@ def _write_outputs(ctx: RunContext, manifest: RunManifest, results: Sequence[Pap
                     methods_figure(records, out / "methods_routes",
                                    examples=examples).items()})
 
+    # the provenance bundle covers the values that actually reached a verdict, not every reading
+    cited = {cid for verdict in verdicts for cid in verdict.candidate_ids}
+    chosen = [c for c in candidates if c.candidate_id in cited]
+    bundle = provenance_bundle(papers, chosen, out / "provenance") if papers and chosen else None
+    if bundle is not None:
+        outputs["provenance.json"] = bundle["json"]
+
     report = write_html_report(out, manifest, ctx.protocol, results=per_outcome,
                                review_queue=manifest.human_review_queue, exclusions=exclusions,
+                               provenance=None if bundle is None else bundle["entries"],
                                run_outputs={"methods_fig_png": outputs.get("methods_fig.png"),
-                                            "prisma_png": outputs.get("prisma.png")})
+                                            "prisma_png": outputs.get("prisma.png"),
+                                            "provenance_json": outputs.get("provenance.json")})
     outputs.update({f"report.{k}": v for k, v in report.items()})
     return outputs
 

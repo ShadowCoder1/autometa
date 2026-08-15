@@ -16,7 +16,8 @@ from typing import Any, Sequence
 from ..models import EffectSizeRecord, OutcomeDef, StatsSettings, Verdict, Candidate
 from ..stats.meta import MetaResult, prediction_interval
 from .forest import forest_plot
-from .tables import extraction_table, funnel_plot, leave_one_out_table, sensitivity_outputs
+from .tables import (dump_json, extraction_table, funnel_plot, leave_one_out_table,
+                     sensitivity_outputs)
 
 __all__ = ["write_outcome_outputs", "outcome_dir"]
 
@@ -65,8 +66,6 @@ def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
 
     Returns `{artefact_key: path}` — the same keys the HTML report and the manifest link by.
     """
-    from .tables import _write_json                        # one JSON writer for the whole package
-
     directory = outcome_dir(run_dir, outcome.key)
     directory.mkdir(parents=True, exist_ok=True)
     out: dict[str, Path] = {}
@@ -90,7 +89,7 @@ def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
     funnel = funnel_plot(rows, settings, directory / "funnel")
     out.update({f"funnel_{k}": v for k, v in funnel.items()})
 
-    out["pooled_json"] = _write_json(
+    out["pooled_json"] = dump_json(
         _pooled_payload(pooled, rows, needs_human_rows, outcome, settings),
         directory / "pooled.json")
     return out

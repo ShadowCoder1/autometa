@@ -38,7 +38,7 @@ from .theme import ACCENT, ACCENT_SOFT, AXIS, GRID, INK, INK_SECONDARY, MARK, MU
 __all__ = ["extraction_table", "EXTRACTION_COLUMNS", "exclusions_table", "EXCLUSION_REASONS",
            "leave_one_out_table", "sensitivity_analyses", "sensitivity_outputs",
            "SENSITIVITY_ANALYSES", "funnel_plot", "prisma_flow", "PRISMA_CHAIN", "pool_rows",
-           "write_rows"]
+           "write_rows", "dump_json"]
 
 #: the reasons a paper or a dataset can leave the review — a free-text reason becomes `other`
 EXCLUSION_REASONS: tuple[str, ...] = (
@@ -85,7 +85,8 @@ def _cell(value: Any) -> str:
     return str(value)
 
 
-def _write_json(payload: Any, path: Path) -> Path:
+def dump_json(payload: Any, path: Path) -> Path:
+    """Write one JSON artefact (numpy arrays, dataclasses and Paths included)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=1, default=_default),
                     encoding="utf-8")
@@ -134,7 +135,7 @@ def write_rows(rows: Sequence[Mapping[str, Any]], out_stem: str | Path, columns:
     if "csv" in formats:
         out["csv"] = _write_csv(rows, stem.with_suffix(".csv"), columns)
     if "json" in formats:
-        out["json"] = _write_json([dict(r) for r in rows], stem.with_suffix(".json"))
+        out["json"] = dump_json([dict(r) for r in rows], stem.with_suffix(".json"))
     if "xlsx" in formats:
         out["xlsx"] = _write_xlsx(rows, stem.with_suffix(".xlsx"), columns)
     return out
@@ -496,7 +497,7 @@ def sensitivity_outputs(rows: Sequence[EffectSizeRecord], settings: StatsSetting
     """`sensitivity.json` plus the small-multiples figure."""
     payload = sensitivity_analyses(rows, settings, needs_human_rows=needs_human_rows)
     stem = Path(out_stem)
-    out = {"json": _write_json(payload, stem.with_suffix(".json"))}
+    out = {"json": dump_json(payload, stem.with_suffix(".json"))}
     out.update(_sensitivity_figure(payload, stem, formats))
     return out
 
@@ -550,13 +551,13 @@ def funnel_plot(rows: Sequence[EffectSizeRecord], settings: StatsSettings, out_s
     if len(keep) < 2:
         payload = {"k": len(keep), "egger": None,
                    "note": "fewer than two poolable rows — no funnel drawn"}
-        return {"json": _write_json(payload, stem.with_suffix(".json"))}
+        return {"json": dump_json(payload, stem.with_suffix(".json"))}
 
     data = funnel_data(yi, vi, method=settings.tau2_method, labels=[_label(r) for r in keep])
     egger, egger_note = _egger(keep, yi, vi, settings)
     payload = {"k": len(keep), "funnel": data, "egger_note": egger_note,
                "egger": None if egger is None else asdict(egger)}
-    out = {"json": _write_json(payload, stem.with_suffix(".json"))}
+    out = {"json": dump_json(payload, stem.with_suffix(".json"))}
 
     with figure_style():
         import matplotlib.pyplot as plt
@@ -614,7 +615,7 @@ def prisma_flow(counts: Mapping[str, Any], out_stem: str | Path,
     data["problems"] = problems
     data["consistent"] = not problems
     stem = Path(out_stem)
-    out = {"json": _write_json(data, stem.with_suffix(".json"))}
+    out = {"json": dump_json(data, stem.with_suffix(".json"))}
 
     steps = [("Files found", data.get("files")),
              ("Unique papers", data.get("unique_papers")),
