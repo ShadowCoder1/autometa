@@ -1,0 +1,126 @@
+{
+ "key": "aa1bca5b5e11e33464b39edd93782b38e97b7b2bb523bc01799303e739796d75",
+ "model": "claude-sonnet-5",
+ "served_model": "claude-sonnet-5",
+ "stop_reason": "end_turn",
+ "usage": {
+  "input_tokens": 2183,
+  "output_tokens": 2331,
+  "cache_creation_input_tokens": 19003,
+  "cache_read_input_tokens": 0
+ },
+ "text": "{\"eligible\":true,\"eligibility_rationale\":\"The study used an upper-extremity visuomotor rotation (60° rotated feedback) pointing adaptation task, compared 12 young vs 12 older adults, and reported performance during the adaptation (perturbation) block and during a subsequent after-effect (feedback-removed) phase. Written in English. All eligibility criteria are met.\",\"datasets\":[{\"label\":\"Pointing task adaptation and after-effect (young vs old, Experiment 1)\",\"experiment\":\"Main pointing/tracking experiment (first experiment); pointing task with center-out reaching under 60° visual rotation, followed by no-feedback after-effect phase\",\"condition\":\"60° rotated visual feedback (pointing), then feedback removed (after-effect)\",\"group_a\":{\"label\":\"old\",\"n\":12,\"n_evidence\":\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\"},\"group_b\":{\"label\":\"young\",\"n\":12,\"n_evidence\":\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\"},\"outcomes\":[{\"outcome_key\":\"late_adaptation\",\"sources\":[{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, adaptation phase (episodes ~6-20)\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"quote\":\"Fig. 1 Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback. ... Also shown are the standard deviations\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, adaptation phase ANOVA\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"UNKNOWN\",\"quote\":\"significant effects were yielded for Age (F(1,22)=7.58, P<0.05), Episode (F(14,308)=41.14, P<0.001), and their interaction (F(14,308)=3.44, P<0.001). An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects.\"}]},{\"outcome_key\":\"aftereffect\",\"sources\":[{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, after-effect phase (open symbols, episodes ~21-25)\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"quote\":\"Fig. 1 Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback. Open symbols indicate episodes where visual feedback was absent. Also shown are the standard deviations\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, after-effect phase ANOVA\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"UNKNOWN\",\"quote\":\"the resulting after-effect was similar in both age groups, and gradually declined with practice... ANOVA yielded significant effects for Episode (F(4,88)=66.84, P<0.001) and the interaction (F(4,88)=3.95, P<0.01); indeed a close look at Fig. 1 reveals that the after-effect declined somewhat faster in the young group.\"}]}]}],\"notes\":\"A second experiment/dataset exists in this paper (transfer of adaptation from pointing to tracking, involving a separate control group and a change in movement category/task between adaptation and the transfer test), but this was excluded per Dataset Rule 3 (contextual change between learning and after-effect/transfer phase) and Rule 1 (same participants, use first experiment only — the pointing task is the primary/first adaptation experiment). The pointing after-effect phase (with feedback removed, same task, no contextual change) was used as the protocol's 'aftereffect' outcome instead. No table of numeric means/SDs is provided in the text; only Fig. 1 (with SD error bars) and ANOVA/exponential-fit text statistics are available as sources. The refresh-phase data (re-instated rotation after a 5-minute break) do not correspond to the protocol's aftereffect definition (perturbation removed) and were not extracted. Group ns are for the pointing-task experimental group only; separate control groups (n=12 young, n=12 old) used only for the tracking transfer test were not included as they belong to the excluded second dataset.\"}",
+ "parsed": {
+  "eligible": true,
+  "eligibility_rationale": "The study used an upper-extremity visuomotor rotation (60° rotated feedback) pointing adaptation task, compared 12 young vs 12 older adults, and reported performance during the adaptation (perturbation) block and during a subsequent after-effect (feedback-removed) phase. Written in English. All eligibility criteria are met.",
+  "datasets": [
+   {
+    "label": "Pointing task adaptation and after-effect (young vs old, Experiment 1)",
+    "experiment": "Main pointing/tracking experiment (first experiment); pointing task with center-out reaching under 60° visual rotation, followed by no-feedback after-effect phase",
+    "condition": "60° rotated visual feedback (pointing), then feedback removed (after-effect)",
+    "group_a": {
+     "label": "old",
+     "n": 12,
+     "n_evidence": "Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects."
+    },
+    "group_b": {
+     "label": "young",
+     "n": 12,
+     "n_evidence": "Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects."
+    },
+    "outcomes": [
+     {
+      "outcome_key": "late_adaptation",
+      "sources": [
+       {
+        "kind": "figure_line",
+        "page": 3,
+        "locator": "Fig. 1, adaptation phase (episodes ~6-20)",
+        "figure_id": "fig01",
+        "table_id": "",
+        "error_bar_type": "SD",
+        "quote": "Fig. 1 Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback. ... Also shown are the standard deviations"
+       },
+       {
+        "kind": "test_statistic",
+        "page": 3,
+        "locator": "Results, adaptation phase ANOVA",
+        "figure_id": "",
+        "table_id": "",
+        "error_bar_type": "UNKNOWN",
+        "quote": "significant effects were yielded for Age (F(1,22)=7.58, P<0.05), Episode (F(14,308)=41.14, P<0.001), and their interaction (F(14,308)=3.44, P<0.001). An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects."
+       }
+      ]
+     },
+     {
+      "outcome_key": "aftereffect",
+      "sources": [
+       {
+        "kind": "figure_line",
+        "page": 3,
+        "locator": "Fig. 1, after-effect phase (open symbols, episodes ~21-25)",
+        "figure_id": "fig01",
+        "table_id": "",
+        "error_bar_type": "SD",
+        "quote": "Fig. 1 Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback. Open symbols indicate episodes where visual feedback was absent. Also shown are the standard deviations"
+       },
+       {
+        "kind": "test_statistic",
+        "page": 3,
+        "locator": "Results, after-effect phase ANOVA",
+        "figure_id": "",
+        "table_id": "",
+        "error_bar_type": "UNKNOWN",
+        "quote": "the resulting after-effect was similar in both age groups, and gradually declined with practice... ANOVA yielded significant effects for Episode (F(4,88)=66.84, P<0.001) and the interaction (F(4,88)=3.95, P<0.01); indeed a close look at Fig. 1 reveals that the after-effect declined somewhat faster in the young group."
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "notes": "A second experiment/dataset exists in this paper (transfer of adaptation from pointing to tracking, involving a separate control group and a change in movement category/task between adaptation and the transfer test), but this was excluded per Dataset Rule 3 (contextual change between learning and after-effect/transfer phase) and Rule 1 (same participants, use first experiment only — the pointing task is the primary/first adaptation experiment). The pointing after-effect phase (with feedback removed, same task, no contextual change) was used as the protocol's 'aftereffect' outcome instead. No table of numeric means/SDs is provided in the text; only Fig. 1 (with SD error bars) and ANOVA/exponential-fit text statistics are available as sources. The refresh-phase data (re-instated rotation after a 5-minute break) do not correspond to the protocol's aftereffect definition (perturbation removed) and were not extracted. Group ns are for the pointing-task experimental group only; separate control groups (n=12 young, n=12 old) used only for the tracking transfer test were not included as they belong to the excluded second dataset."
+ },
+ "response": {
+  "id": "msg_011Ce4x9DwuZ8Pb6KDzHgpkf",
+  "container": null,
+  "content": [
+   {
+    "signature": "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",
+    "thinking": "",
+    "type": "thinking"
+   },
+   {
+    "citations": null,
+    "text": "{\"eligible\":true,\"eligibility_rationale\":\"The study used an upper-extremity visuomotor rotation (60° rotated feedback) pointing adaptation task, compared 12 young vs 12 older adults, and reported performance during the adaptation (perturbation) block and during a subsequent after-effect (feedback-removed) phase. Written in English. All eligibility criteria are met.\",\"datasets\":[{\"label\":\"Pointing task adaptation and after-effect (young vs old, Experiment 1)\",\"experiment\":\"Main pointing/tracking experiment (first experiment); pointing task with center-out reaching under 60° visual rotation, followed by no-feedback after-effect phase\",\"condition\":\"60° rotated visual feedback (pointing), then feedback removed (after-effect)\",\"group_a\":{\"label\":\"old\",\"n\":12,\"n_evidence\":\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\"},\"group_b\":{\"label\":\"young\",\"n\":12,\"n_evidence\":\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\"},\"outcomes\":[{\"outcome_key\":\"late_adaptation\",\"sources\":[{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, adaptation phase (episodes ~6-20)\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"quote\":\"Fig. 1 Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback. ... Also shown are the standard deviations\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, adaptation phase ANOVA\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"UNKNOWN\",\"quote\":\"significant effects were yielded for Age (F(1,22)=7.58, P<0.05), Episode (F(14,308)=41.14, P<0.001), and their interaction (F(14,308)=3.44, P<0.001). An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects.\"}]},{\"outcome_key\":\"aftereffect\",\"sources\":[{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, after-effect phase (open symbols, episodes ~21-25)\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"quote\":\"Fig. 1 Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback. Open symbols indicate episodes where visual feedback was absent. Also shown are the standard deviations\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, after-effect phase ANOVA\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"UNKNOWN\",\"quote\":\"the resulting after-effect was similar in both age groups, and gradually declined with practice... ANOVA yielded significant effects for Episode (F(4,88)=66.84, P<0.001) and the interaction (F(4,88)=3.95, P<0.01); indeed a close look at Fig. 1 reveals that the after-effect declined somewhat faster in the young group.\"}]}]}],\"notes\":\"A second experiment/dataset exists in this paper (transfer of adaptation from pointing to tracking, involving a separate control group and a change in movement category/task between adaptation and the transfer test), but this was excluded per Dataset Rule 3 (contextual change between learning and after-effect/transfer phase) and Rule 1 (same participants, use first experiment only — the pointing task is the primary/first adaptation experiment). The pointing after-effect phase (with feedback removed, same task, no contextual change) was used as the protocol's 'aftereffect' outcome instead. No table of numeric means/SDs is provided in the text; only Fig. 1 (with SD error bars) and ANOVA/exponential-fit text statistics are available as sources. The refresh-phase data (re-instated rotation after a 5-minute break) do not correspond to the protocol's aftereffect definition (perturbation removed) and were not extracted. Group ns are for the pointing-task experimental group only; separate control groups (n=12 young, n=12 old) used only for the tracking transfer test were not included as they belong to the excluded second dataset.\"}",
+    "type": "text"
+   }
+  ],
+  "model": "claude-sonnet-5",
+  "role": "assistant",
+  "stop_details": null,
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "type": "message",
+  "usage": {
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 0,
+    "ephemeral_5m_input_tokens": 19003
+   },
+   "cache_creation_input_tokens": 19003,
+   "cache_read_input_tokens": 0,
+   "inference_geo": "global",
+   "input_tokens": 2183,
+   "output_tokens": 2331,
+   "output_tokens_details": {
+    "thinking_tokens": 813
+   },
+   "server_tool_use": null,
+   "service_tier": "standard"
+  }
+ },
+ "request_id": "req_011Ce4x9BmggT2RrJuvWkVC8",
+ "effort": "medium",
+ "max_tokens": 16000,
+ "cost_usd": 0.0751835,
+ "created_at": "2026-08-15T17:46:14+00:00"
+}

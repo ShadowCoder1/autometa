@@ -200,6 +200,22 @@ class OutcomeSources(CanopyModel):
     sources: list[Source] = Field(default_factory=list)
 
 
+class RosterDecision(CanopyModel):
+    """The mapper's verdict on one figure/table that ingestion detected.
+
+    Ingestion supplies the roster (id, page, printed label); the mapper only says whether the item
+    carries numbers this review needs, so nothing in the paper is silently skipped.
+    """
+
+    kind: Literal["figure", "table"]
+    id: str                                     # ingestion id, e.g. "fig03" / "p1t1"
+    page: int
+    label: str = ""
+    relevant: bool
+    reason: str = ""
+    outcome_keys: list[str] = Field(default_factory=list)
+
+
 class DatasetSpec(CanopyModel):
     """One independent A-vs-B contrast (sample × condition) inside a paper."""
 
@@ -234,7 +250,9 @@ class StudyMap(CanopyModel):
     design_notes: str = ""
     datasets: list[DatasetSpec] = Field(default_factory=list)
     related_files: list[str] = Field(default_factory=list)     # supplements referenced by the paper
+    roster: list[RosterDecision] = Field(default_factory=list)  # one per ingested figure/table
     disagreements: list[str] = Field(default_factory=list)     # cross-check diffs
+    needs_human: list[str] = Field(default_factory=list)       # cells no two agents agreed on
     notes: str = ""
     model: str = ""
     prompt_version: str = ""
