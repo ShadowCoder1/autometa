@@ -200,6 +200,63 @@ def orient(d: float, higher_is_better: bool) -> float:
     return d if higher_is_better else -d
 
 
+# ----------------------------------------------------------------------------- convertibility
+class NotConvertible(ValueError):
+    """A printed statistic that cannot become a standardised mean difference (amendment C).
+
+    Raised rather than returned, because the alternative — a plausible number from a design that
+    does not carry a between-group contrast — is the failure mode this whole layer exists to
+    prevent. `canopy.pipeline.resolve` catches it and records the row with `route="not_convertible"`
+    and the reason, so the statistic is visible to a reviewer instead of silently dropped.
+    """
+
+
+#: the only designs whose test statistic is a comparison of two independent groups
+CONVERTIBLE_DESIGNS: frozenset[str] = frozenset({"independent_t", "one_way_between"})
+#: how far the printed degrees of freedom may sit from n_a + n_b − 2 before the statistic is
+#: refused (±2 covers a paper that reports df after one exclusion, or rounds a Welch correction)
+DF_TOLERANCE = 2.0
+#: why each other design cannot stand in for the two group means
+_DESIGN_REASONS: dict[str, str] = {
+    "mixed_main_effect": "the grouping factor in a mixed analysis is tested against a different "
+                         "error term than a two-group comparison",
+    "interaction": "an interaction term is not a comparison of the two groups",
+    "paired": "a within-participant comparison carries no between-group variance",
+    "ancova": "a covariate-adjusted statistic is not the raw contrast of the two groups",
+    "welch": "unequal-variance degrees of freedom do not match n_a + n_b - 2",
+    "unknown": "the paper does not say what kind of test this is",
+}
+
+
+def convertibility(design: str, df: float | None, n_a: float,
+                   n_b: float) -> tuple[bool, str, list[str]]:
+    """`(ok, reason, flags)` — may a statistic from this design and these dfs become an SMD?
+
+    Missing degrees of freedom are allowed but flagged: a paper that prints "t = 5.25, p < .001"
+    with two groups of twelve is usually reporting the two-group test, and the flag says the claim
+    was never checked against the group sizes.
+    """
+    if design not in CONVERTIBLE_DESIGNS:
+        reason = _DESIGN_REASONS.get(design, "it is not a comparison of two independent groups")
+        return False, f"design {design!r} cannot carry this contrast: {reason}", []
+    expected = n_a + n_b - 2
+    if df is None:
+        return True, "", ["df_missing"]
+    gap = abs(float(df) - expected)
+    if gap > DF_TOLERANCE:
+        return False, (f"the printed degrees of freedom ({float(df):g}) do not match "
+                       f"n_a + n_b - 2 = {expected:g}, so this statistic was not computed on "
+                       f"these two groups"), []
+    return True, "", ([f"df_off_by_{gap:g}"] if gap else [])
+
+
+def _gate(design: str, df: float | None, n_a: float, n_b: float, what: str) -> list[str]:
+    ok, reason, flags = convertibility(design, df, n_a, n_b)
+    if not ok:
+        raise NotConvertible(f"{what}: {reason}")
+    return flags
+
+
 # ----------------------------------------------------------------------------- one-call API
 @dataclass
 class SMDResult:
@@ -223,13 +280,15 @@ class SMDResult:
 
 
 def _finish(d_raw: float, n_a: float, n_b: float, higher_is_better: bool, estimator: Estimator,
-            variance: VarianceMethod, level: float, route: str, details: dict) -> SMDResult:
+            variance: VarianceMethod, level: float, route: str, details: dict,
+            flags: Sequence[str] = ()) -> SMDResult:
     d = orient(d_raw, higher_is_better)
     g = hedges_g(d, n_a, n_b, exact=True)
     es = d if estimator == "cohen" else g
     var = var_smd(es, n_a, n_b, variance)
     se = math.sqrt(var)
     lo, hi = ci_smd(es, se, level)
+    details = {**details, "flags": list(flags)}
     return SMDResult(d=d, g=g, es=es, se=se, var=var, ci_low=lo, ci_high=hi, n_a=n_a, n_b=n_b, route=route,
                      estimator=estimator, variance_method=variance, level=level, details=details)
 
@@ -242,29 +301,53 @@ def smd_from_means(m_a: float, sd_a: float, n_a: float, m_b: float, sd_b: float,
                    dict(m_a=m_a, sd_a=sd_a, m_b=m_b, sd_b=sd_b, pooled_sd=pooled_sd(sd_a, n_a, sd_b, n_b)))
 
 
-def smd_from_t(t: float, n_a: float, n_b: float, *, positive_means_a_greater: bool = True,
+def smd_from_t(t: float, n_a: float, n_b: float, *, df: float | None = None,
+               design: str = "unknown", positive_means_a_greater: bool = True,
                higher_is_better: bool = True, estimator: Estimator = "cohen",
                variance: VarianceMethod = "borenstein", level: float = 0.95) -> SMDResult:
-    """d from an independent-samples t. ``positive_means_a_greater`` states the paper's sign convention."""
+    """d from an independent-samples t (amendment C: gated by `design` and `df`).
+
+    ``positive_means_a_greater`` states the paper's sign convention. Raises `NotConvertible` when
+    the design cannot carry a between-group contrast, or when the printed degrees of freedom do
+    not match the analysed group sizes.
+    """
+    flags = _gate(design, df, n_a, n_b, f"t = {t:g}")
     t_ab = t if positive_means_a_greater else -t
     return _finish(d_from_t(t_ab, n_a, n_b), n_a, n_b, higher_is_better, estimator, variance, level, "t_stat",
-                   dict(t=t, positive_means_a_greater=positive_means_a_greater))
+                   dict(t=t, df=df, design=design,
+                        positive_means_a_greater=positive_means_a_greater), flags)
 
 
-def smd_from_f(F: float, n_a: float, n_b: float, *, a_greater: bool, higher_is_better: bool = True,
+def smd_from_f(F: float, n_a: float, n_b: float, *, a_greater: bool, df1: float | None = None,
+               df2: float | None = None, design: str = "unknown", higher_is_better: bool = True,
                estimator: Estimator = "cohen", variance: VarianceMethod = "borenstein",
                level: float = 0.95) -> SMDResult:
-    """d from a between-subjects F(1, df). ``a_greater`` = whether group A's raw mean exceeds group B's."""
+    """d from a between-subjects F(1, df) (amendment C: gated). ``a_greater`` = A's raw mean is higher.
+
+    An F with more than one numerator degree of freedom compares more than two groups, so it is
+    refused before the design is even considered; the error degrees of freedom `df2` are then
+    checked against n_a + n_b - 2 like a t.
+    """
+    if df1 is not None and float(df1) != 1.0:
+        raise NotConvertible(
+            f"F = {F:g}: df1 = {float(df1):g} means the test compares more than two groups, so it "
+            f"is not the contrast of this pair")
+    flags = _gate(design, df2, n_a, n_b, f"F = {F:g}")
     return _finish(d_from_f(F, n_a, n_b, 1 if a_greater else -1), n_a, n_b, higher_is_better, estimator, variance,
-                   level, "f_stat", dict(F=F, a_greater=a_greater))
+                   level, "f_stat", dict(F=F, df1=df1, df2=df2, design=design,
+                                         a_greater=a_greater), flags)
 
 
-def smd_from_p(p: float, n_a: float, n_b: float, *, a_greater: bool, two_tailed: bool = True,
-               higher_is_better: bool = True, estimator: Estimator = "cohen",
-               variance: VarianceMethod = "borenstein", level: float = 0.95) -> SMDResult:
+def smd_from_p(p: float, n_a: float, n_b: float, *, a_greater: bool, df: float | None = None,
+               design: str = "unknown", two_tailed: bool = True, higher_is_better: bool = True,
+               estimator: Estimator = "cohen", variance: VarianceMethod = "borenstein",
+               level: float = 0.95) -> SMDResult:
+    """d from an exact p value (amendment C: gated exactly like the t it is inverted from)."""
+    flags = _gate(design, df, n_a, n_b, f"p = {p:g}")
     d_raw = d_from_p(p, n_a, n_b, two_tailed, 1 if a_greater else -1)
     return _finish(d_raw, n_a, n_b, higher_is_better, estimator, variance, level, "p_value",
-                   dict(p=p, two_tailed=two_tailed, a_greater=a_greater))
+                   dict(p=p, df=df, design=design, two_tailed=two_tailed,
+                        a_greater=a_greater), flags)
 
 
 def smd_from_reported(d_reported: float, n_a: float, n_b: float, *, positive_means_a_greater: bool = True,

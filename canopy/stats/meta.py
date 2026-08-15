@@ -83,12 +83,44 @@ class FixedResult:
 
 @dataclass
 class EggerResult:
+    """Egger's regression test. `intercept` is the BIAS coefficient in both variants.
+
+    Classic (`predictor="precision"`): OLS of TE/seTE on 1/seTE — the fitted intercept is the bias
+    term and the fitted slope is the effect a study of infinite precision would show. Modified
+    (`predictor="sqrt_inv_n"`, Pustejovsky & Rodgers 2019): weighted least squares of TE on
+    √(1/n_a + 1/n_b) with weights 1/vi, so the predictor does not contain the effect estimate that
+    is being tested; there the bias term is the slope and `estimate` is the fitted intercept.
+    Either way `intercept`/`t`/`p` test asymmetry and `estimate` is the limit estimate.
+    """
+
     intercept: float
     intercept_se: float
     t: float
     p: float
     slope: float
     k: int
+    predictor: str = "precision"
+    df: int = 0
+    estimate: float = float("nan")
+    estimate_ci_low: float = float("nan")
+    estimate_ci_high: float = float("nan")
+
+
+@dataclass
+class LeaveOneOut:
+    """One row of a leave-one-out analysis: the pooled result without study `omitted`."""
+
+    omitted: int
+    label: str
+    k: int
+    estimate: float
+    se: float
+    ci_low: float
+    ci_high: float
+    tau2: float
+    I2: float                # metafor convention (tau²-based), proportion 0..1
+    Q: float
+    Q_p: float
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -290,22 +322,111 @@ def prediction_interval(res: "MetaResult", method: str = "V") -> tuple[float, fl
     raise ValueError(f"unknown prediction-interval method {method!r}")
 
 
-def egger_test(yi, sei) -> EggerResult:
-    """Egger's regression test as OLS of (TE/seTE) on (1/seTE): the intercept tests for small-study effects."""
+def egger_test(yi, sei, n_a=None, n_b=None, level: float = 0.95) -> EggerResult:
+    """Egger's test for small-study effects, classic or Pustejovsky-Rodgers.
+
+    Without group sizes: OLS of (TE/seTE) on (1/seTE) — the regression the reference review ran,
+    and `metafor::regtest(predictor="sei", model="lm")`.
+
+    With group sizes: the predictor becomes √((n_a+n_b)/(n_a·n_b)) = √(1/n_a + 1/n_b) and the fit
+    is weighted least squares with weights 1/vi (Pustejovsky & Rodgers 2019;
+    `metafor::regtest(predictor="sqrtninv", ni=n_a·n_b/(n_a+n_b), model="lm")`). For a standardised
+    mean difference seTE is a function of the effect estimate itself, which makes the classic test
+    reject too often; the sample-size predictor removes that dependence.
+    """
     yi = np.asarray(yi, float).ravel()
     sei = np.asarray(sei, float).ravel()
-    y = yi / sei
-    x = 1 / sei
-    X = np.column_stack([np.ones_like(x), x])
-    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
-    resid = y - X @ beta
+    if yi.shape != sei.shape:
+        raise ValueError("yi and sei must have the same length")
     k = yi.size
-    sigma2 = float(resid @ resid / (k - 2))
-    cov = sigma2 * np.linalg.inv(X.T @ X)
-    se_int = float(np.sqrt(cov[0, 0]))
-    t = float(beta[0] / se_int)
-    p = float(2 * sps.t.sf(abs(t), k - 2))
-    return EggerResult(intercept=float(beta[0]), intercept_se=se_int, t=t, p=p, slope=float(beta[1]), k=k)
+    if k < 3:
+        raise ValueError("Egger's test needs at least 3 studies")
+    q = sps.t.ppf(1 - (1 - level) / 2, k - 2)
+
+    if n_a is None or n_b is None:
+        y = yi / sei
+        X = np.column_stack([np.ones(k), 1 / sei])
+        beta, cov, _ = _weighted_ls(X, y, np.ones(k))
+        bias, corrected = 0, 1
+        predictor = "precision"
+    else:
+        n_a = np.asarray(n_a, float).ravel()
+        n_b = np.asarray(n_b, float).ravel()
+        if n_a.shape != yi.shape or n_b.shape != yi.shape:
+            raise ValueError("n_a and n_b must have the same length as yi")
+        X = np.column_stack([np.ones(k), np.sqrt(1 / n_a + 1 / n_b)])
+        beta, cov, _ = _weighted_ls(X, yi, 1 / sei ** 2)
+        bias, corrected = 1, 0
+        predictor = "sqrt_inv_n"
+
+    se_bias = float(np.sqrt(cov[bias, bias]))
+    t = float(beta[bias] / se_bias)
+    se_est = float(np.sqrt(cov[corrected, corrected]))
+    return EggerResult(intercept=float(beta[bias]), intercept_se=se_bias, t=t,
+                       p=float(2 * sps.t.sf(abs(t), k - 2)), slope=float(beta[corrected]), k=k,
+                       predictor=predictor, df=k - 2, estimate=float(beta[corrected]),
+                       estimate_ci_low=float(beta[corrected] - q * se_est),
+                       estimate_ci_high=float(beta[corrected] + q * se_est))
+
+
+def _weighted_ls(X, y, w):
+    """Weighted least squares with an estimated scale — what R's `lm(..., weights=w)` does."""
+    W = np.asarray(w, float).ravel()
+    XtW = X.T * W
+    xtwx = XtW @ X
+    beta = np.linalg.solve(xtwx, XtW @ y)
+    resid = y - X @ beta
+    df = X.shape[0] - X.shape[1]
+    sigma2 = float((W * resid ** 2).sum() / df)
+    return beta, sigma2 * np.linalg.inv(xtwx), sigma2
+
+
+def leave_one_out(yi, vi, method: Tau2Method = "REML", level: float = 0.95,
+                  labels=None) -> list[LeaveOneOut]:
+    """Re-pool k times, omitting one study each time (`metafor::leave1out`).
+
+    A pooled estimate that one study can move is a different finding from one that no study can,
+    and this is the cheapest way to show which it is.
+    """
+    yi, vi = _check(yi, vi)
+    k = yi.size
+    if k < 3:
+        raise ValueError("leave-one-out needs at least 3 studies")
+    names = list(labels) if labels is not None else [str(i) for i in range(k)]
+    if len(names) != k:
+        raise ValueError("labels must have one entry per study")
+    rows: list[LeaveOneOut] = []
+    for i in range(k):
+        keep = np.arange(k) != i
+        res = random_effects(yi[keep], vi[keep], method=method, level=level)
+        rows.append(LeaveOneOut(omitted=i, label=names[i], k=res.k, estimate=res.estimate,
+                                se=res.se, ci_low=res.ci_low, ci_high=res.ci_high, tau2=res.tau2,
+                                I2=res.I2_tau, Q=res.Q, Q_p=res.Q_p))
+    return rows
+
+
+def funnel_data(yi, vi, method: Tau2Method = "REML", labels=None,
+                levels: tuple[float, ...] = (0.95, 0.99), n_points: int = 50) -> dict:
+    """Everything a funnel plot needs, computed once: the points and the pseudo-CI contours.
+
+    The contours are the region a study of a given standard error would fall in if the pooled
+    estimate were the truth, so the plot can be drawn by any renderer without repeating the stats.
+    """
+    yi, vi = _check(yi, vi)
+    sei = np.sqrt(vi)
+    res = random_effects(yi, vi, method=method)
+    se_max = float(sei.max())
+    grid = np.linspace(0.0, se_max, max(2, n_points))
+    contours = {}
+    for level in levels:
+        q = sps.norm.ppf(1 - (1 - level) / 2)
+        contours[str(level)] = {"se": [float(s) for s in grid],
+                                "low": [float(res.estimate - q * s) for s in grid],
+                                "high": [float(res.estimate + q * s) for s in grid]}
+    names = list(labels) if labels is not None else [str(i) for i in range(yi.size)]
+    return {"yi": [float(v) for v in yi], "sei": [float(v) for v in sei], "labels": names,
+            "estimate": float(res.estimate), "se_max": se_max, "method": method,
+            "contours": contours}
 
 
 def per_study_ci(yi, vi, level: float = 0.95):
