@@ -1,0 +1,155 @@
+"""Adjudicator (spec §3.3(4)) — the strongest model, once, on a cell nobody else could settle.
+
+It runs only when the vote failed or a verifier refuted, and it is the one agent that sees
+everything: the whole paper, every candidate, the consistency flags, the vote and every verifier
+verdict. It still may not compute: it chooses (or reads) values that are printed in the paper, and
+says which candidate each one came from. `needs_human` is a legitimate answer and the prompt says
+so — a cell in the review queue costs a reviewer a minute, a confidently wrong number costs the
+review its result.
+"""
+from __future__ import annotations
+
+from typing import Any, Iterable, Mapping, Sequence
+
+from ..config import MODELS
+from ..ingest.pdf import PaperRecord
+from ..llm.client import LLMClient
+from ..llm.context import text_block
+from ..models import (Adjudication, AdjudicatedGroup, Candidate, CheckFlag, DatasetSpec,
+                      DispersionType, OutcomeDef, Protocol, VerifierVerdict)
+from . import render_prompt
+from .verify_common import (SYSTEM, candidates_text, enum_schema, evidence_text, groups_prompt,
+                            outcome_prompt, prompt_fingerprint, whole_paper)
+
+__all__ = ["adjudicate", "ADJUDICATE_SCHEMA", "PROMPT_VERSION", "PROMPT_FILES"]
+
+PROMPT_FILES = ("adjudicator",)
+PROMPT_VERSION = f"adjudicator/1@{prompt_fingerprint(PROMPT_FILES)}"
+
+MAX_TOKENS = 8000
+EFFORT = "xhigh"
+
+#: 12 leaf properties
+ADJUDICATE_SCHEMA: dict[str, Any] = {
+    "type": "object", "additionalProperties": False,
+    "required": ["groups", "rationale", "needs_human", "notes"],
+    "properties": {
+        "groups": {
+            "type": "array",
+            "items": {
+                "type": "object", "additionalProperties": False,
+                "required": ["group", "n", "mean", "dispersion_value", "dispersion_type", "unit",
+                             "chosen_candidate_ids", "reason", "needs_human"],
+                "properties": {
+                    "group": enum_schema(["A", "B", "unknown"]),
+                    "n": {"type": ["integer", "null"]},
+                    "mean": {"type": ["number", "null"]},
+                    "dispersion_value": {"type": ["number", "null"]},
+                    "dispersion_type": enum_schema([d.value for d in DispersionType]),
+                    "unit": {"type": "string"},
+                    "chosen_candidate_ids": {"type": "array", "items": {"type": "string"}},
+                    "reason": {"type": "string"},
+                    "needs_human": {"type": "boolean"},
+                },
+            },
+        },
+        "rationale": {"type": "string"},
+        "needs_human": {"type": "boolean"},
+        "notes": {"type": "string"},
+    },
+}
+
+
+def _outcome_key(outcome: Any) -> str:
+    return outcome if isinstance(outcome, str) else getattr(outcome, "key", "") or \
+        getattr(outcome, "outcome_key", "")
+
+
+def _whole(raw: Any) -> int | None:
+    return raw if isinstance(raw, int) and not isinstance(raw, bool) else None
+
+
+def _number(raw: Any) -> float | None:
+    if isinstance(raw, bool) or raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _strings(raw: Any) -> list[str]:
+    return [s.strip() for s in raw if isinstance(s, str) and s.strip()] if isinstance(raw, list) \
+        else []
+
+
+def _group_row(raw: Mapping[str, Any], known_ids: set[str],
+               unknown_ids: list[str]) -> AdjudicatedGroup | None:
+    key = raw.get("group")
+    if key not in ("A", "B"):
+        return None
+    chosen = _strings(raw.get("chosen_candidate_ids"))
+    unknown_ids.extend(cid for cid in chosen if cid not in known_ids)
+    kind = raw.get("dispersion_type")
+    return AdjudicatedGroup(
+        group=key, n=_whole(raw.get("n")), mean=_number(raw.get("mean")),
+        dispersion_value=_number(raw.get("dispersion_value")),
+        dispersion_type=DispersionType(kind if kind in {d.value for d in DispersionType}
+                                       else "UNKNOWN"),
+        unit=(raw.get("unit") or "").strip(),
+        chosen_candidate_ids=[cid for cid in chosen if cid in known_ids],
+        reason=(raw.get("reason") or "").strip(),
+        needs_human=bool(raw.get("needs_human")))
+
+
+def adjudicate(client: LLMClient, paper: PaperRecord, dataset: DatasetSpec, outcome: Any,
+               candidates: Sequence[Candidate], verdicts: Iterable[VerifierVerdict] = (),
+               flags: Iterable[CheckFlag] = (), model: str = MODELS["adjudicator"],
+               effort: str = EFFORT, *, protocol: Protocol | None = None,
+               outcome_def: OutcomeDef | None = None, votes: Any = None,
+               pdf_file_id: str | None = None) -> Adjudication:
+    """Settle one (dataset × outcome) cell. Call only when the vote failed or a verifier refuted."""
+    outcome_key = _outcome_key(outcome)
+    document, betas = whole_paper(client, paper, pdf_file_id)
+    content = [document, text_block(render_prompt(
+        "adjudicator",
+        OUTCOME=outcome_prompt(outcome_key, protocol=protocol, dataset=dataset,
+                               outcome=outcome_def if outcome_def is not None
+                               else (outcome if isinstance(outcome, OutcomeDef) else None)),
+        GROUPS=groups_prompt(dataset),
+        CANDIDATES=candidates_text(candidates),
+        EVIDENCE=evidence_text(votes, verdicts, flags)))]
+
+    result = client.structured(
+        model=model, system=SYSTEM, schema=ADJUDICATE_SCHEMA, effort=effort,
+        max_tokens=MAX_TOKENS, betas=betas, prompt_version=PROMPT_VERSION,
+        cell_key=f"adjudicate:{dataset.dataset_id}:{outcome_key}",
+        messages=[{"role": "user", "content": content}])
+
+    parsed = result.parsed if isinstance(result.parsed, dict) else {}
+    known_ids = {c.candidate_id for c in candidates}
+    unknown_ids: list[str] = []
+    rows = [row for row in (parsed.get("groups") or []) if isinstance(row, dict)]
+    groups = [g for g in (_group_row(row, known_ids, unknown_ids) for row in rows) if g is not None]
+
+    notes = (parsed.get("notes") or "").strip()
+    if unknown_ids:
+        notes = (f"{notes}; " if notes else "") + \
+                f"dropped candidate ids that are not in this cell: {sorted(set(unknown_ids))}"
+    answered = {g.group for g in groups}
+    for missing in sorted({"A", "B"} - answered):
+        groups.append(AdjudicatedGroup(group=missing, needs_human=True,
+                                       reason="the adjudicator returned no answer for this group"))
+        notes = (f"{notes}; " if notes else "") + f"no ruling for group {missing}"
+
+    adjudication = Adjudication(
+        dataset_id=dataset.dataset_id, outcome_key=outcome_key, groups=groups,
+        rationale=(parsed.get("rationale") or "").strip(),
+        needs_human=bool(parsed.get("needs_human")) or any(g.needs_human for g in groups),
+        chosen_candidate_ids=sorted({cid for g in groups for cid in g.chosen_candidate_ids}),
+        model=model, prompt_version=PROMPT_VERSION, llm_call_id=result.call_id, notes=notes)
+    if not adjudication.rationale:
+        adjudication.needs_human = True
+        adjudication.notes = (f"{adjudication.notes}; " if adjudication.notes else "") + \
+            "no rationale was given, so the ruling cannot be reviewed"
+    return adjudication

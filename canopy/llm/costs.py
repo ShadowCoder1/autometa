@@ -61,7 +61,29 @@ def estimate_cost(usage: Mapping[str, Any] | None, model: str) -> float:
 CHARS_PER_TOKEN = 3.5             # deliberately pessimistic (real text is ~4)
 IMAGE_TOKENS_ESTIMATE = 4784      # the cap prepare_for_claude sizes images to (HIGH_RES tier)
 PDF_TOKENS_PER_BYTE = 0.15        # measured live: a 125 kB, 5-page paper ≈ 17.8k tokens
-FILE_DOCUMENT_TOKENS = 20000      # document sent by file_id: size unknown, assume a whole paper
+FILE_DOCUMENT_TOKENS = 20000      # document sent by file_id and never registered: assume a paper
+PDF_TOKENS_PER_PAGE = 2500        # measured live: text + page raster of one journal page
+
+#: `file_id` -> page count, so a whole-document call reserves what the paper actually costs
+#: instead of the flat guess above. Whoever uploads the PDF registers it once
+#: (`canopy.agents.verify_common.whole_paper`); a run only ever grows this map.
+_FILE_PAGES: dict[str, int] = {}
+
+
+def register_file_pages(file_id: str, n_pages: int) -> None:
+    """Record how long the paper behind a Files-API id is (see `_FILE_PAGES`)."""
+    if file_id and n_pages and n_pages > 0:
+        _FILE_PAGES[str(file_id)] = int(n_pages)
+
+
+def clear_file_pages() -> None:
+    _FILE_PAGES.clear()
+
+
+def file_document_tokens(file_id: str = "") -> int:
+    """Input tokens to reserve for a `document` block sent by `file_id`."""
+    pages = _FILE_PAGES.get(str(file_id or ""))
+    return pages * PDF_TOKENS_PER_PAGE if pages else FILE_DOCUMENT_TOKENS
 
 
 def approx_tokens(*parts: Any) -> int:
@@ -92,7 +114,7 @@ def _strip_binaries(node: Any, acc: list[int]) -> Any:
                     out[k] = {kk: vv for kk, vv in v.items() if kk != "data"}
                     continue
                 if kind == "file":
-                    acc[0] += FILE_DOCUMENT_TOKENS
+                    acc[0] += file_document_tokens(str(v.get("file_id") or ""))
                     out[k] = v
                     continue
             out[k] = _strip_binaries(v, acc)

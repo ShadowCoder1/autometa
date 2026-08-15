@@ -347,14 +347,96 @@ class CheckFlag(CanopyModel):
 
 
 class VerifierVerdict(CanopyModel):
+    """One adversarial reader's attempt to refute one candidate (Task 8)."""
+
+    candidate_id: str = ""
     verdict: Literal["confirmed", "refuted", "ambiguous"] = "ambiguous"
     reason: str = ""
     alt_mean: float | None = None
     alt_dispersion_value: float | None = None
+    alt_dispersion_type: DispersionType = DispersionType.UNKNOWN
     alt_n: int | None = None
+    alt_page: int | None = None
+    alt_quote: str = ""
     better_source: str = ""
+    #: the named traps the verifier says it checked (wrong group, SE-vs-SD, baseline vs post, ...)
+    checked: list[str] = Field(default_factory=list)
+    #: how many times this cell had already been re-opened when this verdict was produced
+    reopen: int = 0
     model: str = ""
+    prompt_version: str = ""
     llm_call_id: str = ""
+    notes: str = ""
+
+
+class AdjudicatedGroup(CanopyModel):
+    """The adjudicator's final answer for one group of one cell."""
+
+    group: GroupKey
+    n: int | None = None
+    mean: float | None = None
+    dispersion_value: float | None = None
+    dispersion_type: DispersionType = DispersionType.UNKNOWN
+    unit: str = ""
+    chosen_candidate_ids: list[str] = Field(default_factory=list)
+    reason: str = ""
+    needs_human: bool = False
+
+
+class Adjudication(CanopyModel):
+    """The strongest model's ruling on a cell whose vote failed or whose verifier refuted."""
+
+    dataset_id: str = ""
+    outcome_key: str = ""
+    groups: list[AdjudicatedGroup] = Field(default_factory=list)
+    rationale: str = ""
+    needs_human: bool = False
+    chosen_candidate_ids: list[str] = Field(default_factory=list)
+    model: str = ""
+    prompt_version: str = ""
+    llm_call_id: str = ""
+    notes: str = ""
+
+    def group_values(self, key: str) -> AdjudicatedGroup | None:
+        for group in self.groups:
+            if group.group == key:
+                return group
+        return None
+
+
+class OrientationRun(CanopyModel):
+    """What one model answered about the direction of one measure."""
+
+    higher_is_better: bool | None = None
+    raw_value_semantics: RawValueSemantics = "unknown"
+    direction_stated_in_text: Direction = "unknown"
+    quotes: list[str] = Field(default_factory=list)
+    reason: str = ""
+    model: str = ""
+    prompt_version: str = ""
+    llm_call_id: str = ""
+
+
+class OrientationVerdict(CanopyModel):
+    """Whether a larger raw value on this measure means *more of the construct* (spec §3.3(5)).
+
+    Decided once per (outcome, measure) by two independent agents; they must agree, or a human
+    decides. `direction_stated_in_text` is what the paper itself says about which group came out
+    higher — code compares it with the sign it computed (`sign_mismatch`).
+    """
+
+    outcome_key: str = ""
+    measure_name: str = ""
+    higher_is_better: bool | None = None
+    raw_value_semantics: RawValueSemantics = "unknown"
+    direction_stated_in_text: Direction = "unknown"
+    quotes: list[str] = Field(default_factory=list)
+    reason: str = ""
+    agreed: bool = False
+    needs_human: bool = True
+    runs: list[OrientationRun] = Field(default_factory=list)
+    llm_call_ids: list[str] = Field(default_factory=list)
+    notes: str = ""
 
 
 class Verdict(CanopyModel):
@@ -366,9 +448,14 @@ class Verdict(CanopyModel):
     agreement: Literal["agree", "disagree", "single", "none"] = "none"
     agreeing_ids: list[str] = Field(default_factory=list)
     disagreeing_ids: list[str] = Field(default_factory=list)
+    vote_method: str = ""
+    vote_tolerance: float | None = None
+    #: the two text extractors disagreed — the orchestrator owes this cell a third cheap candidate
+    needs_third_candidate: bool = False
     verifier_verdict: Literal["confirmed", "refuted", "ambiguous", "not_run"] = "not_run"
     verifier_reason: str = ""
     verifiers: list[VerifierVerdict] = Field(default_factory=list)
+    reopens: int = 0
     adjudicated: bool = False
     adjudication_rationale: str = ""
     flags: list[CheckFlag] = Field(default_factory=list)
@@ -381,10 +468,18 @@ class Verdict(CanopyModel):
     mean: float | None = None
     dispersion_value: float | None = None
     dispersion_type: DispersionType = DispersionType.UNKNOWN
+    ci_low: float | None = None
+    ci_high: float | None = None
+    points: list[float] = Field(default_factory=list)
     unit: str = ""
     sigma: float | None = None
+    mad: float | None = None
+    analysis_metric: AnalysisMetric = "unknown"
     route: str = ""
     candidate_ids: list[str] = Field(default_factory=list)
+    # orientation (decided once per outcome/measure, copied onto every cell that used it)
+    higher_is_better: bool | None = None
+    orientation_evidence: str = ""
     overridden_by_human: bool = False
     override_justification: str = ""
 
@@ -410,11 +505,21 @@ class EffectSizeRecord(CanopyModel):
     ci_high: float | None = None
     estimator: Estimator = "cohen"
     variance_method: VarianceMethod = "borenstein"
+    level: float = 0.95
     higher_is_better: bool | None = None
     orientation_applied: bool = False
     conversion_chain: str = ""
+    conversion_steps: list[str] = Field(default_factory=list)
+    #: routes the resolved values could have supported, and why the ones ahead were not taken
+    routes_available: list[str] = Field(default_factory=list)
+    routes_rejected: dict[str, str] = Field(default_factory=dict)
+    #: the numbers actually fed to the formula (after every conversion), for the extraction table
+    inputs: dict[str, float | None] = Field(default_factory=dict)
+    #: set when no route could produce an effect size (amendment C gates, missing values, ...)
+    not_convertible_reason: str = ""
     digitization_var: float | None = None
     var_with_digitization: float | None = None
+    digitization_var_share: float | None = None
     confidence: ConfidenceBucket = "needs_human"
     flags: list[str] = Field(default_factory=list)
     moderators: dict[str, str] = Field(default_factory=dict)
