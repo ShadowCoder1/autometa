@@ -298,21 +298,45 @@ def tesseract_path() -> str | None:
     return os.environ.get("CANOPY_TESSERACT") or shutil.which("tesseract")
 
 
-def run_tesseract(png: str | Path, psm: int = 11, lang: str = "eng", whitelist: str | None = None) -> list[dict]:
-    """Run tesseract on a PNG and return its TSV word boxes; [] when tesseract is missing or fails."""
+@dataclass
+class OcrResult:
+    """Outcome of one tesseract call: the word boxes and *why* they may be empty.
+
+    `status` lets a caller record "OCR unavailable" in provenance instead of silently reporting no ticks.
+    """
+
+    words: list[dict]
+    status: str = "ok"                                # ok | missing | failed | timeout
+
+    def __bool__(self) -> bool:
+        return bool(self.words)
+
+
+class TickLabels(list):
+    """`list[TickLabel]` that also carries the OCR `status` of the run that produced it."""
+
+    status: str = "ok"
+
+
+def run_tesseract(png: str | Path, psm: int = 11, lang: str = "eng", whitelist: str | None = None) -> OcrResult:
+    """Run tesseract on a PNG -> `OcrResult` (word boxes + status; never raises)."""
     exe = tesseract_path()
     if not exe:
-        return []
+        return OcrResult([], "missing")
     cmd = [exe, str(png), "stdout", "--psm", str(psm), "-l", lang]
     if whitelist:
         cmd += ["-c", f"tessedit_char_whitelist={whitelist}"]
     cmd += ["tsv"]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return OcrResult([], "timeout")
     except (OSError, subprocess.SubprocessError):
-        return []
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return []
+        return OcrResult([], "failed")
+    if proc.returncode != 0:
+        return OcrResult([], "failed")
+    if not proc.stdout.strip():
+        return OcrResult([], "ok")
     words = []
     for row in csv.DictReader(proc.stdout.splitlines(), delimiter="\t", quoting=csv.QUOTE_NONE):
         text = (row.get("text") or "").strip()
@@ -324,7 +348,7 @@ def run_tesseract(png: str | Path, psm: int = 11, lang: str = "eng", whitelist: 
                               conf=float(row["conf"]), line=(row["block_num"], row["par_num"], row["line_num"])))
         except (KeyError, TypeError, ValueError):
             continue
-    return words
+    return OcrResult(words, "ok")
 
 
 def ocr_tick_labels(img: ImageLike, axes: Axes, side: str = "left", upscale: int = 4, psm: int = 13,
@@ -348,14 +372,14 @@ def ocr_tick_labels(img: ImageLike, axes: Axes, side: str = "left", upscale: int
     tick_len = max(4.0, 0.02 * max(x1 - x0, y1 - y0))
     if side == "left":
         if axes.y_axis_x is None:
-            return []
+            return TickLabels()
         gx1 = int(max(0, axes.y_axis_x - axes.y_axis_width / 2.0 - tick_len))
         gx0 = int(max(0, gx1 - max(60.0, 0.35 * (x1 - x0))))
         pad = 0.04 * (y1 - y0)
         gy0, gy1 = int(max(0, y0 - pad)), int(min(h, y1 + pad))
     elif side == "bottom":
         if axes.x_axis_y is None:
-            return []
+            return TickLabels()
         gy0 = int(min(h, axes.x_axis_y + axes.x_axis_width / 2.0 + tick_len))
         gy1 = int(min(h, gy0 + max(40.0, 0.25 * (y1 - y0))))
         pad = 0.04 * (x1 - x0)
@@ -363,10 +387,11 @@ def ocr_tick_labels(img: ImageLike, axes: Axes, side: str = "left", upscale: int
     else:
         raise ValueError(f"side must be 'left' or 'bottom', got {side!r}")
     if gx1 - gx0 < 4 or gy1 - gy0 < 4:
-        return []
+        return TickLabels()
 
     crop = gray[gy0:gy1, gx0:gx1]
-    out: list[TickLabel] = []
+    out = TickLabels()
+    statuses: list[str] = []
     for comps in _label_groups(crop, side, ticks, offset=(gx0, gy0)):
         bx0 = float(min(c[0] for c in comps) + gx0)
         by0 = float(min(c[1] for c in comps) + gy0)
@@ -376,7 +401,8 @@ def ocr_tick_labels(img: ImageLike, axes: Axes, side: str = "left", upscale: int
         sub = gray[max(0, int(by0) - pad_px):int(by1) + pad_px, max(0, int(bx0) - pad_px):int(bx1) + pad_px]
         if sub.size == 0:
             continue
-        text, conf = _ocr_line(sub, upscale, psm)
+        text, conf, status = _ocr_line(sub, upscale, psm)
+        statuses.append(status)
         if not text:
             continue
         value = parse_number(text)
@@ -385,6 +411,12 @@ def ocr_tick_labels(img: ImageLike, axes: Axes, side: str = "left", upscale: int
         out.append(TickLabel(text=text, value=value, bbox=(bx0, by0, bx1, by1),
                              center=((bx0 + bx1) / 2.0, (by0 + by1) / 2.0), source="ocr",
                              confidence=max(0.0, min(1.0, conf / 100.0))))
+    for bad in ("missing", "timeout", "failed"):
+        if bad in statuses:
+            out.status = bad
+            break
+    else:
+        out.status = "failed" if (statuses and not out) else "ok"
     return out
 
 
@@ -399,8 +431,8 @@ def _has_leading_minus(comps: list[tuple[int, int, int, int]]) -> bool:
             and y > min(c[1] for c in rest))
 
 
-def _ocr_line(patch: np.ndarray, upscale: int, psm: int) -> tuple[str, float]:
-    """OCR one tight single-line crop -> (text, tesseract confidence 0..100).
+def _ocr_line(patch: np.ndarray, upscale: int, psm: int) -> tuple[str, float, str]:
+    """OCR one tight single-line crop -> (text, tesseract confidence 0..100, status).
 
     Tries the requested page-segmentation mode, then single-line, then a digits-only whitelist, and returns
     the first reading that parses as a number; when no mode yields a number (a categorical label such as
@@ -410,23 +442,26 @@ def _ocr_line(patch: np.ndarray, upscale: int, psm: int) -> tuple[str, float]:
     big = cv2.copyMakeBorder(big, 24, 24, 24, 24, cv2.BORDER_CONSTANT, value=int(np.percentile(patch, 95)))
     modes = [(psm, None), (7, None), (7, NUMERIC_CHARS), (13, NUMERIC_CHARS)]
     others: list[tuple[float, str]] = []
+    status = "ok"
     with tempfile.TemporaryDirectory() as td:
         png = Path(td) / "label.png"
         cv2.imwrite(str(png), big)
         for mode, whitelist in dict.fromkeys(modes):
-            words = run_tesseract(png, psm=mode, whitelist=whitelist)
-            if not words:
+            res = run_tesseract(png, psm=mode, whitelist=whitelist)
+            if res.status != "ok":
+                return "", 0.0, res.status
+            if not res.words:
                 continue
-            words.sort(key=lambda ww: ww["left"])
+            words = sorted(res.words, key=lambda ww: ww["left"])
             text = "".join(ww["text"] for ww in words)
             conf = min(ww["conf"] for ww in words)
             if parse_number(text) is not None:
-                return text, conf
+                return text, conf, status
             others.append((conf, text))
     if not others:
-        return "", 0.0
+        return "", 0.0, status
     conf, text = max(others)
-    return text, conf
+    return text, conf, status
 
 
 def _label_groups(crop: np.ndarray, side: str, ticks: list[float] | None,
@@ -449,26 +484,65 @@ def _label_groups(crop: np.ndarray, side: str, ticks: list[float] | None,
     comps = _band_nearest_axis(comps, side, crop.shape, gap_tol=max(4.0, 0.35 * med_h))
     if not comps:
         return []
-    key = (lambda c: c[1] + c[3] / 2.0) if side == "left" else (lambda c: c[0] + c[2] / 2.0)
+    groups = _group_glyphs(comps, side, med_h)
+    if not ticks:
+        return groups
+    return _assign_groups_to_ticks(groups, ticks, side, med_h, offset)
+
+
+def _group_glyphs(comps: list[tuple[int, int, int, int]], side: str,
+                  med_h: float) -> list[list[tuple[int, int, int, int]]]:
+    """Glyph components -> one group per label, by the whitespace between them along the axis.
+
+    Grouping happens *before* any tick assignment: the outer digit of "-100000" is nearer to the
+    neighbouring tick than to its own, so assigning glyph by glyph silently truncates wide labels.
+    """
+    if side == "left":                                   # labels stack: glyphs of one label share rows
+        start, end, tol = (lambda c: c[1]), (lambda c: c[1] + c[3]), 0.25 * med_h
+    else:                                                # labels sit side by side: glyphs nearly touch
+        start, end, tol = (lambda c: c[0]), (lambda c: c[0] + c[2]), max(2.0, 0.45 * med_h)
     groups: list[list[tuple[int, int, int, int]]] = []
-    if ticks:
-        span = float(np.median(np.diff(sorted(ticks)))) if len(ticks) > 1 else 4.0 * med_h
-        window = min(0.45 * span, 1.2 * med_h + 4.0)
-        origin = gy0 if side == "left" else gx0        # ticks are image coordinates, comps are gutter ones
-        buckets: dict[int, list] = {}
-        for c in comps:
-            pos = key(c) + origin
-            j = int(np.argmin([abs(pos - t) for t in ticks]))
-            if abs(pos - ticks[j]) <= window:
-                buckets.setdefault(j, []).append(c)
-        groups = [buckets[j] for j in sorted(buckets)]
-    else:
-        for c in sorted(comps, key=key):
-            if groups and key(c) - key(groups[-1][-1]) <= 0.8 * med_h:
-                groups[-1].append(c)
-            else:
-                groups.append([c])
-    return [g for g in groups if g]
+    edge = 0.0
+    for c in sorted(comps, key=start):
+        if groups and start(c) - edge <= tol:
+            groups[-1].append(c)
+            edge = max(edge, end(c))
+        else:
+            groups.append([c])
+            edge = end(c)
+    return groups
+
+
+def _assign_groups_to_ticks(groups: list[list[tuple[int, int, int, int]]], ticks: list[float], side: str,
+                            med_h: float, offset: tuple[int, int]) -> list[list[tuple[int, int, int, int]]]:
+    """Keep the label group nearest each tick (groups spanning two ticks are split glyph by glyph)."""
+    origin = offset[1] if side == "left" else offset[0]   # ticks are image coordinates, comps gutter ones
+    span = float(np.median(np.diff(sorted(ticks)))) if len(ticks) > 1 else 4.0 * med_h
+
+    def centre(g):
+        if side == "left":
+            return (min(c[1] for c in g) + max(c[1] + c[3] for c in g)) / 2.0 + origin
+        return (min(c[0] for c in g) + max(c[0] + c[2] for c in g)) / 2.0 + origin
+
+    def extent(g):
+        if side == "left":
+            return max(c[1] + c[3] for c in g) - min(c[1] for c in g)
+        return max(c[0] + c[2] for c in g) - min(c[0] for c in g)
+
+    candidates: list[list[tuple[int, int, int, int]]] = []
+    for g in groups:
+        if extent(g) > 0.8 * span and len(g) > 1:        # two labels ran together: fall back to per glyph
+            candidates.extend([c] for c in g)
+        else:
+            candidates.append(g)
+    best: dict[int, tuple[float, list]] = {}
+    for g in candidates:
+        pos = centre(g)
+        j = int(np.argmin([abs(pos - t) for t in ticks]))
+        d = abs(pos - ticks[j])
+        if d <= min(0.5 * span, extent(g) / 2.0 + 1.2 * med_h + 4.0) and (j not in best or d < best[j][0]):
+            best[j] = (d, g)
+    return [best[j][1] for j in sorted(best)]
 
 
 def _band_nearest_axis(comps: list[tuple[int, int, int, int]], side: str, shape: tuple[int, ...],
@@ -644,8 +718,12 @@ def detect_whiskers(img: ImageLike, marker_or_bar, max_len_px: float | None = No
     elif isinstance(marker_or_bar, Bar):
         x, y = marker_or_bar.x_center, marker_or_bar.top_y
     elif isinstance(marker_or_bar, dict):
-        x = float(marker_or_bar.get("x", marker_or_bar.get("x_center")))
-        y = float(marker_or_bar.get("y", marker_or_bar.get("top_y")))
+        xv = marker_or_bar.get("x", marker_or_bar.get("x_center"))
+        yv = marker_or_bar.get("y", marker_or_bar.get("top_y"))
+        if xv is None or yv is None:
+            raise ValueError("detect_whiskers: dict needs 'x'/'y' (or 'x_center'/'top_y'), got "
+                             f"{sorted(marker_or_bar)}")
+        x, y = float(xv), float(yv)
     else:
         x, y = float(marker_or_bar[0]), float(marker_or_bar[1])
     if max_len_px is None:

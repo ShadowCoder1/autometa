@@ -103,6 +103,13 @@ def test_fit_axis_keeps_all_ticks_when_noise_is_comparable():
     assert cal.a == pytest.approx(a, abs=5e-4)
 
 
+def test_fit_axis_rejects_a_degenerate_axis_without_warnings(recwarn):
+    """All ticks on one value: raise before the robust pass divides by a zero slope."""
+    with pytest.raises(ValueError, match="degenerate"):
+        fit_axis([(10.0, 5.0), (20.0, 5.0), (30.0, 5.0), (40.0, 5.0)])
+    assert [w for w in recwarn.list if issubclass(w.category, RuntimeWarning)] == []
+
+
 def test_fit_axis_never_drops_below_three_ticks():
     ticks = [(20.0, 1.0), (60.0, 2.0), (100.0, 9.0)]
     cal = fit_axis(ticks)                      # 3 ticks: no robust drop, keep them all

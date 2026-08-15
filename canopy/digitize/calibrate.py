@@ -122,8 +122,12 @@ def fit_axis(ticks: list[tuple[float, float]], scale: Scale = "linear", axis: Ax
     else:                                          # pragma: no cover - guarded by the type hint
         raise ValueError(f"unknown scale {scale!r}")
 
+    if float(np.ptp(val)) == 0.0:
+        raise ValueError("degenerate axis: all tick values identical")
     keep = np.ones(len(px), dtype=bool)
     a, b = _lsq(px, val)
+    if not math.isfinite(a) or not math.isfinite(b) or a == 0.0:
+        raise ValueError("degenerate axis fit (no usable slope)")
     dropped: list[tuple[float, float]] = []
     if len(px) >= 4:
         resid_px = np.abs(px - _inverse(a, b, val))
@@ -133,8 +137,8 @@ def fit_axis(ticks: list[tuple[float, float]], scale: Scale = "linear", axis: Ax
             keep[worst] = False
             dropped.append((float(px[worst]), float(raw[worst])))
             a, b = _lsq(px[keep], val[keep])
-    if not math.isfinite(a) or not math.isfinite(b) or a == 0.0:
-        raise ValueError("degenerate axis fit (all tick values identical?)")
+            if not math.isfinite(a) or not math.isfinite(b) or a == 0.0:
+                raise ValueError("degenerate axis fit (all tick values identical?)")
     resid = px[keep] - _inverse(a, b, val[keep])
     rmse = float(np.sqrt(np.mean(resid ** 2)))
     kept = [(float(p), float(v)) for p, v, k in zip(px, raw, keep) if k]

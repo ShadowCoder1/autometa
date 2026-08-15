@@ -6,7 +6,6 @@ by ingestion. Offline; OCR asserts skip when the tesseract binary is missing.
 """
 from __future__ import annotations
 
-import shutil
 from dataclasses import replace
 from pathlib import Path
 
@@ -16,6 +15,7 @@ import pytest
 
 from canopy.digitize.calibrate import fit_axis, pair_ticks, px_to_value
 from canopy.digitize.cv import (
+    Marker,
     detect_bars,
     detect_markers,
     detect_whiskers,
@@ -28,12 +28,13 @@ from canopy.digitize.cv import (
     snap_horizontal_edge,
     snap_vertical_edge,
 )
+from canopy.digitize.cv import run_tesseract, tesseract_path
 from canopy.digitize.overlay import draw_overlay
 from canopy.ingest.pdf import PaperRecord, ingest_pdf
 
 PDF_DIR = Path(__file__).resolve().parent / "fixtures" / "pdfs"
-HAS_TESSERACT = shutil.which("tesseract") is not None
-needs_tesseract = pytest.mark.skipif(not HAS_TESSERACT, reason="tesseract binary not installed")
+needs_tesseract = pytest.mark.skipif(tesseract_path() is None,      # same resolver the code uses
+                                     reason="tesseract binary not installed (see CANOPY_TESSERACT)")
 
 
 # ------------------------------------------------------------------ synthetic figure fixtures
@@ -168,10 +169,18 @@ def test_find_cap_ends_respects_max_len():
     assert bottom is not None and abs(bottom - 140.0) <= 2.0
 
 
-def test_detect_whiskers_wraps_find_cap_ends():
+def test_detect_whiskers_finds_the_caps_of_a_marker():
     img = _error_bar_image()
-    marker = dict(x=100.0, y=120.0)
-    assert detect_whiskers(img, marker) == find_cap_ends(img, 100.0, 120.0, max_len_px=240 * 0.35)
+    top, bottom = detect_whiskers(img, dict(x=100.0, y=120.0))
+    assert abs(top - 60.0) < 1.0 and abs(bottom - 180.0) < 1.0          # the caps drawn at y=60 and y=180
+    assert detect_whiskers(img, dict(x=100.0, y=120.0)) == find_cap_ends(img, 100.0, 120.0, 240 * 0.35)
+    assert detect_whiskers(img, Marker(x=100.0, y=120.0, colour="#000000", kind="circle")) == (top, bottom)
+    assert detect_whiskers(img, (100.0, 120.0)) == (top, bottom)
+
+
+def test_detect_whiskers_rejects_a_dict_without_coordinates():
+    with pytest.raises(ValueError, match="x_center"):
+        detect_whiskers(_error_bar_image(), dict(left=1.0, top=2.0))
 
 
 # ------------------------------------------------------------------ axes, ticks, OCR
@@ -249,6 +258,25 @@ def test_ocr_tick_labels_without_an_axis_or_with_a_bad_side(bar_chart):
     assert ocr_tick_labels(img, blind, side="bottom") == []
     with pytest.raises(ValueError):
         ocr_tick_labels(img, axes, side="right")
+
+
+def test_ocr_status_reports_a_missing_binary(bar_chart, monkeypatch):
+    """A missing tesseract must be distinguishable from a figure that genuinely has no labels."""
+    monkeypatch.setenv("CANOPY_TESSERACT", "")
+    monkeypatch.setattr("canopy.digitize.cv.shutil.which", lambda _name: None)
+    img = load_gray(bar_chart["path"])
+    labels = ocr_tick_labels(img, find_axes(img), side="left")
+    assert labels == []
+    assert labels.status == "missing"
+    assert run_tesseract("nonexistent.png").status == "missing"
+
+
+@needs_tesseract
+def test_ocr_status_is_ok_when_labels_are_read(bar_chart):
+    img = load_gray(bar_chart["path"])
+    labels = ocr_tick_labels(img, find_axes(img), side="left")
+    assert labels.status == "ok"
+    assert list(labels) == [t for t in labels]                  # behaves as a plain list
 
 
 # ------------------------------------------------------------------ bars
@@ -367,9 +395,40 @@ def test_draw_overlay_marks_are_visible(bar_chart, tmp_path):
 
 def test_draw_overlay_numbers_every_mark(bar_chart, tmp_path):
     out = tmp_path / "numbered.png"
-    marks = [dict(x=100.0 + 40 * i, y=100.0, kind="point") for i in range(3)]
+    marks = [dict(x=120.0 + 90 * i, y=100.0, color="#e6194b", kind="point") for i in range(3)]
     draw_overlay(bar_chart["path"], marks, out)
     got = cv2.imread(str(out))
     src = cv2.imread(str(bar_chart["path"]))
-    changed = np.any(np.any(got != src, axis=2), axis=0)
-    assert changed[95:105].any() and changed[175:185].any()      # each mark drew something
+    for i, mark in enumerate(marks, start=1):
+        x, y = int(mark["x"]), int(mark["y"])
+        ring = got[y - 12:y + 12, x - 12:x + 12]
+        assert np.any(np.all(np.abs(ring.astype(int) - np.array([75, 25, 230])) <= 12, axis=2)), f"no ring {i}"
+        # the number is written to the right of the ring: coloured glyph ink that was not there before
+        label = got[y - 18:y + 18, x + 12:x + 46]
+        was = src[y - 18:y + 18, x + 12:x + 46]
+        glyph = np.all(np.abs(label.astype(int) - np.array([75, 25, 230])) <= 40, axis=2)
+        assert glyph.sum() >= 12, f"no digits drawn next to mark {i}"
+        assert not np.array_equal(label, was)
+
+
+@needs_tesseract
+def test_ocr_tick_labels_keeps_wide_numeric_labels_whole(tmp_path):
+    """A long label ("-100000") must not lose its outer glyph to the neighbouring tick.
+
+    Components are grouped into labels *before* they are assigned to ticks; assigning each glyph on its own
+    turns "-100000" into "100000" (a sign error) or "10000" (a wrong value).
+    """
+    plt = _mpl()
+    fig, ax = plt.subplots(figsize=(6.0, 3.0), dpi=150)
+    xs = [-100000, 0, 100000, 200000]
+    ax.plot(xs, [1.0, 2.0, 1.5, 2.5], "o-", color="black")
+    ax.set_xticks(xs)
+    ax.set_xticklabels([str(v) for v in xs])
+    ax.set_xlim(-160000, 260000)
+    path = tmp_path / "wide_labels.png"
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    img = load_gray(path)
+    axes = find_axes(img)
+    labels = ocr_tick_labels(img, axes, side="bottom", ticks=find_tick_marks(img, axes)["bottom"])
+    assert sorted(t.value for t in labels if t.value is not None) == [-100000.0, 0.0, 100000.0, 200000.0]
