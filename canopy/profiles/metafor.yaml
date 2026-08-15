@@ -1,0 +1,11 @@
+name: metafor
+description: >-
+  Defaults of the R package metafor / meta (escalc measure="SMD"): Hedges' g with the
+  large-sample (Borenstein) variance, REML between-study variance, Wald-type z confidence
+  interval and a normal-quantile prediction interval.
+reference: "metafor::escalc(measure='SMD'); metafor::rma.uni(method='REML')"
+estimator: hedges
+variance: borenstein
+tau2_method: REML
+hakn: false
+pi_method: z

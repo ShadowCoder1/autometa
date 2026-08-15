@@ -1,0 +1,89 @@
+# Canopy protocol — ageing and upper-extremity sensorimotor adaptation.
+# Written from the review's Methods section only: eligibility, considerations, outcome
+# definitions, groups, moderators and statistical conventions. It contains no knowledge of any
+# individual study, no results and no extracted numbers.
+
+title: Ageing and upper-extremity sensorimotor adaptation
+
+research_question: >-
+  Do older adults differ from younger adults in adaptation to an upper-extremity
+  visuomotor or force-field perturbation, and in the aftereffect once the perturbation is removed?
+
+group_a:
+  key: A
+  label: Older adults
+  definition: >-
+    The older of the two age groups compared by the study (older / elderly / aged participants),
+    as the study itself defines and labels it.
+  synonyms: [older, older adults, elderly, aged, old, seniors, senior adults, older group]
+
+group_b:
+  key: B
+  label: Younger adults
+  definition: >-
+    The younger of the two age groups compared by the study (young / younger participants),
+    as the study itself defines and labels it.
+  synonyms: [younger, younger adults, young, young adults, youths, younger group]
+
+outcomes:
+  - key: late_adaptation
+    label: Late adaptation
+    definition: >-
+      Adaptive change late in the perturbation block; when an average of overall performance is
+      provided use it, otherwise the last measure of overall adaptation in the group time series.
+    measurement_window: >-
+      The end of the initial perturbation block, while the perturbation is still applied. Use the
+      block average of overall performance when the paper reports one; otherwise the final
+      point of the group time series during the perturbation.
+    higher_is_better_hint: >-
+      Depends on the measure the study reports. Error-like measures (directional error, angular
+      deviation, absolute error, initial-direction error) are better when smaller; adaptation-like
+      measures (percent compensation, adaptation index, extent of adaptation) are better when
+      larger. Decide per dataset from the paper's own wording and record the supporting quote.
+    positive_direction_label: Enhanced in Old
+    negative_direction_label: Reduced in Old
+    units_hint: degrees, cm, N, or a unitless index — record exactly what the paper prints.
+
+  - key: aftereffect
+    label: Aftereffect
+    definition: >-
+      Performance after removal of the perturbation and feedback (implicit recalibration).
+    measurement_window: >-
+      The post-learning phase that immediately follows the initial perturbation block, with the
+      perturbation removed and feedback withheld. Use the block average when reported, otherwise
+      the first available measure of the post-learning phase as defined by the paper.
+    higher_is_better_hint: >-
+      Aftereffect magnitude usually indexes the amount of implicit recalibration, so a larger
+      absolute value means more adaptation; a signed error measure may instead be better when
+      smaller. Decide per dataset from the paper's own wording and record the supporting quote.
+    positive_direction_label: Enhanced in Old
+    negative_direction_label: Reduced in Old
+    units_hint: degrees, cm, N, or a unitless index — record exactly what the paper prints.
+
+eligibility:
+  - The study used an upper-extremity motor adaptation task with a visuomotor displacement of feedback or a force field.
+  - The study reported data comparing older adults with younger adults.
+  - The study reported performance measures during the perturbation block and/or during the post-learning phase with the perturbation removed.
+  - The study is written in English.
+
+dataset_rules:
+  - When the same participants took part in two experiments, include only the first experiment.
+  - When a study used multiple perturbation blocks, use the initial round of adaptation.
+  - Exclude experiments in which a contextual change (hand, direction or size) occurred between the learning phase and the aftereffect phase.
+
+moderators:
+  - task_type
+  - perturbation_size_deg
+  - n_targets
+
+stats:
+  profile: cisneros2024
+
+notes: >-
+  Moderators to record for every dataset:
+  task_type — the kind of perturbation, "visuomotor" or "force_field";
+  perturbation_size_deg — the magnitude of the perturbation as printed (rotation in degrees, or
+  the force-field gain/direction when the perturbation is a force field);
+  n_targets — the number of movement targets used in the task.
+  Group A is the older group and group B the younger group, so a positive effect means
+  "Enhanced in Old" and a negative effect means "Reduced in Old".
