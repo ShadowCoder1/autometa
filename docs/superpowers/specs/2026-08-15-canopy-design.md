@@ -196,3 +196,20 @@ chain as human-readable text ("SD_old = SE 2.01 × √19 = 8.76; d = (44.67 − 
 * Whether Fable 5 as adjudicator/ensemble member is worth 2× cost (default: Opus 5 xhigh; Fable optional flag).
 * Best default `late-window` rule for time-series figures (protocol option: `paper_reported_block` | `last_point` | `mean_last_n`).
 * How to present per-value digitization uncertainty in the forest plot (default: not shown; available in table).
+
+## 8. Decisions adopted from the research synthesis (`docs/research/00-synthesis-and-decisions.md`)
+* **License**: core depends on PyMuPDF (AGPL-3) → Canopy is licensed AGPL-3.0-or-later (pyproject updated). A permissive
+  build would need a pypdfium2/pdfplumber backend behind the same `ingest` interface (not v1).
+* **Statistical profiles**: `profile: metafor` (default: Cohen d, Borenstein variance, REML, PI z) and
+  `profile: cisneros2024` (Cohen d, variance `hedges_olkin_df` = the Rmd formula, REML, PI HTS k−2, hakn=False,
+  I² Q-based). Profiles are plain YAML in `canopy/profiles/`; the forest footer prints the conventions used.
+* **Dataset key**: `(paper_id, experiment_id, outcome_id, group_pair)`; meta-analysis row key `doi+experiment+outcome`.
+  Shared control groups across experiments are flagged (dependency) and, by default, only the first exposure enters.
+* **Model roster & prices** (Aug 2026): Opus 5 $5/$25 (primary extraction + figures), Sonnet 5 $2/$10 (second route,
+  verifier votes, locator cross-check), Fable 5 $10/$50 (optional adjudicator; needs `fallbacks:"default"`),
+  Haiku 4.5 (none by default). Effort and thinking held constant across agents sharing a cached prefix.
+* **Grounding**: verbatim quote check (NFKC + whitespace collapse for matching only; raw text kept); citations
+  (page_location) only in the separate verifier pass because citations and structured outputs are mutually exclusive.
+* **Ambiguity is flagged, never resolved by the model** (SD vs SE vs CI, baseline vs post, per-trial vs per-block).
+* **Evaluation ceiling**: human WPD values also carry error; disagreements are adjudicated (both values inspected), not
+  assumed to be tool errors.
