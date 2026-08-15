@@ -187,3 +187,13 @@ def test_a_row_no_ingested_table_contains_only_leaves_a_note(paper):
 def test_a_candidate_without_headers_skips_the_cell_check(paper):
     ok, detail = check_table_cell(_candidate(value_as_written="9.92"), paper)
     assert ok is None and detail == ""
+
+
+def test_a_one_letter_cell_does_not_match_every_header(paper):
+    """Containment matching must not turn a stray 'a' cell into the row the extractor named."""
+    with_table = _with_table(paper, [["Variable", "Young", "Old"], ["a", "1.0", "2.0"],
+                                     ["Trail making (s)", "27.4 (7.2)", "42.5 (6.9)"]])
+    cand = _candidate(quote=TABLE_QUOTE, row_header="Trail making (s)", col_header="Old",
+                      value_as_written="42.5 (6.9)", mean=42.5)
+    ok, detail = check_table_cell(cand, with_table)
+    assert ok is True and "Trail making" in detail

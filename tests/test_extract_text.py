@@ -7,11 +7,14 @@ Two halves, like the mapper's tests:
   * replayed calls on Bock 2005 (fixtures in `tests/fixtures/llm`), which record what the two
     variants really answer for a paper that prints its outcome only in a figure.
 
-Bock 2005 prints no group mean for either protocol outcome anywhere in its text — the numbers are
-in Fig. 1 — so the honest answer there is `not_on_these_pages`, and that is what the replay asserts.
-The one place the paper *does* print "M ± SD" for both groups is the screening test in its Results,
-so a second replay points the same extractor at that with a protocol that asks for it: same code
-path, a real "found" answer, real numbers, a real grounded quote.
+Bock 2005 prints no group mean for either protocol outcome of this contrast: the pointing errors
+live only in Fig. 1, and the text gives a fitted curve and ANOVAs instead. (Its other "M ± SD"
+values are participant ages, the screening test, a speed-normalised screening score, and one index
+from a pooled 54-participant sample built out of two further experiments — none of them this
+contrast's outcome.) So the honest answer is `not_on_these_pages`, and that is what the replay
+asserts. The screening test *is* printed as "M ± SD" for both groups, so a second replay points the
+same extractor at it with a protocol that asks for it: same code path, a real "found" answer, real
+numbers, a real grounded quote.
 """
 from __future__ import annotations
 
@@ -175,8 +178,8 @@ TEXT_SOURCE = Source(kind=SourceKind.text_mean_sd, page=3, locator="Results, sec
                      quote="the completion time for young subjects was")
 
 
-def _extract(paper, protocol, fake_dataset, payload, *, sources=(TEXT_SOURCE,), variant="table_first",
-             outcome_key="late_adaptation", model=None):
+def _extract(paper, protocol, fake_dataset, payload, *, sources=(TEXT_SOURCE,),
+             variant="table_first", outcome_key="late_adaptation", model=None):
     provider = FakeProvider([payload])
     client = LLMClient(provider=provider, cache_dir=None)
     candidates = extract_group_stats(client, paper, protocol, fake_dataset, outcome_key,
@@ -217,7 +220,8 @@ def test_each_variant_has_its_own_prompt_model_and_effort(paper, protocol, fake_
     _, second = _extract(paper, protocol, fake_dataset, _payload(), variant="narrative_first")
     assert first.requests[0].model == MODELS["primary"] and first.requests[0].effort == "high"
     assert second.requests[0].model == MODELS["secondary"] and second.requests[0].effort == "medium"
-    prompts = [r.messages[0]["content"][-1]["text"] for r in (first.requests[0], second.requests[0])]
+    prompts = [r.messages[0]["content"][-1]["text"]
+               for r in (first.requests[0], second.requests[0])]
     assert prompts[0] != prompts[1]
     assert prompts[0].startswith(load_prompt("extract_table_first")[:60])
     assert prompts[1].startswith(load_prompt("extract_narrative_first")[:60])
@@ -361,7 +365,8 @@ def test_a_row_without_a_group_is_kept_and_flagged(paper, protocol, fake_dataset
     assert {c.group for c in cands} == {None, "A", "B"}          # both groups still answered
 
 
-def test_a_group_the_extractor_skipped_becomes_an_explicit_empty_answer(paper, protocol, fake_dataset):
+def test_a_group_the_extractor_skipped_becomes_an_explicit_empty_answer(paper, protocol,
+                                                                        fake_dataset):
     cands, _ = _extract(paper, protocol, fake_dataset, _payload(rows=[_row()]))
     assert [c.group for c in cands] == ["A", "B"]
     assert cands[1].status == "not_on_these_pages" and cands[1].mean is None

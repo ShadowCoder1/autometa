@@ -102,6 +102,11 @@ def _enum_value(raw: Any, allowed: set[str] | tuple[str, ...], fallback: str) ->
     return value if value in allowed else fallback
 
 
+def _whole(raw: Any) -> int | None:
+    """An integer the model sent (a bool is an int in Python, and never an answer here)."""
+    return raw if isinstance(raw, int) and not isinstance(raw, bool) else None
+
+
 def _number(raw: Any) -> float | None:
     if isinstance(raw, bool) or raw is None:
         return None
@@ -139,8 +144,7 @@ def _candidate(row: dict[str, Any], *, index: int, paper: PaperRecord, dataset: 
     group = group_raw or None
     status = _enum_value(row.get("status"), _STATUSES, "ambiguous")
     label = (row.get("group_label_as_written") or "").strip()
-    page = row.get("page")
-    page = int(page) if isinstance(page, int) else None
+    page = _whole(row.get("page"))
     notes = (row.get("notes") or "").strip()
 
     mean, dispersion = _number(row.get("mean")), _number(row.get("dispersion_value"))
@@ -154,7 +158,7 @@ def _candidate(row: dict[str, Any], *, index: int, paper: PaperRecord, dataset: 
         paper_id=paper.sha256, dataset_id=dataset.dataset_id, outcome_key=outcome_key,
         kind="group_stats", group=group, status=status,
         source_kind=SourceKind(_enum_value(row.get("kind"), _SOURCE_KINDS, "unknown")),
-        n=row.get("n") if isinstance(row.get("n"), int) else None,
+        n=_whole(row.get("n")),
         n_quote=(row.get("n_quote") or "").strip(),
         mean=mean, dispersion_value=dispersion,
         dispersion_type=DispersionType(_enum_value(row.get("dispersion_type"), _DISPERSIONS,
@@ -179,7 +183,8 @@ def _candidate(row: dict[str, Any], *, index: int, paper: PaperRecord, dataset: 
     for warning in (group_label_check(group, label, dataset), _hint_conflict(cand, sources)):
         if warning:
             cand.notes = note(cand.notes, warning)
-    if label and label != (dataset.group_a.label if group == "A" else dataset.group_b.label):
+    own_label = dataset.group_a.label if group == "A" else dataset.group_b.label
+    if group and label and label != own_label:          # the paper's words, kept for the reviewer
         cand.notes = note(cand.notes, f"group label as written: {label!r}")
     return ground_candidate(cand, paper)
 

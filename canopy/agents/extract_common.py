@@ -18,7 +18,7 @@ from typing import Any, Iterable, Sequence
 
 from ..ingest.pdf import PaperRecord
 from ..llm.context import page_blocks, text_block
-from ..models import Candidate, DatasetSpec, GroupSpec, Protocol, Source, SourceKind
+from ..models import DatasetSpec, GroupSpec, Protocol, Source, SourceKind
 from ..verify.grounding import ground_candidate, normalize
 # the mapper owns these three; sharing them (rather than copying) is what keeps one prompt-cache
 # prefix and one schema idiom across every agent

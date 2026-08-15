@@ -36,6 +36,8 @@ __all__ = ["ground_quote", "ground_candidate", "check_table_cell", "normalize", 
 THRESHOLD = 0.95
 #: how far either side of the best anchor the window is re-tried (characters)
 _SHIFTS = (0, -2, 2, -5, 5, -10, 10, -20, 20, -40, 40)
+#: shortest header text that may match a cell by containment ("SD" must not match "standard")
+MIN_HEADER_CHARS = 3
 
 _DASHES = "‐‑‒–—―⁃−－˗"
 _DASH_RE = re.compile(f"[{_DASHES}]")
@@ -95,6 +97,17 @@ def ground_quote(quote: str, page_text: str) -> tuple[bool, float, str]:
 
 
 # ----------------------------------------------------------------------------- table cells
+def _names(cell: str, wanted: str) -> bool:
+    """Does this cell name that header? Equal, or one contains the other — but a one- or two-letter
+    cell never matches by containment, or every row would match every header."""
+    if not cell or not wanted:
+        return False
+    if cell == wanted:
+        return True
+    return ((len(cell) >= MIN_HEADER_CHARS and cell in wanted)
+            or (len(wanted) >= MIN_HEADER_CHARS and wanted in cell))
+
+
 def _row_text(row: list[str]) -> str:
     return normalize(" | ".join(str(cell or "") for cell in row))
 
@@ -106,8 +119,7 @@ def _column_index(table: TableRecord, col_header: str) -> int | None:
         return None
     for row in table.rows[:2]:
         for index, cell in enumerate(row):
-            cell_text = normalize(str(cell or ""))
-            if cell_text and (cell_text == wanted or wanted in cell_text or cell_text in wanted):
+            if _names(normalize(str(cell or "")), wanted):
                 return index
     return None
 
@@ -121,8 +133,7 @@ def _find_row(paper: PaperRecord, page: int | None, row_header: str
     tables = sorted(paper.tables, key=lambda t: (page is None or t.page != page, t.id))
     for table in tables:
         for row in table.rows:
-            cells = [normalize(str(cell or "")) for cell in row]
-            if any(cell and (cell == wanted or wanted in cell or cell in wanted) for cell in cells):
+            if any(_names(normalize(str(cell or "")), wanted) for cell in row):
                 return table, list(row)
     return None
 
@@ -190,10 +201,10 @@ def ground_candidate(cand: Candidate, paper: PaperRecord) -> Candidate:
                 cand.grounded = True
                 cand.grounding_similarity = similarity
                 if number != named:
+                    said = f" (extractor said page {named})" if named else ""
                     cand.page = number
                     cand.page_corrected = True
-                    cand.notes = _note(cand.notes, f"quote found on page {number}"
-                                                   f"{f' (extractor said page {named})' if named else ''}")
+                    cand.notes = _note(cand.notes, f"quote found on page {number}{said}")
                 break
             if similarity > best[0]:
                 best = (similarity, number, "")
