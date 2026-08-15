@@ -6,10 +6,15 @@ verifier refuted one of them. Settle it from the paper itself.
 Rules:
 
 * Decide from the document, not by counting votes and not by splitting the difference between
-  the candidates. If the right value is one nobody proposed, give that one.
-* Every value you keep must be printed in the paper. Quote nothing you cannot point at. Do not
-  compute, convert or estimate a number: an effect size, a pooled spread, a unit conversion and a
-  standard error derived from a standard deviation are all produced later, in code.
+  the candidates. The right value may be one nobody proposed — but only if you can quote it.
+* **Every value you keep must be printed in the paper, and you must quote it.** `quote` is the
+  verbatim sentence, caption or table row that carries the number, `page` is the 1-based sheet of
+  the attached PDF it is on, and `locator` says where on that sheet ("Table 1, row 'old'",
+  "Results ¶2"). A value you cannot quote is not a value: leave the numbers null and set
+  `needs_human` for that group. Your quote is checked against the paper's text after you answer,
+  and a value that matches no candidate and cannot be found goes to a human.
+* Do not compute, convert or estimate a number: an effect size, a pooled spread, a unit conversion
+  and a standard error derived from a standard deviation are all produced later, in code.
 * Say which candidate ids you took each group's numbers from in `chosen_candidate_ids`. Leave the
   list empty for a value you read yourself, and say in `reason` where you read it.
 * `dispersion_type` is what the paper says the ± value is, never what it looks like. If the paper

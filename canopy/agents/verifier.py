@@ -25,8 +25,9 @@ from ..llm.context import text_block
 from ..models import Candidate, DatasetSpec, DispersionType, OutcomeDef, Protocol, VerifierVerdict
 from ..verify.vote import model_family
 from . import render_prompt
-from .verify_common import (MAX_REOPENS, SYSTEM, candidate_text, enum_schema, groups_prompt,
-                            outcome_prompt, prompt_fingerprint, whole_paper)
+from .verify_common import (MAX_REOPENS, SYSTEM, candidate_text, enum_schema, enum_value,
+                            groups_prompt, note, number, outcome_prompt, prompt_fingerprint,
+                            whole, whole_paper)
 
 __all__ = ["verify_candidate", "verifier_model_for", "VERIFIER_SCHEMA", "PROMPT_VERSION",
            "PROMPT_FILES", "REFUTATION_TARGETS", "MAX_REOPENS"]
@@ -93,28 +94,6 @@ def _clean_checked(raw: Any) -> list[str]:
     return out
 
 
-def _whole(raw: Any) -> int | None:
-    return raw if isinstance(raw, int) and not isinstance(raw, bool) else None
-
-
-def _number(raw: Any) -> float | None:
-    if isinstance(raw, bool) or raw is None:
-        return None
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return None
-
-
-def _enum_value(raw: Any, allowed: Sequence[str], fallback: str) -> str:
-    value = raw.strip() if isinstance(raw, str) else ""
-    return value if value in set(allowed) else fallback
-
-
-def _note(existing: str, addition: str) -> str:
-    return f"{existing}; {addition}" if existing else addition
-
-
 # ----------------------------------------------------------------------------- the agent
 def verify_candidate(client: LLMClient, paper: PaperRecord, cand: Candidate,
                      context_blocks: Sequence[dict[str, Any]] = (),
@@ -156,30 +135,30 @@ def verify_candidate(client: LLMClient, paper: PaperRecord, cand: Candidate,
     checked = _clean_checked(parsed.get("checked"))
     verdict = VerifierVerdict(
         candidate_id=cand.candidate_id,
-        verdict=_enum_value(parsed.get("verdict"), _VERDICTS, "ambiguous"),
+        verdict=enum_value(parsed.get("verdict"), _VERDICTS, "ambiguous"),
         reason=(parsed.get("reason") or "").strip(),
-        alt_mean=_number(parsed.get("alt_mean")),
-        alt_dispersion_value=_number(parsed.get("alt_dispersion_value")),
+        alt_mean=number(parsed.get("alt_mean")),
+        alt_dispersion_value=number(parsed.get("alt_dispersion_value")),
         alt_dispersion_type=DispersionType(
-            _enum_value(parsed.get("alt_dispersion_type"), [d.value for d in DispersionType],
+            enum_value(parsed.get("alt_dispersion_type"), [d.value for d in DispersionType],
                         "UNKNOWN")),
-        alt_n=_whole(parsed.get("alt_n")),
-        alt_page=_whole(parsed.get("alt_page")),
+        alt_n=whole(parsed.get("alt_n")),
+        alt_page=whole(parsed.get("alt_page")),
         alt_quote=(parsed.get("alt_quote") or "").strip(),
         better_source=(parsed.get("better_source") or "").strip(),
         checked=checked, reopen=reopen, model=model, prompt_version=PROMPT_VERSION,
         llm_call_id=result.call_id, notes=(parsed.get("notes") or "").strip())
 
-    page = _whole(parsed.get("better_source_page"))
+    page = whole(parsed.get("better_source_page"))
     if verdict.better_source and page is not None:
         verdict.better_source = f"{verdict.better_source} (page {page})"
     missed = [target for target in REFUTATION_TARGETS if target not in checked]
     if missed:
-        verdict.notes = _note(verdict.notes, f"did not report checking: {', '.join(missed)}")
+        verdict.notes = note(verdict.notes, f"did not report checking: {', '.join(missed)}")
     if verdict.verdict == "refuted" and not verdict.reason:
         verdict.verdict = "ambiguous"
-        verdict.notes = _note(verdict.notes, "refutation without a reason was downgraded to "
+        verdict.notes = note(verdict.notes, "refutation without a reason was downgraded to "
                                              "ambiguous")
     if reopen:
-        verdict.notes = _note(verdict.notes, f"re-open {reopen} of {MAX_REOPENS}")
+        verdict.notes = note(verdict.notes, f"re-open {reopen} of {MAX_REOPENS}")
     return verdict

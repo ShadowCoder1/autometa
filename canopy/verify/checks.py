@@ -20,12 +20,13 @@ costs it points, an `info` is recorded for the provenance bundle.
 from __future__ import annotations
 
 import math
-from typing import Any, Iterable, Sequence
+from typing import Iterable, Sequence
 
 from ..models import (Candidate, CheckFlag, DatasetSpec, DispersionType, GroupSpec,
-                      OrientationVerdict, OutcomeSources, Source, SourceKind)
+                      OrientationVerdict, OutcomeSources, Source)
 from ..stats.effect_sizes import cohens_d
-from .grounding import is_short_quote
+from .figures import FIGURE_KINDS, axis_limits, is_figure
+from .grounding import ROW_ONLY, SIGN_NOTE, is_short_quote
 
 __all__ = ["run_checks", "sign_check", "codes", "CHECK_SEVERITY", "GROUP_LABEL_MISMATCH_NOTE",
            "SEVERITY_RANK", "MIN_N", "MAX_PLAUSIBLE_D"]
@@ -48,6 +49,7 @@ SEVERITY_RANK = {"error": 0, "warn": 1, "info": 2}
 CHECK_SEVERITY: dict[str, str] = {
     # --- is this a number at all
     "n_not_integer": "error",
+    "n_too_small": "error",
     "n_missing": "warn",
     "n_mismatch": "warn",
     "n_sum_mismatch": "warn",
@@ -64,6 +66,8 @@ CHECK_SEVERITY: dict[str, str] = {
     # --- is it the number we asked for
     "quote_not_grounded": "error",
     "quote_short": "info",
+    "quote_row_only": "warn",
+    "sign_not_confirmed": "warn",
     "group_label_swapped": "error",
     "unit_mismatch": "warn",
     "metric_mixed": "warn",
@@ -82,11 +86,7 @@ CHECK_SEVERITY: dict[str, str] = {
 _POSITIVE_DISPERSIONS = frozenset({DispersionType.SD, DispersionType.SE, DispersionType.IQR,
                                    DispersionType.RANGE})
 _INTERVALS = frozenset({DispersionType.CI95, DispersionType.CI90})
-_FIGURE_KINDS = frozenset({SourceKind.figure_bar, SourceKind.figure_line, SourceKind.figure_points,
-                           SourceKind.figure_box})
-#: `pixel_provenance["cal"]` key spellings the digitizer may use for the value axis
-_AXIS_MIN_KEYS = ("y_min", "ymin", "min", "axis_min", "value_min")
-_AXIS_MAX_KEYS = ("y_max", "ymax", "max", "axis_max", "value_max")
+_FIGURE_KINDS = FIGURE_KINDS
 
 
 def codes(flags: Iterable[CheckFlag]) -> list[str]:
@@ -98,13 +98,6 @@ def codes(flags: Iterable[CheckFlag]) -> list[str]:
 def _flag(out: list[CheckFlag], code: str, message: str, *candidate_ids: str) -> None:
     out.append(CheckFlag(code=code, severity=CHECK_SEVERITY[code], message=message,
                          candidate_ids=[cid for cid in candidate_ids if cid]))
-
-
-def is_figure(cand: Candidate) -> bool:
-    """A value read off a picture rather than out of characters."""
-    return (cand.source_kind in _FIGURE_KINDS
-            or cand.extractor_id.startswith("digitize:")
-            or cand.route.startswith(("figure", "digitize")))
 
 
 def _found_stats(candidates: Sequence[Candidate]) -> list[Candidate]:
@@ -131,19 +124,6 @@ def _outcome(dataset: DatasetSpec, outcome_key: str) -> OutcomeSources | None:
         return None
 
 
-def axis_limits(pixel_provenance: dict[str, Any]) -> tuple[float, float] | None:
-    """The calibrated value-axis range a digitised candidate carries, if it carries one."""
-    cal = pixel_provenance.get("cal") if isinstance(pixel_provenance, dict) else None
-    if not isinstance(cal, dict):
-        return None
-    axis = cal.get("y") if isinstance(cal.get("y"), dict) else cal
-    low = next((axis[k] for k in _AXIS_MIN_KEYS if isinstance(axis.get(k), (int, float))), None)
-    high = next((axis[k] for k in _AXIS_MAX_KEYS if isinstance(axis.get(k), (int, float))), None)
-    if low is None or high is None:
-        return None
-    return (float(low), float(high)) if low <= high else (float(high), float(low))
-
-
 def _close(a: float, b: float, rel: float) -> bool:
     scale = max(abs(a), abs(b), 1e-12)
     return abs(a - b) <= rel * scale
@@ -162,6 +142,15 @@ def _check_one(cand: Candidate, dataset: DatasetSpec, outcome: OutcomeSources | 
             _flag(out, "quote_short",
                   f"the quote {cand.quote.strip()!r} is too short to stand as evidence on its own",
                   cid)
+    if ROW_ONLY in cand.notes:
+        _flag(out, "quote_row_only",
+              f"the transcribed numbers are somewhere in the named table row but NOT in the "
+              f"column this candidate claims — which is what reading the other group's cell looks "
+              f"like ({cand.notes})", cid)
+    if SIGN_NOTE in cand.notes:
+        _flag(out, "sign_not_confirmed",
+              f"a transcribed value matched the table only without its sign, so the direction of "
+              f"this number is not confirmed ({cand.notes})", cid)
     if GROUP_LABEL_MISMATCH_NOTE in cand.notes:
         _flag(out, "group_label_swapped",
               f"the group label this extractor echoed belongs to the other group ({cand.notes})",
@@ -179,9 +168,12 @@ def _check_one(cand: Candidate, dataset: DatasetSpec, outcome: OutcomeSources | 
     # --- n
     if cand.n is None:
         _flag(out, "n_missing", "no group size was transcribed with this value", cid)
+    elif not isinstance(cand.n, int) or isinstance(cand.n, bool):
+        _flag(out, "n_not_integer", f"group size {cand.n!r} is not a whole number", cid)
     elif cand.n < MIN_N:
-        _flag(out, "n_not_integer",
-              f"group size {cand.n} is not an integer of at least {MIN_N}", cid)
+        _flag(out, "n_too_small",
+              f"group size {cand.n} is below {MIN_N}: a group of one has no within-group "
+              f"variance, so no effect size can be built from it", cid)
     elif analysed_n is not None and cand.n != analysed_n:
         code = "figure_n_mismatch" if is_figure(cand) else "n_mismatch"
         _flag(out, code, f"this value carries n = {cand.n}, but the map analysed "
@@ -383,8 +375,14 @@ def sign_check(direction: str, mean_a: float | None, mean_b: float | None,
     """
     if direction not in ("a_greater", "b_greater") or mean_a is None or mean_b is None:
         return None
+    if mean_a == mean_b:
+        # identical means carry no direction to contradict: the effect size is zero, and telling a
+        # reviewer the SIGN is inverted would be wrong. A stated difference that the extracted
+        # numbers do not show at all is a magnitude problem, and the vote and the verifier are
+        # what catch it.
+        return None
     stated_a_greater = direction == "a_greater"
-    if mean_a == mean_b or (mean_a > mean_b) != stated_a_greater:
+    if (mean_a > mean_b) != stated_a_greater:
         return CheckFlag(
             code="sign_mismatch", severity=CHECK_SEVERITY["sign_mismatch"],
             message=(f"the paper states {direction.replace('_', ' ')} on this measure, but the "

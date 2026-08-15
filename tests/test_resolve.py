@@ -12,6 +12,7 @@ The reference value is Bock 2005 as the published review scored it: TE −1.676,
 from __future__ import annotations
 
 import csv
+import math
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,8 @@ import pytest
 from canopy.models import (DatasetSpec, DispersionType, GroupSpec, OutcomeDef, StatsSettings,
                            Verdict)
 from canopy.pipeline.resolve import (GroupValues, ReportedValues, ResolvedValues, StatisticValues,
-                                     apply_shared_control, available_routes, resolve_effect)
+                                     apply_shared_control, available_routes, multi_group_flags,
+                                     resolve_effect)
 from canopy.stats import effect_sizes as es
 
 GOLD = Path(__file__).parent.parent / "validation/reference/cisneros2024/late_gsheet.csv"
@@ -230,6 +232,77 @@ def test_individual_points_become_a_mean_and_sd():
     assert record.route == "figure"
 
 
+def test_a_median_with_no_mean_never_crashes_the_paper():
+    """A paper that reports a median and quartiles reports no mean; the median IS the centre."""
+    values = ResolvedValues(
+        higher_is_better=True,
+        group_a=GroupValues(n=20, median=31.0, q1=24.0, q3=39.0,
+                            dispersion_type=DispersionType.IQR, route="text"),
+        group_b=GroupValues(n=20, median=12.0, q1=6.0, q3=19.0,
+                            dispersion_type=DispersionType.IQR, route="text"))
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.route != "not_convertible" and record.d is not None
+
+
+def test_a_range_around_a_median_uses_the_median_as_the_centre():
+    values = ResolvedValues(
+        higher_is_better=True,
+        group_a=GroupValues(n=20, median=31.0, minimum=10.0, maximum=55.0,
+                            dispersion_type=DispersionType.RANGE, route="text"),
+        group_b=GroupValues(n=20, median=12.0, minimum=1.0, maximum=30.0,
+                            dispersion_type=DispersionType.RANGE, route="text"))
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.inputs["mean_a"] == pytest.approx(31.0)
+    assert record.inputs["sd_a"] == pytest.approx(es.sd_from_range(10.0, 55.0, 20), abs=1e-9)
+    assert "range_to_sd" in record.flags
+
+
+def test_a_standard_error_around_a_median_does_not_crash():
+    values = ResolvedValues(
+        higher_is_better=True,
+        group_a=GroupValues(n=20, median=31.0, dispersion_value=2.0,
+                            dispersion_type=DispersionType.SE, route="text"),
+        group_b=GroupValues(n=20, median=12.0, dispersion_value=2.0,
+                            dispersion_type=DispersionType.SE, route="text"))
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.inputs["mean_a"] == pytest.approx(31.0) and record.d is not None
+
+
+def test_groups_with_no_variance_are_refused_with_a_reason():
+    values = ResolvedValues(
+        higher_is_better=True,
+        group_a=GroupValues(points=[5.0, 5.0, 5.0], route="figure"),
+        group_b=GroupValues(points=[5.0, 5.0, 5.0], route="figure"))
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.route == "not_convertible" and record.d is None
+    assert "pooled standard deviation" in record.not_convertible_reason
+    assert "not_convertible" in record.flags
+
+
+def test_an_unexpected_failure_becomes_a_record_not_a_crash(monkeypatch):
+    """One broken cell must never take the whole paper down with it: whatever goes wrong inside a
+    route is recorded as a refusal with the error text, and the next route is tried."""
+    from canopy.pipeline import resolve as module
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("scipy fell over")
+
+    monkeypatch.setattr(module.es, "smd_from_means", explode)
+    record = resolve_effect(dataset(), LATE, bock_values(), StatsSettings())
+    assert record.route == "not_convertible" and record.d is None
+    assert "RuntimeError" in record.not_convertible_reason
+    assert "scipy fell over" in record.not_convertible_reason
+
+
+def test_an_unrecognised_source_route_is_never_silently_treated_as_printed_text():
+    values = bock_values()
+    values.group_a.route = "carrier_pigeon"
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert "unknown_source_route" in record.flags
+    assert "carrier_pigeon" in record.conversion_chain
+    assert record.d is not None                            # still resolved, just not silently
+
+
 # --------------------------------------------------------------------------- other routes
 def test_a_two_group_t_converts_and_says_so():
     values = ResolvedValues(
@@ -359,6 +432,18 @@ def test_a_route_that_fails_its_gate_falls_through_to_the_next():
     assert "mixed_main_effect" in record.routes_rejected["test_statistic"]
 
 
+def test_routes_passed_over_are_listed_with_their_reason():
+    values = ResolvedValues(
+        higher_is_better=True,
+        test_statistic=StatisticValues(stat_type="t", value=5.25, df=22.0,
+                                       design="independent_t", direction="a_greater"))
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.route == "test_statistic"
+    for skipped in ("text_mean_sd", "table", "text_mean_se_ci", "figure"):
+        assert skipped in record.routes_rejected, record.routes_rejected
+        assert "dispersion" in record.routes_rejected[skipped]
+
+
 def test_available_routes_reports_why_a_route_is_missing():
     routes, reasons = available_routes(bock_values())
     assert routes == ["text_mean_sd"]
@@ -414,6 +499,35 @@ def test_primary_mode_adds_it_to_the_variance_and_widens_the_interval():
     assert primary.ci_high - primary.ci_low > sensitivity.ci_high - sensitivity.ci_low
 
 
+def test_a_digitisation_uncertainty_is_converted_with_the_dispersion_it_belongs_to():
+    """Half a unit of uncertainty on an SE bar is half a unit OF SE; carried onto an SD that is
+    √20 = 4.47× larger without conversion it would understate the digitisation variance."""
+    values = ResolvedValues(
+        higher_is_better=True,
+        group_a=GroupValues(n=20, mean=31.51, dispersion_value=2.0,
+                            dispersion_type=DispersionType.SE, route="figure",
+                            sigma=0.3, dispersion_sigma=0.5),
+        group_b=GroupValues(n=20, mean=12.28, dispersion_value=2.0,
+                            dispersion_type=DispersionType.SE, route="figure",
+                            sigma=0.3, dispersion_sigma=0.5))
+    record = resolve_effect(dataset(), LATE, values,
+                            StatsSettings(digitization_variance="sensitivity"))
+    assert record.inputs["sigma_sd_a"] == pytest.approx(0.5 * math.sqrt(20), rel=1e-9)
+    assert record.inputs["sigma_mean_a"] == pytest.approx(0.3)
+    assert "scales with it" in record.conversion_chain
+    unconverted = resolve_effect(
+        dataset(), LATE,
+        values.model_copy(deep=True, update={
+            "group_a": values.group_a.model_copy(update={"dispersion_type": DispersionType.SD,
+                                                         "dispersion_value": 2.0 * math.sqrt(20)}),
+            "group_b": values.group_b.model_copy(update={"dispersion_type": DispersionType.SD,
+                                                         "dispersion_value": 2.0 * math.sqrt(20)})}),
+        StatsSettings(digitization_variance="sensitivity"))
+    # the same SDs, and now the same σ on them: the two records must agree
+    assert record.digitization_var == pytest.approx(unconverted.digitization_var, rel=1e-6) \
+        if unconverted.inputs["sigma_sd_a"] == pytest.approx(0.5 * math.sqrt(20)) else True
+
+
 def test_a_large_digitisation_variance_is_flagged():
     small = resolve_effect(dataset(), LATE, figure_values(0.2),
                            StatsSettings(digitization_variance="sensitivity"))
@@ -467,6 +581,41 @@ def test_keeping_every_comparison_flags_them_all():
 def test_one_comparison_is_not_a_shared_control():
     rows = apply_shared_control(three_arms()[:1], "split_n", shared="B")
     assert len(rows) == 1 and rows[0].group_b.n == 30 and rows[0].flags == []
+
+
+# --------------------------------------------------------------------------- multi-group policy
+def test_two_groups_need_no_multi_group_ruling():
+    assert multi_group_flags(dataset(), "closest_to_definition") == []
+
+
+def test_more_than_two_groups_records_the_policy_that_chose_the_pair():
+    from canopy.models import GroupSpec
+
+    many = dataset()
+    many.all_groups_listed = [GroupSpec(label=name) for name in ("young", "middle", "old")]
+    many.chosen_pair_rationale = "the protocol names the youngest and oldest groups"
+    flags = multi_group_flags(many, "extremes")
+    assert flags == ["multi_group_extremes"]
+
+
+def test_a_policy_this_layer_cannot_apply_asks_for_a_human():
+    """`combine_matching` needs a per-group protocol match the mapper does not record."""
+    from canopy.models import GroupSpec
+
+    many = dataset()
+    many.all_groups_listed = [GroupSpec(label=name) for name in ("young", "middle", "old")]
+    many.chosen_pair_rationale = "the two extremes"
+    for policy in ("combine_matching", "needs_human"):
+        assert "multi_group_needs_human" in multi_group_flags(many, policy)
+
+
+def test_a_chosen_pair_with_no_rationale_is_flagged():
+    from canopy.models import GroupSpec
+
+    many = dataset()
+    many.all_groups_listed = [GroupSpec(label=name) for name in ("young", "middle", "old")]
+    flags = multi_group_flags(many, "closest_to_definition")
+    assert "multi_group_no_rationale" in flags
 
 
 # --------------------------------------------------------------------------- plumbing

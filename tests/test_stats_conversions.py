@@ -217,6 +217,26 @@ def test_the_pustejovsky_rodgers_predictor_matches_metafor_regtest():
     assert result.df == ref["dfs"]
 
 
+def test_the_asymmetry_coefficient_has_one_unambiguous_name():
+    """`intercept` is the asymmetry coefficient in BOTH variants (the fitted intercept for the
+    classic predictor, the fitted slope for the sample-size one), so downstream code reads one
+    field; the aliases say which is which."""
+    ref = FIX["egger_pr"]
+    classic = egger_test(FIX["cisneros_late"]["TE"], FIX["cisneros_late"]["seTE"])
+    modified = egger_test(ref["TE"], ref["seTE"], n_a=ref["n_a"], n_b=ref["n_b"])
+    for result in (classic, modified):
+        assert result.bias_coefficient == result.intercept
+        assert result.limit_estimate == result.estimate == result.slope
+        assert result.t == pytest.approx(result.intercept / result.intercept_se, abs=1e-12)
+
+
+def test_egger_needs_three_studies():
+    """metafor::regtest refuses below k=3, and so must we: two studies leave no residual degrees
+    of freedom to test the asymmetry coefficient against."""
+    with pytest.raises(ValueError, match="3 studies"):
+        egger_test([0.1, 0.2], [0.1, 0.2])
+
+
 def test_the_classic_egger_also_matches_metafors_lm_variant():
     late = FIX["cisneros_late"]
     result = egger_test(late["TE"], late["seTE"])

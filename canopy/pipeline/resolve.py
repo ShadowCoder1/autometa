@@ -167,12 +167,23 @@ class ResolvedValues(CanopyModel):
 
 # ----------------------------------------------------------------------------- route availability
 def _modality(route: str) -> str:
+    """`text` | `table` | `figure` | `unknown` — where a group's numbers came from.
+
+    An unrecognised route string is `unknown`, not text: it is named in the record's flags so a
+    reviewer sees that the pipeline could not tell where the value was read, instead of the value
+    quietly claiming the highest-precedence route in the list.
+    """
     name = (route or "").lower()
     if name.startswith(("figure", "digitize")):
         return "figure"
     if name == "table":
         return "table"
-    return "text" if name in _TEXT_ROUTES else "text"
+    return "text" if name in _TEXT_ROUTES else "unknown"
+
+
+def _unknown_routes(values: ResolvedValues) -> list[str]:
+    return sorted({g.route for g in (values.group_a, values.group_b)
+                   if g is not None and _modality(g.route) == "unknown"})
 
 
 def _stated_level(group: GroupValues) -> float | None:
@@ -185,6 +196,28 @@ def _stated_level(group: GroupValues) -> float | None:
     if group.ci_level and (group.ci_low is not None or group.dispersion_value is not None):
         return float(group.ci_level)
     return None
+
+
+def _centre(group: GroupValues) -> float:
+    """The group's central value: its mean, or the median when only a median was reported."""
+    centre = group.mean if group.mean is not None else group.median
+    if centre is None:
+        raise NotConvertible("this group reports neither a mean nor a median")
+    return float(centre)
+
+
+def _scaled_sigma(dispersion_sigma: float | None, as_read: float | None,
+                  sd: float) -> float | None:
+    """A digitisation uncertainty converted alongside the dispersion it belongs to.
+
+    `GroupValues.dispersion_sigma` is in the units of the spread AS READ — half a pixel on an
+    error-bar cap is half a pixel's worth of SE if the bar is an SE bar. Converting the bar to an
+    SD without converting its uncertainty understates the digitisation variance by the same factor
+    (√n for SE → SD), so σ travels through the identical linear factor as the value.
+    """
+    if dispersion_sigma is None or dispersion_sigma <= 0 or not as_read:
+        return dispersion_sigma if dispersion_sigma else None
+    return abs(dispersion_sigma) * abs(sd / as_read)
 
 
 def _has_spread(group: GroupValues) -> bool:
@@ -269,8 +302,8 @@ def _ci_dist(n: float, settings: StatsSettings) -> Literal["z", "t"]:
 
 
 def _mean_sd(group: GroupValues, side: str, settings: StatsSettings, steps: list[str],
-             flags: list[str]) -> tuple[float, float, int]:
-    """One group's `(mean, sd, n)` and the conversion steps that produced them."""
+             flags: list[str]) -> tuple[float, float, int, float | None]:
+    """One group's `(mean, sd, n, sd_sigma)` and the conversion steps that produced them."""
     kind = group.dispersion_type
     if len(group.points) >= 2:
         mean, sd, n = es.mean_sd_from_points(group.points)
@@ -278,48 +311,59 @@ def _mean_sd(group: GroupValues, side: str, settings: StatsSettings, steps: list
         if group.n is not None and group.n != n:
             flags.append("points_n_mismatch")
             steps.append(f"group {side}: {n} points were read where n = {group.n} was analysed")
-        return mean, sd, n
+        return mean, sd, n, None
 
     n = int(group.n)
+    centre = _centre(group)
     if kind is DispersionType.SD:
-        steps.append(f"group {side}: mean {_fmt(group.mean)}, SD {_fmt(group.dispersion_value)} "
+        steps.append(f"group {side}: mean {_fmt(centre)}, SD {_fmt(group.dispersion_value)} "
                      f"as printed (n = {n})")
-        return float(group.mean), float(group.dispersion_value), n
+        return centre, float(group.dispersion_value), n, group.dispersion_sigma
 
     if kind is DispersionType.SE:
         sd = es.sd_from_se(group.dispersion_value, n)
+        sigma = _scaled_sigma(group.dispersion_sigma, group.dispersion_value, sd)
         steps.append(f"SD_{side} = SE {_fmt(group.dispersion_value)} × √{n} = {_fmt(sd)}")
-        return float(group.mean), sd, n
+        if sigma is not None and group.dispersion_sigma:
+            steps.append(f"digitisation uncertainty on the SE bar, {_fmt(group.dispersion_sigma)}, "
+                         f"scales with it: ±{_fmt(sigma)} on the SD")
+        return centre, sd, n, sigma
 
     if kind in _CI_LEVELS or _stated_level(group) is not None:
         level = group.ci_level or _CI_LEVELS.get(kind) or 0.95
         dist = _ci_dist(n, settings)
         label = f"t({n - 1})" if dist == "t" else "z"
         if group.ci_low is not None and group.ci_high is not None:
+            half = (group.ci_high - group.ci_low) / 2
             sd = es.sd_from_ci(group.ci_low, group.ci_high, n, level=level, dist=dist)
             steps.append(f"SD_{side} = half of the {level:.0%} interval "
                          f"[{_fmt(group.ci_low)}, {_fmt(group.ci_high)}] ÷ {label} × √{n} "
                          f"= {_fmt(sd)}")
         else:
+            half = group.dispersion_value
             sd = es.sd_from_ci_halfwidth(group.dispersion_value, n, level=level, dist=dist)
             steps.append(f"SD_{side} = interval half-width {_fmt(group.dispersion_value)} ÷ "
                          f"{label} × √{n} = {_fmt(sd)}")
-        return float(group.mean), sd, n
+        sigma = _scaled_sigma(group.dispersion_sigma, half, sd)
+        if sigma is not None and group.dispersion_sigma:
+            steps.append(f"digitisation uncertainty on the interval, "
+                         f"{_fmt(group.dispersion_sigma)}, scales with it: ±{_fmt(sigma)} on the SD")
+        return centre, sd, n, sigma
 
     if kind is DispersionType.IQR:
         if group.q1 is not None and group.q3 is not None:
-            median = group.median if group.median is not None else group.mean
+            median = group.median if group.median is not None else _centre(group)
             mean, sd = mean_sd_from_median_iqr(median, group.q1, group.q3, n)
             flags.append("median_iqr_conversion")
             steps.append(f"group {side}: median {_fmt(median)} with quartiles "
                          f"[{_fmt(group.q1)}, {_fmt(group.q3)}] → mean {_fmt(mean)} (Luo 2018), "
                          f"SD {_fmt(sd)} (Wan 2014 eq. 16)")
-            return mean, sd, n
+            return mean, sd, n, _scaled_sigma(group.dispersion_sigma, group.q3 - group.q1, sd)
         sd = es.sd_from_iqr(0.0, group.dispersion_value, n)
         flags.append("median_iqr_conversion")
         steps.append(f"SD_{side} = IQR {_fmt(group.dispersion_value)} ÷ η({n}) = {_fmt(sd)} "
                      f"(Wan 2014 eq. 16)")
-        return float(group.mean), sd, n
+        return centre, sd, n, _scaled_sigma(group.dispersion_sigma, group.dispersion_value, sd)
 
     if kind is DispersionType.RANGE:
         if group.q1 is not None and group.q3 is not None and group.median is not None:
@@ -328,12 +372,15 @@ def _mean_sd(group: GroupValues, side: str, settings: StatsSettings, steps: list
             flags.append("five_number_conversion")
             steps.append(f"group {side}: five-number summary → mean {_fmt(mean)} (Luo 2018), "
                          f"SD {_fmt(sd)} (Shi 2020)")
-            return mean, sd, n
+            return mean, sd, n, _scaled_sigma(group.dispersion_sigma,
+                                              group.maximum - group.minimum, sd)
         sd = es.sd_from_range(group.minimum, group.maximum, n)
         flags.append("range_to_sd")
-        steps.append(f"SD_{side} = range [{_fmt(group.minimum)}, {_fmt(group.maximum)}] ÷ ξ({n}) "
-                     f"= {_fmt(sd)} (Wan 2014 eq. 9 — a range is a weak estimate of a spread)")
-        return float(group.mean), sd, n
+        steps.append(f"group {side}: mean {_fmt(centre)}; SD_{side} = range "
+                     f"[{_fmt(group.minimum)}, {_fmt(group.maximum)}] ÷ ξ({n}) = {_fmt(sd)} "
+                     f"(Wan 2014 eq. 9 — a range is a weak estimate of a spread)")
+        return centre, sd, n, _scaled_sigma(group.dispersion_sigma,
+                                            group.maximum - group.minimum, sd)
 
     raise NotConvertible(f"group {side} has dispersion type {kind.value}, which is not a spread "
                          f"an effect size can be built from")
@@ -342,10 +389,20 @@ def _mean_sd(group: GroupValues, side: str, settings: StatsSettings, steps: list
 # ----------------------------------------------------------------------------- the routes
 def _from_groups(values: ResolvedValues, settings: StatsSettings, inputs: dict[str, Any],
                  steps: list[str], flags: list[str]) -> SMDResult:
-    mean_a, sd_a, n_a = _mean_sd(values.group_a, "A", settings, steps, flags)
-    mean_b, sd_b, n_b = _mean_sd(values.group_b, "B", settings, steps, flags)
-    inputs.update(mean_a=mean_a, sd_a=sd_a, n_a=n_a, mean_b=mean_b, sd_b=sd_b, n_b=n_b)
+    mean_a, sd_a, n_a, sigma_sd_a = _mean_sd(values.group_a, "A", settings, steps, flags)
+    mean_b, sd_b, n_b, sigma_sd_b = _mean_sd(values.group_b, "B", settings, steps, flags)
+    inputs.update(mean_a=mean_a, sd_a=sd_a, n_a=n_a, mean_b=mean_b, sd_b=sd_b, n_b=n_b,
+                  sigma_mean_a=values.group_a.sigma, sigma_mean_b=values.group_b.sigma,
+                  sigma_sd_a=sigma_sd_a, sigma_sd_b=sigma_sd_b)
+    for name in _unknown_routes(values):
+        flags.append("unknown_source_route")
+        steps.append(f"the source route {name!r} is not one this pipeline names; the values were "
+                     f"treated as printed text — a reviewer should confirm where they came from")
     pooled = es.pooled_sd(sd_a, n_a, sd_b, n_b)
+    if pooled <= 0:
+        raise NotConvertible(
+            f"the pooled standard deviation is {pooled:g}: with no within-group variance a "
+            f"standardised mean difference is unbounded, so these values cannot be pooled")
     steps.append(f"pooled SD = √(((({n_a}−1)·{_fmt(sd_a)}² + ({n_b}−1)·{_fmt(sd_b)}²) / "
                  f"({n_a}+{n_b}−2)) = {_fmt(pooled)}")
     raw = (mean_a - mean_b) / pooled
@@ -442,8 +499,10 @@ def _digitization_variance(values: ResolvedValues, inputs: dict[str, Any],
     a, b = values.group_a, values.group_b
     if a is None or b is None or "sd_a" not in inputs:
         return None, {}
-    sigmas = {"m_a": a.sigma, "m_b": b.sigma, "sd_a": a.dispersion_sigma,
-              "sd_b": b.dispersion_sigma}
+    # the σ recorded on a spread is in the units of that spread AS READ; `_mean_sd` converted it
+    # alongside the value, and those converted numbers are what the derivatives here multiply
+    sigmas = {"m_a": inputs.get("sigma_mean_a"), "m_b": inputs.get("sigma_mean_b"),
+              "sd_a": inputs.get("sigma_sd_a"), "sd_b": inputs.get("sigma_sd_b")}
     if not any(sigma for sigma in sigmas.values()):
         return None, {}
     n_a, n_b = inputs["n_a"], inputs["n_b"]
@@ -481,6 +540,10 @@ def resolve_effect(dataset: DatasetSpec, outcome_def: OutcomeDef, resolved_value
     inputs: dict[str, Any] = {}
     for name in settings.route_precedence:
         if name not in routes:
+            why = why_missing.get(name) or (why_missing.get("group_statistics")
+                                            if name in GROUP_ROUTES else None)
+            if why:
+                rejected[name] = why
             continue
         if values.route_available and name not in values.route_available:
             rejected[name] = "the orchestrator did not offer this route for this cell"
@@ -490,8 +553,12 @@ def resolve_effect(dataset: DatasetSpec, outcome_def: OutcomeDef, resolved_value
         attempt: dict[str, Any] = {}
         try:
             result = _run_route(name, values, dataset, settings, attempt, steps, flags)
-        except (NotConvertible, ValueError) as exc:
+        except NotConvertible as exc:
             rejected[name] = str(exc)
+            inputs = attempt or inputs
+            continue
+        except Exception as exc:            # a broken cell must never take the paper down with it
+            rejected[name] = f"{type(exc).__name__}: {exc}"
             inputs = attempt or inputs
             continue
         return _finish(record, name, result, attempt, steps, flags, rejected, values, settings)
@@ -551,8 +618,10 @@ def _finish(record: EffectSizeRecord, name: str, result: SMDResult, inputs: dict
         record.digitization_var = digitization
         record.var_with_digitization = result.var + digitization
         record.digitization_var_share = digitization / result.var if result.var else None
-        steps.append(f"digitisation variance (delta method) = {_fmt(digitization)}, "
-                     f"{digitization / result.var:.1%} of the sampling variance")
+        share = (f"{record.digitization_var_share:.1%} of the sampling variance"
+                 if record.digitization_var_share is not None
+                 else "the sampling variance is zero, so its share is undefined")
+        steps.append(f"digitisation variance (delta method) = {_fmt(digitization)}, {share}")
         if record.digitization_var_share and record.digitization_var_share > DIGITIZATION_SHARE_FLAG:
             flags.append("digitization_variance_large")
         if settings.digitization_variance == "primary":

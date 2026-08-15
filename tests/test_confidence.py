@@ -160,6 +160,42 @@ def test_an_adjudicator_that_asks_for_a_human_gets_one():
     assert bucket == "needs_human"
 
 
+def test_a_row_only_table_match_caps_the_cell():
+    """Numbers found in the named row but not the named column may be the other group's."""
+    result = vote([text_cand("a", 31.51), text_cand("b", 31.51, model=SONNET)])
+    flags = [CheckFlag(code="quote_row_only", severity="warn",
+                       message="found in the row but not the column", candidate_ids=["a"])]
+    bucket, score, reasons = confidence(result, CONFIRMED, flags, None, orientation=ORIENTED)
+    assert bucket == "accept_with_note" and score <= 0.70
+    assert any("other group" in r for r in reasons)
+
+
+def test_a_figure_that_contradicts_the_printed_value_costs_points():
+    text = [text_cand("a", 31.51), text_cand("b", 31.51, model=SONNET)]
+    clean = confidence(vote(text), CONFIRMED, [], None, orientation=ORIENTED)
+    conflicted = vote([*text, fig_cand("f", 45.0, model="claude-fable-5")])
+    assert conflicted.figure_conflict is True
+    scored = confidence(conflicted, CONFIRMED, [], None, orientation=ORIENTED)
+    assert scored[1] < clean[1]
+    assert any("figure read disagrees" in r for r in scored[2])
+
+
+def test_a_grounded_adjudicated_quote_counts_as_evidence():
+    """A ruling that quoted the paper is evidence; `ground_adjudication` already checked it."""
+    rows = [text_cand("a", 31.51), text_cand("b", 13.5, model=SONNET)]
+    quoted = Adjudication(
+        dataset_id="ds1", outcome_key="late_adaptation", rationale="page 4 prints it",
+        groups=[AdjudicatedGroup(group="A", mean=31.51, n=12, quote="the mean direction error "
+                                                                   "was 31.51 deg",
+                                 page=4, grounded=True, grounding_similarity=1.0)])
+    bare = Adjudication(dataset_id="ds1", outcome_key="late_adaptation", rationale="page 4",
+                        groups=[AdjudicatedGroup(group="A", mean=31.51, n=12)])
+    with_quote = confidence(vote(rows), [], [], quoted, candidates=rows, orientation=ORIENTED)
+    without = confidence(vote(rows), [], [], bare, candidates=rows, orientation=ORIENTED)
+    assert with_quote[1] > without[1]
+    assert with_quote[0] == "accept_with_note"
+
+
 # --------------------------------------------------------------------------- amendment F
 def test_digitised_routes_that_imply_the_same_effect_pass_the_gate():
     rows = [fig_cand("a1", 31.5, route="pathC", sigma=0.2),

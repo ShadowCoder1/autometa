@@ -5,10 +5,24 @@ A number is believed when two readers that fail *differently* wrote it down. "Di
 variants of the same model on the same pages share a failure mode, so they are one voter, and
 their answers are collapsed to that route's median before anything is compared.
 
-Tolerance comes from the evidence, not from a constant:
+Tolerance comes from the evidence, not from a constant, and it is applied PER PAIR — never once
+for the whole cell:
 
-* characters — half of the last digit the paper actually printed ("31.5" tolerates ±0.05);
-* pictures   — max(2% of the axis range, half a tick), the resolution a reader can honestly claim.
+* two printed values — the TIGHTER of the two printed precisions ("31.5" claims ±0.05, "31.51"
+  claims ±0.005; two readers who write different numbers disagree at the finer claim);
+* anything against a picture — the figure tolerance, max(2% of the axis range, half a tick), the
+  resolution a reader of that picture can honestly claim.
+
+The comparison is therefore **staged**, and the stages are not interchangeable. Text and table
+routes are clustered among themselves FIRST (spec §3.3(2): text/table agree when equal after
+normalisation, ± printed precision). Only then are figure routes reconciled with that consensus,
+at the figure tolerance. A figure read can confirm a text consensus, and it can conflict with one
+(recorded, and the text value is kept) — but it can never bridge two text readers who disagree
+with each other, which a single cell-wide tolerance would let it do.
+
+The resolved value is one a source actually reported: the most-reported text/table value (or, on a
+tie, the lower of the reported ones), never a blend of a text reading and a figure reading. Only
+when there is no text or table route at all does the figure per-cell median become the value.
 
 Agreement across at least two routes is *accepted by vote*. Two text extractors that disagree set
 `needs_third_candidate`, which the orchestrator satisfies by running a third cheap candidate
@@ -24,22 +38,16 @@ from typing import Any, Iterable, Literal, Sequence
 from pydantic import Field
 
 from ..models import CanopyModel, Candidate, DispersionType, GroupKey, SourceKind
+from .figures import (AXIS_FRACTION, FALLBACK_FRACTION, FIGURE_KINDS, TICK_FRACTION,
+                      figure_calibration, figure_tolerance)
 from .grounding import is_short_quote as _is_short_quote
 
 __all__ = ["vote", "vote_groups", "VoteResult", "RouteValue", "route_key", "modality",
-           "model_family", "precision_tolerance", "figure_tolerance", "AXIS_FRACTION",
-           "TICK_FRACTION"]
+           "model_family", "precision_tolerance", "figure_tolerance", "candidate_tolerance",
+           "AXIS_FRACTION", "TICK_FRACTION"]
 
-AXIS_FRACTION = 0.02            # a digitised mean may differ by 2% of the axis range …
-TICK_FRACTION = 0.5             # … or half a tick, whichever is looser (amendment F)
-FALLBACK_FRACTION = 0.02        # a figure with no calibration at all: 2% of the value itself
 MAX_DECIMALS = 12               # beyond this a "printed" precision is float noise
 
-_FIGURE_KINDS = frozenset({SourceKind.figure_bar, SourceKind.figure_line, SourceKind.figure_points,
-                           SourceKind.figure_box})
-_AXIS_MIN_KEYS = ("y_min", "ymin", "min", "axis_min", "value_min")
-_AXIS_MAX_KEYS = ("y_max", "ymax", "max", "axis_max", "value_max")
-_TICK_KEYS = ("y_tick", "ytick", "tick", "tick_spacing", "y_tick_spacing")
 _NUMBER_RE = re.compile(r"[-+]?\d+(?:\.\d+)?")
 
 
@@ -58,7 +66,7 @@ def modality(cand: Candidate) -> str:
     if cand.extractor_id.startswith("digitize:"):
         pieces = cand.extractor_id.split(":")
         return f"figure:{pieces[1]}" if len(pieces) > 1 and pieces[1] else "figure"
-    if cand.source_kind in _FIGURE_KINDS:
+    if cand.source_kind in FIGURE_KINDS:
         return "figure"
     if cand.kind in ("test_statistic", "reported_d"):
         return "statistic"
@@ -104,24 +112,8 @@ def precision_tolerance(cand: Candidate) -> float:
 
 
 def axis_calibration(cand: Candidate) -> dict[str, Any]:
-    cal = (cand.pixel_provenance or {}).get("cal")
-    if not isinstance(cal, dict):
-        return {}
-    axis = cal.get("y")
-    return axis if isinstance(axis, dict) else cal
-
-
-def figure_tolerance(cand: Candidate, axis_range: float | None = None) -> float | None:
-    """max(2% of the axis range, half a tick) — `None` when nothing calibrates this figure."""
-    cal = axis_calibration(cand)
-    low = next((cal[k] for k in _AXIS_MIN_KEYS if isinstance(cal.get(k), (int, float))), None)
-    high = next((cal[k] for k in _AXIS_MAX_KEYS if isinstance(cal.get(k), (int, float))), None)
-    tick = next((cal[k] for k in _TICK_KEYS if isinstance(cal.get(k), (int, float))), None)
-    span = abs(float(high) - float(low)) if low is not None and high is not None else axis_range
-    options = [AXIS_FRACTION * abs(span) for span in ([span] if span else [])]
-    if tick:
-        options.append(TICK_FRACTION * abs(float(tick)))
-    return max(options) if options else None
+    """Deprecated alias kept for readability at call sites: the parsed figure calibration."""
+    return figure_calibration(cand.pixel_provenance).__dict__
 
 
 def candidate_tolerance(cand: Candidate, axis_range: float | None = None) -> float:
@@ -144,6 +136,7 @@ class RouteValue(CanopyModel):
     n: int | None = None
     sigma: float | None = None
     candidate_ids: list[str] = Field(default_factory=list)
+    tolerance: float = 0.0               # what THIS route can honestly claim about its own value
     spread: float | None = None          # furthest candidate from this route's own median
     consistent: bool = True
 
@@ -167,6 +160,9 @@ class VoteResult(CanopyModel):
     #: the value came from a picture and there is no quote to ground
     grounded: bool | None = None
     short_quote: bool = False
+    #: a figure route read a different value from the text/table consensus that carried the vote —
+    #: the text value is kept, and this says the picture did not corroborate it
+    figure_conflict: bool = False
     method: str = "none"
     tolerance: float | None = None
     agreeing_ids: list[str] = Field(default_factory=list)
@@ -201,7 +197,42 @@ def _mode(values: Sequence[Any]) -> Any | None:
     return Counter(present).most_common(1)[0][0] if present else None
 
 
-def _route_values(rows: Sequence[Candidate], tolerance: float,
+def _reported_value(values: Sequence[float]) -> float:
+    """A value a source actually reported: the most-reported one, or the lower on a tie.
+
+    Never the arithmetic middle of two different readings — an effect size built on a number no
+    paper contains cannot be checked against the paper.
+    """
+    counts = Counter(values)
+    value, times = counts.most_common(1)[0]
+    return float(value) if times > 1 else float(statistics.median_low(values))
+
+
+def _route_tolerance(members: Sequence[Candidate], axis_range: float | None) -> float:
+    """What one route can claim about its own value.
+
+    Text routes take the tighter of their members' printed precisions (a route that reports two
+    different numbers should look inconsistent, not be excused by its coarsest reading); a figure
+    route's members share one calibration, so the two agree.
+    """
+    tolerances = [candidate_tolerance(c, axis_range) for c in members]
+    return min(tolerances) if is_text_route(route_key(members[0])) else max(tolerances)
+
+
+def _pair_tolerance(a: RouteValue, b: RouteValue) -> float:
+    """How far apart two routes may be and still be the same value.
+
+    Two printed readings: the TIGHTER of the two precisions — a reader who writes "31.51" is
+    claiming two decimals, and "31.5" from the other reader is then a different number, not a
+    rounding of the same one. Anything involving a picture: the figure tolerance, because a value
+    measured off an axis cannot be more precise than that axis.
+    """
+    if is_text_route(a.route_key) and is_text_route(b.route_key):
+        return min(a.tolerance, b.tolerance)
+    return max(a.tolerance, b.tolerance)
+
+
+def _route_values(rows: Sequence[Candidate], axis_range: float | None,
                   notes: list[str]) -> list[RouteValue]:
     grouped: dict[str, list[Candidate]] = {}
     for cand in rows:
@@ -212,6 +243,7 @@ def _route_values(rows: Sequence[Candidate], tolerance: float,
         means = [c.mean for c in members]
         median = _median(means)
         spread = max(abs(m - median) for m in means)
+        tolerance = _route_tolerance(members, axis_range)
         consistent = spread <= tolerance
         if not consistent:
             notes.append(f"route {key} disagrees with itself: {means} (spread {spread:.4g} > "
@@ -222,16 +254,16 @@ def _route_values(rows: Sequence[Candidate], tolerance: float,
             route_key=key, value=median,
             dispersion_value=_median(dispersions) if dispersions else None,
             n=_mode([c.n for c in members]), sigma=_median(sigmas) if sigmas else None,
-            candidate_ids=[c.candidate_id for c in members],
+            candidate_ids=[c.candidate_id for c in members], tolerance=tolerance,
             spread=spread, consistent=consistent))
     return routes
 
 
-def _best_cluster(routes: Sequence[RouteValue], tolerance: float) -> list[RouteValue]:
-    """The largest set of routes that all sit within `tolerance` of one of them."""
+def _best_cluster(routes: Sequence[RouteValue]) -> list[RouteValue]:
+    """The largest set of routes that all sit within their PAIRWISE tolerance of one of them."""
     best: list[RouteValue] = []
     for seed in routes:
-        cluster = [r for r in routes if abs(r.value - seed.value) <= tolerance]
+        cluster = [r for r in routes if abs(r.value - seed.value) <= _pair_tolerance(seed, r)]
         if (len(cluster), sum(len(r.candidate_ids) for r in cluster)) > \
                 (len(best), sum(len(r.candidate_ids) for r in best)):
             best = cluster
@@ -283,53 +315,99 @@ def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
         result.notes = ["no candidate reported a value for this cell"]
         return result
 
-    tolerances = [candidate_tolerance(c, axis_range) for c in rows]
-    tolerance = max(tolerances)
-    any_figure = any(is_figure_route(route_key(c)) for c in rows)
-    if any_figure and all(figure_tolerance(c, axis_range) is None
-                          for c in rows if is_figure_route(route_key(c))):
+    if any(is_figure_route(route_key(c)) for c in rows) and all(
+            figure_tolerance(c, axis_range) is None
+            for c in rows if is_figure_route(route_key(c))):
         notes.append(f"no figure calibration was recorded; falling back to "
                      f"{FALLBACK_FRACTION:.0%} of the value as the tolerance")
 
-    routes = _route_values(rows, tolerance, notes)
+    routes = _route_values(rows, axis_range, notes)
     result.routes = routes
-    result.tolerance = tolerance
     by_id = {c.candidate_id: c for c in rows}
 
     if len(routes) == 1:
         route = routes[0]
-        result.agreement = "single"
-        result.method = "single"
+        result.agreement, result.method = "single", "single"
         result.mean = route.value
+        result.tolerance = route.tolerance
         result.agreeing_ids = list(route.candidate_ids)
         result.mad = 0.0
         _fill_values(result, [by_id[cid] for cid in route.candidate_ids], notes)
         result.notes = notes
         return result
 
-    result.method = "figure_tolerance" if any_figure else "printed_precision"
-    cluster = _best_cluster(routes, tolerance)
-    cluster_keys = {r.route_key for r in cluster}
-    text_routes = {r.route_key for r in routes if is_text_route(r.route_key)}
+    text = [r for r in routes if is_text_route(r.route_key)]
+    others = [r for r in routes if not is_text_route(r.route_key)]
 
-    if len(cluster) >= 2:
-        values = [r.value for r in cluster]
-        centre = _median(values)
-        result.agreement = "agree"
-        result.mean = centre
-        result.mad = _median([abs(v - centre) for v in values])
-        result.agreeing_ids = [c.candidate_id for c in rows if route_key(c) in cluster_keys]
-        result.disagreeing_ids = [c.candidate_id for c in rows if route_key(c) not in cluster_keys]
-        _fill_values(result, [by_id[cid] for cid in result.agreeing_ids], notes)
-    else:
-        result.agreement = "disagree"
+    # --- stage 1: what the printed sources agree on, decided among themselves
+    consensus = _best_cluster(text) if len(text) >= 2 else []
+    if len(consensus) >= 2:
+        value = _reported_value([r.value for r in consensus])
+        result.tolerance = min(_pair_tolerance(a, b) for a in consensus for b in consensus
+                               if a is not b)
+        result.method = "printed_precision"
+        winners, conflicts = list(consensus), []
+        for route in others:                       # --- stage 2: does the picture corroborate it?
+            tolerance = max([route.tolerance] + [c.tolerance for c in consensus])
+            (winners if abs(route.value - value) <= tolerance else conflicts).append(route)
+        for route in conflicts:
+            notes.append(f"route {route.route_key} read {route.value:.4g}, outside the "
+                         f"{max([route.tolerance] + [c.tolerance for c in consensus]):.4g} "
+                         f"tolerance around the printed value {value:.4g}; the printed value "
+                         f"stands")
+        result.figure_conflict = any(is_figure_route(r.route_key) for r in conflicts)
+        _decide(result, rows, winners, value, by_id, notes)
+        return result
+
+    if len(text) >= 2:
+        # printed sources that contradict each other: no picture may reconcile them (amendment G)
+        result.agreement, result.method = "disagree", "printed_precision"
+        result.tolerance = min(_pair_tolerance(a, b) for a in text for b in text if a is not b)
         result.disagreeing_ids = [c.candidate_id for c in rows]
-        result.needs_third_candidate = len(text_routes) == 2
-        notes.append("no two independent routes agreed: "
-                     + ", ".join(f"{r.route_key}={r.value:.4g}" for r in routes)
-                     + f" (tolerance {tolerance:.4g})")
+        result.needs_third_candidate = len(text) == 2
+        notes.append("the printed sources disagree: "
+                     + ", ".join(f"{r.route_key}={r.value:.4g}" for r in text)
+                     + f" (tolerance {result.tolerance:.4g}); a figure read cannot decide between "
+                       f"them")
+        if others:
+            notes.append("routes not consulted: "
+                         + ", ".join(f"{r.route_key}={r.value:.4g}" for r in others))
+        result.notes = notes
+        return result
+
+    # --- one or no printed source: everything votes, at the tolerance of each pair
+    cluster = _best_cluster(routes)
+    result.method = "figure_tolerance" if any(is_figure_route(r.route_key) for r in routes) \
+        else "printed_precision"
+    if len(cluster) >= 2:
+        result.tolerance = max(_pair_tolerance(a, b) for a in cluster for b in cluster if a is not b)
+        in_text = [r for r in cluster if is_text_route(r.route_key)]
+        value = _reported_value([r.value for r in in_text]) if in_text \
+            else _median([r.value for r in cluster])
+        _decide(result, rows, cluster, value, by_id, notes)
+        return result
+
+    result.agreement = "disagree"
+    result.tolerance = max(r.tolerance for r in routes)
+    result.disagreeing_ids = [c.candidate_id for c in rows]
+    notes.append("no two independent routes agreed: "
+                 + ", ".join(f"{r.route_key}={r.value:.4g}" for r in routes)
+                 + f" (tolerances {[round(r.tolerance, 4) for r in routes]})")
     result.notes = notes
     return result
+
+
+def _decide(result: VoteResult, rows: Sequence[Candidate], winners: Sequence[RouteValue],
+            value: float, by_id: dict[str, Candidate], notes: list[str]) -> None:
+    """Record an agreed cell: the value the sources reported, and who stood behind it."""
+    keys = {r.route_key for r in winners}
+    result.agreement = "agree"
+    result.mean = value
+    result.mad = _median([abs(r.value - value) for r in winners])
+    result.agreeing_ids = [c.candidate_id for c in rows if route_key(c) in keys]
+    result.disagreeing_ids = [c.candidate_id for c in rows if route_key(c) not in keys]
+    _fill_values(result, [by_id[cid] for cid in result.agreeing_ids], notes)
+    result.notes = notes
 
 
 def vote_groups(candidates: Sequence[Candidate],

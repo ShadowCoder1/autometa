@@ -93,17 +93,32 @@ class EggerResult:
     Either way `intercept`/`t`/`p` test asymmetry and `estimate` is the limit estimate.
     """
 
+    #: THE ASYMMETRY COEFFICIENT, whichever variant produced it — the quantity the test is about.
+    #: Classic: the fitted intercept of TE/seTE on 1/seTE. Pustejovsky-Rodgers: the fitted slope on
+    #: √(1/n_a + 1/n_b). `t` and `p` always test THIS number against zero.
     intercept: float
     intercept_se: float
     t: float
     p: float
+    #: the other coefficient of the same fit: the effect a study of infinite precision would show
     slope: float
     k: int
-    predictor: str = "precision"
+    predictor: str = "precision"           # precision | sqrt_inv_n
     df: int = 0
+    #: the limit estimate — identical to `slope`, under the name a report should print
     estimate: float = float("nan")
     estimate_ci_low: float = float("nan")
     estimate_ci_high: float = float("nan")
+
+    @property
+    def bias_coefficient(self) -> float:
+        """`intercept` under the name that says what it is, whichever predictor was used."""
+        return self.intercept
+
+    @property
+    def limit_estimate(self) -> float:
+        """`estimate` under the name that says what it is: the effect at zero standard error."""
+        return self.estimate
 
 
 @dataclass
@@ -333,6 +348,10 @@ def egger_test(yi, sei, n_a=None, n_b=None, level: float = 0.95) -> EggerResult:
     `metafor::regtest(predictor="sqrtninv", ni=n_a·n_b/(n_a+n_b), model="lm")`). For a standardised
     mean difference seTE is a function of the effect estimate itself, which makes the classic test
     reject too often; the sample-size predictor removes that dependence.
+
+    Raises `ValueError` below k = 3, matching `metafor::regtest`: the fit spends two degrees of
+    freedom on its two coefficients, so with two studies there is nothing left to test the
+    asymmetry coefficient against and any p value would be fabricated.
     """
     yi = np.asarray(yi, float).ravel()
     sei = np.asarray(sei, float).ravel()

@@ -52,6 +52,10 @@ CONFIRMED_BONUS, AMBIGUOUS_PENALTY = 0.20, 0.05
 WARN_PENALTY, WARN_CAP = 0.08, 0.24
 INFO_PENALTY, INFO_CAP = 0.01, 0.03
 MAD_SHARE, SIGMA_SHARE, SPREAD_PENALTY = 0.05, 0.10, 0.05
+FIGURE_CONFLICT_PENALTY = 0.05
+#: flags that cap a cell at `accept_with_note` however well it scores otherwise — each one is a
+#: specific way the value could belong to the OTHER group, which no amount of agreement rules out
+CAPPING_FLAGS: frozenset[str] = frozenset({"quote_row_only"})
 
 
 # ----------------------------------------------------------------------------- amendment F gate
@@ -154,6 +158,12 @@ def _grounding(vote_result: VoteResult, candidates: Sequence[Candidate] | None,
         if quoted:
             return (all(c.grounded is not False for c in quoted),
                     any(is_short_quote(c.quote) for c in quoted))
+    if settled is not None:
+        # a ruling that quoted the paper itself: `ground_adjudication` already checked it, and a
+        # failed check set `needs_human`, so anything still here is grounded evidence
+        ruled = [g for g in settled.groups if g.quote.strip() and g.grounded is not None]
+        if ruled:
+            return (all(g.grounded for g in ruled), any(is_short_quote(g.quote) for g in ruled))
     return vote_result.grounded, vote_result.short_quote
 
 
@@ -243,6 +253,10 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
         score -= SPREAD_PENALTY
         reasons.append(f"the routes are {vote_result.mad / abs(value):.0%} apart around the value "
                        f"(-{SPREAD_PENALTY:.2f})")
+    if vote_result.figure_conflict:
+        score -= FIGURE_CONFLICT_PENALTY
+        reasons.append(f"a figure read disagrees with the printed value that carried the vote "
+                       f"(-{FIGURE_CONFLICT_PENALTY:.2f})")
     if vote_result.sigma and value and vote_result.sigma / abs(value) > SIGMA_SHARE:
         score -= SPREAD_PENALTY
         reasons.append(f"the digitisation uncertainty is {vote_result.sigma / abs(value):.0%} of "
@@ -279,6 +293,11 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
         reasons.append(f"adjudicated cells are capped at {ADJUDICATED_CAP:.2f}")
     if vote_result.agreement == "single" and not settled:
         score = min(score, SINGLE_ROUTE_CAP)
+    capping = sorted({f.code for f in flags} & CAPPING_FLAGS)
+    if capping:
+        score = min(score, ADJUDICATED_CAP)
+        reasons.append(f"{', '.join(capping)} caps this cell: the numbers may belong to the other "
+                       f"group, which agreement cannot rule out")
 
     # --- amendment F: a purely digitised cell has to earn its automatic acceptance
     if routes and all(is_figure_route(r.route_key) for r in routes) and not settled:

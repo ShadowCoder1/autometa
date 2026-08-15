@@ -370,7 +370,13 @@ class VerifierVerdict(CanopyModel):
 
 
 class AdjudicatedGroup(CanopyModel):
-    """The adjudicator's final answer for one group of one cell."""
+    """The adjudicator's final answer for one group of one cell.
+
+    An adjudicated value is a value like any other: it must point at a place in the paper. `quote`,
+    `page` and `locator` carry that, `grounded` records whether the quote was found in the
+    deterministic page text, and a value that matches no candidate AND cannot be grounded sets
+    `needs_human` — an LLM's unverifiable number never enters a pooled estimate.
+    """
 
     group: GroupKey
     n: int | None = None
@@ -378,6 +384,11 @@ class AdjudicatedGroup(CanopyModel):
     dispersion_value: float | None = None
     dispersion_type: DispersionType = DispersionType.UNKNOWN
     unit: str = ""
+    quote: str = ""
+    page: int | None = None
+    locator: str = ""
+    grounded: bool | None = None
+    grounding_similarity: float | None = None
     chosen_candidate_ids: list[str] = Field(default_factory=list)
     reason: str = ""
     needs_human: bool = False
@@ -521,6 +532,9 @@ class EffectSizeRecord(CanopyModel):
     var_with_digitization: float | None = None
     digitization_var_share: float | None = None
     confidence: ConfidenceBucket = "needs_human"
+    #: what the two groups' numbers measured (endpoint, change from baseline, ...) — copied from
+    #: the verified cell by the orchestrator so the sensitivity set can split rows by metric
+    analysis_metric: AnalysisMetric = "unknown"
     flags: list[str] = Field(default_factory=list)
     moderators: dict[str, str] = Field(default_factory=dict)
     citation: Citation = Field(default_factory=Citation)

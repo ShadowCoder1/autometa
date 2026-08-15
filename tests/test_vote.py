@@ -102,10 +102,68 @@ def test_two_heterogeneous_readers_that_agree_are_accepted():
 
 
 def test_agreement_survives_a_difference_inside_the_printed_precision():
+    """Both readers say the paper prints one decimal; 31.50 and 31.52 are the same printed value."""
     a = text_cand("a", 31.5, written="31.5")
-    b = text_cand("b", 31.51, written="31.51", model=SONNET)
+    b = text_cand("b", 31.52, written="31.5", model=SONNET)
     result = vote([a, b])
     assert result.agreement == "agree" and result.tolerance == pytest.approx(0.05)
+    assert result.value in (31.5, 31.52)                # a value a source actually reported
+
+
+def test_the_tighter_printed_precision_decides_a_pair():
+    """One reader claims two decimals and the other one: 31.5 and 31.51 are then different
+    numbers, not a rounding of the same one, and a third opinion is owed."""
+    a = text_cand("a", 31.51, written="31.51")
+    b = text_cand("b", 31.5, written="31.5", model=SONNET)
+    result = vote([a, b])
+    assert result.agreement == "disagree" and result.tolerance == pytest.approx(0.005)
+    assert result.needs_third_candidate is True
+
+
+def test_a_figure_read_cannot_bridge_two_text_readers_who_disagree():
+    """The failure this layer exists to prevent: a loose figure tolerance must not be applied to a
+    text-versus-text comparison, blending two contradictory transcriptions into one number."""
+    a = text_cand("a", 31.51, written="31.51")
+    b = text_cand("b", 33.0, written="33.0", model=SONNET, variant="narrative_first")
+    figure = figure_cand("f", 32.4, model="claude-fable-5")
+    result = vote([a, b, figure])
+    assert result.agreement == "disagree"
+    assert result.needs_third_candidate is True
+    assert result.value is None
+    assert sorted(result.agreeing_ids) == []
+    assert any("cannot decide between them" in note for note in result.notes)
+
+
+def test_a_figure_within_tolerance_corroborates_the_printed_value():
+    a = text_cand("a", 31.51, written="31.51")
+    b = text_cand("b", 31.51, written="31.51", model=SONNET, variant="narrative_first")
+    figure = figure_cand("f", 32.4, model="claude-fable-5")
+    result = vote([a, b, figure])
+    assert result.agreement == "agree"
+    assert result.value == pytest.approx(31.51)         # the printed value, not a blend
+    assert sorted(result.agreeing_ids) == ["a", "b", "f"]
+    assert result.figure_conflict is False
+
+
+def test_a_figure_outside_tolerance_is_flagged_and_the_printed_value_stands():
+    a = text_cand("a", 31.51, written="31.51")
+    b = text_cand("b", 31.51, written="31.51", model=SONNET, variant="narrative_first")
+    figure = figure_cand("f", 45.0, model="claude-fable-5")
+    result = vote([a, b, figure])
+    assert result.agreement == "agree"
+    assert result.value == pytest.approx(31.51)
+    assert result.figure_conflict is True
+    assert result.disagreeing_ids == ["f"]
+    assert any("the printed value stands" in note for note in result.notes)
+
+
+def test_the_resolved_value_is_one_a_source_reported():
+    """Three readers, two of whom report the same number: that number wins, not their mean."""
+    rows = [text_cand("a", 31.5, written="31.5"),
+            text_cand("b", 31.5, written="31.5", model=SONNET),
+            text_cand("c", 31.52, written="31.5", model="claude-fable-5")]
+    result = vote(rows)
+    assert result.value == pytest.approx(31.5)
 
 
 def test_two_text_readers_that_disagree_ask_for_a_third_candidate():

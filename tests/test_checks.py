@@ -69,8 +69,67 @@ def test_flags_are_stable_and_sorted_worst_first():
 # --------------------------------------------------------------------------- spec §3.3(1)
 def test_an_n_below_two_is_an_error():
     flags = run_checks(make_dataset(), "late_adaptation", [cand("A", n=1), cand("B")])
-    flag = next(f for f in flags if f.code == "n_not_integer")
+    flag = next(f for f in flags if f.code == "n_too_small")
     assert flag.severity == "error" and flag.candidate_ids == ["cA"] and "1" in flag.message
+    assert "n_not_integer" not in codes(flags)           # a whole number, just too few of them
+
+
+def test_a_row_only_table_match_is_flagged_as_a_possible_group_mix_up():
+    """`grounding.check_table_cell` writes ROW_ONLY when the numbers are in the named row but not
+    in the named column — exactly what reading the other group's cell looks like."""
+    from canopy.verify.grounding import ROW_ONLY
+
+    flags = run_checks(make_dataset(), "late_adaptation",
+                       [cand("A", notes=f"table cell check: {ROW_ONLY}: found in p1t1 row 'old' "
+                                        f"but not in column 'mean'"), cand("B")])
+    flag = next(f for f in flags if f.code == "quote_row_only")
+    assert flag.severity == "warn" and flag.candidate_ids == ["cA"]
+
+
+def test_a_value_matched_without_its_sign_is_flagged():
+    from canopy.verify.grounding import SIGN_NOTE
+
+    flags = run_checks(make_dataset(), "late_adaptation",
+                       [cand("A", notes=f"table cell check: row-confirmed; {SIGN_NOTE} for "
+                                        f"[31.51]"), cand("B")])
+    flag = next(f for f in flags if f.code == "sign_not_confirmed")
+    assert flag.severity == "warn"
+
+
+# --------------------------------------------------------------------------- the sign check
+def test_a_stated_direction_that_the_numbers_contradict_is_an_error():
+    from canopy.models import OrientationVerdict
+
+    verdict = OrientationVerdict(outcome_key="late_adaptation", higher_is_better=False,
+                                 agreed=True, needs_human=False,
+                                 direction_stated_in_text="b_greater")
+    flags = run_checks(make_dataset(), "late_adaptation", pair(), orientation=verdict)
+    flag = next(f for f in flags if f.code == "sign_mismatch")
+    assert flag.severity == "error"
+    assert "31.51" in flag.message and "12.28" in flag.message
+    assert set(flag.candidate_ids) == {"cA", "cB"}
+
+
+def test_a_stated_direction_the_numbers_agree_with_is_not_flagged():
+    from canopy.models import OrientationVerdict
+
+    verdict = OrientationVerdict(outcome_key="late_adaptation", higher_is_better=False,
+                                 agreed=True, needs_human=False,
+                                 direction_stated_in_text="a_greater")
+    assert "sign_mismatch" not in codes(
+        run_checks(make_dataset(), "late_adaptation", pair(), orientation=verdict))
+
+
+def test_identical_means_carry_no_direction_to_contradict():
+    """A stated direction with equal extracted means is a magnitude problem, not a sign problem:
+    the effect size is zero, and `sign_mismatch` would tell a reviewer the sign is inverted."""
+    from canopy.verify.checks import sign_check
+
+    assert sign_check("a_greater", 12.0, 12.0) is None
+    assert sign_check("b_greater", 12.0, 12.0) is None
+    assert sign_check("unknown", 31.51, 12.28) is None
+    assert sign_check("a_greater", None, 12.28) is None
+    assert sign_check("b_greater", 31.51, 12.28) is not None
 
 
 def test_a_missing_n_is_flagged_but_not_fatal():

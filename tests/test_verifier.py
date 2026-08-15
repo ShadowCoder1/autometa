@@ -217,17 +217,23 @@ def test_the_verifier_sees_the_whole_paper_and_the_extra_blocks(paper, bock_data
     assert "42.5" in prompt and "old subjects" in prompt and "screening_time" in prompt
 
 
-def test_a_file_id_document_reserves_by_page_count(paper, bock_dataset):
+@pytest.fixture
+def file_page_registry():
+    """`canopy.llm.costs` keeps a process-wide `file_id` -> page-count map so a whole-paper call
+    reserves what the paper really costs. It is global state, so a test that writes to it clears
+    it on both sides."""
     clear_file_pages()
-    try:
-        _, provider = run_verifier(paper, screening_candidate(), verifier_payload(),
-                                   dataset=bock_dataset, pdf_file_id="file_abc")
-        blocks = provider.requests[0].messages[0]["content"]
-        assert blocks[0]["source"] == {"type": "file", "file_id": "file_abc"}
-        assert file_document_tokens("file_abc") == paper.n_pages * PDF_TOKENS_PER_PAGE
-        assert file_document_tokens("file_unknown") > 0
-    finally:
-        clear_file_pages()
+    yield
+    clear_file_pages()
+
+
+def test_a_file_id_document_reserves_by_page_count(paper, bock_dataset, file_page_registry):
+    _, provider = run_verifier(paper, screening_candidate(), verifier_payload(),
+                               dataset=bock_dataset, pdf_file_id="file_abc")
+    blocks = provider.requests[0].messages[0]["content"]
+    assert blocks[0]["source"] == {"type": "file", "file_id": "file_abc"}
+    assert file_document_tokens("file_abc") == paper.n_pages * PDF_TOKENS_PER_PAGE
+    assert file_document_tokens("file_unknown") > 0
 
 
 # ------------------------------------------------------------------ the adjudicator
@@ -235,10 +241,14 @@ def adjudication_payload(**overrides):
     payload = {
         "groups": [
             {"group": "A", "n": 12, "mean": 42.5, "dispersion_value": 6.9,
-             "dispersion_type": "SD", "unit": "s", "chosen_candidate_ids": [],
+             "dispersion_type": "SD", "unit": "s",
+             "quote": "that for old subjects was 42.5±6.9 s", "page": 3,
+             "locator": "Results, screening-test paragraph", "chosen_candidate_ids": [],
              "reason": "page 3 prints it for the old group", "needs_human": False},
             {"group": "B", "n": 12, "mean": 27.4, "dispersion_value": 7.2,
-             "dispersion_type": "SD", "unit": "s", "chosen_candidate_ids": [],
+             "dispersion_type": "SD", "unit": "s",
+             "quote": "the completion time for young subjects was 27.4±7.2 s", "page": 3,
+             "locator": "Results, screening-test paragraph", "chosen_candidate_ids": [],
              "reason": "page 3 prints it for the young group", "needs_human": False},
         ],
         "rationale": "both values are printed in the same sentence on page 3",
@@ -274,6 +284,75 @@ def test_a_ruling_may_only_cite_candidates_from_this_cell(paper, bock_dataset):
     assert ruling.group_values("A").chosen_candidate_ids == [cands[0].candidate_id]
     assert "some:other:cell#3" in ruling.notes
     assert ruling.chosen_candidate_ids == [cands[0].candidate_id]
+
+
+def test_an_adjudicated_value_that_matches_a_candidate_inherits_its_provenance(paper,
+                                                                              bock_dataset):
+    """The adjudicator picked a reading somebody already evidenced, so it inherits that evidence
+    rather than being grounded a second time."""
+    cands = [screening_candidate("A")]
+    ruling, _ = run_adjudicator(paper, bock_dataset, cands, adjudication_payload())
+    group = ruling.group_values("A")
+    assert group.grounded is True and group.page == 3
+    assert group.chosen_candidate_ids == [cands[0].candidate_id]
+    assert group.needs_human is False and ruling.needs_human is False
+
+
+def test_an_adjudicated_value_nobody_proposed_must_stand_on_its_own_quote(paper, bock_dataset):
+    payload = adjudication_payload()
+    payload["groups"][0]["mean"] = 27.4                       # not what any candidate reported
+    payload["groups"][0]["quote"] = "the completion time for young subjects was 27.4±7.2 s"
+    ruling, _ = run_adjudicator(paper, bock_dataset, [screening_candidate("A")], payload)
+    group = ruling.group_values("A")
+    assert group.grounded is True and group.page == 3
+    assert group.needs_human is False
+
+
+def test_an_adjudicated_value_that_is_not_in_the_paper_needs_a_human(paper, bock_dataset):
+    """A number that matches no candidate and cannot be found in the paper is an LLM's invention,
+    and must never reach a pooled estimate as `accept_with_note`."""
+    payload = adjudication_payload()
+    payload["groups"][0]["mean"] = 39.9
+    payload["groups"][0]["quote"] = "that for old subjects was 39.9±6.9 s"
+    ruling, _ = run_adjudicator(paper, bock_dataset, [screening_candidate("A")], payload)
+    group = ruling.group_values("A")
+    assert group.grounded is False and group.needs_human is True
+    assert "not in the paper" in group.reason
+    assert ruling.needs_human is True
+
+
+def test_an_adjudicated_value_with_no_quote_needs_a_human(paper, bock_dataset):
+    payload = adjudication_payload()
+    payload["groups"][0]["mean"] = 39.9
+    payload["groups"][0]["quote"] = ""
+    ruling, _ = run_adjudicator(paper, bock_dataset, [screening_candidate("A")], payload)
+    group = ruling.group_values("A")
+    assert group.needs_human is True and group.grounded is False
+    assert "quoted nothing" in group.reason
+
+
+def test_an_adjudicated_value_inherited_from_an_ungrounded_candidate_needs_a_human(paper,
+                                                                                   bock_dataset):
+    cand = screening_candidate("A", grounded=False, grounding_similarity=0.3)
+    ruling, _ = run_adjudicator(paper, bock_dataset, [cand], adjudication_payload())
+    group = ruling.group_values("A")
+    assert group.needs_human is True and "not grounded" in group.reason
+
+
+def test_grounding_a_ruling_is_pure_code(paper, bock_dataset):
+    """`ground_adjudication` needs no model: Task 10 can re-run it after a human override."""
+    from canopy.agents.adjudicator import ground_adjudication
+    from canopy.models import Adjudication, AdjudicatedGroup
+
+    ruling = Adjudication(groups=[AdjudicatedGroup(group="A", mean=42.5, quote="", page=3)])
+    ground_adjudication(ruling, [], paper)
+    assert ruling.groups[0].needs_human is True and ruling.needs_human is True
+
+
+def test_the_adjudicator_prompt_demands_a_quote_for_every_value():
+    text = load_prompt("adjudicator").lower()
+    assert "quote" in text and "needs_human" in text
+    assert "checked against the paper" in text
 
 
 def test_a_group_the_adjudicator_skipped_needs_a_human(paper, bock_dataset):

@@ -21,12 +21,42 @@ from .extract_common import SYSTEM, clip, enum_schema, groups_text, outcome_text
 
 __all__ = ["SYSTEM", "clip", "enum_schema", "prompt_fingerprint", "outcome_prompt", "groups_prompt",
            "measure_prompt", "candidate_text", "candidates_text", "evidence_text", "whole_paper",
-           "MAX_REOPENS"]
+           "whole", "number", "enum_value", "strings", "note", "MAX_REOPENS"]
 
 #: how often one cell may be re-opened after a refutation before it goes to a human (amendment G)
 MAX_REOPENS = 2
 
 _QUOTE_CHARS = 320
+
+
+# ----------------------------------------------------------------------------- parsing a payload
+def whole(raw: Any) -> int | None:
+    """An integer the model sent (a bool is an int in Python, and never an answer here)."""
+    return raw if isinstance(raw, int) and not isinstance(raw, bool) else None
+
+
+def number(raw: Any) -> float | None:
+    if isinstance(raw, bool) or raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def enum_value(raw: Any, allowed: Sequence[str], fallback: str) -> str:
+    """One of `allowed`, or `fallback` — a model that answers off-menu never sets a field."""
+    value = raw.strip() if isinstance(raw, str) else ""
+    return value if value in set(allowed) else fallback
+
+
+def strings(raw: Any) -> list[str]:
+    return [s.strip() for s in raw if isinstance(s, str) and s.strip()] if isinstance(raw, list) \
+        else []
+
+
+def note(existing: str, addition: str) -> str:
+    return f"{existing}; {addition}" if existing else addition
 
 
 # ----------------------------------------------------------------------------- prose

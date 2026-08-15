@@ -21,7 +21,7 @@ from ..llm.context import text_block
 from ..models import (DatasetSpec, Direction, OrientationRun, OrientationVerdict, OutcomeDef,
                       OutcomeSources, Protocol, RawValueSemantics)
 from . import render_prompt
-from .verify_common import (SYSTEM, clip, enum_schema, groups_prompt, measure_prompt,
+from .verify_common import (SYSTEM, clip, enum_schema, enum_value, groups_prompt, measure_prompt,
                             outcome_prompt, prompt_fingerprint, whole_paper)
 
 __all__ = ["orientation", "orientation_run", "combine_orientation", "ORIENTATION_SCHEMA",
@@ -51,11 +51,6 @@ ORIENTATION_SCHEMA: dict[str, Any] = {
         "reason": {"type": "string"},
     },
 }
-
-
-def _enum_value(raw: Any, allowed: Sequence[str], fallback: str) -> str:
-    value = raw.strip() if isinstance(raw, str) else ""
-    return value if value in set(allowed) else fallback
 
 
 def _quotes(raw: Any) -> list[str]:
@@ -90,11 +85,11 @@ def orientation_run(client: LLMClient, paper: PaperRecord, dataset: DatasetSpec 
 
     parsed = result.parsed if isinstance(result.parsed, dict) else {}
     return OrientationRun(
-        higher_is_better=_HIGHER[_enum_value(parsed.get("higher_is_better"), list(_HIGHER),
+        higher_is_better=_HIGHER[enum_value(parsed.get("higher_is_better"), list(_HIGHER),
                                              "unknown")],
-        raw_value_semantics=_enum_value(parsed.get("raw_value_semantics"),
+        raw_value_semantics=enum_value(parsed.get("raw_value_semantics"),
                                         get_args(RawValueSemantics), "unknown"),
-        direction_stated_in_text=_enum_value(parsed.get("direction_stated_in_text"),
+        direction_stated_in_text=enum_value(parsed.get("direction_stated_in_text"),
                                              get_args(Direction), "unknown"),
         quotes=_quotes(parsed.get("quotes")),
         reason=(parsed.get("reason") or "").strip(),
