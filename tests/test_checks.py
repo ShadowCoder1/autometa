@@ -86,6 +86,18 @@ def test_a_row_only_table_match_is_flagged_as_a_possible_group_mix_up():
     assert flag.severity == "warn" and flag.candidate_ids == ["cA"]
 
 
+def test_the_row_only_marker_is_matched_as_grounding_writes_it():
+    """The bare words could appear in anyone's prose; the marker is the constant plus the
+    punctuation `check_table_cell` writes after it."""
+    from canopy.verify.checks import ROW_ONLY_MARKER
+    from canopy.verify.grounding import ROW_ONLY
+
+    assert ROW_ONLY_MARKER.startswith(ROW_ONLY) and ROW_ONLY_MARKER != ROW_ONLY
+    prose = cand("A", notes="the reviewer wondered whether this was a row-only match")
+    assert "quote_row_only" not in codes(run_checks(make_dataset(), "late_adaptation",
+                                                    [prose, cand("B")]))
+
+
 def test_a_value_matched_without_its_sign_is_flagged():
     from canopy.verify.grounding import SIGN_NOTE
 

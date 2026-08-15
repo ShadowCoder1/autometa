@@ -298,6 +298,41 @@ def test_an_adjudicated_value_that_matches_a_candidate_inherits_its_provenance(p
     assert group.needs_human is False and ruling.needs_human is False
 
 
+def test_an_inherited_verdict_comes_with_the_quote_it_was_a_verdict_ON(paper, bock_dataset):
+    """The quote and the grounding verdict travel together. Showing the adjudicator's own words
+    beside a candidate's `grounded` would label an unchecked quote as checked."""
+    payload = adjudication_payload()
+    payload["groups"][0]["quote"] = "old subjects took about forty-two seconds"   # not in the paper
+    ruling, _ = run_adjudicator(paper, bock_dataset, [screening_candidate("A")], payload)
+    group = ruling.group_values("A")
+    assert group.quote == screening_candidate("A").quote        # the checked one, not the model's
+    assert group.grounded is True
+    assert "forty-two seconds" in group.reason and "was checked" in group.reason
+
+
+def test_a_quote_beside_a_digitised_candidate_is_checked_on_its_own(paper, bock_dataset):
+    """A digitised candidate has pixels, not words, so there is no verdict to inherit: the
+    adjudicator's own quote has to be grounded itself."""
+    figure = screening_candidate("A", candidate_id="fig#1", quote="", grounded=None,
+                                 grounding_similarity=None, model="",
+                                 extractor_id="digitize:ensemble", route="figure")
+    payload = adjudication_payload()
+    payload["groups"][0]["quote"] = "that for old subjects was 42.5±6.9 s"
+    ruling, _ = run_adjudicator(paper, bock_dataset, [figure], payload)
+    group = ruling.group_values("A")
+    assert group.grounded is True and group.grounding_similarity is not None
+    assert group.needs_human is False
+
+    payload["groups"][0]["quote"] = "old subjects averaged 42.5 furlongs per fortnight"
+    ruling, _ = run_adjudicator(paper, bock_dataset, [figure], payload)
+    group = ruling.group_values("A")
+    # the VALUE still stands — a candidate reported it — but the justification does not, and it
+    # says so; `confidence` reads `grounded` and takes the ungrounded penalty
+    assert group.grounded is False
+    assert "not in the paper" in group.reason and figure.candidate_id in group.reason
+    assert group.needs_human is False
+
+
 def test_an_adjudicated_value_nobody_proposed_must_stand_on_its_own_quote(paper, bock_dataset):
     payload = adjudication_payload()
     payload["groups"][0]["mean"] = 27.4                       # not what any candidate reported

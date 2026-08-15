@@ -29,11 +29,15 @@ from .figures import FIGURE_KINDS, axis_limits, is_figure
 from .grounding import ROW_ONLY, SIGN_NOTE, is_short_quote
 
 __all__ = ["run_checks", "sign_check", "codes", "CHECK_SEVERITY", "GROUP_LABEL_MISMATCH_NOTE",
-           "SEVERITY_RANK", "MIN_N", "MAX_PLAUSIBLE_D"]
+           "ROW_ONLY_MARKER", "SIGN_NOTE_MARKER", "SEVERITY_RANK", "MIN_N", "MAX_PLAUSIBLE_D"]
 
 #: the marker `canopy.agents.extract_common.group_label_check` writes into a candidate's notes when
 #: the label the extractor echoed belongs to the *other* group (tests/test_checks.py pins it).
 GROUP_LABEL_MISMATCH_NOTE = "group label mismatch"
+#: the exact shapes `grounding.check_table_cell` writes its two table-cell markers in — the bare
+#: words would also match a reviewer's prose, so the punctuation that follows them is part of it
+ROW_ONLY_MARKER = f"{ROW_ONLY}:"
+SIGN_NOTE_MARKER = f"{SIGN_NOTE} for "
 
 MIN_N = 2                       # a group of one has no within-group variance
 MAX_PLAUSIBLE_D = 3.0           # |d| above this is nearly always a transcription error
@@ -142,12 +146,12 @@ def _check_one(cand: Candidate, dataset: DatasetSpec, outcome: OutcomeSources | 
             _flag(out, "quote_short",
                   f"the quote {cand.quote.strip()!r} is too short to stand as evidence on its own",
                   cid)
-    if ROW_ONLY in cand.notes:
+    if ROW_ONLY_MARKER in cand.notes:
         _flag(out, "quote_row_only",
               f"the transcribed numbers are somewhere in the named table row but NOT in the "
               f"column this candidate claims — which is what reading the other group's cell looks "
               f"like ({cand.notes})", cid)
-    if SIGN_NOTE in cand.notes:
+    if SIGN_NOTE_MARKER in cand.notes:
         _flag(out, "sign_not_confirmed",
               f"a transcribed value matched the table only without its sign, so the direction of "
               f"this number is not confirmed ({cand.notes})", cid)

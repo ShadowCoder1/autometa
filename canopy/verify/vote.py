@@ -17,16 +17,22 @@ for the whole cell:
   value or be flagged against it; it never sets the resolved value and never overrules the print.
 
 The comparison is therefore **staged**, and the stages are not interchangeable. Text and table
-routes are clustered among themselves FIRST (spec §3.3(2): text/table agree when equal after
-normalisation, ± printed precision). Only then are figure routes reconciled with that consensus,
-at the figure tolerance. A figure read can confirm a text consensus, and it can conflict with one
-(recorded, and the text value is kept) — but it can never bridge two text readers who disagree
-with each other, which a single cell-wide tolerance would let it do.
+routes settle the value FIRST, among themselves (spec §3.3(2): text/table agree when equal after
+normalisation, ± printed precision). **One printed route is already that consensus** — the
+digitizer contributes four or five routes to a figure cell, and a printed value must not be
+outvoted by however many ways one picture was measured. Only then are figure routes reconciled
+with the printed consensus, at the figure tolerance. A figure can corroborate it, or conflict with
+it (`figure_conflict`, a note, and the printed value stands); it can never replace it, and it can
+never bridge two printed readers who disagree with each other.
 
-The resolved value is one a source actually reported: the most-reported text/table value and, on a
-tie, the most precisely printed of them (31.51 over 31.5) — never a blend of a text reading and a
-figure reading. Only when there is no text or table route at all does the figure per-cell median
-become the value.
+The resolved value is a printed one whenever any printed route exists: the most-reported
+text/table value and, on a tie, the most precisely printed of them (31.51 over 31.5) — never a
+blend of a transcription and a measurement. Only a cell with no text or table route at all takes
+the figure per-cell median.
+
+A lone printed route that no figure corroborates keeps its value but is reported as `single` with
+`method="printed_uncorroborated"`, so `confidence` caps it below automatic acceptance: exactly one
+route stands behind it, and the pictures that could have confirmed it did not.
 
 Agreement across at least two routes is *accepted by vote*. Two text extractors that disagree set
 `needs_third_candidate`, which the orchestrator satisfies by running a third cheap candidate
@@ -43,7 +49,7 @@ from pydantic import Field
 
 from ..models import CanopyModel, Candidate, DispersionType, GroupKey, SourceKind
 from .figures import (AXIS_FRACTION, FALLBACK_FRACTION, FIGURE_KINDS, TICK_FRACTION,
-                      figure_calibration, figure_tolerance)
+                      figure_tolerance)
 from .grounding import is_short_quote as _is_short_quote
 
 __all__ = ["vote", "vote_groups", "VoteResult", "RouteValue", "route_key", "modality",
@@ -113,11 +119,6 @@ def precision_tolerance(cand: Candidate) -> float:
     if decimals is None:
         decimals = min(seen) if seen else _decimals(repr(float(value)))
     return 0.5 * 10 ** (-min(decimals, MAX_DECIMALS))
-
-
-def axis_calibration(cand: Candidate) -> dict[str, Any]:
-    """Deprecated alias kept for readability at call sites: the parsed figure calibration."""
-    return figure_calibration(cand.pixel_provenance).__dict__
 
 
 def candidate_tolerance(cand: Candidate, axis_range: float | None = None) -> float:
@@ -353,57 +354,88 @@ def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
     text = [r for r in routes if is_text_route(r.route_key)]
     others = [r for r in routes if not is_text_route(r.route_key)]
 
-    # --- stage 1: what the printed sources agree on, decided among themselves
-    consensus = _best_cluster(text) if len(text) >= 2 else []
-    if len(consensus) >= 2:
+    # --- stage 1: what the printed sources say, decided among themselves. ONE printed route is
+    # already a consensus: a value the paper prints is not outvoted by a picture, however many
+    # ways that picture was measured.
+    if text:
+        consensus = _best_cluster(text) if len(text) >= 2 else list(text)
+        if len(text) >= 2 and len(consensus) < 2:
+            result.agreement, result.method = "disagree", "printed_precision"
+            result.tolerance = max(_pair_tolerance(a, b) for a in text for b in text if a is not b)
+            result.disagreeing_ids = [c.candidate_id for c in rows]
+            result.needs_third_candidate = len(text) == 2
+            notes.append("the printed sources disagree: "
+                         + ", ".join(f"{r.route_key}={r.value:.4g}" for r in text)
+                         + f" (tolerance {result.tolerance:.4g}); a figure read cannot decide "
+                           f"between them")
+            if others:
+                notes.append("routes not consulted: "
+                             + ", ".join(f"{r.route_key}={r.value:.4g}" for r in others))
+            result.notes = notes
+            return result
+
         value = _reported_value(consensus)
-        result.tolerance = max(_pair_tolerance(a, b) for a in consensus for b in consensus
-                               if a is not b)
+        conflicts = [r for r in text if r not in consensus]
+        for route in conflicts:
+            notes.append(f"printed route {route.route_key} read {route.value:.4g}, outside the "
+                         f"{max(r.tolerance for r in consensus):.4g} tolerance around the value "
+                         f"{value:.4g} the other printed sources agree on")
         precisions = {r.tolerance for r in consensus}
         if len(precisions) > 1:
             notes.append("the printed sources agree but at different precisions "
                          + ", ".join(f"{r.route_key}={r.value:.6g} (±{r.tolerance:g})"
                                      for r in consensus)
                          + f"; the most precise reading {value:.6g} is kept")
-        result.method = "printed_precision"
-        winners, conflicts = list(consensus), []
-        for route in others:                       # --- stage 2: does the picture corroborate it?
-            tolerance = max([route.tolerance] + [c.tolerance for c in consensus])
-            (winners if abs(route.value - value) <= tolerance else conflicts).append(route)
-        for route in conflicts:
-            notes.append(f"route {route.route_key} read {route.value:.4g}, outside the "
-                         f"{max([route.tolerance] + [c.tolerance for c in consensus]):.4g} "
-                         f"tolerance around the printed value {value:.4g}; the printed value "
-                         f"stands")
-        result.figure_conflict = any(is_figure_route(r.route_key) for r in conflicts)
-        _decide(result, rows, winners, value, by_id, notes)
-        return result
 
-    if len(text) >= 2:
-        # printed sources that contradict each other: no picture may reconcile them (amendment G)
-        result.agreement, result.method = "disagree", "printed_precision"
-        result.tolerance = max(_pair_tolerance(a, b) for a in text for b in text if a is not b)
-        result.disagreeing_ids = [c.candidate_id for c in rows]
-        result.needs_third_candidate = len(text) == 2
-        notes.append("the printed sources disagree: "
-                     + ", ".join(f"{r.route_key}={r.value:.4g}" for r in text)
-                     + f" (tolerance {result.tolerance:.4g}); a figure read cannot decide between "
-                       f"them")
+        # --- stage 2: does anything else corroborate what the paper prints?
+        winners = list(consensus)
+        reconciliation = 0.0
+        for route in others:
+            tolerance = max([route.tolerance] + [c.tolerance for c in consensus])
+            reconciliation = max(reconciliation, tolerance)
+            if abs(route.value - value) <= tolerance:
+                winners.append(route)
+            else:
+                conflicts.append(route)
+                notes.append(f"route {route.route_key} read {route.value:.4g}, outside the "
+                             f"{tolerance:.4g} tolerance around the printed value {value:.4g}; "
+                             f"the printed value stands")
+        result.figure_conflict = any(is_figure_route(r.route_key) for r in conflicts)
+
+        if len(consensus) >= 2:
+            result.tolerance = max(_pair_tolerance(a, b) for a in consensus for b in consensus
+                                   if a is not b)
+            result.method = "printed_precision"
+        else:
+            result.tolerance = reconciliation or consensus[0].tolerance
+            result.method = "figure_tolerance" if others else "single"
+
+        if len(winners) >= 2:
+            _decide(result, rows, winners, value, by_id, notes)
+            return result
+
+        # one printed route, and nothing corroborated it
+        keys = {r.route_key for r in winners}
+        result.agreement = "single"
+        result.method = "printed_uncorroborated" if others else "single"
+        result.mean = value
+        result.mad = 0.0
+        result.agreeing_ids = [c.candidate_id for c in rows if route_key(c) in keys]
+        result.disagreeing_ids = [c.candidate_id for c in rows if route_key(c) not in keys]
         if others:
-            notes.append("routes not consulted: "
-                         + ", ".join(f"{r.route_key}={r.value:.4g}" for r in others))
+            notes.append("no other route corroborated the printed value; it stands on one "
+                         "reader alone")
+        _fill_values(result, [by_id[cid] for cid in result.agreeing_ids], notes)
         result.notes = notes
         return result
 
-    # --- one or no printed source: everything votes, at the tolerance of each pair
+    # --- no printed source at all: the pictures vote among themselves
     cluster = _best_cluster(routes)
     result.method = "figure_tolerance" if any(is_figure_route(r.route_key) for r in routes) \
         else "printed_precision"
     if len(cluster) >= 2:
         result.tolerance = max(_pair_tolerance(a, b) for a in cluster for b in cluster if a is not b)
-        in_text = [r for r in cluster if is_text_route(r.route_key)]
-        value = _reported_value(in_text) if in_text else _median([r.value for r in cluster])
-        _decide(result, rows, cluster, value, by_id, notes)
+        _decide(result, rows, cluster, _median([r.value for r in cluster]), by_id, notes)
         return result
 
     result.agreement = "disagree"

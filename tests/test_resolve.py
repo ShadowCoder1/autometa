@@ -499,33 +499,64 @@ def test_primary_mode_adds_it_to_the_variance_and_widens_the_interval():
     assert primary.ci_high - primary.ci_low > sensitivity.ci_high - sensitivity.ci_low
 
 
-def test_a_digitisation_uncertainty_is_converted_with_the_dispersion_it_belongs_to():
-    """Half a unit of uncertainty on an SE bar is half a unit OF SE; carried onto an SD that is
-    √20 = 4.47× larger without conversion it would understate the digitisation variance."""
-    values = ResolvedValues(
+def se_values(dispersion_sigma=0.5) -> ResolvedValues:
+    """Both groups reported as mean ± SE, with a digitisation uncertainty ON THE SE BAR."""
+    return ResolvedValues(
         higher_is_better=True,
         group_a=GroupValues(n=20, mean=31.51, dispersion_value=2.0,
                             dispersion_type=DispersionType.SE, route="figure",
-                            sigma=0.3, dispersion_sigma=0.5),
+                            sigma=0.3, dispersion_sigma=dispersion_sigma),
         group_b=GroupValues(n=20, mean=12.28, dispersion_value=2.0,
                             dispersion_type=DispersionType.SE, route="figure",
-                            sigma=0.3, dispersion_sigma=0.5))
-    record = resolve_effect(dataset(), LATE, values,
+                            sigma=0.3, dispersion_sigma=dispersion_sigma))
+
+
+def sd_values(dispersion_sigma=0.5) -> ResolvedValues:
+    """The SAME standard deviations, already printed as SDs — so nothing needs converting."""
+    sd = 2.0 * math.sqrt(20)
+    return ResolvedValues(
+        higher_is_better=True,
+        group_a=GroupValues(n=20, mean=31.51, dispersion_value=sd,
+                            dispersion_type=DispersionType.SD, route="figure",
+                            sigma=0.3, dispersion_sigma=dispersion_sigma),
+        group_b=GroupValues(n=20, mean=12.28, dispersion_value=sd,
+                            dispersion_type=DispersionType.SD, route="figure",
+                            sigma=0.3, dispersion_sigma=dispersion_sigma))
+
+
+def test_a_digitisation_uncertainty_is_converted_with_the_dispersion_it_belongs_to():
+    """Half a unit of uncertainty on an SE bar is half a unit OF SE; carried onto an SD that is
+    √20 = 4.47x larger without conversion it would understate the digitisation variance."""
+    record = resolve_effect(dataset(), LATE, se_values(),
                             StatsSettings(digitization_variance="sensitivity"))
     assert record.inputs["sigma_sd_a"] == pytest.approx(0.5 * math.sqrt(20), rel=1e-9)
     assert record.inputs["sigma_mean_a"] == pytest.approx(0.3)
     assert "scales with it" in record.conversion_chain
-    unconverted = resolve_effect(
-        dataset(), LATE,
-        values.model_copy(deep=True, update={
-            "group_a": values.group_a.model_copy(update={"dispersion_type": DispersionType.SD,
-                                                         "dispersion_value": 2.0 * math.sqrt(20)}),
-            "group_b": values.group_b.model_copy(update={"dispersion_type": DispersionType.SD,
-                                                         "dispersion_value": 2.0 * math.sqrt(20)})}),
-        StatsSettings(digitization_variance="sensitivity"))
-    # the same SDs, and now the same σ on them: the two records must agree
-    assert record.digitization_var == pytest.approx(unconverted.digitization_var, rel=1e-6) \
-        if unconverted.inputs["sigma_sd_a"] == pytest.approx(0.5 * math.sqrt(20)) else True
+
+
+def test_an_uncertainty_on_a_printed_sd_is_left_alone():
+    record = resolve_effect(dataset(), LATE, sd_values(),
+                            StatsSettings(digitization_variance="sensitivity"))
+    assert record.inputs["sigma_sd_a"] == pytest.approx(0.5)          # unchanged, nothing converted
+    assert record.inputs["sd_a"] == pytest.approx(2.0 * math.sqrt(20))
+    assert "scales with it" not in record.conversion_chain
+
+
+def test_converting_the_bar_without_its_uncertainty_would_understate_the_variance():
+    """Same SDs, same means, same n: the two records differ ONLY in whether the uncertainty on the
+    spread was converted with it. The SE route must come out larger, by the square of √20."""
+    converted = resolve_effect(dataset(), LATE, se_values(),
+                               StatsSettings(digitization_variance="sensitivity"))
+    printed = resolve_effect(dataset(), LATE, sd_values(),
+                             StatsSettings(digitization_variance="sensitivity"))
+    assert converted.inputs["sd_a"] == pytest.approx(printed.inputs["sd_a"])
+    assert converted.digitization_var > printed.digitization_var
+    # the mean partials are identical, so the difference is entirely in the SD partials
+    mean_only = resolve_effect(dataset(), LATE, sd_values(dispersion_sigma=None),
+                               StatsSettings(digitization_variance="sensitivity"))
+    from_sd_converted = converted.digitization_var - mean_only.digitization_var
+    from_sd_printed = printed.digitization_var - mean_only.digitization_var
+    assert from_sd_converted == pytest.approx(from_sd_printed * 20, rel=1e-4)
 
 
 def test_a_large_digitisation_variance_is_flagged():

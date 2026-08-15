@@ -178,6 +178,79 @@ def test_a_figure_outside_tolerance_is_flagged_and_the_printed_value_stands():
     assert any("the printed value stands" in note for note in result.notes)
 
 
+# --------------------------------------------------------------------------- one printed route
+def test_one_printed_route_is_the_consensus_and_four_figure_routes_corroborate_it():
+    """The common shape after the digitizer merge: one text extractor against four ways of
+    measuring one picture. The printed value is the answer; the pictures agree with it."""
+    text = text_cand("t1", 31.51, written="31.51")
+    figures = [figure_cand(f"f{i}", value, route=route, model=model)
+               for i, (value, route, model) in enumerate(
+                   [(31.0, "pathB", OPUS), (32.0, "pathC", OPUS), (30.5, "pathD", SONNET),
+                    (31.4, "ensemble", SONNET)])]
+    result = vote([text, *figures])
+    assert result.agreement == "agree"
+    assert result.value == pytest.approx(31.51)         # printed, not the figure median
+    assert "t1" in result.agreeing_ids and len(result.agreeing_ids) == 5
+    assert result.figure_conflict is False
+
+
+def test_four_figure_routes_cannot_outvote_one_printed_route():
+    """The probe: one text reader at 31.51 against four digitizer routes clustered near 45. The
+    printed value stands, the pictures are recorded as conflicting, and nothing auto-accepts."""
+    text = text_cand("t1", 31.51, written="31.51")
+    figures = [figure_cand(f"f{i}", value, route=route, model=model)
+               for i, (value, route, model) in enumerate(
+                   [(45.0, "pathB", OPUS), (45.1, "pathC", OPUS), (44.9, "pathD", SONNET),
+                    (45.2, "ensemble", SONNET)])]
+    result = vote([text, *figures])
+    assert result.value == pytest.approx(31.51)         # NOT 45.05
+    assert result.agreeing_ids == ["t1"]
+    assert sorted(result.disagreeing_ids) == ["f0", "f1", "f2", "f3"]
+    assert result.figure_conflict is True
+    assert result.agreement == "single"                 # nothing corroborated it
+    assert result.method == "printed_uncorroborated"
+    assert any("the printed value stands" in note for note in result.notes)
+    assert any("stands on one reader alone" in note for note in result.notes)
+
+
+def test_an_uncorroborated_printed_value_cannot_be_accepted_automatically():
+    from canopy.models import OrientationVerdict, VerifierVerdict
+    from canopy.verify.confidence import AUTO_ACCEPT, confidence
+
+    text = text_cand("t1", 31.51, written="31.51")
+    figures = [figure_cand(f"f{i}", 45.0 + i / 10, route=route)
+               for i, route in enumerate(("pathB", "pathC", "pathD", "ensemble"))]
+    result = vote([text, *figures])
+    oriented = OrientationVerdict(outcome_key="late_adaptation", higher_is_better=False,
+                                  agreed=True, needs_human=False)
+    bucket, score, _ = confidence(result, [VerifierVerdict(candidate_id="t1", verdict="confirmed",
+                                                           model=SONNET)],
+                                  [], None, orientation=oriented)
+    assert bucket != "auto_accept" and score < AUTO_ACCEPT
+
+
+def test_two_figure_routes_cannot_outvote_one_printed_route_either():
+    text = text_cand("t1", 31.51, written="31.51")
+    figures = [figure_cand("f0", 45.0, route="pathC"),
+               figure_cand("f1", 45.1, route="pathD", model=SONNET)]
+    result = vote([text, *figures])
+    assert result.value == pytest.approx(31.51)
+    assert result.agreement == "single" and result.method == "printed_uncorroborated"
+    assert result.figure_conflict is True
+
+
+def test_a_printed_outlier_is_noted_like_a_figure_one():
+    """Three printed routes, one of which read something else: the majority carries the value and
+    the odd one out is named, exactly as a conflicting figure would be."""
+    rows = [text_cand("a", 31.5, written="31.5"),
+            text_cand("b", 31.5, written="31.5", model=SONNET),
+            text_cand("c", 44.0, written="44.0", model="claude-fable-5")]
+    result = vote(rows)
+    assert result.agreement == "agree" and result.value == pytest.approx(31.5)
+    assert result.disagreeing_ids == ["c"]
+    assert any("printed route" in note and "44" in note for note in result.notes)
+
+
 def test_the_resolved_value_is_one_a_source_reported():
     """Three readers, two of whom report the same number: that number wins, not their mean."""
     rows = [text_cand("a", 31.5, written="31.5"),

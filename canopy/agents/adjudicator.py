@@ -20,9 +20,9 @@ from ..models import (Adjudication, AdjudicatedGroup, Candidate, CheckFlag, Data
                       DispersionType, OutcomeDef, Protocol, VerifierVerdict)
 from ..verify.grounding import ground_candidate
 from . import render_prompt
-from .verify_common import (SYSTEM, candidates_text, enum_schema, evidence_text, groups_prompt,
-                            number, outcome_prompt, prompt_fingerprint, strings, whole,
-                            whole_paper)
+from .verify_common import (SYSTEM, candidates_text, clip, enum_schema, evidence_text,
+                            groups_prompt, number, outcome_prompt, prompt_fingerprint, strings,
+                            whole, whole_paper)
 
 __all__ = ["adjudicate", "ADJUDICATE_SCHEMA", "PROMPT_VERSION", "PROMPT_FILES"]
 
@@ -109,13 +109,33 @@ def ground_adjudication(adjudication: Adjudication, candidates: Sequence[Candida
             continue
         twin = _matching_candidate(group, candidates)
         if twin is not None:
-            group.grounded = twin.grounded
-            group.grounding_similarity = twin.grounding_similarity
-            group.quote = group.quote or twin.quote
-            group.page = group.page or twin.page
-            group.locator = group.locator or twin.locator
             if twin.candidate_id not in group.chosen_candidate_ids:
                 group.chosen_candidate_ids = [*group.chosen_candidate_ids, twin.candidate_id]
+            if twin.quote.strip():
+                # the quote and the verdict on it travel together: showing the model's own words
+                # next to the twin's `grounded` would label an unchecked quote as checked
+                if group.quote.strip() and group.quote.strip() != twin.quote.strip():
+                    group.reason = _note(group.reason,
+                                         f"the adjudicator wrote {clip(group.quote, 160)!r}; the "
+                                         f"quote recorded here is the one from candidate "
+                                         f"{twin.candidate_id}, which is the one that was checked")
+                group.quote = twin.quote
+                group.page = twin.page
+                group.locator = twin.locator or group.locator
+                group.grounded = twin.grounded
+                group.grounding_similarity = twin.grounding_similarity
+            elif group.quote.strip():
+                _ground_own_quote(group, paper)          # the twin's evidence is pixels, not words
+                if not group.grounded:
+                    # the VALUE is fine — a candidate reported it — but the words the adjudicator
+                    # justified it with are not in the paper, and confidence weighs that
+                    group.reason = _note(group.reason,
+                                         f"the quote the adjudicator gave is not in the paper "
+                                         f"(best similarity {group.grounding_similarity}); the "
+                                         f"value itself comes from candidate {twin.candidate_id}")
+            else:
+                group.page = group.page or twin.page
+                group.locator = group.locator or twin.locator
             if twin.grounded is False:
                 group.needs_human = True
                 group.reason = _note(group.reason, "the candidate this value came from is not "
@@ -127,20 +147,25 @@ def ground_adjudication(adjudication: Adjudication, candidates: Sequence[Candida
             group.reason = _note(group.reason, "this value matches no candidate and the "
                                                "adjudicator quoted nothing for it")
             continue
-        probe = ground_candidate(Candidate(kind="group_stats", group=group.group, mean=group.mean,
-                                           dispersion_value=group.dispersion_value,
-                                           quote=group.quote, page=group.page), paper)
-        group.grounded = probe.grounded
-        group.grounding_similarity = probe.grounding_similarity
-        group.page = probe.page
-        if not probe.grounded:
+        _ground_own_quote(group, paper)
+        if not group.grounded:
             group.needs_human = True
             group.reason = _note(group.reason,
                                  f"this value matches no candidate and its quote is not in the "
-                                 f"paper (best similarity {probe.grounding_similarity})")
+                                 f"paper (best similarity {group.grounding_similarity})")
     adjudication.needs_human = adjudication.needs_human or any(g.needs_human
                                                                for g in adjudication.groups)
     return adjudication
+
+
+def _ground_own_quote(group: AdjudicatedGroup, paper: PaperRecord) -> None:
+    """Check the adjudicator's OWN quote against the paper, exactly as an extractor's is checked."""
+    probe = ground_candidate(Candidate(kind="group_stats", group=group.group, mean=group.mean,
+                                       dispersion_value=group.dispersion_value,
+                                       quote=group.quote, page=group.page), paper)
+    group.grounded = probe.grounded
+    group.grounding_similarity = probe.grounding_similarity
+    group.page = probe.page
 
 
 def _matching_candidate(group: AdjudicatedGroup,
