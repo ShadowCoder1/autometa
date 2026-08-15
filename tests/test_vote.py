@@ -110,14 +110,35 @@ def test_agreement_survives_a_difference_inside_the_printed_precision():
     assert result.value in (31.5, 31.52)                # a value a source actually reported
 
 
-def test_the_tighter_printed_precision_decides_a_pair():
-    """One reader claims two decimals and the other one: 31.5 and 31.51 are then different
-    numbers, not a rounding of the same one, and a third opinion is owed."""
+def test_the_coarser_printed_precision_decides_a_text_pair():
+    """A paper that prints 31.5 in the text and 31.51 in a table is printing ONE number at two
+    precisions. Half a unit in the last digit of the LESS precise reading is what separates that
+    from a discrepancy, so they agree — and the finer reading is the better record of it."""
     a = text_cand("a", 31.51, written="31.51")
     b = text_cand("b", 31.5, written="31.5", model=SONNET)
     result = vote([a, b])
-    assert result.agreement == "disagree" and result.tolerance == pytest.approx(0.005)
+    assert result.agreement == "agree"
+    assert result.tolerance == pytest.approx(0.05)      # the coarser claim, not 0.005
+    assert result.value == pytest.approx(31.51)         # the more precise of the two
+    assert result.needs_third_candidate is False
+    assert any("different precisions" in note for note in result.notes)
+
+
+def test_a_difference_the_coarser_precision_cannot_absorb_still_disagrees():
+    """31.5 and 31.6 differ by a whole unit in the last printed digit: a different number."""
+    a = text_cand("a", 31.5, written="31.5")
+    b = text_cand("b", 31.6, written="31.6", model=SONNET)
+    result = vote([a, b])
+    assert result.agreement == "disagree" and result.tolerance == pytest.approx(0.05)
     assert result.needs_third_candidate is True
+
+
+def test_a_coarse_reading_does_not_absorb_a_plainly_different_number():
+    """Even a value printed as a whole number ("32", ±0.5) cannot absorb 33.0."""
+    a = text_cand("a", 32.0, written="32")
+    b = text_cand("b", 33.0, written="33.0", model=SONNET)
+    result = vote([a, b])
+    assert result.agreement == "disagree" and result.tolerance == pytest.approx(0.5)
 
 
 def test_a_figure_read_cannot_bridge_two_text_readers_who_disagree():

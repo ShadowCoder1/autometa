@@ -8,10 +8,13 @@ their answers are collapsed to that route's median before anything is compared.
 Tolerance comes from the evidence, not from a constant, and it is applied PER PAIR — never once
 for the whole cell:
 
-* two printed values — the TIGHTER of the two printed precisions ("31.5" claims ±0.05, "31.51"
-  claims ±0.005; two readers who write different numbers disagree at the finer claim);
+* two printed values — the COARSER of the two printed precisions. A paper that prints 31.5 in one
+  place and 31.51 in another is printing one number at two precisions, so ±0.05 (half a unit in
+  the last digit of the LESS precise reading) is what separates a rounding from a discrepancy:
+  31.5 and 31.51 agree, 31.5 and 31.6 do not, and 31.5 and 33.0 do not at any precision.
 * anything against a picture — the figure tolerance, max(2% of the axis range, half a tick), the
-  resolution a reader of that picture can honestly claim.
+  resolution a reader of that picture can honestly claim. A figure may only corroborate a printed
+  value or be flagged against it; it never sets the resolved value and never overrules the print.
 
 The comparison is therefore **staged**, and the stages are not interchangeable. Text and table
 routes are clustered among themselves FIRST (spec §3.3(2): text/table agree when equal after
@@ -20,9 +23,10 @@ at the figure tolerance. A figure read can confirm a text consensus, and it can 
 (recorded, and the text value is kept) — but it can never bridge two text readers who disagree
 with each other, which a single cell-wide tolerance would let it do.
 
-The resolved value is one a source actually reported: the most-reported text/table value (or, on a
-tie, the lower of the reported ones), never a blend of a text reading and a figure reading. Only
-when there is no text or table route at all does the figure per-cell median become the value.
+The resolved value is one a source actually reported: the most-reported text/table value and, on a
+tie, the most precisely printed of them (31.51 over 31.5) — never a blend of a text reading and a
+figure reading. Only when there is no text or table route at all does the figure per-cell median
+become the value.
 
 Agreement across at least two routes is *accepted by vote*. Two text extractors that disagree set
 `needs_third_candidate`, which the orchestrator satisfies by running a third cheap candidate
@@ -197,38 +201,48 @@ def _mode(values: Sequence[Any]) -> Any | None:
     return Counter(present).most_common(1)[0][0] if present else None
 
 
-def _reported_value(values: Sequence[float]) -> float:
-    """A value a source actually reported: the most-reported one, or the lower on a tie.
+def _reported_value(routes: Sequence["RouteValue"]) -> float:
+    """A value a source actually reported: the most-reported one, most precisely printed.
 
     Never the arithmetic middle of two different readings — an effect size built on a number no
-    paper contains cannot be checked against the paper.
+    paper contains cannot be checked against the paper. When two readings agree within the coarser
+    of their printed precisions, the finer one is the better record of what the paper prints
+    (31.51, not 31.5), so ties are broken by tolerance and then by value, deterministically.
     """
-    counts = Counter(values)
-    value, times = counts.most_common(1)[0]
-    return float(value) if times > 1 else float(statistics.median_low(values))
+    counts = Counter(r.value for r in routes)
+    best = max(counts.values())
+    tied = [r for r in routes if counts[r.value] == best]
+    return float(min(tied, key=lambda r: (r.tolerance, r.value)).value)
 
 
 def _route_tolerance(members: Sequence[Candidate], axis_range: float | None) -> float:
     """What one route can claim about its own value.
 
-    Text routes take the tighter of their members' printed precisions (a route that reports two
-    different numbers should look inconsistent, not be excused by its coarsest reading); a figure
-    route's members share one calibration, so the two agree.
+    A text route takes the coarsest printed precision among its members, for the same reason a
+    pair of them does: a value printed at one decimal is not contradicted by the same value
+    printed at two. A figure route's members share one calibration, so min and max agree.
     """
-    tolerances = [candidate_tolerance(c, axis_range) for c in members]
-    return min(tolerances) if is_text_route(route_key(members[0])) else max(tolerances)
+    return max(candidate_tolerance(c, axis_range) for c in members)
 
 
 def _pair_tolerance(a: RouteValue, b: RouteValue) -> float:
-    """How far apart two routes may be and still be the same value.
+    """How far apart two routes may be and still be the same value: the LOOSER of their claims.
 
-    Two printed readings: the TIGHTER of the two precisions — a reader who writes "31.51" is
-    claiming two decimals, and "31.5" from the other reader is then a different number, not a
-    rounding of the same one. Anything involving a picture: the figure tolerance, because a value
-    measured off an axis cannot be more precise than that axis.
+    One expression, two readings of it, both deliberate:
+
+    * **two printed readings** — the COARSER of the two precisions. "31.5" in the text and "31.51"
+      in a table are one number printed at two precisions, and half a unit in the last digit of
+      the less precise one is exactly what separates that from a discrepancy. 31.5 against 31.6,
+      or 32 against 33.0, is a different number at any precision either of them claims.
+    * **anything against a picture** — the figure tolerance, max(2% of the axis range, half a
+      tick), because a value measured off an axis cannot be read more precisely than that axis.
+
+    What keeps a picture from *governing* is not this number — a tolerance tight enough to stop
+    that would also make corroboration impossible, since no digitised read lands within ±0.005 of
+    a printed value. It is the staging in `vote()`: figures are reconciled with the printed
+    consensus only after it has been decided among the printed sources, they never join in
+    deciding it, and they never set the resolved value.
     """
-    if is_text_route(a.route_key) and is_text_route(b.route_key):
-        return min(a.tolerance, b.tolerance)
     return max(a.tolerance, b.tolerance)
 
 
@@ -342,9 +356,15 @@ def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
     # --- stage 1: what the printed sources agree on, decided among themselves
     consensus = _best_cluster(text) if len(text) >= 2 else []
     if len(consensus) >= 2:
-        value = _reported_value([r.value for r in consensus])
-        result.tolerance = min(_pair_tolerance(a, b) for a in consensus for b in consensus
+        value = _reported_value(consensus)
+        result.tolerance = max(_pair_tolerance(a, b) for a in consensus for b in consensus
                                if a is not b)
+        precisions = {r.tolerance for r in consensus}
+        if len(precisions) > 1:
+            notes.append("the printed sources agree but at different precisions "
+                         + ", ".join(f"{r.route_key}={r.value:.6g} (±{r.tolerance:g})"
+                                     for r in consensus)
+                         + f"; the most precise reading {value:.6g} is kept")
         result.method = "printed_precision"
         winners, conflicts = list(consensus), []
         for route in others:                       # --- stage 2: does the picture corroborate it?
@@ -362,7 +382,7 @@ def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
     if len(text) >= 2:
         # printed sources that contradict each other: no picture may reconcile them (amendment G)
         result.agreement, result.method = "disagree", "printed_precision"
-        result.tolerance = min(_pair_tolerance(a, b) for a in text for b in text if a is not b)
+        result.tolerance = max(_pair_tolerance(a, b) for a in text for b in text if a is not b)
         result.disagreeing_ids = [c.candidate_id for c in rows]
         result.needs_third_candidate = len(text) == 2
         notes.append("the printed sources disagree: "
@@ -382,8 +402,7 @@ def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
     if len(cluster) >= 2:
         result.tolerance = max(_pair_tolerance(a, b) for a in cluster for b in cluster if a is not b)
         in_text = [r for r in cluster if is_text_route(r.route_key)]
-        value = _reported_value([r.value for r in in_text]) if in_text \
-            else _median([r.value for r in cluster])
+        value = _reported_value(in_text) if in_text else _median([r.value for r in cluster])
         _decide(result, rows, cluster, value, by_id, notes)
         return result
 
