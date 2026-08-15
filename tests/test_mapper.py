@@ -7,54 +7,22 @@ Two halves:
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from canopy.agents import load_prompt
 from canopy.agents.mapper import (MAPPER_SCHEMA, MAPPER_SOURCES_SCHEMA, PROMPT_VERSION,
                                   map_study, protocol_text, roster_text)
-from canopy.config import MODELS, live_enabled, load_env, record_enabled
-from canopy.ingest.pdf import PaperRecord, ingest_pdf
+from canopy.config import MODELS
 from canopy.llm.client import LLMClient
 from canopy.llm.errors import RefusalError
 from canopy.llm.providers import FakeProvider
 from canopy.llm.schemas import assert_no_derived_stats, assert_valid_output_schema
 from canopy.models import DatasetSpec, DispersionType, Source, SourceKind, StudyMap
-from canopy.protocol import load_protocol
-
-ROOT = Path(__file__).resolve().parents[1]
-PDF = ROOT / "tests" / "fixtures" / "pdfs" / "bock2005.pdf"
-REPLAY = ROOT / "tests" / "fixtures" / "llm"
-PROTOCOL_PATH = ROOT / "examples" / "protocols" / "aging_sensorimotor_adaptation.yaml"
 
 #: every Bock test replays fixtures; `@pytest.mark.replay` is what keeps `CANOPY_LIVE`/
-#: `CANOPY_RECORD` visible during a recording run (see tests/conftest.py).
+#: `CANOPY_RECORD` visible during a recording run. `paper`, `protocol`, `client` and `bock_map`
+#: are session fixtures shared by every agent test module (see tests/conftest.py).
 replayed = pytest.mark.replay
-
-
-@pytest.fixture(scope="session")
-def paper(tmp_path_factory) -> PaperRecord:
-    return ingest_pdf(PDF, tmp_path_factory.mktemp("bock2005-map"))
-
-
-@pytest.fixture(scope="session")
-def protocol():
-    return load_protocol(PROTOCOL_PATH)
-
-
-@pytest.fixture(scope="session")
-def bock_map(paper, protocol) -> StudyMap:
-    live, record = live_enabled(), record_enabled()      # read here, not at import
-    if live:
-        load_env()
-    client = LLMClient(replay_dir=REPLAY, record_dir=REPLAY if record else None,
-                       allow_live=live, cache_dir=None)
-    study = map_study(client, paper, protocol)
-    if live:                                    # recording run: report what it cost
-        print(f"\n[mapper] ${client.total_cost():.4f} over {len(client.calls())} calls: "
-              f"{[c['model'] for c in client.calls()]}")
-    return study
 
 
 # ------------------------------------------------------------------ schema hygiene

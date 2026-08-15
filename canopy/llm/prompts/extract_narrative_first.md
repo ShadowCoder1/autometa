@@ -37,6 +37,10 @@ Stop as soon as one place gives you the value for both groups; if two places dis
 - `dispersion_type`: what the paper **says** the second number is (SD, SE, CI95, CI90, IQR, RANGE).
   If nothing on these pages says which it is, answer `UNKNOWN` — never assume. When the words that
   identify it are somewhere else on the page, quote them in `notes`.
+- When the spread is a **confidence interval**, its two bounds go in `ci_low` and `ci_high` (not in
+  `dispersion_value`, which stays null unless the paper also prints a ± value), and `ci_level` is
+  the level the paper states — "95", "90", "99", or `unknown`. Set `dispersion_type` to `CI95` or
+  `CI90` to match. For "0.62 [0.41, 0.83]": `mean` 0.62, `ci_low` 0.41, `ci_high` 0.83.
 - `error_bar_scope`: `between_subject`, unless the paper says the spread was computed within
   participants or normalised per participant.
 - `unit`: exactly as printed ("deg", "mm", "s", "%", or empty when the measure has no unit).

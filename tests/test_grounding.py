@@ -7,21 +7,14 @@ hyphenated across a line break) while still rejecting a quote the paper never pr
 from __future__ import annotations
 
 import dataclasses
-from pathlib import Path
 
-import pytest
-
-from canopy.ingest.pdf import Bbox, PaperRecord, TableRecord, ingest_pdf
+from canopy.ingest.pdf import Bbox, PaperRecord, TableRecord
 from canopy.models import Candidate
-from canopy.verify.grounding import check_table_cell, ground_candidate, ground_quote, normalize
+from canopy.verify.grounding import (SHORT_QUOTE_CHARS, SHORT_QUOTE_NOTE, check_table_cell,
+                                     ground_candidate, ground_quote, is_short_quote, normalize,
+                                     numbers_in)
 
-ROOT = Path(__file__).resolve().parents[1]
-PDF = ROOT / "tests" / "fixtures" / "pdfs" / "bock2005.pdf"
-
-
-@pytest.fixture(scope="session")
-def paper(tmp_path_factory) -> PaperRecord:
-    return ingest_pdf(PDF, tmp_path_factory.mktemp("bock2005-grounding"))
+# `paper` (Bock 2005, ingested once per session) comes from tests/conftest.py.
 
 
 # ------------------------------------------------------------------ normalisation
@@ -135,9 +128,9 @@ def test_a_candidate_with_a_page_outside_the_document_still_searches(paper):
 
 
 # ------------------------------------------------------------------ table cells
-def _with_table(paper: PaperRecord, rows: list[list[str]]) -> PaperRecord:
-    table = TableRecord(id="p3t1", page=3, bbox=Bbox(0, 0, 1, 1), caption="Table 1 Group means",
-                        rows=rows)
+def _with_table(paper: PaperRecord, rows: list[list[str]], page: int = 3) -> PaperRecord:
+    table = TableRecord(id=f"p{page}t1", page=page, bbox=Bbox(0, 0, 1, 1),
+                        caption="Table 1 Group means", rows=rows)
     return dataclasses.replace(paper, tables=[table])
 
 
@@ -197,3 +190,88 @@ def test_a_one_letter_cell_does_not_match_every_header(paper):
                       value_as_written="42.5 (6.9)", mean=42.5)
     ok, detail = check_table_cell(cand, with_table)
     assert ok is True and "Trail making" in detail
+
+
+# ------------------------------------------------------------------ cells match by their numbers
+PM_ROWS = [["Variable", "Young", "Old"],
+           ["Trail making (s)", "27.4±7.2", "42.5±6.9"]]
+SPLIT_ROWS = [["Variable", "Young M", "Young SD", "Old M", "Old SD"],
+              ["Trail making (s)", "27.4", "7.2", "42.5", "6.9"]]
+
+
+def test_formatting_differences_between_the_quote_and_the_cell_do_not_refute(paper):
+    """"42.5 ± 6.9 s" and a cell reading `42.5±6.9` are the same reading."""
+    cand = _candidate(quote=TABLE_QUOTE, row_header="Trail making (s)", col_header="Old",
+                      value_as_written="42.5 ± 6.9 s", mean=42.5, dispersion_value=6.9)
+    ok, detail = check_table_cell(cand, _with_table(paper, PM_ROWS))
+    assert ok is True, detail
+
+
+def test_a_mean_and_a_dispersion_in_separate_columns_still_confirm_the_row(paper):
+    cand = _candidate(quote=TABLE_QUOTE, row_header="Trail making (s)", col_header="Old M",
+                      value_as_written="42.5 (6.9)", mean=42.5, dispersion_value=6.9)
+    ok, detail = check_table_cell(cand, _with_table(paper, SPLIT_ROWS))
+    assert ok is True, detail
+
+
+def test_a_number_that_is_not_in_the_row_still_fails(paper):
+    cand = _candidate(quote=TABLE_QUOTE, row_header="Trail making (s)", col_header="Old",
+                      value_as_written="41.0 (6.9)", mean=41.0, dispersion_value=6.9)
+    ok, detail = check_table_cell(cand, _with_table(paper, PM_ROWS))
+    assert ok is False and "41.0" in detail
+
+
+def test_a_confidence_interval_is_checked_by_its_bounds(paper):
+    rows = [["Measure", "Old"], ["Trail making (s)", "42.5 [40.1, 44.9]"]]
+    cand = _candidate(quote=TABLE_QUOTE, row_header="Trail making (s)", col_header="Old",
+                      value_as_written="42.5 [40.1, 44.9]", mean=42.5, ci_low=40.1, ci_high=44.9)
+    ok, detail = check_table_cell(cand, _with_table(paper, rows))
+    assert ok is True, detail
+
+
+def test_a_row_of_the_same_name_on_a_far_away_page_is_only_a_note(paper):
+    """Two tables can share a row label; the wrong one must never refute a candidate."""
+    with_table = _with_table(paper, PM_ROWS, page=1)
+    cand = ground_candidate(
+        _candidate(quote=TABLE_QUOTE, row_header="Trail making (s)", col_header="Old",
+                   value_as_written="99.9 (1.1)", mean=99.9), with_table)
+    assert cand.grounded is True
+    assert "table cell check skipped" in cand.notes and "not near page 3" in cand.notes
+
+
+def test_a_row_on_the_neighbouring_page_is_still_checked(paper):
+    with_table = _with_table(paper, PM_ROWS, page=2)
+    ok, detail = check_table_cell(
+        _candidate(row_header="Trail making (s)", col_header="Old", value_as_written="42.5±6.9",
+                   mean=42.5, dispersion_value=6.9), with_table)
+    assert ok is True, detail
+
+
+def test_numbers_are_read_out_of_any_formatting():
+    assert numbers_in("42.5 ± 6.9 s") == [42.5, 6.9]
+    assert numbers_in("42.5\u00b16.9") == [42.5, 6.9]
+    assert numbers_in("the offset was \u22120.5 deg") == [-0.5]      # unicode minus keeps its sign
+    assert numbers_in("y=9.92+53.51\u00d7exp(-x/5.89)") == [9.92, 53.51, 5.89]
+
+
+# ------------------------------------------------------------------ short quotes
+def test_a_short_quote_grounds_but_is_marked(paper):
+    """"42.5±6.9" is on the page — matching it proves much less than a sentence does."""
+    cand = ground_candidate(_candidate(quote="42.5±6.9 s"), paper)
+    assert cand.grounded is True and cand.grounding_similarity == 1.0
+    assert SHORT_QUOTE_NOTE in cand.notes
+    assert is_short_quote("42.5±6.9 s") and SHORT_QUOTE_CHARS == 20
+
+
+def test_a_full_sentence_is_not_marked_short(paper):
+    cand = ground_candidate(_candidate(quote=TABLE_QUOTE), paper)
+    assert cand.grounded is True and SHORT_QUOTE_NOTE not in cand.notes
+    assert not is_short_quote(TABLE_QUOTE)
+
+
+def test_a_candidate_without_a_page_never_reports_page_none(paper):
+    cand = ground_candidate(_candidate(page=None, quote="the old group reached 42.0 deg by "
+                                                        "episode 20 of the pointing task"), paper)
+    assert cand.grounded is False
+    assert "None" not in cand.notes, cand.notes
+    assert "best similarity" in cand.notes

@@ -11,58 +11,22 @@ of the grouping factor (F(1,22)=7.58, inadmissible) and a plain two-group t test
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from canopy.agents import load_prompt
 from canopy.agents.extract_stats import (ADMISSIBLE_DESIGNS, EXTRACT_STATS_SCHEMA, PROMPT_FILES,
                                          PROMPT_VERSION, admissibility, extract_test_statistics)
-from canopy.agents.mapper import map_study
-from canopy.config import MODELS, live_enabled, load_env, record_enabled
-from canopy.ingest.pdf import PaperRecord, ingest_pdf
+from canopy.config import MODELS
 from canopy.llm.client import LLMClient
 from canopy.llm.providers import FakeProvider
 from canopy.llm.schemas import assert_no_derived_stats, assert_valid_output_schema
 from canopy.models import (Candidate, DatasetSpec, GroupSpec, OutcomeDef, Protocol, Source,
-                           SourceKind, StudyMap)
-from canopy.protocol import load_protocol
-
-ROOT = Path(__file__).resolve().parents[1]
-PDF = ROOT / "tests" / "fixtures" / "pdfs" / "bock2005.pdf"
-REPLAY = ROOT / "tests" / "fixtures" / "llm"
-PROTOCOL_PATH = ROOT / "examples" / "protocols" / "aging_sensorimotor_adaptation.yaml"
+                           SourceKind)
 
 replayed = pytest.mark.replay
 
-
-@pytest.fixture(scope="session")
-def paper(tmp_path_factory) -> PaperRecord:
-    return ingest_pdf(PDF, tmp_path_factory.mktemp("bock2005-stats"))
-
-
-@pytest.fixture(scope="session")
-def protocol() -> Protocol:
-    return load_protocol(PROTOCOL_PATH)
-
-
-@pytest.fixture(scope="session")
-def client() -> LLMClient:
-    live, record = live_enabled(), record_enabled()          # read here, not at import
-    if live:
-        load_env()
-    return LLMClient(replay_dir=REPLAY, record_dir=REPLAY if record else None, allow_live=live,
-                     cache_dir=None)
-
-
-@pytest.fixture(scope="session")
-def bock_map(client, paper, protocol) -> StudyMap:
-    return map_study(client, paper, protocol)
-
-
-@pytest.fixture(scope="session")
-def dataset(bock_map) -> DatasetSpec:
-    return bock_map.datasets[0]
+# `paper`, `protocol`, `client`, `bock_map` and `dataset` (Bock 2005, ingested and mapped once per
+# session) come from tests/conftest.py.
 
 
 @pytest.fixture
@@ -313,13 +277,23 @@ def test_a_reported_effect_size_is_parsed_into_its_own_kind(paper, protocol, fak
 
 
 def test_a_status_that_is_not_found_carries_no_numbers(paper, protocol, fake_dataset):
-    rows = [_stat(status="ambiguous", quote="", stat_value=7.58, p_value=0.05)]
+    """Degrees of freedom and a p kind are numbers too: left standing on an empty row they read
+    downstream as a statistic the paper never printed."""
+    rows = [_stat(status="ambiguous", quote="", stat_value=7.58, p_value=0.05, tails=2)]
     cands, _ = _extract(paper, protocol, fake_dataset, _payload(rows=rows))
     cand = cands[0]
     assert cand.status == "ambiguous"
     assert cand.stat_value is None and cand.p_value is None and cand.reported_value is None
-    assert "dropped because status is ambiguous" in cand.notes and "7.58" in cand.notes
+    assert (cand.df, cand.df1, cand.df2, cand.tails) == (None, None, None, None)
+    assert cand.p_kind == "unknown"
+    assert "dropped because status is ambiguous" in cand.notes
+    assert "7.58" in cand.notes and "df2" in cand.notes and "less_than" in cand.notes
     assert cand.admissible is False and cand.admissible_reason == "the extractor answered ambiguous"
+
+
+def test_a_found_row_keeps_its_degrees_of_freedom(paper, protocol, fake_dataset):
+    cands, _ = _extract(paper, protocol, fake_dataset, _payload())
+    assert (cands[0].df1, cands[0].df2) == (1.0, 22.0) and cands[0].p_kind == "less_than"
 
 
 def test_an_invented_quote_is_marked_ungrounded(paper, protocol, fake_dataset):
@@ -399,5 +373,8 @@ def test_bock_two_group_t_test_is_transcribed_with_its_direction(client, paper, 
     assert cand.p_kind == "less_than" and cand.p_value == 0.001
     assert cand.direction == "a_greater", cand.notes      # the older group took longer
     assert cand.grounded is True and cand.page == 3
-    # whatever the model called the design, the admissibility rule is code's alone
-    assert cand.admissible is (cand.design in ADMISSIBLE_DESIGNS)
+    assert "t(22)=5.25" in cand.quote.replace(" ", "")
+    # df 22 = 12 + 12 - 2, two independent groups: the one convertible statistic in the paper
+    assert cand.design == "independent_t", cand.notes
+    assert cand.admissible is True and cand.admissible_reason == ""
+    assert cand.route == "test_statistic" and cand.kind == "test_statistic"

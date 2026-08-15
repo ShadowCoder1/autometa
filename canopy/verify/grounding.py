@@ -23,6 +23,7 @@ really is in that row of that table.
 """
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from difflib import SequenceMatcher
@@ -30,7 +31,8 @@ from difflib import SequenceMatcher
 from ..ingest.pdf import PaperRecord, TableRecord
 from ..models import Candidate
 
-__all__ = ["ground_quote", "ground_candidate", "check_table_cell", "normalize", "THRESHOLD"]
+__all__ = ["ground_quote", "ground_candidate", "check_table_cell", "is_short_quote", "normalize",
+           "THRESHOLD", "SHORT_QUOTE_CHARS", "SHORT_QUOTE_NOTE"]
 
 #: fuzzy similarity at or above which a quote counts as grounded (plan: 0.95)
 THRESHOLD = 0.95
@@ -38,6 +40,10 @@ THRESHOLD = 0.95
 _SHIFTS = (0, -2, 2, -5, 5, -10, 10, -20, 20, -40, 40)
 #: shortest header text that may match a cell by containment ("SD" must not match "standard")
 MIN_HEADER_CHARS = 3
+#: a quote shorter than this grounds too easily to be evidence on its own — Task 8 reads the marker
+SHORT_QUOTE_CHARS = 20
+#: the note a short but grounded quote carries (a stable marker, not prose)
+SHORT_QUOTE_NOTE = "short quote"
 
 _DASHES = "‐‑‒–—―⁃−－˗"
 _DASH_RE = re.compile(f"[{_DASHES}]")
@@ -61,6 +67,15 @@ def normalize(text: str) -> str:
     out = _DIGIT_SPACE_RE.sub("", out)           # "1 779" -> "1779"
     out = _DECIMAL_SPACE_RE.sub(".", out)        # "42. 5" -> "42.5"
     return _WS_RE.sub(" ", out).strip().casefold()
+
+
+def is_short_quote(quote: str) -> bool:
+    """True when a quote is too short to be evidence on its own.
+
+    "42.5" is in a page a dozen times; grounding it proves nothing. Such a quote still grounds (the
+    number really is printed), but the candidate carries `SHORT_QUOTE_NOTE` so Task 8 can weigh it.
+    """
+    return 0 < len(normalize(quote)) < SHORT_QUOTE_CHARS
 
 
 def _best_window(needle: str, hay: str) -> tuple[float, str]:
@@ -125,48 +140,94 @@ def _column_index(table: TableRecord, col_header: str) -> int | None:
 
 
 def _find_row(paper: PaperRecord, page: int | None, row_header: str
-              ) -> tuple[TableRecord, list[str]] | None:
-    """The ingested table row whose cells name `row_header` — tables on `page` are tried first."""
+              ) -> tuple[TableRecord, list[str], bool] | None:
+    """The ingested table row whose cells name `row_header`, and whether it is where it should be.
+
+    A table more than one page from the one the extractor named is almost certainly a different
+    table with a similar row label, so the third element is False and the caller only notes it —
+    a cross-page hit must never refute a candidate.
+    """
     wanted = normalize(row_header)
     if not wanted:
         return None
-    tables = sorted(paper.tables, key=lambda t: (page is None or t.page != page, t.id))
-    for table in tables:
-        for row in table.rows:
-            if any(_names(normalize(str(cell or "")), wanted) for cell in row):
-                return table, list(row)
+    def near(table: TableRecord) -> bool:
+        return page is None or abs(table.page - page) <= 1
+
+    for tables in ([t for t in paper.tables if near(t)], [t for t in paper.tables if not near(t)]):
+        for table in sorted(tables, key=lambda t: t.id):
+            for row in table.rows:
+                if any(_names(normalize(str(cell or "")), wanted) for cell in row):
+                    return table, list(row), near(table)
     return None
 
 
-def check_table_cell(cand: Candidate, paper: PaperRecord) -> tuple[bool | None, str]:
-    """Is the transcribed value really in the table row the extractor named?
+_NUMBER_RE = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
 
-    Returns `(None, "")` when the candidate claims no table cell, `(None, reason)` when ingestion
-    detected no row of that name (imperfect table detection is not evidence against the quote), and
-    `(True/False, detail)` when the row was found and the value was or was not in it.
+
+def numbers_in(text: str) -> list[float]:
+    """Every number in a piece of text, as floats, after the usual normalisation."""
+    found: list[float] = []
+    for token in _NUMBER_RE.findall(normalize(text)):
+        try:
+            found.append(float(token))
+        except ValueError:                                   # pragma: no cover - regex is strict
+            continue
+    return found
+
+
+def _same(a: float, b: float) -> bool:
+    return math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-12)
+
+
+def _transcribed_numbers(cand: Candidate) -> list[float]:
+    """What this candidate says it read, as numbers: the fields plus anything in the raw string.
+
+    Only the numbers matter. "42.5 ± 6.9 s" and a row holding `42.5 | 6.9` are the same reading;
+    demanding the whole string back would refute correct transcriptions on formatting alone.
+    """
+    wanted: list[float] = []
+    for value in (cand.mean, cand.dispersion_value, cand.ci_low, cand.ci_high):
+        if value is not None and not any(_same(value, seen) for seen in wanted):
+            wanted.append(float(value))
+    for value in numbers_in(cand.value_as_written):
+        if not any(_same(value, seen) for seen in wanted):
+            wanted.append(value)
+    return wanted
+
+
+def check_table_cell(cand: Candidate, paper: PaperRecord) -> tuple[bool | None, str]:
+    """Are the numbers this candidate transcribed really in the table row it named?
+
+    `(None, "")` when the candidate claims no table cell; `(None, reason)` when the check could not
+    be made (nothing numeric to look for, no such row anywhere, or the only such row is on a
+    different page) — imperfect table detection is not evidence against a quote; `(True/False,
+    detail)` when the row was found where it should be and every transcribed number was, or was
+    not, somewhere in it.
     """
     if not (cand.row_header or cand.col_header):
         return None, ""
-    value = cand.value_as_written or ("" if cand.mean is None else f"{cand.mean:g}")
-    if not value:
-        return None, "no transcribed value to look for"
+    wanted = _transcribed_numbers(cand)
+    if not wanted:
+        return None, "no transcribed number to look for"
     if not cand.row_header:
         return None, f"no row header for column {cand.col_header!r}"
     found = _find_row(paper, cand.page, cand.row_header)
     if found is None:
         return None, (f"no ingested table has a row named {cand.row_header!r} "
                       f"(ingestion found {len(paper.tables)} table(s))")
-    table, row = found
-    wanted = normalize(value)
-    index = _column_index(table, cand.col_header)
-    if index is not None and index < len(row):
-        cell = normalize(str(row[index] or ""))
-        if wanted and wanted in cell:
-            return True, f"{table.id} row {cand.row_header!r} column {cand.col_header!r}"
-    if wanted and wanted in _row_text(row):
-        return True, f"{table.id} row {cand.row_header!r}"
-    return False, (f"{value!r} is not in {table.id} row {cand.row_header!r} "
-                   f"(row reads: {_row_text(row)[:160]!r})")
+    table, row, near = found
+    if not near:
+        return None, (f"the only row named {cand.row_header!r} is in {table.id} on page "
+                      f"{table.page}, not near page {cand.page}")
+
+    present = numbers_in(_row_text(row))
+    missing = [value for value in wanted if not any(_same(value, cell) for cell in present)]
+    where = f"{table.id} row {cand.row_header!r}"
+    if _column_index(table, cand.col_header) is not None:
+        where += f" column {cand.col_header!r}"
+    if missing:
+        return False, (f"{missing} not in {where} (row reads: {_row_text(row)[:160]!r})")
+    return True, where
 
 
 # ----------------------------------------------------------------------------- candidates
@@ -194,7 +255,7 @@ def ground_candidate(cand: Candidate, paper: PaperRecord) -> Candidate:
     """
     if cand.quote.strip():
         named = cand.page
-        best = (0.0, named, "")
+        best: tuple[float, int | None] = (0.0, None)
         for number in _pages_to_try(paper, named):
             grounded, similarity, _ = ground_quote(cand.quote, paper.page_text(number))
             if grounded:
@@ -205,14 +266,19 @@ def ground_candidate(cand: Candidate, paper: PaperRecord) -> Candidate:
                     cand.page = number
                     cand.page_corrected = True
                     cand.notes = _note(cand.notes, f"quote found on page {number}{said}")
+                if is_short_quote(cand.quote):
+                    cand.notes = _note(cand.notes, f"{SHORT_QUOTE_NOTE}: "
+                                                   f"{len(normalize(cand.quote))} characters "
+                                                   f"ground too easily to stand as evidence")
                 break
             if similarity > best[0]:
-                best = (similarity, number, "")
+                best = (similarity, number)
         else:
             cand.grounded = False
             cand.grounding_similarity = best[0]
-            cand.notes = _note(cand.notes, f"quote not found in the document (best similarity "
-                                           f"{best[0]:.2f} on page {best[1]})")
+            where = f" on page {best[1]}" if best[1] else ""
+            cand.notes = _note(cand.notes, f"quote not found in the document "
+                                           f"(best similarity {best[0]:.2f}{where})")
 
     ok, detail = check_table_cell(cand, paper)
     if ok is False:

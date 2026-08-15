@@ -182,11 +182,17 @@ def _candidate(row: dict[str, Any], *, index: int, paper: PaperRecord, dataset: 
     page = _whole(row.get("page"))
 
     values = {name: _number(row.get(name)) for name in
-              ("stat_value", "p_value", "reported_value", "reported_ci_low", "reported_ci_high")}
-    if status != "found" and any(v is not None for v in values.values()):
-        printed = {k: v for k, v in values.items() if v is not None}
-        notes = note(notes, f"numbers dropped because status is {status}: {printed}")
-        values = dict.fromkeys(values)             # amendment E: a non-`found` row carries no value
+              ("stat_value", "p_value", "reported_value", "reported_ci_low", "reported_ci_high",
+               "df", "df1", "df2")}
+    tails = _whole(row.get("tails"))
+    p_kind = _enum_value(row.get("p_kind"), get_args(PKind), "unknown")
+    if status != "found":                          # amendment E: a non-`found` row carries no value
+        printed = {k: v for k, v in {**values, "tails": tails}.items() if v is not None}
+        if p_kind != "unknown":
+            printed["p_kind"] = p_kind
+        if printed:
+            notes = note(notes, f"numbers dropped because status is {status}: {printed}")
+        values, tails, p_kind = dict.fromkeys(values), None, "unknown"
 
     admissible, reason = admissibility(
         kind, design, compares, bool(row.get("admissible")),
@@ -201,9 +207,7 @@ def _candidate(row: dict[str, Any], *, index: int, paper: PaperRecord, dataset: 
         source_kind=(SourceKind.reported_effect_size if kind == "reported_d"
                      else SourceKind.test_statistic),
         stat_type=stat_type, stat_value=values["stat_value"],
-        df=_number(row.get("df")), df1=_number(row.get("df1")), df2=_number(row.get("df2")),
-        tails=_whole(row.get("tails")),
-        p_kind=_enum_value(row.get("p_kind"), get_args(PKind), "unknown"),
+        df=values["df"], df1=values["df1"], df2=values["df2"], tails=tails, p_kind=p_kind,
         p_value=values["p_value"], design=design,
         direction=_enum_value(row.get("direction"), get_args(Direction), "unknown"),
         admissible=admissible, admissible_reason=reason,

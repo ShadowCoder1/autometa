@@ -48,6 +48,11 @@ PROMPT_VERSION = f"extract_text/1@{prompt_fingerprint(PROMPT_FILES)}"
 MAX_TOKENS = 8000
 ROUTE = "text"
 
+#: confidence levels a paper may state, as printed (a string: it is a label, not a number to use)
+CI_LEVELS = ("95", "90", "99", "unknown")
+#: the dispersion type a stated level implies, when the extractor left the type open
+CI_DISPERSION = {"95": DispersionType.CI95, "90": DispersionType.CI90}
+
 
 # ----------------------------------------------------------------------------- schema
 #: one row per group; 20 leaf properties, well under the structured-output grammar limit
@@ -61,8 +66,9 @@ EXTRACT_TEXT_SCHEMA: dict[str, Any] = {
                 "type": "object", "additionalProperties": False,
                 "required": ["group", "group_label_as_written", "status", "page", "kind", "quote",
                              "row_header", "col_header", "value_as_written", "mean",
-                             "dispersion_value", "dispersion_type", "unit", "n", "n_quote",
-                             "raw_value_semantics", "analysis_metric", "error_bar_scope", "notes"],
+                             "dispersion_value", "dispersion_type", "ci_low", "ci_high",
+                             "ci_level", "unit", "n", "n_quote", "raw_value_semantics",
+                             "analysis_metric", "error_bar_scope", "notes"],
                 "properties": {
                     "group": enum_schema(["A", "B", "unknown"]),
                     "group_label_as_written": {"type": "string"},
@@ -76,6 +82,9 @@ EXTRACT_TEXT_SCHEMA: dict[str, Any] = {
                     "mean": {"type": ["number", "null"]},
                     "dispersion_value": {"type": ["number", "null"]},
                     "dispersion_type": enum_schema([d.value for d in DispersionType]),
+                    "ci_low": {"type": ["number", "null"]},
+                    "ci_high": {"type": ["number", "null"]},
+                    "ci_level": enum_schema(CI_LEVELS),
                     "unit": {"type": "string"},
                     "n": {"type": ["integer", "null"]},
                     "n_quote": {"type": "string"},
@@ -147,31 +156,49 @@ def _candidate(row: dict[str, Any], *, index: int, paper: PaperRecord, dataset: 
     page = _whole(row.get("page"))
     notes = (row.get("notes") or "").strip()
 
-    mean, dispersion = _number(row.get("mean")), _number(row.get("dispersion_value"))
-    if status != "found" and (mean is not None or dispersion is not None):
-        notes = note(notes, f"numbers dropped because status is {status}: mean={mean!r} "
-                            f"dispersion={dispersion!r}")
-        mean = dispersion = None                 # amendment E: a non-`found` row carries no value
+    values = {name: _number(row.get(name))
+              for name in ("mean", "dispersion_value", "ci_low", "ci_high")}
+    dispersion_type = DispersionType(_enum_value(row.get("dispersion_type"), _DISPERSIONS,
+                                                 "UNKNOWN"))
+    ci_level = _enum_value(row.get("ci_level"), CI_LEVELS, "unknown")
+    n, n_quote = _whole(row.get("n")), (row.get("n_quote") or "").strip()
+    unit = (row.get("unit") or "").strip()
+    written = (row.get("value_as_written") or "").strip()
+
+    if status != "found":                        # amendment E: a non-`found` row carries no value
+        reported = {**values, "n": n, "unit": unit, "value_as_written": written,
+                    "dispersion_type": (None if dispersion_type is DispersionType.UNKNOWN
+                                        else dispersion_type.value)}
+        dropped = {name: value for name, value in reported.items()
+                   if value is not None and value != ""}
+        if dropped:
+            notes = note(notes, f"numbers dropped because status is {status}: {dropped}")
+        values = dict.fromkeys(values)
+        dispersion_type, ci_level = DispersionType.UNKNOWN, "unknown"
+        n, n_quote, unit, written = None, "", "", ""
+    elif (values["ci_low"] is not None or values["ci_high"] is not None) \
+            and dispersion_type is DispersionType.UNKNOWN:
+        implied = CI_DISPERSION.get(ci_level)    # a stated level names the interval, nothing more
+        if implied is not None:
+            dispersion_type = implied
+            notes = note(notes, f"dispersion type read from the stated {ci_level}% interval")
 
     cand = Candidate(
         candidate_id=candidate_id(dataset.dataset_id, outcome_key, extractor_id, index, group),
         paper_id=paper.sha256, dataset_id=dataset.dataset_id, outcome_key=outcome_key,
         kind="group_stats", group=group, status=status,
         source_kind=SourceKind(_enum_value(row.get("kind"), _SOURCE_KINDS, "unknown")),
-        n=_whole(row.get("n")),
-        n_quote=(row.get("n_quote") or "").strip(),
-        mean=mean, dispersion_value=dispersion,
-        dispersion_type=DispersionType(_enum_value(row.get("dispersion_type"), _DISPERSIONS,
-                                                   "UNKNOWN")),
-        unit=(row.get("unit") or "").strip(),
-        value_as_written=(row.get("value_as_written") or "").strip(),
+        n=n, n_quote=n_quote,
+        mean=values["mean"], dispersion_value=values["dispersion_value"],
+        dispersion_type=dispersion_type,
+        ci_low=values["ci_low"], ci_high=values["ci_high"],
+        unit=unit, value_as_written=written,
         raw_value_semantics=_enum_value(row.get("raw_value_semantics"),
                                         get_args(RawValueSemantics), "unknown"),
         analysis_metric=_enum_value(row.get("analysis_metric"), get_args(AnalysisMetric),
                                     "unknown"),
         error_bar_scope=_enum_value(row.get("error_bar_scope"), get_args(ErrorBarScope), "unknown"),
         page=page, quote=(row.get("quote") or "").strip(),
-        locator=next((s.locator for s in sources if s.page == page and s.locator), ""),
         row_header=(row.get("row_header") or "").strip(),
         col_header=(row.get("col_header") or "").strip(),
         route=ROUTE, model=model, prompt_version=PROMPT_VERSION, llm_call_id=call_id,
@@ -186,7 +213,11 @@ def _candidate(row: dict[str, Any], *, index: int, paper: PaperRecord, dataset: 
     own_label = dataset.group_a.label if group == "A" else dataset.group_b.label
     if group and label and label != own_label:          # the paper's words, kept for the reviewer
         cand.notes = note(cand.notes, f"group label as written: {label!r}")
-    return ground_candidate(cand, paper)
+
+    ground_candidate(cand, paper)
+    # after grounding, so a corrected page names the location it was actually read from
+    cand.locator = next((s.locator for s in sources if s.page == cand.page and s.locator), "")
+    return cand
 
 
 def _missing_group(group: str, *, paper: PaperRecord, dataset: DatasetSpec, outcome_key: str,
