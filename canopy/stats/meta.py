@@ -46,8 +46,10 @@ class MetaResult:
     pi_low: float            # prediction interval, t(k-2) (meta HTS)
     pi_high: float
     pi_df: int
-    pi_low_z: float          # prediction interval, z-based (metafor default)
+    pi_low_z: float          # prediction interval, z-based (metafor default; meta method.predict="S")
     pi_high_z: float
+    pi_low_v: float = float("nan")   # prediction interval, t(k-1) (meta ≥7 default method.predict="V", Veroniki 2019)
+    pi_high_v: float = float("nan")
     hakn: bool = False
     level: float = 0.95
     tau2_ci_low: float | None = None
@@ -259,6 +261,8 @@ def random_effects(yi, vi, method: Tau2Method = "REML", hakn: bool = False, leve
         pi_low = pi_high = float("nan")
     zq = sps.norm.ppf(1 - (1 - level) / 2)
     pi_low_z, pi_high_z = mu - zq * pi_sd, mu + zq * pi_sd
+    tv = sps.t.ppf(1 - (1 - level) / 2, k - 1)
+    pi_low_v, pi_high_v = mu - tv * pi_sd, mu + tv * pi_sd
 
     lb = ub = None
     if tau2_ci:
@@ -268,8 +272,22 @@ def random_effects(yi, vi, method: Tau2Method = "REML", hakn: bool = False, leve
                       z=float(stat), p=p, tau2=float(tau2), tau=float(np.sqrt(tau2)), se_tau2=se_tau2, Q=Q, Q_df=df,
                       Q_p=Q_p, I2=I2_meta, I2_tau=I2_tau, H2=H2, weights=w / sw, weights_pct=100 * w / sw,
                       weights_raw=w, pi_low=float(pi_low), pi_high=float(pi_high), pi_df=k - 2,
-                      pi_low_z=float(pi_low_z), pi_high_z=float(pi_high_z), hakn=hakn, level=level,
+                      pi_low_z=float(pi_low_z), pi_high_z=float(pi_high_z), pi_low_v=float(pi_low_v),
+                      pi_high_v=float(pi_high_v), hakn=hakn, level=level,
                       tau2_ci_low=lb, tau2_ci_high=ub, iterations=iters, converged=conv, yi=yi, vi=vi)
+
+
+def prediction_interval(res: "MetaResult", method: str = "V") -> tuple[float, float, float]:
+    """Return (low, high, df) for the requested convention: 'HTS' t(k-2) [meta ≤6 default, Cisneros 2024 figures],
+    'V' t(k-1) [meta ≥7 default], 'z' normal [metafor default; meta 'S']."""
+    m = method.upper()
+    if m == "HTS":
+        return res.pi_low, res.pi_high, res.k - 2
+    if m == "V":
+        return res.pi_low_v, res.pi_high_v, res.k - 1
+    if m in ("Z", "S"):
+        return res.pi_low_z, res.pi_high_z, float("inf")
+    raise ValueError(f"unknown prediction-interval method {method!r}")
 
 
 def egger_test(yi, sei) -> EggerResult:

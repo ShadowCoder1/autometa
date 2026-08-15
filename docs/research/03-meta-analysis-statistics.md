@@ -3,7 +3,8 @@
 Status: research brief, 2026-08-14. Target: `canopy.stats` must reproduce, to floating-point tolerance,
 `meta::metagen(sm="SMD", random=TRUE, method.tau="REML", hakn=FALSE, prediction=TRUE)` and
 `metafor::rma(yi, vi, method="REML")`. Everything below was checked against **metafor 4.6-0** and **meta 8.2-1**
-installed locally (`/usr/local/bin/Rscript`) and against a from-scratch NumPy/SciPy implementation
+installed locally (`/usr/local/bin/Rscript`, R 4.4.0; note CRAN is ahead — metafor 5.0-1 (2026-04-26) and meta 8.5-0
+(2026-05-25) — so pin the golden fixtures to the versions actually used) and against a from-scratch NumPy/SciPy implementation
 (`scratchpad/ref.py`) that reproduced all R numbers to ≥ 9 significant digits. The worked example in §7 is that run.
 
 Notation: study *i* has groups A (reference, e.g. young) and B (comparison, e.g. older) with means m_A, m_B,
@@ -18,7 +19,7 @@ sampling variance; w_i = 1/v_i (common-effect weights); w_i* = 1/(v_i + τ²) (r
 |---|---|---|
 | Pooled SD | s_p = √[((n_A−1)s_A² + (n_B−1)s_B²)/(N−2)] | Borenstein 2009 eq. 4.19; Cochrane 6.5.1.2 |
 | Cohen's d | d = (m_B − m_A)/s_p | Cohen 1988; Borenstein eq. 4.18 |
-| Var(d), large-sample ("Rmd" formula) | V_d = (n_A+n_B)/(n_A n_B) + d²/(2(N−2)) → SE(d)=√V_d | Borenstein 2009 eq. 4.20 (uses N−2 in the second term); Hedges & Olkin 1985 |
+| Var(d), large-sample ("Rmd" formula) | V_d = (n_A+n_B)/(n_A n_B) + d²/(2(N−2)) → SE(d)=√V_d | Formula as used in the Cisneros Rmd. **Note:** Borenstein 2009 eq. 4.20 actually reads V_d = (n_A+n_B)/(n_A n_B) + d²/(2(n_A+n_B)) — denominator 2N, not 2(N−2) (verified in the book text); Hedges & Olkin 1985 eq. 15 likewise uses 2N. The N−2 variant is a df-based approximation whose primary source we could not pin down — cite it as "Cisneros Rmd formula", not Borenstein |
 | Hedges' correction, exact | J(m) = Γ(m/2) / (√(m/2) Γ((m−1)/2)); compute as exp(lgamma(m/2) − ½ln(m/2) − lgamma((m−1)/2)) | Hedges 1981; metafor `.cmicalc()` |
 | Hedges' correction, approx. | J ≈ 1 − 3/(4m − 1) | Hedges 1981; Borenstein eq. 4.22; Lakens 2013 |
 | Hedges' g | g = J·d | |
@@ -57,7 +58,7 @@ different error.
 | Exact p (or t) for a two-group comparison | t = t⁻¹(1 − p/2, N−2); SE_MD = |MD|/t; s_p as above — or go straight to d (§3) | Cochrane 6.5.2.3 |
 | Median + IQR (q1, q3), n | Wan 2014 eq. 16: SD ≈ (q3 − q1)/η(n), η(n) = 2Φ⁻¹((0.75n − 0.125)/(n + 0.25)); large-n limit η→1.349 (Cochrane's "IQR/1.35") | Wan 2014; Cochrane 6.5.2.5 |
 | Median + min/max, n | Wan 2014 eq. 9: SD ≈ (b − a)/ξ(n), ξ(n) = 2Φ⁻¹((n − 0.375)/(n + 0.25)); (b−a)/4 or /6 only as fallbacks (Hozo 2005) | Wan 2014 |
-| Five-number summary | Wan 2014: SD ≈ ½[(b−a)/ξ(n) + (q3−q1)/η(n)]. **Shi 2020 (metafor default):** SD ≈ w(b−a)/ξ(n) + (1−w)(q3−q1)/η(n), w = 1/(1 + 0.07 n^0.6) | Shi 2020 eq. 10; metafor `conv.fivenum()` |
+| Five-number summary | Wan 2014 eq. 13: SD ≈ ½[(b−a)/ξ(n) + (q3−q1)/η(n)]. **Shi 2020 (metafor default):** SD ≈ w(b−a)/ξ(n) + (1−w)(q3−q1)/η(n), w = 1/(1 + 0.07 n^0.6) | Shi 2020 eq. 10; metafor `conv.fivenum()` |
 | Mean from median (Luo 2018) | (a,m,b): x̄ ≈ [4/(4+n^0.75)]·(a+b)/2 + [n^0.75/(4+n^0.75)]·m. (q1,m,q3): x̄ ≈ (0.7 + 0.39/n)(q1+q3)/2 + (0.3 − 0.39/n)m. Five numbers: w1 = 2.2/(2.2+n^0.75), w2 = 0.7 − 0.72/n^0.55, x̄ ≈ w1(a+b)/2 + w2(q1+q3)/2 + (1−w1−w2)m | Luo 2018; metafor source |
 | Individual data points (digitized dots / supplementary data) | SD = sample SD with n−1; SE = SD/√n; prefer this over any of the above; record n actually counted vs n reported | — |
 | Error bars in a figure | Must know whether they are SD, SE or CI (caption/methods). If SE → SD = SE·√n; if 95 % CI → SD = √n·half-width/1.96 (or /t) | Cochrane 6.5.2.2 |
@@ -159,10 +160,12 @@ Canopy should report the meta version when replicating a `meta` analysis and off
 ### 4.4 Prediction interval — the exact `meta` rule depends on version
 
 PI = μ̂ ± t_{df, 0.975}·√(τ² + SE(μ̂)²).
-* `meta` ≤ 7.0-0 default (`method.predict="HTS"`, Higgins–Thompson–Spiegelhalter 2009): **df = k − 2**, SE = classic
-  RE SE. Example: (−1.008326, 1.667627). This is almost certainly what the Cisneros Rmd produced (2023–2024 CRAN
-  versions were 6.x/7.0-0); confirm from their `sessionInfo()`.
-* `meta` ≥ 7.1 default (`method.predict="V"`, Veroniki 2019): **df = k − 1**. Example: (−0.837633, 1.496934).
+* `meta` < 8.0-0 default (`method.predict="HTS"`, Higgins–Thompson–Spiegelhalter 2009): **df = k − 2**, SE = classic
+  RE SE. Example: (−1.008326, 1.667627). This is very likely what the Cisneros Rmd produced (CRAN versions up to
+  7.0-0, released 2024-01-11, used HTS); confirm from their `sessionInfo()` — an analysis re-run after 2024-10-30
+  would silently switch to "V".
+* `meta` ≥ 8.0-0 (2024-10-30) default (`method.predict="V"`, Veroniki 2019): **df = k − 1**. Example: (−0.837633, 1.496934).
+  (Corrected from "7.1": the meta NEWS file dates the default change to 8.0-0.)
 * `method.predict="S"` (Skipka): z instead of t → (−0.494365, 1.153666).
 * `metafor::predict.rma()` default: **z** (i.e. same as "S"); with `test="knha"`/`"t"`: t_{k−p} with the HK SE
   (example knha: (−0.825917, 1.485218)); `pi.type="Riley"`: t_{k−2}·√(τ² + SE²) with classic SE = meta "HTS" exactly.
@@ -223,7 +226,7 @@ reference (young), d = (m_B − m_A)/s_p. Then apply an outcome-level `direction
 | `statsmodels.stats.meta_analysis` (`combine_effects`, `effectsize_smd`) | 0.14.6 | DL exact (τ² 0.12125456, matches R); `method_re="iterated"` = Paule–Mandel (~1e-6 off); **no REML**, no Q-profile CI, no PI, no HK; `effectsize_smd` uses J = 1−3/(4N−9) and 2(N−3.94) → g/var differ from metafor at 4th decimal | Use only as a secondary cross-check for DL |
 | PyMARE | 0.0.10 (installed in scratch venv) | DL, HE, PM ("Hedges", "SampleSize"), REML/ML via `VarianceBasedLikelihoodEstimator` (SciPy optimizer): τ² 0.12508276 vs 0.12508342, μ̂ 0.32965022 vs 0.32965030; I² uses (Q−df)/Q. No PI, no HK, no Q-profile CI, no Egger | Good independent check at 1e-6; not exact |
 | PythonMeta | 1.26 | Fixed/random (DL) only, aimed at RevMan-style plots; sparse tests | Not recommended |
-| SciPy | 1.17 | Nothing meta-analytic beyond `stats` primitives | Building block only |
+| SciPy | 1.17 (installed; PyPI latest 1.18.0) | Nothing meta-analytic beyond `stats` primitives | Building block only |
 | R via `Rscript` (metafor 4.6-0, meta 8.2-1 installed here) | — | The oracle | Use for CI tests, not at runtime |
 
 **Recommendation**: implement from scratch (~250 lines, NumPy/SciPy only) mirroring metafor's algorithms verbatim
@@ -247,7 +250,7 @@ optional `--engine r` that shells out to `Rscript` for auditors.
    as τ² → 0; d(t) round-trips d → t → d; J(m)·d ≤ d for d>0; sign flip invariance (negating all y negates μ̂,
    leaves τ², Q, I², |z| unchanged).
 5. **Regression guard**: pin the golden JSON to metafor/meta versions in its header; CI job re-generates with the
-   installed R and fails loudly on drift (e.g. meta changed the PI default at 7.1).
+   installed R and fails loudly on drift (e.g. meta changed the PI default at 8.0-0, 2024-10-30).
 
 ---
 
@@ -361,3 +364,27 @@ p = .018 → d = 0.8733431; η²_p = .15 → d = 0.8176964; r = .40 → d 0.8728
 * statsmodels `combine_effects` / `effectsize_smd`: https://www.statsmodels.org/stable/generated/statsmodels.stats.meta_analysis.combine_effects.html
 * PyMARE: https://pymare.readthedocs.io/ (PyPI 0.0.10)
 * PythonMeta: https://pypi.org/project/PythonMeta/
+
+---
+
+## Verification notes (fact-check)
+
+Fact-checked 2026-08-15 by re-running the worked example against the locally installed R (metafor 4.6-0, meta 8.2-1,
+R 4.4.0) and Python (statsmodels 0.14.6, SciPy 1.17.0), and against primary sources on the web. Script:
+`scratchpad/chk*.R` (fact-check session).
+
+| # | Claim | Verdict | Source |
+|---|---|---|---|
+| 1 | Local versions: metafor 4.6-0, meta 8.2-1, Rscript at `/usr/local/bin` | **Confirmed** (added note: CRAN now has metafor 5.0-1, 2026-04-26 and meta 8.5-0, 2026-05-25) | `packageVersion()`; https://cran.r-project.org/package=metafor ; https://cran.r-project.org/package=meta |
+| 2 | Borenstein 2009 eq. 4.20 uses 2(N−2) in the second term of V_d | **Corrected** — eq. 4.20 is (n1+n2)/(n1n2) + d²/(2(n1+n2)); the 2(N−2) form is the Cisneros Rmd's, not Borenstein's | Borenstein et al. 2009, ch. 4 text (eq. 4.20), https://doi.org/10.1002/9780470743386 |
+| 3 | metafor `vtype` LS = 1/n1+1/n2+g²/(2N); LS2 = J²(1/n1+1/n2+d²/(2N)); UB = 1/n1+1/n2+(1−(m−2)/(m J²))g²; exact J via lgamma with m ≤ 1 → NA | **Confirmed** (source comments cite Hedges 1982 eq. 8 / H&O 1985 eq. 15; Borenstein eq. 12.17; Hedges 1983 eq. 9) | https://raw.githubusercontent.com/wviechtb/metafor/master/R/escalc.r ; `metafor:::.cmicalc` |
+| 4 | statsmodels `effectsize_smd`: J = 1−3/(4N−9), var = N/(n1n2)+g²/(2(N−3.94)); DL τ² 0.12125456; `iterated` ≈ PM to ~1e-6 | **Confirmed** (iterated τ² 0.10850739 vs metafor PM 0.10850577) | statsmodels 0.14.6 source (`inspect.getsource`) |
+| 5 | Wan 2014 equation numbers (range eq. 9, IQR eq. 16) and ξ(n)/η(n) definitions; five-number = eq. 13 (added) | **Confirmed** | https://pmc.ncbi.nlm.nih.gov/articles/PMC4383202/ |
+| 6 | Shi 2020 weight w = 1/(1+0.07n^0.6); Luo 2018 weights 4/(4+n^0.75), 0.7+0.39/n, 2.2/(2.2+n^0.75), 0.7−0.72/n^0.55; skew tests 1/ln(n+9)+2.5/(n+1) and 2.65/√n−6/n²; worked n=20 numbers (ξ 3.73648, η 1.25337, SD_Shi 4.3833, mean 10.5638 etc.) | **Confirmed** | metafor `conv.fivenum` source + `conv.fivenum()` output |
+| 7 | Cochrane 6.5.2.2 (÷3.92 / 3.29 / 5.15, t for <60 per group), 6.5.2.3 (t/p for differences), 6.5.2.5 (IQR ≈ 1.35 SD), 6.5.1.2 (SMD) | **Confirmed** | https://www.cochrane.org/authors/handbooks-and-manuals/handbook/current/chapter-06 |
+| 8 | metafor `rma.uni` control defaults: threshold 1e-5, maxiter 100, stepadj 1, tau2.min 0, tol eps^0.25, ll0check TRUE, tau2.max = max(100, 10·mad(yi)²) | **Confirmed** | `deparse(rma.uni)` (metafor 4.6-0) |
+| 9 | meta default PI switched from HTS (k−2) to V (k−1) at version 7.1 | **Corrected** — the switch is in meta 8.0-0 (2024-10-30) per NEWS: "By default, prediction intervals are based on k − 1 instead of k − 2 degrees of freedom (Veroniki et al., 2019)". 7.0-0 (2024-01-11) still HTS | https://cran.r-project.org/web/packages/meta/news/news.html |
+| 10 | meta `method.tau.ci` default: Jackson (J) for DL, Q-profile otherwise; `metabias` k.min = 10; `method.I2` "Q" default, "tau2" = metafor definition | **Confirmed** | meta 8.2-1 `?meta-package`, `formals(meta:::metabias.meta)$k.min`, `gs("method.predict")` = "V" |
+| 11 | All §7 worked-example numbers (d, SE, g, LS/UB v, τ²_REML/DL/PM, SE(τ²), μ̂, SE, CI, I² both defs, H/H², Q-profile CI, PI HTS/V/S/knha, HK CI + adhoc, Egger lm intercept/t/p, logLik, trim-and-fill metafor vs meta, metacont seTE = √UB) and the τ²=0 second fixture | **Confirmed** to all printed digits | Re-run in R (metafor 4.6-0, meta 8.2-1) |
+| 12 | PyPI latest: PyMARE 0.0.10, PythonMeta 1.26, statsmodels 0.14.6 | **Confirmed**; PyMARE REML numbers (0.12508276 / 0.32965022) **unverifiable** here (package not installed in this venv) | `pip index versions` |
+| 13 | SciPy version "1.17" | **Confirmed** as installed (1.17.0); PyPI latest is 1.18.0 (annotated) | `pip index versions scipy` |

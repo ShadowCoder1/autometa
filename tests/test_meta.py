@@ -110,3 +110,15 @@ def test_degenerate_inputs():
         random_effects(np.array([0.1]), np.array([0.01]))  # k < 2
     r = random_effects(np.array([0.2, 0.2, 0.2]), np.array([0.01, 0.02, 0.03]))
     assert r.tau2 == 0 and r.I2 == 0
+
+
+def test_prediction_interval_conventions():
+    from canopy.stats.meta import prediction_interval
+    yi, vi = _syn()
+    r = random_effects(yi, vi, method="REML")
+    lo, hi, df = prediction_interval(r, "V")      # meta 8.x default: t(k-1)
+    assert (lo, hi, df) == pytest.approx((-0.885220, 1.180695, 4), abs=2e-5)
+    lo, hi, df = prediction_interval(r, "HTS")    # t(k-2)
+    assert (lo, hi) == pytest.approx((-1.036270, 1.331745), abs=2e-5) and df == 3
+    lo, hi, df = prediction_interval(r, "z")      # metafor / meta 'S'
+    assert (lo, hi) == pytest.approx((-0.581454, 0.876928), abs=2e-5)
