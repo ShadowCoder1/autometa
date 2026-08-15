@@ -176,7 +176,8 @@ def conventions_footer(settings: StatsSettings, pooled: MetaResult, *, k_papers:
         f"I²τ = {100 * pooled.I2_tau:.1f}% [τ²/(τ²+s²), metafor] · H² = {pooled.H2:.2f}",
         f"{pct} CI from {'t(k−1), Hartung–Knapp' if pooled.hakn else 'z'} "
         f"(Hartung–Knapp: {'on' if settings.hakn else 'off'}) · "
-        f"{pct} prediction interval: {pi_label(settings, pooled)}",
+        + (f"{pct} prediction interval: {pi_label(settings, pooled)}" if pooled.k >= 3 else
+           f"no prediction interval: it needs k ≥ 3 and k = {pooled.k}"),
         f"k = {k_datasets} datasets from {k_papers} papers · "
         f"{n_excluded} rows excluded (needs_human): drawn hollow, not pooled",
     ]

@@ -105,8 +105,14 @@ def _default(obj: Any) -> Any:
 
 
 def _write_xlsx(rows: Sequence[Mapping[str, Any]], path: Path, columns: Sequence[str]) -> Path:
-    """One sheet, one header row. Missing openpyxl is reported, never silently skipped."""
+    """One sheet, one header row. Missing openpyxl is reported, never silently skipped.
+
+    Quotes come out of real PDFs, and real PDFs contain control characters that the XLSX format
+    forbids outright. They are stripped **here only**: the CSV and the JSON keep the text exactly
+    as the extractor read it, because that is the copy a reviewer checks against the paper.
+    """
     from openpyxl import Workbook
+    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 
     path.parent.mkdir(parents=True, exist_ok=True)
     book = Workbook()
@@ -114,7 +120,7 @@ def _write_xlsx(rows: Sequence[Mapping[str, Any]], path: Path, columns: Sequence
     sheet.title = "extraction"
     sheet.append(list(columns))
     for row in rows:
-        sheet.append([_cell(row.get(c)) for c in columns])
+        sheet.append([ILLEGAL_CHARACTERS_RE.sub("", _cell(row.get(c))) for c in columns])
     sheet.freeze_panes = "A2"
     book.save(path)
     return path

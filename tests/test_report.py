@@ -558,3 +558,51 @@ def test_funnel_falls_back_when_every_study_has_the_same_group_sizes(tmp_path, s
     assert payload["egger"]["predictor"] == "precision"
     assert "could not be fitted" in payload["egger_note"]
     assert out["png"].exists() and out["png"].stat().st_size > 0
+
+
+def test_extraction_xlsx_survives_control_characters_from_a_real_pdf(tmp_path, resolved_row):
+    """PDF text routinely contains characters XLSX forbids; the CSV must still keep them."""
+    from canopy.report.tables import extraction_table
+
+    dirty = resolved_row.model_copy(update={
+        "notes": "SD \x03 3.7 years \x0b as printed",
+        "conversion_chain": "pooled SD \x01 = 7.5"})
+    out = extraction_table([dirty], tmp_path / "t")
+    assert out["xlsx"].exists() and out["xlsx"].stat().st_size > 0
+    row = list(csv.DictReader(out["csv"].open(newline="", encoding="utf-8")))[0]
+    assert "\x03" in row["notes"]                     # the CSV keeps what the extractor read
+
+
+def test_route_example_filenames_are_safe_for_a_url(tmp_path, paper, resolved_row):
+    """Candidate ids carry `:` and `#`; a thumbnail the HTML report links must not."""
+    from canopy.models import Candidate
+    from canopy.report.methods_fig import route_examples
+
+    page, quote = _bock_quote(paper)
+    rows = [resolved_row.model_copy(update={"dataset_id": "sha:d1", "route": "text_mean_sd",
+                                            "paper_id": paper.sha256})]
+    cands = [Candidate(candidate_id="sha:d1:late:A:text:table_first:claude-opus-5#1",
+                       paper_id=paper.sha256, dataset_id="sha:d1", outcome_key="late_adaptation",
+                       kind="group_stats", group="A", mean=1.0, page=page, quote=quote,
+                       route="text")]
+    examples = route_examples(rows, candidates=cands, papers=[paper], out_dir=tmp_path / "t")
+    for paths in examples.values():
+        for path in paths:
+            assert ":" not in path.name and "#" not in path.name
+
+
+def test_footer_does_not_claim_a_prediction_interval_it_could_not_compute(gold_rows, settings):
+    """With k = 2 the prediction interval has df = 0; saying so beats printing a df of 0."""
+    from canopy.report.theme import conventions_footer
+
+    two = gold_rows[:2]
+    pooled = random_effects([r.es for r in two], [r.var for r in two],
+                            method=settings.tau2_method)
+    lines = "\n".join(conventions_footer(settings, pooled, k_papers=2, k_datasets=2))
+    assert "no prediction interval" in lines and "k = 2" in lines
+
+    many = gold_rows[:6]
+    pooled_many = random_effects([r.es for r in many], [r.var for r in many],
+                                 method=settings.tau2_method)
+    lines = "\n".join(conventions_footer(settings, pooled_many, k_papers=6, k_datasets=6))
+    assert "prediction interval: HTS" in lines

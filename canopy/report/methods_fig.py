@@ -8,6 +8,7 @@ every thumbnail is a value that is in the forest plot.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -28,6 +29,12 @@ ROUTE_TITLES: dict[str, str] = {
     "not_convertible": "No usable route", "other": "Other",
 }
 THUMB_PX = 460
+#: candidate ids carry `:` and `#`; a file name (and a URL) must not
+_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _safe(name: str) -> str:
+    return _UNSAFE.sub("_", str(name)).strip("_") or "x"
 
 
 def route_group(route: str) -> str:
@@ -105,7 +112,8 @@ def route_examples(rows: Sequence[EffectSizeRecord], *, candidates: Sequence[Can
         if paper is None:
             continue
         for candidate in pool:
-            stem = directory / f"{bucket}_{record.dataset_id}_{candidate.candidate_id or 'c'}.png"
+            stem = directory / (f"{_safe(bucket)}_{_safe(record.dataset_id)}_"
+                                f"{_safe(candidate.candidate_id or 'c')}.png")
             source: Path | None = None
             existing = candidate.overlay_path or candidate.crop_path
             figure_id = str((candidate.pixel_provenance or {}).get("figure_id") or "")
