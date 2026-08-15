@@ -237,19 +237,23 @@ def _classify(scene: VectorScene, paths: list[list[Segment]], axis_min: float, t
                 s.role = "axis"
                 scene.axis_lines.append(s)
     for segs in paths:
-        caps = [s for s in segs if s.role == "other" and s.orientation in ("h", "v") and s.length <= tick_max]
         for s in segs:
             if s.role == "axis":
                 continue
             if s.orientation in ("h", "v") and s.length <= tick_max and _on_axis(s, scene.axis_lines):
                 s.role = "tick"
                 scene.tick_lines.append(s)
+        caps = [s for s in segs if s.role == "other" and s.orientation in ("h", "v") and s.length <= tick_max]
         for s in segs:
-            if s.role != "other" or s.orientation not in ("h", "v") or s.length > 0.5 * axis_min:
+            if s.role != "other" or s.orientation not in ("h", "v"):
                 continue
-            if _has_cap(s, caps):
-                s.role = "whisker"
-                scene.whiskers.append(s)
+            end = _capped_end(s, caps)
+            if end is None:
+                continue
+            if end == 0:                                          # keep the datum end first
+                s.x0, s.y0, s.x1, s.y1 = s.x1, s.y1, s.x0, s.y0
+            s.role = "whisker"
+            scene.whiskers.append(s)
         for s in segs:
             if s.role != "other":
                 continue
@@ -280,21 +284,20 @@ def _on_axis(seg: Segment, axes: list[Segment], tol: float = 2.0) -> bool:
     return False
 
 
-def _has_cap(stem: Segment, caps: list[Segment], tol: float = 1.5) -> bool:
-    """True when a short perpendicular segment sits on one end of `stem` (an error-bar cap).
+def _capped_end(stem: Segment, caps: list[Segment], tol: float = 1.5) -> int | None:
+    """Index of the end of `stem` that carries an error-bar cap (0 or 1), else None.
 
-    The stem is oriented so that (x0, y0) is the datum end and (x1, y1) the capped end.
+    A cap is a short perpendicular segment whose *midpoint* sits on the end of the stem; the corner of a
+    box, where the perpendicular side meets end-to-end, is half a side away and does not qualify.
     """
     for cap in caps:
         if cap is stem or cap.orientation == stem.orientation:
             continue
         cx, cy = (cap.x0 + cap.x1) / 2.0, (cap.y0 + cap.y1) / 2.0
-        for end in ((stem.x0, stem.y0, False), (stem.x1, stem.y1, True)):
-            if math.hypot(cx - end[0], cy - end[1]) <= max(tol, 0.25 * cap.length):
-                if not end[2]:                                    # capped end must be second
-                    stem.x0, stem.y0, stem.x1, stem.y1 = stem.x1, stem.y1, stem.x0, stem.y0
-                return True
-    return False
+        for i, (ex, ey) in enumerate(((stem.x0, stem.y0), (stem.x1, stem.y1))):
+            if math.hypot(cx - ex, cy - ey) <= max(tol, 0.25 * cap.length):
+                return i
+    return None
 
 
 # ----------------------------------------------------------------------------- use

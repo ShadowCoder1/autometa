@@ -7,6 +7,7 @@ by ingestion. Offline; OCR asserts skip when the tesseract binary is missing.
 from __future__ import annotations
 
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import cv2
@@ -231,6 +232,25 @@ def test_ocr_plus_ticks_calibrate_the_bar_chart(bar_chart):
         assert abs(px_to_value(cal, bar["top_y"]) - bar["value"]) < 0.3
 
 
+@needs_tesseract
+def test_ocr_tick_labels_reads_categorical_labels_below_the_x_axis(bar_chart):
+    img = load_gray(bar_chart["path"])
+    axes = find_axes(img)
+    labels = ocr_tick_labels(img, axes, side="bottom", ticks=find_tick_marks(img, axes)["bottom"])
+    assert [t.text for t in labels] == ["A", "B", "C", "D"]
+    assert all(t.value is None for t in labels)
+
+
+def test_ocr_tick_labels_without_an_axis_or_with_a_bad_side(bar_chart):
+    img = load_gray(bar_chart["path"])
+    axes = find_axes(img)
+    blind = replace(axes, y_axis_x=None, x_axis_y=None)
+    assert ocr_tick_labels(img, blind, side="left") == []
+    assert ocr_tick_labels(img, blind, side="bottom") == []
+    with pytest.raises(ValueError):
+        ocr_tick_labels(img, axes, side="right")
+
+
 # ------------------------------------------------------------------ bars
 def test_detect_bars_recovers_bar_tops(bar_chart):
     img = load_color(bar_chart["path"])
@@ -311,7 +331,8 @@ def test_bock_figure_calibrates_from_ocr(bock):
     img = load_gray(Path(bock.out_dir) / fig.crop_png)
     axes = find_axes(img)
     ticks = find_tick_marks(img, axes)
-    labels = ocr_tick_labels(img, axes, side="left")
+    labels = ocr_tick_labels(img, axes, side="left", ticks=ticks["left"])
+    assert sorted(t.value for t in labels if t.value is not None) == [-40.0, -20.0, 0.0, 20.0, 40.0, 60.0]
     pairs = pair_ticks(labels, ticks["left"])
     assert len(pairs) >= 4
     cal = fit_axis(pairs)

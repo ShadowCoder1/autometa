@@ -25,7 +25,7 @@ import numpy as np
 
 from .calibrate import TickLabel, parse_number
 
-ImageLike = "str | Path | np.ndarray"
+ImageLike = str | Path | np.ndarray      # a PNG path or an already-loaded array
 
 MIN_BAR_WIDTH_PX = 8          # amendment F: bars narrower than this are flagged (unreliable read-out)
 _MIN_INK = 8.0                # darkness (0..255) below which a patch counts as blank
@@ -41,8 +41,8 @@ class Axes:
     x_axis_y: float | None                            # row of the horizontal axis line
     y_axis_span: tuple[float, float] | None           # (y0, y1) rows covered by the vertical axis
     x_axis_span: tuple[float, float] | None           # (x0, x1) columns covered by the horizontal axis
-    y_axis_width: float                               # stroke width of the vertical axis, px
-    x_axis_width: float                               # stroke width of the horizontal axis, px
+    y_axis_width: float                               # stroke width of the vertical axis (scan lines), px
+    x_axis_width: float                               # stroke width of the horizontal axis (scan lines), px
     plot_bbox: tuple[float, float, float, float]      # x0, y0, x1, y1 of the plotting area
     confidence: float                                 # 1.0 both axes, 0.6 one, 0.0 none
 
@@ -403,12 +403,13 @@ def _ocr_line(patch: np.ndarray, upscale: int, psm: int) -> tuple[str, float]:
     """OCR one tight single-line crop -> (text, tesseract confidence 0..100).
 
     Tries the requested page-segmentation mode, then single-line, then a digits-only whitelist, and returns
-    the first reading that parses as a number (categorical labels fall back to the first non-empty text).
+    the first reading that parses as a number; when no mode yields a number (a categorical label such as
+    "young"), the most confident reading wins.
     """
     big = cv2.resize(patch, None, fx=upscale, fy=upscale, interpolation=cv2.INTER_CUBIC)
     big = cv2.copyMakeBorder(big, 24, 24, 24, 24, cv2.BORDER_CONSTANT, value=int(np.percentile(patch, 95)))
     modes = [(psm, None), (7, None), (7, NUMERIC_CHARS), (13, NUMERIC_CHARS)]
-    best = ("", 0.0)
+    others: list[tuple[float, str]] = []
     with tempfile.TemporaryDirectory() as td:
         png = Path(td) / "label.png"
         cv2.imwrite(str(png), big)
@@ -421,9 +422,11 @@ def _ocr_line(patch: np.ndarray, upscale: int, psm: int) -> tuple[str, float]:
             conf = min(ww["conf"] for ww in words)
             if parse_number(text) is not None:
                 return text, conf
-            if not best[0]:
-                best = (text, conf)
-    return best
+            others.append((conf, text))
+    if not others:
+        return "", 0.0
+    conf, text = max(others)
+    return text, conf
 
 
 def _label_groups(crop: np.ndarray, side: str, ticks: list[float] | None,
@@ -468,7 +471,6 @@ def _label_groups(crop: np.ndarray, side: str, ticks: list[float] | None,
     return [g for g in groups if g]
 
 
-
 def _band_nearest_axis(comps: list[tuple[int, int, int, int]], side: str, shape: tuple[int, ...],
                        gap_tol: float) -> list[tuple[int, int, int, int]]:
     """Keep only the strip of components closest to the axis.
@@ -503,6 +505,7 @@ def _band_nearest_axis(comps: list[tuple[int, int, int, int]], side: str, shape:
     if side == "left":
         return [c for c in comps if c[0] + c[2] > edge - 1]
     return [c for c in comps if c[1] < edge + 1]
+
 
 # ----------------------------------------------------------------------------- sub-pixel snapping
 def snap_horizontal_edge(img: ImageLike, x: float, y: float, window: int = 6,
