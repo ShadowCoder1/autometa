@@ -70,8 +70,13 @@ def image_hashes(messages: Any) -> list[str]:
 
 
 def cache_key(*, model: str, system: Any, messages: Any, schema: Any = None,
-              effort: str | None = "high", max_tokens: int = 16000, extra: str = "") -> str:
-    """sha256 over everything that can change the answer."""
+              effort: str | None = "high", max_tokens: int = 16000, extra: str = "",
+              tools: Any = None, tool_choice: Any = None) -> str:
+    """sha256 over everything that can change the answer.
+
+    `tools`/`tool_choice` only enter the payload when they are set, so keys (and therefore fixtures)
+    recorded for plain `structured()`/`text()` calls stay valid.
+    """
     payload = {
         "model": model,
         "system": canonicalize(system),
@@ -81,6 +86,10 @@ def cache_key(*, model: str, system: Any, messages: Any, schema: Any = None,
         "max_tokens": max_tokens,
         "extra": extra,
     }
+    if tools is not None:
+        payload["tools"] = canonicalize(tools)
+    if tool_choice is not None:
+        payload["tool_choice"] = canonicalize(tool_choice)
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
                       default=str)
     return sha256_text(blob)

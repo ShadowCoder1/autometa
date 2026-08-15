@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ..config import live_enabled, record_enabled
 from .cache import DiskCache, cache_key, image_hashes, sha256_text
@@ -23,9 +23,9 @@ from .providers import (AnthropicProvider, LLMProvider, LLMRequest, ReplayProvid
                         response_from_record)
 from .schemas import assert_no_derived_stats, assert_valid_output_schema
 
-__all__ = ["LLMClient", "LLMResult", "LLMCall", "image_block", "pdf_block", "MissingFixture",
-           "RefusalError", "TruncatedOutput", "BudgetExceeded", "LiveCallsDisabled", "ParseError",
-           "LLMError"]
+__all__ = ["LLMClient", "LLMResult", "LLMCall", "ToolLoopResult", "image_block", "pdf_block",
+           "MissingFixture", "RefusalError", "TruncatedOutput", "BudgetExceeded",
+           "LiveCallsDisabled", "ParseError", "LLMError"]
 
 STREAM_MAX_TOKENS = 16000          # above this the SDK requires streaming
 EPHEMERAL = {"type": "ephemeral"}
@@ -61,6 +61,24 @@ def pdf_block(pdf_path: str | Path | None, file_id: str | None = None,
     return block
 
 
+def _summarize_tool_output(content: list[dict] | str, limit: int = 400) -> str:
+    """One readable line per tool result for the audit trail (image bytes are hashed, not stored)."""
+    if isinstance(content, str):
+        return content if len(content) <= limit else content[:limit] + "..."
+    parts: list[str] = []
+    for block in content:
+        kind = block.get("type")
+        if kind == "text":
+            parts.append(str(block.get("text", "")))
+        elif kind == "image":
+            src = block.get("source") or {}
+            parts.append(f"<image {src.get('media_type', '?')}>")
+        else:
+            parts.append(f"<{kind}>")
+    joined = " ".join(parts)
+    return joined if len(joined) <= limit else joined[:limit] + "..."
+
+
 # ----------------------------------------------------------------------------- results
 @dataclass
 class LLMResult:
@@ -76,6 +94,7 @@ class LLMResult:
     raw: dict[str, Any] = field(default_factory=dict)
     request_id: str = ""
     served_model: str = ""
+    content: list[dict[str, Any]] = field(default_factory=list)   # all blocks (tool_use included)
 
 
 @dataclass
@@ -101,10 +120,27 @@ class LLMCall:
     cost_usd: float = 0.0
     cached: bool = False
     source: str = "live"                     # live | disk_cache | replay
+    tool_calls: int = 0                      # tool_use blocks the model emitted on this turn
     ts: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return dict(self.__dict__)
+
+
+@dataclass
+class ToolLoopResult:
+    """One completed tool-use loop (see `LLMClient.tool_loop`)."""
+
+    parsed: dict[str, Any]                   # the `final_tool` call's validated input
+    turns: int
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    call_ids: list[str] = field(default_factory=list)
+    cost_usd: float = 0.0
+    models: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return dict(parsed=self.parsed, turns=self.turns, tool_calls=list(self.tool_calls),
+                    call_ids=list(self.call_ids), cost_usd=self.cost_usd, models=list(self.models))
 
 
 # ----------------------------------------------------------------------------- client
@@ -224,14 +260,117 @@ class LLMClient:
                           betas=betas, fallbacks=fallbacks, prompt_version=prompt_version,
                           cell_key=cell_key)
 
+    # ------------------------------------------------------------------ tool loop
+    def tool_loop(self, *, model: str, system: Any = "", messages: list[Any],
+                  tools: list[dict], handlers: dict[str, Callable[[dict], list[dict] | str]],
+                  final_tool: str, effort: str | None = None, max_tokens: int = 8000,
+                  max_tool_calls: int = 8, prompt_version: str = "", cell_key: str = "",
+                  cache_key_extra: str = "") -> ToolLoopResult:
+        """Run a tool-use conversation until the model calls `final_tool`, one cached turn at a time.
+
+        Every turn goes through `_call`, so each is disk-cached / replayable / live exactly like any
+        other request (the tool list and `tool_choice` are part of the cache key). `handlers` map a
+        tool name to a callable that receives the tool input and returns either a plain string or a
+        list of content blocks (an image block, say). Their outputs go back as `tool_result` blocks.
+
+        The terminal action is `final_tool` — a tool whose `input_schema` is the answer schema, so
+        the answer arrives as validated JSON without combining `output_config.format` with tools.
+        After `max_tool_calls` non-final tool calls the loop forces `tool_choice` to `final_tool`.
+        A turn that calls no tool at all gets exactly one "call the tool" nudge, then raises.
+        """
+        if not any((t or {}).get("name") == final_tool for t in tools):
+            raise ValueError(f"final_tool {final_tool!r} is not in the tool list "
+                             f"{[t.get('name') for t in tools]}")
+        convo: list[Any] = list(messages)
+        logged: list[dict[str, Any]] = []
+        call_ids: list[str] = []
+        models: list[str] = []
+        cost = 0.0
+        turns = 0
+        non_final = 0
+        nudged = False
+        max_turns = max_tool_calls + 4                       # forced-submit + nudge + slack
+        while True:
+            if turns >= max_turns:
+                raise LLMError(f"tool loop did not reach {final_tool!r} in {turns} turns")
+            forced = non_final >= max_tool_calls
+            choice = {"type": "tool", "name": final_tool} if forced else {"type": "auto"}
+            result = self._call(model=model, system=system, messages=convo, schema=None,
+                                effort=effort, max_tokens=max_tokens,
+                                cache_key_extra=cache_key_extra, betas=None, fallbacks=None,
+                                prompt_version=prompt_version, cell_key=cell_key,
+                                tools=tools, tool_choice=choice)
+            turns += 1
+            call_ids.append(result.call_id)
+            models.append(result.served_model or model)
+            cost += result.cost_usd
+            blocks = list(result.content) or [{"type": "text", "text": result.text}]
+            uses = [b for b in blocks if b.get("type") == "tool_use"]
+
+            if not uses:
+                if nudged:
+                    raise LLMError(
+                        f"model ended its turn without calling {final_tool!r} twice "
+                        f"(last text: {result.text[:200]!r})")
+                nudged = True
+                convo = convo + [
+                    {"role": "assistant", "content": blocks},
+                    {"role": "user", "content": [{"type": "text", "text":
+                     f"You did not call a tool. Call the `{final_tool}` tool now with your "
+                     f"best answer; use `unknown`/null fields where you are not sure."}]}]
+                continue
+
+            final = next((u for u in uses if u.get("name") == final_tool), None)
+            if final is not None:
+                parsed = final.get("input")
+                parsed = dict(parsed) if isinstance(parsed, dict) else {}
+                logged.append({"turn": turns, "name": final_tool, "input": parsed,
+                               "output": "", "image_hashes": [], "is_error": False})
+                return ToolLoopResult(parsed=parsed, turns=turns, tool_calls=logged,
+                                      call_ids=call_ids, cost_usd=cost, models=models)
+
+            results: list[dict[str, Any]] = []
+            for use in uses:
+                non_final += 1
+                name = str(use.get("name") or "")
+                payload = use.get("input")
+                payload = dict(payload) if isinstance(payload, dict) else {}
+                content, is_error = self._run_tool(name, payload, handlers)
+                results.append({"type": "tool_result", "tool_use_id": use.get("id", ""),
+                                "content": content, "is_error": is_error})
+                logged.append({"turn": turns, "name": name, "input": payload,
+                               "output": _summarize_tool_output(content),
+                               "image_hashes": image_hashes(content), "is_error": is_error})
+            convo = convo + [{"role": "assistant", "content": blocks},
+                             {"role": "user", "content": results}]
+
+    @staticmethod
+    def _run_tool(name: str, payload: dict[str, Any],
+                  handlers: dict[str, Callable[[dict], list[dict] | str]]
+                  ) -> tuple[list[dict] | str, bool]:
+        """Run one tool; a bad name or a raising handler becomes an error result *for the model*."""
+        handler = handlers.get(name)
+        if handler is None:
+            return (f"error: no tool named {name!r}; available tools: "
+                    f"{sorted(handlers)}"), True
+        try:
+            out = handler(payload)
+        except Exception as exc:                            # handler errors are the model's problem
+            return f"error: {type(exc).__name__}: {exc}", True
+        if isinstance(out, str):
+            return out, False
+        return list(out), False
+
     # ------------------------------------------------------------------ engine
     def _call(self, *, model: str, system: Any, messages: list[Any], schema: dict | None,
               effort: str | None, max_tokens: int, cache_key_extra: str,
               betas: list[str] | None, fallbacks: str | None, prompt_version: str,
-              cell_key: str, _retry: int = 0) -> LLMResult:
+              cell_key: str, tools: list[dict] | None = None,
+              tool_choice: dict | None = None, _retry: int = 0) -> LLMResult:
         effort = effort or self.default_effort
         key = cache_key(model=model, system=system, messages=messages, schema=schema,
-                        effort=effort, max_tokens=max_tokens, extra=cache_key_extra)
+                        effort=effort, max_tokens=max_tokens, extra=cache_key_extra,
+                        tools=tools, tool_choice=tool_choice)
         meta = dict(key=key, model=model, effort=effort, max_tokens=max_tokens,
                     prompt_version=prompt_version or self.prompt_version,
                     schema_hash=sha256_text(json.dumps(schema, sort_keys=True)) if schema else "",
@@ -248,7 +387,8 @@ class LLMClient:
         self._guard_live(key)
         request = LLMRequest(model=model, system=system, messages=messages, schema=schema,
                              effort=effort, max_tokens=max_tokens, betas=betas,
-                             fallbacks=fallbacks, stream=max_tokens > STREAM_MAX_TOKENS, key=key)
+                             fallbacks=fallbacks, stream=max_tokens > STREAM_MAX_TOKENS, key=key,
+                             tools=tools, tool_choice=tool_choice)
 
         reservation = self._reserve(estimate_request_cost(model, system, messages, max_tokens))
         try:
@@ -270,7 +410,8 @@ class LLMClient:
                                   effort=effort, max_tokens=max_tokens * 2,
                                   cache_key_extra=cache_key_extra, betas=betas,
                                   fallbacks=fallbacks, prompt_version=prompt_version,
-                                  cell_key=cell_key, _retry=1)
+                                  cell_key=cell_key, tools=tools, tool_choice=tool_choice,
+                                  _retry=1)
             raise TruncatedOutput(
                 f"response hit max_tokens={max_tokens} twice (request {response.request_id or key})")
 
@@ -278,6 +419,7 @@ class LLMClient:
         record = {
             "key": key, "model": model, "served_model": response.model,
             "stop_reason": response.stop_reason, "usage": response.usage, "text": response.text,
+            "content": response.content,
             "parsed": parsed, "response": response.raw, "request_id": response.request_id,
             "effort": effort, "max_tokens": max_tokens, "cost_usd": cost,
             "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -287,7 +429,8 @@ class LLMClient:
         return LLMResult(text=response.text, parsed=parsed, usage=dict(response.usage),
                          cost_usd=cost, model=model, call_id=key, cached=False,
                          stop_reason=response.stop_reason, latency_s=latency, raw=response.raw,
-                         request_id=response.request_id, served_model=response.model)
+                         request_id=response.request_id, served_model=response.model,
+                         content=list(response.content))
 
     # ------------------------------------------------------------------ internals
     def _guard_live(self, key: str) -> None:
@@ -313,7 +456,8 @@ class LLMClient:
         return LLMResult(text=response.text, parsed=parsed, usage=dict(response.usage),
                          cost_usd=0.0, model=meta["model"], call_id=meta["key"], cached=True,
                          stop_reason=response.stop_reason, latency_s=0.0, raw=response.raw,
-                         request_id=response.request_id, served_model=response.model)
+                         request_id=response.request_id, served_model=response.model,
+                         content=list(response.content))
 
     def _log(self, meta: dict[str, Any], *, response: Any, latency: float, cost: float,
              cached: bool, source: str) -> None:
@@ -329,6 +473,8 @@ class LLMClient:
             cache_creation_input_tokens=int(usage.get("cache_creation_input_tokens") or 0),
             cache_read_input_tokens=int(usage.get("cache_read_input_tokens") or 0),
             latency_s=round(latency, 4), cost_usd=cost, cached=cached, source=source,
+            tool_calls=sum(1 for b in (getattr(response, "content", None) or [])
+                           if isinstance(b, dict) and b.get("type") == "tool_use"),
             ts=datetime.now(timezone.utc).isoformat(timespec="seconds"))
         with self._lock:
             self._calls.append(call)
