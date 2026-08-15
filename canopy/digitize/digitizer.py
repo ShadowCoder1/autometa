@@ -24,7 +24,7 @@ from typing import Any, Iterable, Sequence
 from ..ingest.pdf import FigureRegion, PaperRecord
 from ..llm.client import LLMClient
 from ..models import Candidate, DatasetSpec, DispersionType, Source, SourceKind
-from .calibrate import AxisCalibration, TickLabel, fit_axis, pair_ticks, pixel_resolution, \
+from .calibrate import AxisCalibration, fit_axis, pair_ticks, pixel_resolution, \
     px_to_value, value_to_px
 from .cv import (Axes, Bar, Marker, MIN_BAR_WIDTH_PX, detect_bars, detect_markers, find_axes,
                  find_cap_ends, find_tick_marks, load_color, load_gray, ocr_tick_labels,
@@ -659,6 +659,7 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
             bad = [v for v in verdicts if v.bad]
             verify_log.append({"iteration": iteration, "overlay": overlay_path,
                                "n_marks": len(marks), "call_ids": list(verdicts.call_ids),
+                               "cost_usd": verdicts.cost_usd,
                                "verdicts": [v.to_dict() for v in verdicts]})
             if not bad:
                 break
@@ -736,13 +737,11 @@ def _group_n(dataset: DatasetSpec | None, group: str) -> tuple[int | None, str]:
     return spec.n, spec.n_evidence
 
 
-def _unit(target: TargetSpec, readouts: Sequence[ReadOut], coord: CoordReadout | None) -> str:
+def _unit(target: TargetSpec, readouts: Sequence[ReadOut]) -> str:
+    """The mapper's unit wins; otherwise the first unit any read-out managed to read."""
     if target.unit_hint:
         return target.unit_hint
-    for reading in readouts:
-        if reading.unit:
-            return reading.unit
-    return coord.unit if coord is not None else ""
+    return next((r.unit for r in readouts if r.unit), "")
 
 
 def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: FigureRegion,
@@ -755,7 +754,7 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
     mapper_type = source.error_bar_type if source is not None else DispersionType.UNKNOWN
     legend_text = " ".join(r.legend_says for r in readouts if r.legend_says)
     legend_type = _legend_dispersion(legend_text)
-    unit = _unit(target, readouts, None)
+    unit = _unit(target, readouts)
     page = source.page if source is not None and source.page else fig.page
     locator = (source.locator if source is not None and source.locator
                else (target.panel_hint or fig.label or fig.id))
@@ -770,10 +769,7 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
                 s.mean, s.error, group=group, sample=s, target=target, fig=fig, paper=paper,
                 dataset=dataset, source=source, kind=kind, mapper_type=mapper_type, unit=unit,
                 page=page, locator=locator, crop=crop, overlay_path=overlay_path,
-                extractor_id=s.extractor_id, sigma=s.sigma,
-                status=("ambiguous" if s.status == "ambiguous" else
-                        ("not_on_these_pages" if s.status == "not_on_these_pages" and
-                         s.mean is None else ("found" if s.mean is not None else "ambiguous"))),
+                extractor_id=s.extractor_id, sigma=s.sigma, status=_sample_status(s),
                 notes=("; ".join(x for x in (s.notes, s.drop_reason) if x)),
                 provenance={**base, "route_sample": s.to_dict(),
                             "tool_calls": summarize_tool_calls(s.tool_calls),
@@ -836,6 +832,13 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             notes="; ".join(reasons), provenance=provenance,
             call_id=_verify_call_id(base), model=live[0].model or ""))
     return out
+
+
+def _sample_status(s: RouteSample) -> str:
+    """A route sample is `found` when it produced a value, else it inherits the model's verdict."""
+    if s.mean is not None:
+        return "ambiguous" if s.status == "ambiguous" else "found"
+    return "not_on_these_pages" if s.status == "not_on_these_pages" else "ambiguous"
 
 
 def _verify_call_id(base: dict[str, Any]) -> str:

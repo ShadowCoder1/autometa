@@ -7,7 +7,11 @@ Two kinds of test here:
   pixel coordinates, so paths B and C are exercised end to end without a model in the loop: what
   is under test is the calibration/snap/ensemble code, not the model.
 * **replay** — the real Bock 2005 Fig. 1 crop with recorded fixtures, compared against the human
-  WebPlotDigitizer read (young 12.28 +/- 11.82, old 31.51 +/- 11.12).
+  WebPlotDigitizer read (young 12.28 +/- 11.82, old 31.51 +/- 11.12). The read-out fixtures are
+  recorded; the coords/verify ones are NOT, because the API account ran out of credit part-way
+  through the recording run. Those tests skip (loudly) until someone re-runs
+  `CANOPY_LIVE=1 CANOPY_RECORD=1 pytest tests/test_digitizer.py -k bock` with a funded key —
+  recorded turns replay for free, so the re-run only pays for what is still missing.
 """
 from __future__ import annotations
 
@@ -22,10 +26,14 @@ from canopy.digitize.digitizer import (RouteSample, digitize, dual_tolerance, en
 from canopy.digitize.vlm import (FigureView, MAX_ZOOM, READOUT_SCHEMA, TargetSpec, coords,
                                  overlay_verify, read_out, render_prompt)
 from canopy.ingest.pdf import Bbox, FigureRegion, PaperRecord, ingest_pdf
-from canopy.llm.client import LLMClient
+from canopy.llm.client import LLMClient, MissingFixture
 from canopy.llm.providers import FakeProvider
 from canopy.llm.schemas import assert_no_derived_stats, assert_valid_output_schema
 from canopy.models import DatasetSpec, DispersionType, GroupSpec, Source, SourceKind
+
+#: read at import time — conftest's `offline_by_default` clears these env vars per test, so a
+#: fixture body would always see "offline" even during a recording run.
+LIVE, RECORD = live_enabled(), record_enabled()
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 REPLAY = FIXTURES / "llm"
@@ -566,12 +574,11 @@ def bock(tmp_path_factory) -> PaperRecord:
 
 @pytest.fixture()
 def replay_client() -> LLMClient:
-    live = live_enabled()
-    if live:
+    if LIVE:
         load_env()
-    return LLMClient(replay_dir=REPLAY, record_dir=REPLAY if record_enabled() else None,
-                     allow_live=live, cache_dir=None,
-                     budget_usd=6.0 if live else None)   # recording guard; fixtures are free
+    return LLMClient(replay_dir=REPLAY, record_dir=REPLAY if RECORD else None,
+                     allow_live=LIVE, cache_dir=None,
+                     budget_usd=6.0 if LIVE else None)    # recording guard; fixtures are free
 
 
 BOCK_TARGET = TargetSpec(
@@ -588,11 +595,47 @@ BOCK_DATASET = DatasetSpec(dataset_id="bock2005:main",
                            group_b=GroupSpec(label="young", n=10))
 
 
-def test_bock_fig1_matches_the_human_digitisation(bock, replay_client, tmp_path):
+def test_bock_fig1_read_outs_match_the_human_digitisation(bock, replay_client, tmp_path):
+    """Path D on the real figure: every recorded read-out variant, against the human numbers."""
     fig = next(f for f in bock.figures if f.id == "fig01")
     assert fig.page == 3
-    candidates = digitize(replay_client, bock, fig, BOCK_TARGET, source=BOCK_SOURCE,
-                          dataset=BOCK_DATASET, out_dir=tmp_path)
+    crop = Path(bock.out_dir) / fig.crop_png
+    view = FigureView(crop, work_dir=tmp_path)
+    readings = []
+    missing = []
+    for variant in ("direct", "ticks_first"):
+        try:
+            readings.append(read_out(replay_client, crop, fig.caption, BOCK_TARGET,
+                                     "claude-opus-5", variant, view=view,
+                                     cell_key=f"bock/fig01/D/{variant}"))
+        except MissingFixture as exc:                       # see the module docstring
+            missing.append(f"{variant}: {exc}")
+    if not readings:
+        pytest.skip("no recorded Bock read-out at all: " + "; ".join(missing))
+    for reading in readings:
+        assert reading.status == "found", reading.notes
+        assert "standard deviation" in reading.legend_says.lower()
+        assert set(reading.tick_labels) >= {-40.0, 0.0, 60.0}
+        for group, (mean, sd) in HUMAN.items():
+            row = reading.group(group)
+            assert row is not None and row.mean is not None, (reading.variant, group)
+            assert row.mean == pytest.approx(mean, abs=MEAN_TOL), (reading.variant, group,
+                                                                   row.mean, row.notes)
+            assert row.error_half_length == pytest.approx(sd, abs=SD_TOL), (
+                reading.variant, group, row.error_half_length)
+        assert any(c["name"] == "crop_image" for c in reading.tool_calls), "the model must zoom"
+        assert reading.turns >= 2 and reading.call_ids
+
+
+def test_bock_fig1_matches_the_human_digitisation(bock, replay_client, tmp_path):
+    """The whole of `digitize()` on the real figure (skips until the fixture set is complete)."""
+    fig = next(f for f in bock.figures if f.id == "fig01")
+    try:
+        candidates = digitize(replay_client, bock, fig, BOCK_TARGET, source=BOCK_SOURCE,
+                              dataset=BOCK_DATASET, out_dir=tmp_path)
+    except MissingFixture as exc:                           # see the module docstring
+        pytest.skip(f"Bock fixture set is incomplete — re-record with "
+                    f"CANOPY_LIVE=1 CANOPY_RECORD=1: {exc}")
     ensemble = {c.group: c for c in candidates if c.extractor_id == "digitize:ensemble"}
     assert set(ensemble) == {"A", "B"}
     for group, (mean, sd) in HUMAN.items():
