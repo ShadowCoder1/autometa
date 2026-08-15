@@ -164,10 +164,14 @@ class AnthropicProvider:
         res = self.client.messages.count_tokens(**kwargs)
         return int(getattr(res, "input_tokens", 0) or 0)
 
-    def upload_file(self, path: str | Path, media_type: str = "application/pdf") -> str:
+    def upload_file(self, path: str | Path, media_type: str = "application/pdf",
+                    betas: list[str] | None = None) -> str:
         p = Path(path)
+        kwargs: dict[str, Any] = {}
+        if betas:
+            kwargs["betas"] = list(betas)
         with open(p, "rb") as fh:
-            uploaded = self.client.beta.files.upload(file=(p.name, fh, media_type))
+            uploaded = self.client.beta.files.upload(file=(p.name, fh, media_type), **kwargs)
         return str(getattr(uploaded, "id", "") or "")
 
 
@@ -233,6 +237,7 @@ class FakeProvider:
                                "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
         self.model = model
         self.requests: list[LLMRequest] = []
+        self.uploads: list[dict[str, Any]] = []
 
     def complete(self, request: LLMRequest) -> ProviderResponse:
         self.requests.append(request)
@@ -250,3 +255,11 @@ class FakeProvider:
         from .costs import approx_tokens
 
         return approx_tokens(system, messages)
+
+    def upload_file(self, path: str | Path, media_type: str = "application/pdf",
+                    betas: list[str] | None = None) -> str:
+        import hashlib
+
+        digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()[:12]
+        self.uploads.append({"path": str(path), "media_type": media_type, "betas": betas})
+        return f"file_fake_{digest}"
