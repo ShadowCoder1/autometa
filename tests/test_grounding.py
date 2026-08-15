@@ -10,7 +10,8 @@ import dataclasses
 
 from canopy.ingest.pdf import Bbox, PaperRecord, TableRecord
 from canopy.models import Candidate
-from canopy.verify.grounding import (SHORT_QUOTE_CHARS, SHORT_QUOTE_NOTE, check_table_cell,
+from canopy.verify.grounding import (CELL_CONFIRMED, ROW_ONLY, SHORT_QUOTE_CHARS,
+                                     SHORT_QUOTE_NOTE, SIGN_NOTE, check_table_cell,
                                      ground_candidate, ground_quote, is_short_quote, normalize,
                                      numbers_in)
 
@@ -275,3 +276,88 @@ def test_a_candidate_without_a_page_never_reports_page_none(paper):
     assert cand.grounded is False
     assert "None" not in cand.notes, cand.notes
     assert "best similarity" in cand.notes
+
+
+# ------------------------------------------------------------------ number tokenisation (round 2)
+def _cell_check(paper, rows, **over):
+    """Run the cell check against a one-row table holding `rows`."""
+    cand = _candidate(quote=TABLE_QUOTE, row_header="Trail making (s)", col_header="Old", **over)
+    return check_table_cell(cand, _with_table(paper, rows))
+
+
+def test_a_range_in_the_cell_is_two_numbers_not_a_negative(paper):
+    """"0.41–0.83" is an interval; reading the dash as a minus refuted correct transcriptions."""
+    ok, detail = _cell_check(paper, [["Measure", "Old"], ["Trail making (s)", "0.62 (0.41–0.83)"]],
+                             value_as_written="0.62 (0.41 to 0.83)", mean=0.62, ci_low=0.41,
+                             ci_high=0.83)
+    assert ok is True, detail
+
+
+def test_a_thousands_separator_in_the_cell_is_one_number(paper):
+    ok, detail = _cell_check(paper, [["Measure", "Old"], ["Trail making (s)", "1,779 (120)"]],
+                             value_as_written="1779 (120)", mean=1779.0, dispersion_value=120.0)
+    assert ok is True, detail
+
+
+def test_a_stated_confidence_level_is_not_a_measurement(paper):
+    ok, detail = _cell_check(paper, [["Measure", "Old"], ["Trail making (s)", "0.62 (0.41–0.83)"]],
+                             value_as_written="0.62 (95% CI 0.41, 0.83)", mean=0.62, ci_low=0.41,
+                             ci_high=0.83)
+    assert ok is True, detail
+
+
+def test_a_negative_value_keeps_its_sign(paper):
+    ok, detail = _cell_check(paper, [["Measure", "Old"], ["Trail making (s)", "−0.5 (0.2)"]],
+                             value_as_written="−0.5 (0.2)", mean=-0.5, dispersion_value=0.2)
+    assert ok is True and SIGN_NOTE not in detail, detail
+
+
+def test_a_european_decimal_cell_still_confirms_the_transcription(paper):
+    ok, detail = _cell_check(paper, [["Measure", "Old"], ["Trail making (s)", "27,4 (7,2)"]],
+                             value_as_written="27.4 (7.2)", mean=27.4, dispersion_value=7.2)
+    assert ok is True, detail
+
+
+def test_a_magnitude_where_the_extractor_read_a_sign_passes_with_a_warning(paper):
+    ok, detail = _cell_check(paper, [["Measure", "Old"], ["Trail making (s)", "0.5 (0.2)"]],
+                             value_as_written="−0.5 (0.2)", mean=-0.5, dispersion_value=0.2)
+    assert ok is True and SIGN_NOTE in detail and "-0.5" in detail
+
+
+def test_a_number_the_row_does_not_hold_at_all_is_still_refuted(paper):
+    ok, detail = _cell_check(paper, [["Measure", "Old"], ["Trail making (s)", "0.62 (0.41–0.83)"]],
+                             value_as_written="0.71 (0.41, 0.83)", mean=0.71)
+    assert ok is False and "0.71" in detail
+
+
+# ------------------------------------------------------------------ cell vs row level (round 2)
+def test_a_value_in_the_named_column_is_cell_confirmed(paper):
+    ok, detail = _cell_check(paper, ROWS, value_as_written="42.5 (6.9)", mean=42.5,
+                             dispersion_value=6.9)
+    assert ok is True and detail.startswith(CELL_CONFIRMED)
+    assert "Old" in detail
+
+
+def test_numbers_from_the_other_groups_column_are_row_only(paper):
+    """A group mix-up reads as: the numbers are in the row, but not in the column claimed."""
+    ok, detail = _cell_check(paper, ROWS, value_as_written="27.4 (7.2)", mean=27.4,
+                             dispersion_value=7.2)
+    assert ok is True and detail.startswith(ROW_ONLY)
+    assert "'Old'" in detail and "42.5 (6.9)" in detail
+
+
+def test_the_row_only_verdict_reaches_the_candidates_notes(paper):
+    cand = ground_candidate(
+        _candidate(quote=TABLE_QUOTE, row_header="Trail making (s)", col_header="Old",
+                   value_as_written="27.4 (7.2)", mean=27.4, dispersion_value=7.2),
+        _with_table(paper, ROWS))
+    assert cand.grounded is True                       # the numbers are printed in that row
+    assert f"table cell check: {ROW_ONLY}" in cand.notes
+
+
+def test_a_cell_confirmed_candidate_stays_quiet(paper):
+    cand = ground_candidate(
+        _candidate(quote=TABLE_QUOTE, row_header="Trail making (s)", col_header="Old",
+                   value_as_written="42.5 (6.9)", mean=42.5, dispersion_value=6.9),
+        _with_table(paper, ROWS))
+    assert cand.grounded is True and "table cell check" not in cand.notes

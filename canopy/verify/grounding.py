@@ -32,7 +32,8 @@ from ..ingest.pdf import PaperRecord, TableRecord
 from ..models import Candidate
 
 __all__ = ["ground_quote", "ground_candidate", "check_table_cell", "is_short_quote", "normalize",
-           "THRESHOLD", "SHORT_QUOTE_CHARS", "SHORT_QUOTE_NOTE"]
+           "numbers_in", "THRESHOLD", "SHORT_QUOTE_CHARS", "SHORT_QUOTE_NOTE", "CELL_CONFIRMED",
+           "ROW_ONLY", "SIGN_NOTE"]
 
 #: fuzzy similarity at or above which a quote counts as grounded (plan: 0.95)
 THRESHOLD = 0.95
@@ -44,6 +45,10 @@ MIN_HEADER_CHARS = 3
 SHORT_QUOTE_CHARS = 20
 #: the note a short but grounded quote carries (a stable marker, not prose)
 SHORT_QUOTE_NOTE = "short quote"
+#: markers in a table cell check's detail: fully confirmed / only elsewhere in the row / sign only
+CELL_CONFIRMED = "cell-confirmed"
+ROW_ONLY = "row-only"
+SIGN_NOTE = "sign not confirmed"
 
 _DASHES = "‐‑‒–—―⁃−－˗"
 _DASH_RE = re.compile(f"[{_DASHES}]")
@@ -51,6 +56,11 @@ _HYPHEN_BREAK_RE = re.compile(r"(?<=\w)-[ \t]*\n[ \t]*(?=\w)")
 _PLUSMINUS_RE = re.compile(r"\s*±\s*")
 _PM_ASCII_RE = re.compile(r"\+\s*/\s*-")
 _DIGIT_SPACE_RE = re.compile(r"(?<=\d)[  ](?=\d{3}(?!\d))")
+#: a comma between digits is a thousands separator only when exactly three digits follow it
+#: ("1,779" -> "1779"). Anything else is left alone, because "27,4" is a European decimal and
+#: "F(1,22)" is a pair of degrees of freedom; both sides of every comparison are normalised
+#: the same way, and `_decimal_comma_readings` covers the European form where it matters.
+_DIGIT_COMMA_RE = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
 _DECIMAL_SPACE_RE = re.compile(r"(?<=\d)\s*\.\s*(?=\d)")
 _WS_RE = re.compile(r"\s+")
 
@@ -65,6 +75,7 @@ def normalize(text: str) -> str:
     out = _HYPHEN_BREAK_RE.sub("", out)          # before whitespace collapse: needs the newline
     out = _PLUSMINUS_RE.sub("±", out)
     out = _DIGIT_SPACE_RE.sub("", out)           # "1 779" -> "1779"
+    out = _DIGIT_COMMA_RE.sub("", out)           # "1,779" -> "1779"
     out = _DECIMAL_SPACE_RE.sub(".", out)        # "42. 5" -> "42.5"
     return _WS_RE.sub(" ", out).strip().casefold()
 
@@ -161,22 +172,53 @@ def _find_row(paper: PaperRecord, page: int | None, row_header: str
     return None
 
 
-_NUMBER_RE = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
+#: A sign belongs to a number only when nothing numeric precedes it: in "0.41-0.83" the dash is a
+#: range, in "-0.5" it is a minus. `)` and `]` close a previous value, so they end a number too.
+_NUMBER_RE = re.compile(r"(?<![\d)\]])[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
+#: "95% CI" states a confidence level, not a measurement — it must not have to appear in a table row
+CI_LEVEL_TOKENS = frozenset({90.0, 95.0, 99.0})
+_PERCENT_RE = re.compile(r"\s*%")
+#: a European decimal a table may print ("27,4" is 27.4); read *in addition to* the plain tokens
+_DECIMAL_COMMA_RE = re.compile(r"(?<!\d)(\d+),(\d{1,2})(?!\d)")
 
 
-def numbers_in(text: str) -> list[float]:
-    """Every number in a piece of text, as floats, after the usual normalisation."""
+def numbers_in(text: str, drop_ci_levels: bool = False) -> list[float]:
+    """Every number in a piece of text, as floats, after the usual normalisation.
+
+    With `drop_ci_levels`, an integer 90/95/99 written as a percentage is skipped: "0.62 (95% CI
+    0.41, 0.83)" is three numbers, not four, and a table cell holding the same interval need not
+    repeat the level.
+    """
+    normalised = normalize(text)
     found: list[float] = []
-    for token in _NUMBER_RE.findall(normalize(text)):
+    for match in _NUMBER_RE.finditer(normalised):
         try:
-            found.append(float(token))
+            value = float(match.group())
         except ValueError:                                   # pragma: no cover - regex is strict
             continue
+        if (drop_ci_levels and value in CI_LEVEL_TOKENS
+                and _PERCENT_RE.match(normalised, match.end())):
+            continue
+        found.append(value)
     return found
+
+
+def _decimal_comma_readings(text: str) -> list[float]:
+    """The European reading of any "27,4" in the text — added to a row's numbers, never demanded."""
+    return [float(f"{whole}.{part}") for whole, part in _DECIMAL_COMMA_RE.findall(normalize(text))]
+
+
+def _row_numbers(text: str) -> list[float]:
+    """Every number a table row could be offering, read generously (the row is the haystack)."""
+    return numbers_in(text, drop_ci_levels=True) + _decimal_comma_readings(text)
 
 
 def _same(a: float, b: float) -> bool:
     return math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-12)
+
+
+def _holds(value: float, present: list[float]) -> bool:
+    return any(_same(value, other) for other in present)
 
 
 def _transcribed_numbers(cand: Candidate) -> list[float]:
@@ -189,10 +231,27 @@ def _transcribed_numbers(cand: Candidate) -> list[float]:
     for value in (cand.mean, cand.dispersion_value, cand.ci_low, cand.ci_high):
         if value is not None and not any(_same(value, seen) for seen in wanted):
             wanted.append(float(value))
-    for value in numbers_in(cand.value_as_written):
+    for value in numbers_in(cand.value_as_written, drop_ci_levels=True):
         if not any(_same(value, seen) for seen in wanted):
             wanted.append(value)
     return wanted
+
+
+def _confirms(wanted: list[float], present: list[float]) -> tuple[bool, list[float]]:
+    """Does `present` hold every wanted number? Also: which ones matched only in absolute value.
+
+    A paper often prints a magnitude where the extractor read a signed value (or the other way
+    round). That is a difference worth reporting, not a reason to call the transcription invented.
+    """
+    unsigned: list[float] = []
+    for value in wanted:
+        if _holds(value, present):
+            continue
+        if _holds(abs(value), [abs(other) for other in present]):
+            unsigned.append(value)
+            continue
+        return False, unsigned
+    return True, unsigned
 
 
 def check_table_cell(cand: Candidate, paper: PaperRecord) -> tuple[bool | None, str]:
@@ -201,8 +260,12 @@ def check_table_cell(cand: Candidate, paper: PaperRecord) -> tuple[bool | None, 
     `(None, "")` when the candidate claims no table cell; `(None, reason)` when the check could not
     be made (nothing numeric to look for, no such row anywhere, or the only such row is on a
     different page) — imperfect table detection is not evidence against a quote; `(True/False,
-    detail)` when the row was found where it should be and every transcribed number was, or was
-    not, somewhere in it.
+    detail)` otherwise.
+
+    The detail always says at what level the numbers were confirmed: `cell-confirmed` when they are
+    in the cell where the named row and column meet, `ROW_ONLY` when they are only somewhere else
+    in that row (which is what a group mix-up looks like — still grounded, but Task 8 should know),
+    `row-confirmed` when no column was named or found.
     """
     if not (cand.row_header or cand.col_header):
         return None, ""
@@ -220,14 +283,22 @@ def check_table_cell(cand: Candidate, paper: PaperRecord) -> tuple[bool | None, 
         return None, (f"the only row named {cand.row_header!r} is in {table.id} on page "
                       f"{table.page}, not near page {cand.page}")
 
-    present = numbers_in(_row_text(row))
-    missing = [value for value in wanted if not any(_same(value, cell) for cell in present)]
+    row_text = _row_text(row)
     where = f"{table.id} row {cand.row_header!r}"
-    if _column_index(table, cand.col_header) is not None:
-        where += f" column {cand.col_header!r}"
-    if missing:
-        return False, (f"{missing} not in {where} (row reads: {_row_text(row)[:160]!r})")
-    return True, where
+    in_row, unsigned = _confirms(wanted, _row_numbers(row_text))
+    if not in_row:
+        missing = [v for v in wanted if not _holds(v, _row_numbers(row_text))]
+        return False, f"{missing} not in {where} (row reads: {row_text[:160]!r})"
+    suffix = f"; {SIGN_NOTE} for {unsigned}" if unsigned else ""
+
+    index = _column_index(table, cand.col_header)
+    if index is None or index >= len(row):
+        return True, f"row-confirmed ({where}){suffix}"
+    in_cell, _ = _confirms(wanted, _row_numbers(str(row[index] or "")))
+    if in_cell:
+        return True, f"{CELL_CONFIRMED} ({where}, column {cand.col_header!r}){suffix}"
+    return True, (f"{ROW_ONLY}: found in {where} but not in column {cand.col_header!r} "
+                  f"(that cell reads {str(row[index] or '')!r}){suffix}")
 
 
 # ----------------------------------------------------------------------------- candidates
@@ -286,4 +357,6 @@ def ground_candidate(cand: Candidate, paper: PaperRecord) -> Candidate:
         cand.notes = _note(cand.notes, f"table cell check failed: {detail}")
     elif ok is None and detail:
         cand.notes = _note(cand.notes, f"table cell check skipped: {detail}")
+    elif ok is True and (detail.startswith(ROW_ONLY) or SIGN_NOTE in detail):
+        cand.notes = _note(cand.notes, f"table cell check: {detail}")
     return cand

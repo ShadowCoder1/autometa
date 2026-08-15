@@ -38,13 +38,18 @@ replayed = pytest.mark.replay
 
 #: the schema and both prompts changed in the review fix round, so the recorded requests no longer
 #: match. Nothing below is weakened: the replays skip visibly until the fixtures are re-recorded.
+#: DELETE `extract` and use `extract_group_stats(client, ...)` again once they are — a permanent
+#: skip wrapper would turn the next prompt edit into four silent skips.
 RECORD_HINT = ("fixture not recorded yet — run: CANOPY_LIVE=1 CANOPY_RECORD=1 "
                ".venv/bin/python -m pytest tests/test_extract_text.py -q")
 
 
 @pytest.fixture(scope="session")
 def extract(client):
-    """`extract_group_stats` against the recorded fixtures, skipping when one is missing."""
+    """`extract_group_stats` against the recorded fixtures, skipping when one is missing.
+
+    Temporary: remove this fixture as soon as the four fixtures are re-recorded (see RECORD_HINT).
+    """
     def run(*args, **kwargs):
         try:
             return extract_group_stats(client, *args, **kwargs)
@@ -287,6 +292,7 @@ def test_a_status_that_is_not_found_carries_no_numbers(paper, protocol, fake_dat
     assert b.unit == "" and b.value_as_written == "" and b.n_quote == ""
     assert "dropped because status is ambiguous" in b.notes
     assert "27.4" in b.notes and "'n': 12" in b.notes and "SD" in b.notes
+    assert "n_quote" in b.notes and "twelve old subjects" in b.notes     # cleared, so reported
 
 
 def test_a_confidence_interval_is_transcribed_into_its_own_fields(paper, protocol, fake_dataset):
@@ -310,6 +316,18 @@ def test_a_stated_interval_level_names_the_dispersion_type(paper, protocol, fake
     cands, _ = _extract(paper, protocol, fake_dataset, _payload(rows=rows))
     assert cands[0].dispersion_type is DispersionType.CI90
     assert "read from the stated 90% interval" in cands[0].notes
+
+
+def test_a_ninety_nine_percent_interval_keeps_its_bounds_and_says_why(paper, protocol,
+                                                                     fake_dataset):
+    """There is no CI99 dispersion type; the bounds are still the transcription."""
+    rows = [_row(kind="text_mean_ci", value_as_written="0.62 (99% CI 0.30, 0.94)", mean=0.62,
+                 dispersion_value=None, dispersion_type="UNKNOWN", ci_low=0.30, ci_high=0.94,
+                 ci_level="99")]
+    cands, _ = _extract(paper, protocol, fake_dataset, _payload(rows=rows))
+    assert (cands[0].ci_low, cands[0].ci_high) == (0.30, 0.94)
+    assert cands[0].dispersion_type is DispersionType.UNKNOWN
+    assert "99% interval" in cands[0].notes and "no DispersionType member" in cands[0].notes
 
 
 def test_an_interval_with_no_stated_level_stays_unknown(paper, protocol, fake_dataset):

@@ -50,7 +50,9 @@ ROUTE = "text"
 
 #: confidence levels a paper may state, as printed (a string: it is a label, not a number to use)
 CI_LEVELS = ("95", "90", "99", "unknown")
-#: the dispersion type a stated level implies, when the extractor left the type open
+#: the dispersion type a stated level implies, when the extractor left the type open. A level with
+#: no member (99%) keeps its bounds in `ci_low`/`ci_high` and says so in the notes rather than
+#: growing `DispersionType`, which Task 8/9 code is reading concurrently.
 CI_DISPERSION = {"95": DispersionType.CI95, "90": DispersionType.CI90}
 
 
@@ -166,7 +168,8 @@ def _candidate(row: dict[str, Any], *, index: int, paper: PaperRecord, dataset: 
     written = (row.get("value_as_written") or "").strip()
 
     if status != "found":                        # amendment E: a non-`found` row carries no value
-        reported = {**values, "n": n, "unit": unit, "value_as_written": written,
+        reported = {**values, "n": n, "n_quote": n_quote, "unit": unit,
+                    "value_as_written": written,
                     "dispersion_type": (None if dispersion_type is DispersionType.UNKNOWN
                                         else dispersion_type.value)}
         dropped = {name: value for name, value in reported.items()
@@ -182,6 +185,10 @@ def _candidate(row: dict[str, Any], *, index: int, paper: PaperRecord, dataset: 
         if implied is not None:
             dispersion_type = implied
             notes = note(notes, f"dispersion type read from the stated {ci_level}% interval")
+        elif ci_level != "unknown":              # e.g. 99%: the bounds are kept, the type is not
+            notes = note(notes, f"the paper states a {ci_level}% interval, which has no "
+                                f"DispersionType member: the bounds are transcribed and "
+                                f"dispersion_type stays UNKNOWN")
 
     cand = Candidate(
         candidate_id=candidate_id(dataset.dataset_id, outcome_key, extractor_id, index, group),
