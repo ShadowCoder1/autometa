@@ -8,6 +8,10 @@ from .calibrate import (AxisCalibration, TickLabel, fit_axis, pair_ticks, parse_
 from .cv import (Axes, Bar, Marker, OcrResult, TickLabels, detect_bars, detect_markers, detect_whiskers,
                  find_axes, find_cap_ends, find_tick_marks, load_color, load_gray, ocr_tick_labels,
                  run_tesseract, snap_horizontal_edge, snap_vertical_edge, snap_window_for, tesseract_path)
+from .digitizer import DigitizeResult, RouteSample, digitize, dual_tolerance, ensemble_stats
 from .overlay import draw_overlay
 from .vector import (Mark, Segment, VectorScene, calibrate_from_scene, snap_to_vector, vector_candidates,
                      whisker_ends)
+from .vlm import (CoordReadout, FigureView, GroupCoords, GroupReadOut, Mismatch, OverlayVerdict,
+                  PROMPT_VERSION, ReadOut, TargetSpec, TickCoord, coords, load_prompt,
+                  overlay_verify, read_out, render_prompt)

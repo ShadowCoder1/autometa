@@ -819,10 +819,18 @@ def detect_bars(img_bgr: ImageLike, axes: Axes, min_width_px: int = MIN_BAR_WIDT
         bx0, bx1 = float(g[0]) - 0.5, float(g[-1]) + 0.5
         width = bx1 - bx0
         cx = 0.5 * (bx0 + bx1)
-        top_y, conf = snap_horizontal_edge(ink_gray, cx, med, window=snap_window_for(width),
-                                           band=max(1, int(width // 4)))
-        if conf <= 0.0:
-            top_y = med
+        # Refine at the bar's quarter points, never at its centre: an error bar is drawn down the
+        # middle, and a dark stem over a light bar biases the integrated-coverage edge upwards by
+        # several pixels. Wide bars have two clean columns either side of the stem; narrow ones
+        # have nowhere to go, so they keep the centre.
+        window = snap_window_for(width)
+        band = max(1, int(width // 5))
+        columns = [cx - width / 4.0, cx + width / 4.0] if width >= 8 else [cx]
+        snaps = [snap_horizontal_edge(ink_gray, c, med, window=window, band=band)
+                 for c in columns]
+        good = [pos for pos, conf in snaps if conf > 0.0]
+        top_y = float(np.median(good)) if good else med
+        conf = max((c for _, c in snaps), default=0.0)
         inset = int(min(2, max(0, width // 4)))
         interior = region[int(med) + 2:base_row - 1, g[0] + inset:g[-1] + 1 - inset].reshape(-1, 3)
         colour = _hex(np.median(interior, axis=0)) if interior.size else _hex(region[int(med) + 1, int(cx)])
