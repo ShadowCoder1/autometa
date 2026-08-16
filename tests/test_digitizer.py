@@ -216,10 +216,14 @@ def test_prompts_render_with_the_target_and_refuse_unfilled_placeholders():
         assert "{{" not in load_prompt(name), f"{name} still interpolates a per-call value"
 
 
-def test_readout_plan_is_two_model_families_and_two_variants():
+def test_readout_plan_buys_a_second_model_family_before_a_second_prompt():
+    """F2: two prompts of one model that agree are one voter agreeing with itself."""
     assert _readout_plan(("claude-opus-5",), 3) == [
-        ReadoutSpec("claude-opus-5", "direct"), ReadoutSpec("claude-opus-5", "ticks_first"),
-        ReadoutSpec("claude-sonnet-5", "direct")]
+        ReadoutSpec("claude-opus-5", "direct"), ReadoutSpec("claude-sonnet-5", "direct"),
+        ReadoutSpec("claude-opus-5", "ticks_first")]
+    # …and the first two, which is where the adaptive plan stops when they agree, are two families
+    first_two = _readout_plan(("claude-opus-5",), 2)
+    assert len({spec.model for spec in first_two}) == 2
     assert _readout_plan(("claude-opus-5",), 0) == []
 
 
@@ -925,9 +929,10 @@ def test_digitize_stops_at_two_read_outs_when_the_routes_agree(bar_figure, tmp_p
     assert _n_readouts(out) == 2
     plan = next(c for c in out.candidates
                 if c.extractor_id == "digitize:ensemble").pixel_provenance["call_plan"]
+    agreed = ("the routes agreed across two model families, so no further read-out was bought")
     assert plan == {"readouts_min": 2, "readouts_max": 3, "readouts_run": 2,
                     "extra_readouts_bought": 0,
-                    "extra_readout_reason": "the routes agreed, so no further read-out was bought",
+                    "extra_readout_reason": agreed, "readout_stop_reason": agreed,
                     "overlay_verify": False,
                     "overlay_verify_reason": "every route agreed and none was dropped",
                     "list_regions_offered": plan["list_regions_offered"]}
@@ -1271,3 +1276,28 @@ def test_the_marker_floor_rejects_a_cap_inside_the_marker(bar_figure):
     assert mean == pytest.approx(31.6677, abs=1e-3)
     assert error == pytest.approx(11.00, abs=0.02)          # not 5.998
     assert side == "up"
+
+
+def test_the_family_rule_buys_a_second_family_and_records_which_ones_answered(bar_figure,
+                                                                              tmp_path):
+    """F2, end to end: `readouts_min=1` leaves one family, so the adaptive step buys another."""
+    from canopy.digitize.digitizer import model_families
+
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    provider = _scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                         _coord_payload(bar_figure, view.scale))
+    out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, result=True,
+                   settings=DigitizeSettings(readouts_min=1, readouts_max=3))
+    plan = out.provenance["call_plan"]
+    assert plan["readouts_run"] == 2 and plan["extra_readouts_bought"] == 1
+    assert "one model family" in plan["extra_readout_reason"]
+    assert out.provenance["model_families"] == ["claude-opus", "claude-sonnet"]
+    assert plan["readouts_run"] <= 3, "the cost guard: never more than three read-outs"
+    # …and the ensemble does not pretend to be one of them
+    ensemble = next(c for c in out.candidates if c.extractor_id == "digitize:ensemble")
+    assert ensemble.model == ""
+    assert ensemble.pixel_provenance["model_families"] == ["claude-opus", "claude-sonnet"]
+    assert model_families([s for s in out.samples if s.group == "A"]) == ["claude-opus",
+                                                                         "claude-sonnet"]

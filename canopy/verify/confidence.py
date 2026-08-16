@@ -208,6 +208,27 @@ def _agreeing_routes(result: VoteResult) -> list:
     return [r for r in result.routes if agreeing & set(r.candidate_ids)]
 
 
+def _agreeing_model_families(result: VoteResult,
+                             candidates: Sequence[Candidate] | None) -> list[str]:
+    """The model families recorded INSIDE the candidates the vote kept.
+
+    `route_key` is one modality and one model family per candidate, and the digitiser's ensemble
+    is one candidate however many models read the figure — so a figure that two independent model
+    families read and agreed on arrived at the vote looking like a single route (F2). The
+    digitiser records the families it actually ran in `pixel_provenance["model_families"]`; this
+    is where they are cashed in.
+    """
+    agreeing = set(result.agreeing_ids)
+    families: set[str] = set()
+    for cand in candidates or []:
+        if cand.candidate_id not in agreeing:
+            continue
+        names = (cand.pixel_provenance or {}).get("model_families")
+        if isinstance(names, (list, tuple)):
+            families |= {str(name) for name in names if name}
+    return sorted(families)
+
+
 def _base_kind(routes: Sequence) -> str:
     kinds = {r.route_key.split("/", 1)[0] for r in routes}
     if any(k == "text" for k in kinds):
@@ -249,8 +270,16 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
         reasons.append(f"{len(routes)} independent routes agree within {vote_result.tolerance:.4g} "
                        f"(+{AGREE_BONUS + extra:.2f})")
     elif vote_result.agreement == "single":
-        reasons.append("only one independent route produced this value, so it cannot be accepted "
-                       "by vote")
+        heterogeneous = _agreeing_model_families(vote_result, candidates)
+        if len(heterogeneous) >= 2:
+            score += AGREE_BONUS
+            reasons.append(f"one route, but {len(heterogeneous)} independent model families read "
+                           f"it and agreed ({', '.join(heterogeneous)}) — a second family is a "
+                           f"different failure mode, which is what agreement is for "
+                           f"(+{AGREE_BONUS:.2f})")
+        else:
+            reasons.append("only one independent route produced this value, so it cannot be "
+                           "accepted by vote")
     else:
         score -= DISAGREE_PENALTY
         forced_human = True
@@ -332,7 +361,8 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
             reasons.append("the adjudicator asked for a human")
         score = min(score, ADJUDICATED_CAP)
         reasons.append(f"adjudicated cells are capped at {ADJUDICATED_CAP:.2f}")
-    if vote_result.agreement == "single" and not settled:
+    if (vote_result.agreement == "single" and not settled
+            and len(_agreeing_model_families(vote_result, candidates)) < 2):
         score = min(score, SINGLE_ROUTE_CAP)
     capping = sorted({f.code for f in flags} & CAPPING_FLAGS)
     if capping:

@@ -299,3 +299,41 @@ def test_cressman_late_adaptation_is_no_longer_convicted_by_its_own_bad_ladder(c
     flags = run_checks(_dataset_for("late_adaptation"), "late_adaptation", repaired)
     assert "value_outside_axis" not in codes(flags)
     assert not [f for f in flags if f.severity == "error"], codes(flags)
+
+
+def test_cressman_the_record_shows_the_one_family_stop_the_plan_now_prevents(cressman_late):
+    """Acceptance item 3, against the run that exposed it (F2).
+
+    The live run stopped at two read-outs, and both were Opus — one voter agreeing with itself.
+    The Sonnet read-out was third in the plan and never ran, so the cell could not be accepted by
+    agreement however right 31.3 was.
+    """
+    from canopy.digitize.digitizer import _readout_plan, model_families
+
+    plan = cressman_late["readout_plan"]
+    assert [(s["model"], s["variant"]) for s in plan[:2]] == [
+        ("claude-opus-5", "direct"), ("claude-opus-5", "ticks_first")]
+    assert cressman_late["call_plan"]["readouts_run"] == 2
+    ran = {row["model"] for row in cressman_late["per_route"] if row["route"] == "D"}
+    assert ran == {"claude-opus-5"}, "the record no longer shows the one-family stop"
+
+    today = _readout_plan(("claude-opus-5",), 3)
+    assert [(s.model, s.variant) for s in today[:2]] == [
+        ("claude-opus-5", "direct"), ("claude-sonnet-5", "direct")]
+    assert len(today) == 3, "three read-outs remains the ceiling"
+
+
+def test_cressman_the_family_gate_would_have_bought_the_second_read_out(cressman_late):
+    """The same samples, through today's gate: one family is a reason to buy, agreement is not."""
+    from canopy.digitize.digitizer import RouteSample, _needs_another_readout
+
+    samples = [RouteSample(route=row["route"], group=row["group"], model=row["model"],
+                           variant=row["variant"], mean=row["mean"], error=row["error"])
+               for row in cressman_late["per_route"]]
+    needed, why = _needs_another_readout(samples, axis_range=50.0, tick_spacing=5.0, px_units=0.07)
+    assert needed and "one model family" in why
+    # add the Sonnet read the plan now buys first, and the gate is satisfied
+    samples.append(RouteSample(route="D", group="A", model="claude-sonnet-5", variant="direct",
+                               mean=31.4, error=2.0))
+    needed, why = _needs_another_readout(samples, axis_range=50.0, tick_spacing=5.0, px_units=0.07)
+    assert not needed and "two model families" in why

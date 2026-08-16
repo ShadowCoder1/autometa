@@ -370,3 +370,28 @@ def test_a_refuted_calibration_convicts_the_ladder_not_the_reading():
     disputed = [CheckFlag(code="calibration_disputed", severity="error", message="x",
                           candidate_ids=["a"])]
     assert confidence(result, CONFIRMED, disputed, None, orientation=ORIENTED)[0] == "needs_human"
+
+
+def test_two_model_families_inside_one_figure_route_count_as_agreement():
+    """F2: two Opus prompts agreeing is one voter agreeing with itself; opus + sonnet is not."""
+    from canopy.models import SourceKind
+
+    def ensemble(cid, families):
+        return Candidate(candidate_id=cid, paper_id="p", dataset_id="ds1",
+                         outcome_key="late_adaptation", kind="group_stats", group="A",
+                         status="found", source_kind=SourceKind.figure_bar, n=12, mean=31.5,
+                         dispersion_value=11.0, dispersion_type=DispersionType.SD, unit="deg",
+                         route="figure", extractor_id="digitize:ensemble", model="",
+                         pixel_provenance={"model_families": families,
+                                           "cal": {"ticks": [[0.0, 45.0], [100.0, 5.0]]}})
+
+    one = ensemble("f1", ["claude-opus"])
+    two = ensemble("f2", ["claude-opus", "claude-sonnet"])
+    lonely = confidence(vote([one]), CONFIRMED, [], None, candidates=[one], n_a=12, n_b=12,
+                        orientation=ORIENTED)
+    shared = confidence(vote([two]), CONFIRMED, [], None, candidates=[two], n_a=12, n_b=12,
+                        orientation=ORIENTED)
+    assert vote([two]).agreement == "single", "the vote still sees one route, as it should"
+    assert shared[1] > lonely[1]
+    assert any("independent model families" in r for r in shared[2])
+    assert any("only one independent route" in r for r in lonely[2])

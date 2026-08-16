@@ -608,12 +608,18 @@ def _rank(name: str) -> int:
 def _readout_plan(models: Sequence[str], n_readouts: int) -> list[ReadoutSpec]:
     """Vote within route = modality x model family (amendment G), with no vote counted twice.
 
-    Samples are taken from DISTINCT (model, variant) pairs — primary/direct, primary/ticks-first,
-    then one variant per other model family, then the remaining variants. Only when every pair is
-    spent does a pair get re-sampled, and such a sample is flagged `resample` so the ensemble and
-    task 8 can see that it is a weaker vote: an identical prompt on an identical image is the same
-    question asked twice, and under replay it would be a byte-identical copy that silently pins the
-    median and deflates the MAD.
+    Samples are taken from DISTINCT (model, variant) pairs, **a second model family before a
+    second prompt variant**: primary/direct, secondary/direct, primary/ticks-first, then the rest.
+    That order is the fix for F2. The adaptive plan stops at two read-outs when they agree, and
+    with the old order those two were opus/direct and opus/ticks-first — one family, two prompts,
+    which `vote.route_key` correctly counts as ONE voter. The cell could then never be accepted by
+    agreement however right it was, and the sonnet read that would have settled it was never
+    bought. Two prompts of one model share a failure mode; two models do not.
+
+    Only when every pair is spent does a pair get re-sampled, and such a sample is flagged
+    `resample` so the ensemble and task 8 can see that it is a weaker vote: an identical prompt on
+    an identical image is the same question asked twice, and under replay it would be a
+    byte-identical copy that silently pins the median and deflates the MAD.
     """
     from ..config import MODELS
 
@@ -624,8 +630,9 @@ def _readout_plan(models: Sequence[str], n_readouts: int) -> list[ReadoutSpec]:
             families.append(model)
     others = families[1:]
     first, second, *rest = READOUT_VARIANTS
-    pairs = [(primary, first), (primary, second)]
+    pairs = [(primary, first)]
     pairs += [(m, first) for m in others]
+    pairs += [(primary, second)]
     pairs += [(primary, v) for v in rest]
     pairs += [(m, v) for m in others for v in (second, *rest)]
 
@@ -1023,29 +1030,52 @@ def _means_by_group(samples: Sequence[RouteSample]) -> dict[str, list[float]]:
     return out
 
 
+def model_families(samples: Sequence[RouteSample]) -> list[str]:
+    """The distinct model families behind a set of samples, ignoring the routes that have none.
+
+    Route A and route B are code, not models, so they carry no family; route C and every read-out
+    do. This is the number `vote.route_key` cannot see, because it reads one `model` field per
+    candidate and the ensemble has to pick one.
+    """
+    from ..verify.vote import model_family
+
+    return sorted({model_family(s.model) for s in samples if s.model})
+
+
 def _needs_another_readout(samples: Sequence[RouteSample], *, axis_range: float,
                            tick_spacing: float, px_units: float) -> tuple[bool, str]:
-    """Is one more vision read-out worth its price? (task 15 §A3)
+    """Is one more vision read-out worth its price? (task 15 §A3, amended by task 16 §R1c)
 
-    Yes when a group has fewer than two usable routes — a single route cannot be checked by
-    anything — or when the routes that did read it disagree about the MEAN beyond amendment F's
-    tolerance. A third pass that only confirms two agreeing reads buys nothing: the ensemble is
-    already a median of routes that agree, and the confidence gate looks at the means.
+    Yes when a group has fewer than two usable routes, when the routes that read it disagree about
+    the MEAN beyond amendment F's tolerance, or — this is F2 — when every route that answered
+    comes from ONE model family. Two prompts of one model that agree are one voter agreeing with
+    itself: they share the model's failure modes, `vote.route_key` counts them as a single route,
+    and the cell can never be accepted by agreement. A second family is what makes the agreement
+    mean something, and it is bought before any adaptive stop.
+
+    A third pass that only confirms two agreeing families buys nothing: the ensemble is already a
+    median of routes that agree, and the confidence gate looks at the means.
     """
     means = _means_by_group(samples)
     if not means:
         return True, "no route has produced a value yet"
     for group in GROUPS:
-        mine = means.get(group)
-        if mine is None:
+        mine = [s for s in samples if s.group == group and s.usable]
+        values = means.get(group)
+        if values is None:
             continue                      # a group that is genuinely not plotted is not a reason
-        if len(mine) < 2:
-            return True, f"group {group} has only {len(mine)} usable route"
-        agreement = dual_tolerance(mine, [], axis_range=axis_range, tick_spacing=tick_spacing,
+        if len(values) < 2:
+            return True, f"group {group} has only {len(values)} usable route"
+        families = model_families(mine)
+        if len(families) < 2:
+            return True, (f"group {group} was read by only one model family "
+                          f"({', '.join(families) or 'none'}); two prompts of one model share its "
+                          f"failure modes and count as one route in the vote")
+        agreement = dual_tolerance(values, [], axis_range=axis_range, tick_spacing=tick_spacing,
                                    px_units=px_units)
         if not agreement["mean_agrees"]:
             return True, f"group {group}: {'; '.join(agreement['reasons'])}"
-    return False, "the routes agreed, so no further read-out was bought"
+    return False, "the routes agreed across two model families, so no further read-out was bought"
 
 
 def _overlay_wanted(verify: bool, policy: str, samples: Sequence[RouteSample], *,
@@ -1145,18 +1175,23 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
         axis_range_source = "readout_magnitude"
     px_units = abs(pixel_resolution(pixel_cal)) if pixel_cal is not None else 0.0
 
-    # --- path D again, but only if the routes so far do not agree about a mean
-    bought, buy_reason = 0, "the routes agreed, so no further read-out was bought"
+    # --- path D again, but only while the routes so far do not agree, or come from one family
+    bought = 0
+    bought_because: list[str] = []
+    stop_reason = f"the plan holds no read-out past the first {n_min}"
     for spec in plan[n_min:]:
-        needed, buy_reason = _needs_another_readout(samples, axis_range=axis_range,
-                                                    tick_spacing=tick_spacing, px_units=px_units)
+        needed, reason = _needs_another_readout(samples, axis_range=axis_range,
+                                                tick_spacing=tick_spacing, px_units=px_units)
         if not needed:
+            stop_reason = reason
             break
+        bought_because.append(reason)                 # WHY the money was spent, not why it stopped
         read(spec)
         bought += 1
     else:
-        if len(plan) <= n_min:
-            buy_reason = f"the plan holds no read-out past the first {n_min}"
+        if len(plan) > n_min:
+            stop_reason = "every read-out in the plan was spent"
+    buy_reason = "; ".join(bought_because) or stop_reason
 
     # --- path A: vector-exact (after every read-out, so it sees every tick ladder)
     samples.extend(_samples_from_vector(scene, vec_info, coord, core, readouts))
@@ -1210,8 +1245,13 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     provenance["call_plan"] = {
         "readouts_min": n_min, "readouts_max": n_max, "readouts_run": len(readouts),
         "extra_readouts_bought": bought, "extra_readout_reason": buy_reason,
+        "readout_stop_reason": stop_reason,
         "overlay_verify": bool(do_verify), "overlay_verify_reason": verify_reason,
         "list_regions_offered": view.has_regions}
+    # the families that actually answered — `vote.route_key` reads ONE model per candidate and the
+    # ensemble has to pick one, so without this the vote cannot tell two families from two prompts
+    provenance["model_families"] = model_families(samples)
+    provenance["readout_families"] = sorted({r.model for r in readouts})
     provenance.update(_late_window_provenance(target, samples, plan))
     candidates = _build_candidates(samples, target=target, fig=fig, paper=paper, source=source,
                                    dataset=dataset, core=core, cal=cal, crop=crop,
@@ -1410,6 +1450,7 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
                 + (f" (whisker drawn on one side only: {'/'.join(sides)})" if sides else ""))
         provenance = {
             **base,
+            "model_families": model_families(mine),
             "legend_says": legend_text,
             "legend_dispersion": legend_type.value if legend_type else None,
             "mapper_dispersion": mapper_type.value if mapper_type else None,
@@ -1438,7 +1479,11 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             page=page, locator=locator, crop=crop, overlay_path=overlay_path,
             extractor_id="digitize:ensemble", sigma=sigma, status=status,
             notes="; ".join(reasons), provenance=provenance,
-            call_id=_verify_call_id(base), model=live[0].model or "",
+            call_id=_verify_call_id(base),
+            # NOT `live[0].model`: `vote.route_key` would then stamp the ensemble with one family
+            # and the vote could never see that two families agreed inside it. The families are
+            # recorded explicitly in provenance, where `confidence` reads them.
+            model=("" if len(model_families(mine)) > 1 else (live[0].model or "")),
             dispersion_sigma=dispersion_sigma))
     return out
 
