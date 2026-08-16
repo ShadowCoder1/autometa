@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>Canopy — agent-verified meta-analysis</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <span class="wordmark">Canopy</span>
+  </div>
+  <p class="run-title" id="run-title"></p>
+  <div class="topbar-right">
+    <span class="pill" id="key-pill" title="Loaded from .env; never shown here">key …</span>
+    <span class="meter" id="cost-meter" hidden>
+      <span class="meter-label">spent</span>
+      <span class="meter-value" id="cost-value">$0.00</span>
+    </span>
+  </div>
+</header>
+
+<nav class="steps" id="steps" aria-label="Stages">
+  <button type="button" class="step is-current" data-screen="new" aria-current="step">
+    <span class="step-n">1</span><span class="step-name">New run</span>
+  </button>
+  <button type="button" class="step" data-screen="monitor">
+    <span class="step-n">2</span><span class="step-name">Monitor</span>
+  </button>
+  <button type="button" class="step" data-screen="results">
+    <span class="step-n">3</span><span class="step-name">Results</span>
+  </button>
+  <button type="button" class="step" data-screen="runs">
+    <span class="step-n">·</span><span class="step-name">Runs</span>
+  </button>
+</nav>
+
+<main id="main">
+
+  <!-- ───────────────────────────────── 1. new run ───────────────────────────────── -->
+  <section id="screen-new" class="screen">
+    <div class="lede">
+      <h1>Start a review</h1>
+      <p>Point Canopy at a folder of PDFs and a protocol. The protocol is the only place your
+         field's knowledge lives — Canopy itself knows nothing about your subject.</p>
+    </div>
+
+    <form id="run-form" autocomplete="off">
+      <section class="card" aria-labelledby="h-protocol">
+        <div class="card-head">
+          <h2 id="h-protocol">Protocol</h2>
+          <div class="seg" role="tablist" aria-label="How to write the protocol">
+            <button type="button" class="seg-btn is-on" data-mode="guided" role="tab"
+                    aria-selected="true">Guided form</button>
+            <button type="button" class="seg-btn" data-mode="yaml" role="tab"
+                    aria-selected="false">YAML</button>
+          </div>
+        </div>
+
+        <div class="draft-row">
+          <label class="field grow">
+            <span class="label">Describe your review in one sentence</span>
+            <input type="text" id="draft-sentence"
+                   placeholder="Do older adults adapt less than younger adults to a visuomotor rotation?">
+          </label>
+          <button type="button" class="btn" id="draft-btn">Draft it for me</button>
+        </div>
+        <p class="hint" id="draft-note">A draft is a starting point, not a protocol: every line is
+           yours to change.</p>
+
+        <div id="guided">
+          <div class="grid-2">
+            <label class="field"><span class="label">Title</span>
+              <input type="text" id="p-title" required></label>
+            <label class="field"><span class="label">Statistics profile</span>
+              <select id="p-profile"></select></label>
+          </div>
+          <label class="field"><span class="label">Research question</span>
+            <textarea id="p-question" rows="2"></textarea></label>
+
+          <div class="grid-2 groups">
+            <fieldset class="sub"><legend>Group A <em>— the group an effect is “in”</em></legend>
+              <label class="field"><span class="label">Label</span>
+                <input type="text" id="a-label"></label>
+              <label class="field"><span class="label">How a paper identifies it</span>
+                <textarea id="a-definition" rows="3"></textarea></label>
+              <label class="field"><span class="label">Synonyms <em>comma separated</em></span>
+                <input type="text" id="a-synonyms"></label>
+            </fieldset>
+            <fieldset class="sub"><legend>Group B <em>— its comparator</em></legend>
+              <label class="field"><span class="label">Label</span>
+                <input type="text" id="b-label"></label>
+              <label class="field"><span class="label">How a paper identifies it</span>
+                <textarea id="b-definition" rows="3"></textarea></label>
+              <label class="field"><span class="label">Synonyms <em>comma separated</em></span>
+                <input type="text" id="b-synonyms"></label>
+            </fieldset>
+          </div>
+
+          <div class="stack-head">
+            <h3>Outcomes</h3>
+            <button type="button" class="btn ghost" id="add-outcome">Add outcome</button>
+          </div>
+          <div id="outcomes"></div>
+
+          <div class="grid-3 lists">
+            <label class="field"><span class="label">Eligibility <em>one rule per line</em></span>
+              <textarea id="p-eligibility" rows="5"></textarea></label>
+            <label class="field"><span class="label">Dataset rules <em>one per line</em></span>
+              <textarea id="p-dataset-rules" rows="5"></textarea></label>
+            <label class="field"><span class="label">Moderators <em>one per line</em></span>
+              <textarea id="p-moderators" rows="5"></textarea></label>
+          </div>
+          <label class="field"><span class="label">Notes for the agents</span>
+            <textarea id="p-notes" rows="2"></textarea></label>
+        </div>
+
+        <div id="yaml-mode" hidden>
+          <div class="draft-row">
+            <label class="field grow"><span class="label">Start from an example</span>
+              <select id="example-picker"></select></label>
+          </div>
+          <label class="field"><span class="label">Protocol YAML</span>
+            <textarea id="p-yaml" rows="18" spellcheck="false" class="mono"></textarea></label>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="h-papers">
+        <div class="card-head"><h2 id="h-papers">Papers</h2></div>
+        <div class="drop" id="drop">
+          <label class="btn">
+            Choose a folder
+            <input type="file" id="folder-input" webkitdirectory directory multiple hidden>
+          </label>
+          <label class="btn ghost">
+            or pick files
+            <input type="file" id="files-input" accept="application/pdf,.pdf" multiple hidden>
+          </label>
+          <p class="hint" id="files-note">Nothing is uploaded until you press Run. PDFs only.</p>
+        </div>
+        <ul class="file-list" id="file-list"></ul>
+      </section>
+
+      <details class="card advanced">
+        <summary><h2>Advanced</h2><span class="hint">models, budget, concurrency</span></summary>
+        <div class="grid-3">
+          <label class="field"><span class="label">Budget (USD)</span>
+            <input type="number" id="o-budget" min="0" step="0.5" placeholder="no cap"></label>
+          <label class="field"><span class="label">Max per paper (USD)</span>
+            <input type="number" id="o-per-paper" min="0" step="0.5" placeholder="no cap"></label>
+          <label class="field"><span class="label">Papers at a time</span>
+            <input type="number" id="o-concurrency" min="1" max="16" value="4"></label>
+          <label class="field"><span class="label">Only the first N papers</span>
+            <input type="number" id="o-max-papers" min="1" placeholder="all"></label>
+          <label class="field"><span class="label">Primary model</span>
+            <input type="text" id="o-model-primary"></label>
+          <label class="field"><span class="label">Secondary model</span>
+            <input type="text" id="o-model-secondary"></label>
+        </div>
+      </details>
+
+      <div class="actions">
+        <button type="button" class="btn ghost" id="dry-run-btn">Dry run the mapper on 2–3 papers</button>
+        <button type="submit" class="btn primary" id="run-btn">Run the review</button>
+      </div>
+      <p class="error" id="form-error" hidden></p>
+      <div id="dry-run-out"></div>
+    </form>
+  </section>
+
+  <!-- ───────────────────────────────── 2. monitor ───────────────────────────────── -->
+  <section id="screen-monitor" class="screen" hidden>
+    <div class="lede row">
+      <div>
+        <h1>Run monitor</h1>
+        <p id="monitor-sub">Each paper moves through five stages. Nothing is spent twice: a run
+           you stop can be resumed.</p>
+      </div>
+      <button type="button" class="btn danger" id="cancel-btn">Stop the run</button>
+    </div>
+    <div class="grid-stage">
+      <div class="card">
+        <div class="card-head"><h2>Papers</h2><span class="hint" id="stage-summary"></span></div>
+        <div class="table-wrap"><table class="grid" id="stage-grid">
+          <thead><tr><th scope="col">paper</th><th scope="col">ingest</th><th scope="col">map</th>
+          <th scope="col">extract</th><th scope="col">verify</th><th scope="col">resolve</th>
+          <th scope="col">cost</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h2>Log</h2><span class="hint" id="log-count"></span></div>
+        <ol class="log" id="log" aria-live="polite"></ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────────────── 3. results ───────────────────────────────── -->
+  <section id="screen-results" class="screen" hidden>
+    <div class="lede row">
+      <div><h1 id="results-title">Results</h1><p id="results-sub"></p></div>
+      <label class="field inline"><span class="label">Outcome</span>
+        <select id="outcome-picker"></select></label>
+    </div>
+
+    <div class="headline card" id="pooled-card"></div>
+
+    <div class="tabs" role="tablist" aria-label="Results views">
+      <button type="button" class="tab is-on" data-tab="forest" role="tab" aria-selected="true">Forest</button>
+      <button type="button" class="tab" data-tab="table" role="tab" aria-selected="false">Extraction table</button>
+      <button type="button" class="tab" data-tab="flags" role="tab" aria-selected="false">Flags</button>
+      <button type="button" class="tab" data-tab="figures" role="tab" aria-selected="false">Figures</button>
+      <button type="button" class="tab" data-tab="downloads" role="tab" aria-selected="false">Downloads</button>
+    </div>
+
+    <div class="card pane" id="pane-forest">
+      <div class="forest-holder" id="forest"></div>
+      <p class="hint">Hover a row for its numbers; click it for the evidence behind them.</p>
+    </div>
+
+    <div class="card pane" id="pane-table" hidden>
+      <div class="filters">
+        <label class="field inline"><span class="label">Route</span>
+          <select id="filter-route"></select></label>
+        <label class="field inline"><span class="label">Confidence</span>
+          <select id="filter-confidence"></select></label>
+        <label class="field inline grow"><span class="label">Search</span>
+          <input type="search" id="filter-text" placeholder="author, dataset, quote…"></label>
+      </div>
+      <div class="table-wrap"><table class="grid" id="extraction"><thead></thead><tbody></tbody></table></div>
+    </div>
+
+    <div class="card pane" id="pane-flags" hidden>
+      <p class="hint">Sorted by how far the pooled estimate would move if the value changed — the
+         top of this list is where an hour of your time is worth most.</p>
+      <div id="flags"></div>
+    </div>
+
+    <div class="card pane" id="pane-figures" hidden><div class="thumbs" id="figures"></div></div>
+    <div class="card pane" id="pane-downloads" hidden><ul class="downloads" id="downloads"></ul></div>
+  </section>
+
+  <!-- ───────────────────────────────── runs ───────────────────────────────── -->
+  <section id="screen-runs" class="screen" hidden>
+    <div class="lede"><h1>Runs on this machine</h1>
+      <p>Every run is a directory. Open one to read its results, or start a new review.</p></div>
+    <div class="card"><ul class="run-list" id="run-list"></ul></div>
+  </section>
+
+</main>
+
+<!-- ───────────────────────────────── evidence drawer ───────────────────────────────── -->
+<aside id="drawer" class="drawer" hidden aria-labelledby="drawer-title" role="dialog" aria-modal="false">
+  <div class="drawer-head">
+    <h2 id="drawer-title">Evidence</h2>
+    <button type="button" class="icon-btn" id="drawer-close" aria-label="Close the evidence drawer">✕</button>
+  </div>
+  <div class="drawer-body" id="drawer-body"></div>
+</aside>
+<div class="scrim" id="scrim" hidden></div>
+
+<div class="toast" id="toast" hidden role="status"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
