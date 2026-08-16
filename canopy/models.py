@@ -349,7 +349,11 @@ class Candidate(CanopyModel):
     crop_path: str = ""
     overlay_path: str = ""
     pixel_provenance: dict[str, Any] = Field(default_factory=dict)
-    sigma: float | None = None                   # digitization uncertainty (data units)
+    sigma: float | None = None                   # digitization uncertainty of the MEAN (data units)
+    #: digitization uncertainty of `dispersion_value`, in the same units. Carries a disagreement
+    #: about the error-bar half-length that the routes' agreement about the mean survives
+    #: (amendment F applied per quantity — see `canopy.digitize.digitizer`).
+    dispersion_sigma: float | None = None
     grounded: bool | None = None
     grounding_similarity: float | None = None
     route: str = ""

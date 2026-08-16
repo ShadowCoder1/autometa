@@ -17,6 +17,11 @@ unless the figure itself carries it.
 4. For each group, read the plotted central value and the error bar. Report the error bar as a
    HALF-length (datum to cap) in data units, and, when you can see them, also the absolute values
    of the upper and lower cap.
+   **Say in `error_sides` whether the whisker is drawn on both sides of the datum (`both`), only
+   upward (`up`), only downward (`down`), or not at all (`none`).** One-armed whiskers are common
+   where two series overlap, and a half-length read as if the bar were two-armed is half the true
+   value. If the bar is one-armed, the half-length is the arm you can see; leave the cap on the
+   side that is not drawn null rather than guessing at it.
 5. Read the legend and the caption to say what the error bars represent (SD, SE, 95% CI, ...) and
    which drawn series belongs to which group. Report what the figure says even when it disagrees
    with the target's hint — the disagreement is information.

@@ -992,3 +992,115 @@ def test_figure_view_sends_the_image_first_and_marks_it_cacheable(bar_figure, tm
         assert "cache_control" not in content[2] and "cache_control" not in content[3]
         assert TARGET.outcome_key in content[2]["text"], "the target belongs after the image"
     assert systems[0] == systems[1], "two variants must share one system prompt, or nothing caches"
+
+
+# ------------------------------------------------------------------ task 15 §B: one-armed bars
+def test_resolve_arms_never_halves_a_one_armed_whisker():
+    from canopy.digitize.digitizer import resolve_arms
+
+    assert resolve_arms(11.0, 11.2) == (pytest.approx(11.1), None)     # symmetric: the average
+    assert resolve_arms(11.0, None) == (11.0, "up")                    # only an upper arm
+    assert resolve_arms(None, 9.5) == (9.5, "down")
+    # the killer case: the cap walk stopped on the marker's own edge a pixel below the datum
+    assert resolve_arms(11.0, 0.99) == (11.0, "up")
+    assert resolve_arms(0.4, 12.0) == (12.0, "down")
+    # an arm inside the floor (two pixels' worth) is not an arm at all
+    assert resolve_arms(0.05, None, floor=0.2) == (None, None)
+    assert resolve_arms(None, None) == (None, None)
+
+
+@pytest.fixture(scope="module")
+def one_armed_figure(tmp_path_factory) -> dict:
+    """Bock's figure form: the old series' whisker points UP, the young series' points DOWN."""
+    plt = _mpl()
+    dpi = 150
+    values = {"A": 31.5, "B": 12.25}
+    errors = {"A": 11.0, "B": 11.75}
+    fig, ax = plt.subplots(figsize=(5.0, 4.0), dpi=dpi)
+    ax.errorbar([0], [values["A"]], yerr=[[0.0], [errors["A"]]], fmt="o", color="#333333",
+                capsize=8, markersize=9)
+    ax.errorbar([1], [values["B"]], yerr=[[errors["B"]], [0.0]], fmt="s", color="#999999",
+                capsize=8, markersize=9)
+    ax.set_xlim(-0.5, 1.5)
+    ax.set_ylim(0, 60)
+    ax.set_yticks([0, 10, 20, 30, 40, 50, 60])
+    ax.set_ylabel("error (deg)")
+    fig.canvas.draw()
+    out = tmp_path_factory.mktemp("one_armed")
+    path = out / "figures" / "fig01.png"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=dpi)
+    h_px = int(round(fig.get_size_inches()[1] * dpi))
+
+    def row(value: float) -> float:
+        return h_px - ax.transData.transform((0, value))[1]
+
+    truth = {"path": path, "out_dir": out, "values": values, "errors": errors,
+             "x": {"A": ax.transData.transform((0, 0))[0],
+                   "B": ax.transData.transform((1, 0))[0]},
+             "y": {k: row(v) for k, v in values.items()},
+             "cap_down": {k: row(values[k] - errors[k]) for k in values}}
+    plt.close(fig)
+    return truth
+
+
+def test_a_one_armed_whisker_reads_its_true_length_not_half_of_it(one_armed_figure):
+    """End to end on pixels: the arm that exists IS the half-length (task 15 §B5).
+
+    Averaging the arms read 6.0 where the figure showed 11.0 on the first live run, which is what
+    made four agreeing routes look like a disagreement.
+    """
+    from canopy.digitize.calibrate import fit_axis, pair_ticks
+    from canopy.digitize.cv import (find_axes, find_cap_ends, find_tick_marks, load_gray,
+                                    ocr_tick_labels)
+    from canopy.digitize.digitizer import _values_from_pixels
+
+    gray = load_gray(one_armed_figure["path"])
+    axes = find_axes(gray)
+    rows = find_tick_marks(gray, axes).get("left", [])
+    cal = fit_axis(pair_ticks(list(ocr_tick_labels(gray, axes, side="left", ticks=rows or None)),
+                              rows, axis="y"), axis="y")
+    span = abs(axes.plot_bbox[3] - axes.plot_bbox[1])
+    # group A: the whole raster path, cap search included
+    x, y = one_armed_figure["x"]["A"], one_armed_figure["y"]["A"]
+    top, bottom = find_cap_ends(gray, x, y, max_len_px=span)
+    assert bottom is not None, "the cap walk stops on the marker's own lower edge"
+    mean, error, one_sided = _values_from_pixels(cal, y, top, bottom)
+    assert mean == pytest.approx(one_armed_figure["values"]["A"], abs=0.5)
+    assert error == pytest.approx(one_armed_figure["errors"]["A"], abs=1.0), (
+        f"{error} — a one-armed whisker must not be halved")
+    assert one_sided == "up"
+
+    # group B (the arm points DOWN): `find_cap_ends` does not find this one at all on a square
+    # marker, so the caps come from the model's own coordinates, as path C supplies them.
+    y_b = one_armed_figure["y"]["B"]
+    down_cap = one_armed_figure["cap_down"]["B"]
+    mean, error, one_sided = _values_from_pixels(cal, y_b, None, down_cap)
+    assert mean == pytest.approx(one_armed_figure["values"]["B"], abs=0.5)
+    assert error == pytest.approx(one_armed_figure["errors"]["B"], abs=1.0)
+    assert one_sided == "down"
+
+
+def test_agreed_means_survive_a_dispersion_disagreement(bar_figure, tmp_path):
+    """Amendment F per QUANTITY: the cell is `found`, the dispersion carries the doubt (§B4)."""
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    # same means, wildly different half-lengths — Bock's shape
+    first = _readout_payload(31.5, 11.0, 12.25, 11.75)
+    second = _readout_payload(31.6, 16.0, 12.30, 13.00)
+    provider = _scripted(first, _coord_payload(bar_figure, view.scale),
+                         readout_by_call=[first, second, second])
+    out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, result=True)
+    ensemble = {c.group: c for c in out.candidates if c.extractor_id == "digitize:ensemble"}
+    got = ensemble["A"]
+    prov = got.pixel_provenance
+    assert got.status == "found", got.notes
+    assert got.mean == pytest.approx(31.5, abs=0.5)
+    assert prov["mean_agreement"] is True and prov["error_agreement"] is False
+    assert prov["needs_review"] is True and prov["needs_review_kind"] == "dispersion"
+    assert "agree about the mean and disagree about the error half-length" in got.notes
+    # the median of the routes that FOUND a whisker, with its own uncertainty widened
+    assert got.dispersion_value is not None
+    assert got.dispersion_sigma is not None and got.dispersion_sigma > (got.sigma or 0)
+    assert prov["n_routes_with_error"] >= 2

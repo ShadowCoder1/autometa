@@ -147,6 +147,8 @@ READOUT_SCHEMA = _obj({
         "error_half_length": _NUM,
         "error_upper": _NUM,
         "error_lower": _NUM,
+        "error_sides": {"type": "string",
+                        "enum": ["both", "up", "down", "none", "unknown"]},
         "x_read": {"type": "string"},
         "confidence": {"type": "number"},
         "notes": {"type": "string"},
@@ -201,6 +203,7 @@ class GroupReadOut:
     error_half_length: float | None = None      # datum -> cap, in data units
     error_upper: float | None = None            # absolute value of the upper cap
     error_lower: float | None = None
+    error_sides: str = "unknown"                # both | up | down | none (one-armed bars are common)
     x_read: str = ""
     confidence: float = 0.0
     notes: str = ""
@@ -653,6 +656,7 @@ def _parse_readout(result: ToolLoopResult, model: str, variant: str,
             error_half_length=_number(row.get("error_half_length")),
             error_upper=_number(row.get("error_upper")),
             error_lower=_number(row.get("error_lower")),
+            error_sides=str(row.get("error_sides") or "unknown"),
             x_read=str(row.get("x_read") or ""),
             confidence=float(_number(row.get("confidence")) or 0.0),
             notes=str(row.get("notes") or "")))

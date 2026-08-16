@@ -37,7 +37,7 @@ from .vlm import (READOUT_VARIANTS, CoordReadout, FigureView, PROMPT_VERSION, Re
                   TargetSpec, coords, overlay_verify, read_out, summarize_tool_calls)
 
 __all__ = ["digitize", "RouteSample", "ReadoutSpec", "DigitizeResult", "ensemble_stats",
-           "dual_tolerance", "ROUTE_LABELS"]
+           "dual_tolerance", "resolve_arms", "ROUTE_LABELS"]
 
 ROUTE_LABELS = {"A": "vector", "B": "raster_cv", "C": "vlm_coords", "D": "readout"}
 GROUPS = ("A", "B")
@@ -83,6 +83,7 @@ class RouteSample:
     cap_bottom_px: float | None = None
     snap_conf: float | None = None
     sigma: float | None = None
+    one_sided: str | None = None                 # "up"/"down" when only one whisker arm is drawn
     label_read: str = ""
     status: str = "found"
     notes: str = ""
@@ -136,6 +137,40 @@ def ensemble_stats(values: Sequence[float]) -> tuple[float, float]:
     med = statistics.median(vals)
     mad = statistics.median([abs(v - med) for v in vals])
     return med, _MAD_TO_SIGMA * mad
+
+
+#: an "arm" shorter than this fraction of the other one is not the far end of a symmetric error
+#: bar: it is the marker's own edge, the bar top, or the axis line the cap walk ran into
+_ONE_SIDED_RATIO = 0.5
+
+
+def resolve_arms(up: float | None, down: float | None, floor: float = 0.0
+                 ) -> tuple[float | None, str | None]:
+    """`(half-length, one_sided)` from the two arm lengths of an error bar.
+
+    **This is where a one-armed whisker used to be halved.** Averaging the two arms is right only
+    when both are really arms; when a figure draws the whisker on ONE side (common when two series
+    overlap — Bock 2005 draws it up for the old group and down for the young), the "other arm" is
+    whatever the cap search stopped at, usually a pixel or two away, and the average came out at
+    half the true SD. On the first live run that turned an 11.0-unit SD into 6.0 and made four
+    routes that agreed about the means look like a disagreement (task 13-14 report, limitation 7a).
+
+    So an arm counts only if it is longer than `floor` (in the same units as the arms — pass two
+    pixels' worth) and at least `_ONE_SIDED_RATIO` of the other. What survives alone IS the
+    half-length, and `one_sided` says which side it was read from.
+    """
+    arms = {"up": up, "down": down}
+    live = {side: abs(v) for side, v in arms.items() if v is not None and abs(v) > floor}
+    if not live:
+        return None, None
+    if len(live) == 1:
+        side, value = next(iter(live.items()))
+        return value, side
+    longest = max(live, key=lambda s: live[s])
+    shortest = min(live, key=lambda s: live[s])
+    if live[shortest] < _ONE_SIDED_RATIO * live[longest]:
+        return live[longest], longest
+    return statistics.mean(live.values()), None
 
 
 def dual_tolerance(means: Sequence[float], errors: Sequence[float], *, axis_range: float,
@@ -334,11 +369,15 @@ def _samples_from_readout(reading: ReadOut) -> list[RouteSample]:
         row = reading.group(group)
         if row is None:
             continue
-        error = row.error_half_length
-        if error is None and row.mean is not None:
-            arms = [abs(cap - row.mean) for cap in (row.error_upper, row.error_lower)
-                    if cap is not None]
-            error = statistics.mean(arms) if arms else None
+        error, one_sided = row.error_half_length, None
+        if row.mean is not None:
+            up = None if row.error_upper is None else abs(row.error_upper - row.mean)
+            down = None if row.error_lower is None else abs(row.error_lower - row.mean)
+            resolved, one_sided = resolve_arms(up, down)
+            if error is None:                     # the model gave caps but no half-length
+                error = resolved
+        if row.error_sides in ("up", "down"):     # the model was asked outright, and answered
+            one_sided = row.error_sides
         out.append(RouteSample(
             route="D", group=group, model=reading.model, variant=reading.variant,
             sample=reading.sample,
@@ -347,9 +386,11 @@ def _samples_from_readout(reading: ReadOut) -> list[RouteSample]:
             notes=row.notes, snap_conf=row.confidence,
             call_ids=list(reading.call_ids), tool_calls=list(reading.tool_calls),
             cost_usd=reading.cost_usd / max(1, len(reading.groups)),
+            one_sided=one_sided,
             extra={"legend_says": reading.legend_says, "x_read": row.x_read,
                    "tick_labels": list(reading.tick_labels), "unit": reading.unit,
-                   "panel": reading.panel, "same_prompt_resample": reading.sample > 0}))
+                   "panel": reading.panel, "same_prompt_resample": reading.sample > 0,
+                   "error_sides": row.error_sides}))
     return out
 
 
@@ -366,10 +407,17 @@ def _snap_point(core: _Core, x: float, y: float, width: float | None,
 
 
 def _values_from_pixels(cal: AxisCalibration, y: float, cap_top: float | None,
-                        cap_bottom: float | None) -> tuple[float, float | None]:
+                        cap_bottom: float | None) -> tuple[float, float | None, str | None]:
+    """`(mean, error half-length, one_sided)` for one datum, in data units.
+
+    The floor below which an "arm" is not an arm is two pixels' worth of data units: a cap that
+    close to the datum is the marker's own edge, not the end of a whisker.
+    """
     mean = px_to_value(cal, y)
-    arms = [abs(px_to_value(cal, cap) - mean) for cap in (cap_top, cap_bottom) if cap is not None]
-    return mean, (statistics.mean(arms) if arms else None)
+    up = None if cap_top is None else abs(px_to_value(cal, cap_top) - mean)
+    down = None if cap_bottom is None else abs(px_to_value(cal, cap_bottom) - mean)
+    error, one_sided = resolve_arms(up, down, floor=2.0 * abs(pixel_resolution(cal, y)))
+    return mean, error, one_sided
 
 
 def _samples_from_coords(coord: CoordReadout, core: _Core, cal: AxisCalibration | None,
@@ -400,7 +448,7 @@ def _samples_from_coords(coord: CoordReadout, core: _Core, cal: AxisCalibration 
         sample.cap_bottom_px = _closest(bottom, found_bottom)
         sample.extra["cap_source"] = {"model": [top, bottom], "cv": [found_top, found_bottom]}
         if cal is not None:
-            sample.mean, sample.error = _values_from_pixels(
+            sample.mean, sample.error, sample.one_sided = _values_from_pixels(
                 cal, snapped, sample.cap_top_px, sample.cap_bottom_px)
             sample.sigma = _pixel_sigma(cal, snapped)
         else:
@@ -486,7 +534,8 @@ def _samples_from_raster(coord: CoordReadout | None, core: _Core,
             sample.extra = {"marker": marker.to_dict()}
             top, bottom = find_cap_ends(core.gray, marker.x, marker.y, max_len_px=span)
         sample.cap_top_px, sample.cap_bottom_px = top, bottom
-        sample.mean, sample.error = _values_from_pixels(cal, sample.y_px, top, bottom)
+        sample.mean, sample.error, sample.one_sided = _values_from_pixels(
+            cal, sample.y_px, top, bottom)
         sample.sigma = _pixel_sigma(cal, sample.y_px)
         sample.snap_conf = 1.0
         out.append(sample)
@@ -566,7 +615,7 @@ def _samples_from_vector(paper: PaperRecord, fig: FigureRegion, coord: CoordRead
         ends = whisker_ends(scene, mark) if mark is not None else None
         if ends is not None:
             sample.cap_top_px, sample.cap_bottom_px = min(ends), max(ends)
-        sample.mean, sample.error = _values_from_pixels(
+        sample.mean, sample.error, sample.one_sided = _values_from_pixels(
             cal_vec, snapped[1], sample.cap_top_px, sample.cap_bottom_px)
         sample.sigma = 0.0                                    # exact geometry
         out.append(sample)
@@ -980,17 +1029,29 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
 
         live, zero_notes = _drop_zero_confidence(live)
         means = [s.mean for s in live]
-        errors = [s.error for s in live if s.error is not None]
+        # a route that found no whisker does not get a vote on the whisker's length
+        with_error = [s for s in live if s.error is not None]
+        errors = [s.error for s in with_error]
         mean, mad_sigma = ensemble_stats(means)
-        error = statistics.median(errors) if errors else None
+        error, error_mad = ensemble_stats(errors) if errors else (None, 0.0)
         agreement = dual_tolerance(means, errors, axis_range=axis_range,
                                    tick_spacing=tick_spacing, px_units=px_units)
-        sigma = None
-        if want_uncertainty:
-            floor = px_units
-            if cal is not None:
-                floor = max(floor, abs(cal.rmse) * px_units)
-            sigma = max(mad_sigma, floor)
+        floor = px_units
+        if cal is not None:
+            floor = max(floor, abs(cal.rmse) * px_units)
+        sigma = max(mad_sigma, floor) if want_uncertainty else None
+        # amendment F applies PER QUANTITY (controller ruling, task 15 §B4): routes that agree
+        # about the mean and differ about the half-length give an agreed mean and an uncertain
+        # dispersion — the dispersion's own sigma carries that disagreement instead of the cell
+        # being thrown away.
+        dispersion_sigma = None
+        if want_uncertainty and errors:
+            # the MAD collapses to zero when a majority of the routes happen to agree exactly
+            # ([11, 16, 16] has MAD 0), and a disagreement that wide is not zero uncertainty; half
+            # the span is the honest floor for "somewhere between the smallest and largest read".
+            spread = (max(errors) - min(errors)) if len(errors) > 1 else 0.0
+            widen = 0.5 * spread if not agreement["error_agrees"] else 0.0
+            dispersion_sigma = max(error_mad, widen, floor)
         conflict = (legend_type is not None and mapper_type != DispersionType.UNKNOWN
                     and legend_type != mapper_type)
         reasons = list(agreement["reasons"])
@@ -998,7 +1059,16 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
         if conflict:
             reasons.append(f"the figure's legend reads {legend_type.value} but the mapper recorded "
                            f"{mapper_type.value}")
-        status = _ensemble_status(agreement["agrees"], conflict, zero_notes)
+        status = _ensemble_status(agreement["mean_agrees"], conflict, zero_notes)
+        dispersion_only = (status == "found" and not agreement["error_agrees"])
+        sides = sorted({s.one_sided for s in with_error if s.one_sided})
+        if dispersion_only:
+            reasons.append(
+                f"the routes agree about the mean and disagree about the error half-length "
+                f"({', '.join(f'{v:.4g}' for v in sorted(errors))}); the median of the "
+                f"{len(errors)} route(s) that found a whisker is used and its own uncertainty is "
+                f"widened to {dispersion_sigma:.4g}"
+                + (f" (whisker drawn on one side only: {'/'.join(sides)})" if sides else ""))
         provenance = {
             **base,
             "legend_says": legend_text,
@@ -1008,12 +1078,18 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             "route_values": {s.extractor_id: {"mean": s.mean, "error": s.error} for s in live},
             "snap_confidences": {s.extractor_id: s.snap_conf for s in mine
                                  if s.snap_conf is not None},
-            "n_routes": len(live), "mad_sigma": mad_sigma,
+            "n_routes": len(live), "n_routes_with_error": len(with_error),
+            "mad_sigma": mad_sigma, "dispersion_mad_sigma": error_mad,
             "agreement": agreement,
+            "mean_agreement": agreement["mean_agrees"],
+            "error_agreement": agreement["error_agrees"],
+            "one_sided": sides[0] if len(sides) == 1 else (sides or None),
             "zero_confidence_snaps": zero_notes,
             "resampled_routes": [s.extractor_id for s in live if s.sample > 0],
             "tool_calls": _aggregate_tool_calls(mine),
-            "needs_review": status == "ambiguous",
+            "needs_review": status == "ambiguous" or dispersion_only,
+            "needs_review_kind": ("mean" if status == "ambiguous"
+                                  else ("dispersion" if dispersion_only else None)),
             "needs_review_reason": "; ".join(reasons),
             "dropped_samples": [s.to_dict() for s in mine if s.dropped],
         }
@@ -1023,15 +1099,22 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             page=page, locator=locator, crop=crop, overlay_path=overlay_path,
             extractor_id="digitize:ensemble", sigma=sigma, status=status,
             notes="; ".join(reasons), provenance=provenance,
-            call_id=_verify_call_id(base), model=live[0].model or ""))
+            call_id=_verify_call_id(base), model=live[0].model or "",
+            dispersion_sigma=dispersion_sigma))
     return out
 
 
-def _ensemble_status(agrees: bool, legend_conflict: bool, zero_notes: Sequence[str]) -> str:
-    """`found` only when the routes agree, the legend does not contradict the mapper, AND no
-    zero-confidence snap had to be kept as a vote (a snap that found no ink is not evidence)."""
+def _ensemble_status(mean_agrees: bool, legend_conflict: bool, zero_notes: Sequence[str]) -> str:
+    """`found` when the routes agree about the MEAN, the legend does not contradict the mapper,
+    and no zero-confidence snap had to be kept as a vote (a snap that found no ink is not
+    evidence).
+
+    A disagreement about the error half-length alone does NOT make the cell ambiguous: it makes
+    the dispersion uncertain, which travels in `dispersion_sigma` and in the review flag
+    (controller ruling, task 15 §B4).
+    """
     kept_zero = any("kept" in n for n in zero_notes)
-    return "found" if agrees and not legend_conflict and not kept_zero else "ambiguous"
+    return "found" if mean_agrees and not legend_conflict and not kept_zero else "ambiguous"
 
 
 def _drop_zero_confidence(live: list[RouteSample]) -> tuple[list[RouteSample], list[str]]:
@@ -1101,7 +1184,8 @@ def _candidate(mean: float | None, error: float | None, *, group: str, sample: R
                dataset: DatasetSpec | None, source: Source | None, kind: SourceKind | None,
                mapper_type: DispersionType, unit: str, page: int, locator: str, crop: Path,
                overlay_path: str, extractor_id: str, sigma: float | None, status: str,
-               notes: str, provenance: dict[str, Any], call_id: str, model: str) -> Candidate:
+               notes: str, provenance: dict[str, Any], call_id: str, model: str,
+               dispersion_sigma: float | None = None) -> Candidate:
     n, n_quote = _group_n(dataset, group)
     return Candidate(
         candidate_id=f"{dataset.dataset_id if dataset else fig.id}:{target.outcome_key}:"
@@ -1118,6 +1202,6 @@ def _candidate(mean: float | None, error: float | None, *, group: str, sample: R
         error_bar_scope=(source.error_bar_scope if source is not None else "unknown"),
         page=page, locator=locator,
         crop_path=str(crop), overlay_path=overlay_path,
-        pixel_provenance=provenance, sigma=sigma,
+        pixel_provenance=provenance, sigma=sigma, dispersion_sigma=dispersion_sigma,
         route="figure", model=model, prompt_version=PROMPT_VERSION,
         llm_call_id=call_id, extractor_id=extractor_id, notes=notes)
