@@ -19,20 +19,18 @@
     "n_series": 32,
     "n_read": 30,
     "read_rate": 0.9375,
-    "mae_pct_of_axis_range": 2.9568976393259234,
+    "mae_pct_of_axis_range": 0.07488749626749992,
     "median_pct_of_axis_range": 0.07437391173397145,
-    "max_pct_of_axis_range": 53.31417624521071,
-    "within_2pct_of_range": 0.9333333333333333,
-    "error_bar_mae_pct_of_range": 10.195555651194915,
+    "max_pct_of_axis_range": 0.1746230407056564,
+    "within_2pct_of_range": 1.0,
+    "error_bar_mae_pct_of_range": 12.055034876295718,
     "n_error_bars_read": 30,
-    "sigma_coverage_95": 0.9333333333333333,
+    "sigma_coverage_95": 1.0,
     "n_sigma_checked": 30,
     "failures": [
       "mark_count_mismatch:1_detected_2_plotted"
     ],
-    "cases_with_implausible_calibration": [
-      "bars_se_sparse_ticks"
-    ],
+    "cases_with_implausible_calibration": [],
     "cases_where_cv_core_would_pick_bars_on_a_point_chart": [
       "line_timeseries_endpoint",
       "points_high_dpi",
@@ -45,10 +43,10 @@
   },
   "_note": "routes C (VLM coordinates) and D (VLM read-out) are NOT measured here \u2014 they need a model.  Run them on this corpus once credit allows; see validation/README.md.",
   "n_cases": 13,
-  "corpus_dir": "/Users/sritejpadmanabhan/projects/canopy/validation/synthetic/corpus",
+  "corpus_dir": "validation/synthetic/corpus",
   "files": {
-    "csv": "/Users/sritejpadmanabhan/projects/canopy/validation/synthetic/accuracy.csv",
-    "png": "/Users/sritejpadmanabhan/projects/canopy/validation/synthetic/accuracy.png",
-    "svg": "/Users/sritejpadmanabhan/projects/canopy/validation/synthetic/accuracy.svg"
+    "csv": "validation/synthetic/accuracy.csv",
+    "png": "validation/synthetic/accuracy.png",
+    "svg": "validation/synthetic/accuracy.svg"
   }
 }

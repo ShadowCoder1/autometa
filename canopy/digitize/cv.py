@@ -481,7 +481,7 @@ def _label_groups(crop: np.ndarray, side: str, ticks: list[float] | None,
     if not comps:
         return []
     med_h = float(np.median([c[3] for c in comps]))
-    comps = _band_nearest_axis(comps, side, crop.shape, gap_tol=max(4.0, 0.35 * med_h))
+    comps = _band_nearest_axis(comps, side, crop.shape, gap_tol=max(4.0, 0.6 * med_h))   # 0.35× cut INSIDE wide labels ("15,10,5,0" read as "5,0,5,0", a silent half-scale fit)
     if not comps:
         return []
     groups = _group_glyphs(comps, side, med_h)
