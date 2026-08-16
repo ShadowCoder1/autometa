@@ -152,6 +152,27 @@ def test_the_join_never_pairs_two_rows_with_different_group_sizes_by_the_strict_
     assert any(p.how == "unmatched_auto" and p.auto.dataset_id == "d1" for p in pairs)
 
 
+def test_the_experiment_label_comes_from_the_mapper_not_from_the_dataset_id():
+    """`record.label` falls back to `d1`, which is not an experiment and must not be compared."""
+    from canopy.models import DatasetSpec, StudyMap
+
+    record = _record(dataset_id="d1", label="d1", n_a=12, n_b=12, es=-1.6)
+    record.paper_id = "sha"
+    study = StudyMap(paper_id="sha", datasets=[DatasetSpec(dataset_id="d1", experiment="1a")])
+
+    # with the mapper's experiment, this is an EXACT match to the gold row's experiment "1a"
+    pairs = common.join_rows([record], [_gold(1)], "late_adaptation", studies={"sha": study})
+    assert pairs[0].how == "exact"
+
+    # a genuinely different experiment label is not an exact match, but the N pair still is
+    other = StudyMap(paper_id="sha", datasets=[DatasetSpec(dataset_id="d1", experiment="2b")])
+    pairs = common.join_rows([record], [_gold(1)], "late_adaptation", studies={"sha": other})
+    assert pairs[0].how == "n_pair"
+
+    # and with no study at all the experiment is simply unknown, never "d1"
+    assert common._auto_experiment(record, None) == ""
+
+
 def test_a_gold_row_the_run_never_produced_is_reported_not_dropped():
     pairs = common.join_rows([], [_gold(1), _gold(2)], "late_adaptation")
     assert [p.how for p in pairs] == ["unmatched_gold", "unmatched_gold"]

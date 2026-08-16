@@ -404,9 +404,23 @@ def load_overrides(path: str | Path) -> dict[tuple[str, str], int]:
     return out
 
 
-def _auto_key(record: Any, study: Any | None) -> tuple[str, int | None]:
+def _auto_key(record: Any) -> tuple[str, int | None]:
     author = record.citation.first_author or first_author(record.citation.authors)
     return first_author(author), record.citation.year
+
+
+def _auto_experiment(record: Any, study: Any | None) -> str:
+    """The experiment label the MAPPER read off the paper, not the dataset id.
+
+    `EffectSizeRecord.label` falls back to the dataset id (`d1`), which is not an experiment
+    label and must never be compared to the spreadsheet's `Experiment` column — doing so rejects
+    otherwise exact matches.
+    """
+    if study is None:
+        return ""
+    dataset = next((d for d in getattr(study, "datasets", [])
+                    if d.dataset_id == record.dataset_id), None)
+    return norm_experiment(getattr(dataset, "experiment", "")) if dataset is not None else ""
 
 
 def _n_distance(record: Any, gold: GoldRow) -> float | None:
@@ -454,20 +468,20 @@ def join_rows(records: Sequence[Any], gold: Sequence[GoldRow], outcome_key: str,
     for rule in ("exact", "n_pair"):                                  # 2, 3
         still: list[Any] = []
         for record in left:
-            author, year = _auto_key(record, studies.get(record.paper_id))
+            author, year = _auto_key(record)
+            experiment = _auto_experiment(record, studies.get(record.paper_id))
             best: GoldRow | None = None
             for row in unclaimed.values():
                 if row.author_key != author or row.year != year:
                     continue
                 if _n_distance(record, row) != 0:
                     continue
-                if rule == "exact":
-                    exp = norm_experiment(getattr(record, "label", ""))
-                    if row.experiment and row.experiment not in (exp, ""):
-                        # the dataset label rarely carries the experiment; only reject when the
-                        # label names a DIFFERENT experiment
-                        if exp and exp != row.experiment:
-                            continue
+                # `exact` also needs the experiment labels to agree; a blank on either side is
+                # not a disagreement (many papers never label their single experiment), so only
+                # a genuine mismatch of two named experiments rejects the pair
+                if rule == "exact" and experiment and row.experiment \
+                        and experiment != row.experiment:
+                    continue
                 best = row
                 break
             if best is None:
@@ -478,13 +492,13 @@ def join_rows(records: Sequence[Any], gold: Sequence[GoldRow], outcome_key: str,
 
     remaining_by_author: dict[str, list[Any]] = {}                    # 4. author (+/- 1 year)
     for record in left:
-        remaining_by_author.setdefault(_auto_key(record, None)[0], []).append(record)
+        remaining_by_author.setdefault(_auto_key(record)[0], []).append(record)
     still = []
     for author, group in remaining_by_author.items():
         rows = [r for r in unclaimed.values() if r.author_key == author]
         if len(group) == 1 and len(rows) == 1:
             record, row = group[0], rows[0]
-            year = _auto_key(record, None)[1]
+            year = _auto_key(record)[1]
             close = year is None or row.year is None or abs(year - row.year) <= 1
             distance = _n_distance(record, row)
             if close:
