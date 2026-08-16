@@ -406,3 +406,115 @@ def test_checks_never_change_a_candidate():
     before = [c.model_dump() for c in candidates]
     run_checks(make_dataset(), "late_adaptation", candidates)
     assert [c.model_dump() for c in candidates] == before
+
+
+# --------------------------------------------------------------------------- task 16: P3 as split
+def _figure_cand(group="A", cal_status="confirmed", ticks=((0.0, 45.0), (100.0, 15.0)),
+                 mean=31.3, agree=True, **kwargs) -> Candidate:
+    provenance = {"figure_id": "fig03", "cal_status": cal_status, "mean_agreement": agree,
+                  "cal_note": "an axis note",
+                  "cal": {"ticks": [list(t) for t in ticks]} if ticks else None}
+    return cand(group, candidate_id=f"fig{group}", source_kind=SourceKind.figure_line,
+                extractor_id="digitize:ensemble", route="figure", mean=mean, quote="",
+                pixel_provenance=provenance, **kwargs)
+
+
+def test_a_value_outside_a_CONFIRMED_axis_is_still_an_error():
+    dataset = make_dataset()
+    flags = run_checks(dataset, "late_adaptation", [_figure_cand(mean=900.0)])
+    assert "value_outside_axis" in codes(flags)
+    assert CHECK_SEVERITY["value_outside_axis"] == "error"
+
+
+def test_a_value_outside_an_UNCONFIRMED_axis_convicts_the_axis_instead():
+    """F1: a ladder misread as 1..4 sent a correct read of 31.3 to a human as an `error`."""
+    dataset = make_dataset()
+    flags = run_checks(dataset, "late_adaptation",
+                       [_figure_cand(cal_status="cal_refuted", ticks=((0.0, 4.0), (100.0, 1.0)))])
+    assert "value_outside_axis" not in codes(flags)
+    assert "calibration_refuted" in codes(flags)
+    refuted = next(f for f in flags if f.code == "calibration_refuted")
+    assert refuted.severity == "error" and "fig03" in refuted.message
+
+
+def test_a_single_witness_axis_is_a_warning_while_the_readers_agree():
+    dataset = make_dataset()
+    flags = run_checks(dataset, "late_adaptation",
+                       [_figure_cand(cal_status="single_witness", agree=True, mean=900.0)])
+    assert codes(flags).count("calibration_single_witness") == 1
+    assert "value_outside_axis" not in codes(flags)     # the axis is not evidence yet
+    assert "calibration_disputed" not in codes(flags)
+    assert CHECK_SEVERITY["calibration_single_witness"] == "warn"
+
+
+def test_a_single_witness_axis_whose_readers_also_disagree_is_a_humans_problem():
+    dataset = make_dataset()
+    flags = run_checks(dataset, "late_adaptation",
+                       [_figure_cand(cal_status="single_witness", agree=False)])
+    assert "calibration_disputed" in codes(flags)
+    assert CHECK_SEVERITY["calibration_disputed"] == "error"
+
+
+def test_a_record_with_no_calibration_status_is_checked_the_way_it_always_was():
+    """Every candidate written before task 16 (and every hand-built one) still gets the axis check."""
+    dataset = make_dataset()
+    plain = cand("A", candidate_id="old", source_kind=SourceKind.figure_bar, mean=900.0, quote="",
+                 extractor_id="digitize:ensemble",
+                 pixel_provenance={"cal": {"ticks": [[0.0, 45.0], [100.0, 15.0]]}})
+    flags = run_checks(dataset, "late_adaptation", [plain])
+    assert "value_outside_axis" in codes(flags)
+    assert not [f for f in flags if f.code.startswith("calibration_")]
+
+
+# --------------------------------------------------------------------------- metric scope
+def _metric_pair(metric_a: str, metric_b: str, outcome_key="late_adaptation") -> list[Candidate]:
+    return [cand("A", candidate_id="ma", outcome_key=outcome_key, analysis_metric=metric_a),
+            cand("B", candidate_id="mb", outcome_key=outcome_key, mean=12.28,
+                 analysis_metric=metric_b)]
+
+
+def test_metric_mixed_is_scoped_to_one_outcome():
+    """F4: Cressman's late adaptation IS an endpoint and its aftereffect IS a difference."""
+    dataset = make_dataset()
+    within = _metric_pair("endpoint", "change_from_baseline")
+    assert "metric_mixed" in codes(run_checks(dataset, "late_adaptation", within))
+
+    clean = _metric_pair("endpoint", "endpoint")
+    others = _metric_pair("change_from_baseline", "change_from_baseline",
+                          outcome_key="aftereffect")
+    flags = run_checks(dataset, "late_adaptation", clean, other_candidates=others)
+    assert "metric_mixed" not in codes(flags)
+    # …but the paper-wide drift is still recorded, one severity down
+    assert "metric_mixed_across_outcomes" in codes(flags)
+    assert CHECK_SEVERITY["metric_mixed_across_outcomes"] == "info"
+
+
+# --------------------------------------------------------------------------- unit coherence
+def test_two_readings_a_decade_apart_are_a_unit_problem_not_a_reading_error():
+    """Cressman's aftereffect A: read-outs at 61.6, a coords route at 0.061, all labelled "deg"."""
+    dataset = make_dataset()
+    rows = [cand("A", candidate_id="readout", mean=61.6, dispersion_value=3.0),
+            cand("A", candidate_id="coords", mean=0.0610, dispersion_value=0.15)]
+    flags = run_checks(dataset, "late_adaptation", rows)
+    assert "unit_incoherent" in codes(flags)
+    assert "unit_mismatch" not in codes(flags)          # the unit STRINGS agree perfectly
+    flag = next(f for f in flags if f.code == "unit_incoherent")
+    assert set(flag.candidate_ids) == {"readout", "coords"}
+
+
+def test_a_mean_and_a_spread_in_different_units_on_one_candidate_are_flagged():
+    dataset = make_dataset()
+    rows = [cand("A", candidate_id="readout", mean=61.6, dispersion_value=3.0),
+            cand("A", candidate_id="vector", mean=0.0383, dispersion_value=2.106)]
+    flags = run_checks(dataset, "late_adaptation", rows)
+    incoherent = [f for f in flags if f.code == "unit_incoherent"]
+    assert any(f.candidate_ids == ["vector"] for f in incoherent), \
+        "the mean/dispersion mismatch on one candidate was not named"
+
+
+def test_two_groups_that_simply_differ_are_not_a_unit_problem():
+    """The check is per GROUP: A at 0.5 and B at 30 is a large effect, not a unit mix."""
+    dataset = make_dataset()
+    rows = [cand("A", mean=0.5, dispersion_value=0.2),
+            cand("B", candidate_id="cB", mean=30.0, dispersion_value=6.0)]
+    assert "unit_incoherent" not in codes(run_checks(dataset, "late_adaptation", rows))

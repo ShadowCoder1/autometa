@@ -25,7 +25,8 @@ from typing import Iterable, Sequence
 from ..models import (Candidate, CheckFlag, DatasetSpec, DispersionType, GroupSpec,
                       OrientationVerdict, OutcomeSources, Source)
 from ..stats.effect_sizes import cohens_d
-from .figures import FIGURE_KINDS, axis_limits, is_figure
+from .figures import (FIGURE_KINDS, axis_limits, calibration_status, is_figure,
+                      routes_agree)
 from .grounding import ROW_ONLY, SIGN_NOTE, is_short_quote
 
 __all__ = ["run_checks", "sign_check", "codes", "CHECK_SEVERITY", "GROUP_LABEL_MISMATCH_NOTE",
@@ -62,6 +63,10 @@ CHECK_SEVERITY: dict[str, str] = {
     "se_sd_inconsistent": "warn",
     "ci_asymmetric": "warn",
     "value_outside_axis": "error",
+    #: the axis a figure value was read against, and how much corroboration it had (task 16 P1/P3)
+    "calibration_single_witness": "warn",
+    "calibration_refuted": "error",
+    "calibration_disputed": "error",
     "mean_missing": "warn",
     "dispersion_unknown": "warn",
     "dispersion_missing": "warn",
@@ -75,6 +80,8 @@ CHECK_SEVERITY: dict[str, str] = {
     "group_label_swapped": "error",
     "unit_mismatch": "warn",
     "metric_mixed": "warn",
+    "metric_mixed_across_outcomes": "info",
+    "unit_incoherent": "warn",
     "dispersion_type_conflict": "warn",
     "duplicate_across_outcomes": "warn",
     "figure_n_mismatch": "warn",
@@ -219,8 +226,12 @@ def _check_one(cand: Candidate, dataset: DatasetSpec, outcome: OutcomeSources | 
                   f"the interval [{cand.ci_low}, {cand.ci_high}] is not symmetric about the mean "
                   f"{cand.mean} ({lower} below, {upper} above)", cid)
 
-    # --- a digitised value has to be inside the axis it was read from
-    if cand.mean is not None:
+    # --- a digitised value has to be inside the axis it was read from — but only when we know
+    # what the axis is. Convicting a value on a calibration nobody corroborated is exactly how a
+    # correct read of 31.3 was sent to a human by a ladder that had been misread as 1..4 (F1).
+    _check_calibration(cand, out)
+    confirmed = calibration_status(cand.pixel_provenance) in ("confirmed", "unknown")
+    if cand.mean is not None and confirmed:
         limits = axis_limits(cand.pixel_provenance)
         if limits is not None:
             low, high = limits
@@ -236,6 +247,43 @@ def _check_one(cand: Candidate, dataset: DatasetSpec, outcome: OutcomeSources | 
         _flag(out, "dispersion_type_conflict",
               f"the extractor read {kind.value} at {where}, but the map determined "
               f"{mapped.value} there", cid)
+
+
+def _check_calibration(cand: Candidate, out: list[CheckFlag]) -> None:
+    """What the axis this figure value was read against is worth (task 16, P1/P3 as corrected).
+
+    Three different things used to arrive as one `value_outside_axis` error:
+
+    * the calibration two or more witnesses agree on — a value outside THAT is a real error, and
+      is flagged above, not here;
+    * a calibration the readers contradict — `calibration_refuted`. The error is against the
+      LADDER: two readers agreed on a number the ticks cannot draw, so their number has two
+      witnesses and the ladder has none. It caps the cell instead of convicting it;
+    * a calibration only one witness built, which nothing corroborates. On its own that is a
+      `warn` and a cap; when the readers of that figure also disagree with each other, nothing is
+      left standing and it is `calibration_disputed` — a human's problem.
+    """
+    if cand.status != "found" or not cand.pixel_provenance:
+        return
+    status = calibration_status(cand.pixel_provenance)
+    cid = cand.candidate_id
+    where = (cand.pixel_provenance or {}).get("figure_id") or cand.locator or "this figure"
+    note = str((cand.pixel_provenance or {}).get("cal_note") or "")
+    if status == "cal_refuted":
+        _flag(out, "calibration_refuted",
+              f"the tick ladder read off {where} cannot draw the values the readers agree on, so "
+              f"the axis calibration was discarded and the reading rests on the read-outs alone "
+              f"({note})", cid)
+    elif status == "single_witness":
+        if routes_agree(cand.pixel_provenance) is False:
+            _flag(out, "calibration_disputed",
+                  f"only one witness calibrated {where} AND the routes that read it disagree "
+                  f"about the value, so neither the scale nor the number is corroborated "
+                  f"({note})", cid)
+        else:
+            _flag(out, "calibration_single_witness",
+                  f"only one witness calibrated the axis of {where}, so the scale this value was "
+                  f"read against is uncorroborated ({note})", cid)
 
 
 def _check_statistic(cand: Candidate, dataset: DatasetSpec, out: list[CheckFlag]) -> None:
@@ -314,13 +362,115 @@ def _check_units(found: Sequence[Candidate], outcome: OutcomeSources | None,
 
 def _check_metric(found: Sequence[Candidate], others: Sequence[Candidate],
                   out: list[CheckFlag]) -> None:
-    """Amendment G: an endpoint and a change from baseline are not the same quantity."""
-    rows = [c for c in list(found) + list(others) if c.analysis_metric != "unknown"]
+    """Amendment G: an endpoint and a change from baseline are not the same quantity.
+
+    Scoped per (paper, OUTCOME), because a paper whose outcomes are legitimately different metrics
+    is not a problem — Cressman's late adaptation is an endpoint and its aftereffect a
+    baseline-subtracted difference, and warning about that penalised a correct map. What IS a
+    problem is one outcome fed by two different metrics: within `aftereffect`, Fig 3b (degrees,
+    endpoint) and Fig 5 (`% Visuomotor Adaptation`, a correlation scatter) are both sources of the
+    same number.
+
+    The cross-outcome comparison is kept, demoted to `info`: it is the only thing that would catch
+    a paper whose outcomes silently drift metric, and deleting it costs that.
+    """
+    rows = [c for c in found if c.analysis_metric != "unknown"]
     metrics = sorted({c.analysis_metric for c in rows})
     if len(metrics) > 1:
         _flag(out, "metric_mixed",
-              f"this paper's values mix analysis metrics ({', '.join(metrics)}), which are not "
+              f"this outcome's values mix analysis metrics ({', '.join(metrics)}), which are not "
               f"the same quantity", *sorted(c.candidate_id for c in rows))
+    across = [c for c in list(found) + list(others) if c.analysis_metric != "unknown"]
+    other_metrics = sorted({c.analysis_metric for c in across})
+    if len(other_metrics) > len(metrics):
+        _flag(out, "metric_mixed_across_outcomes",
+              f"this paper's outcomes are read on different analysis metrics "
+              f"({', '.join(other_metrics)}) — legitimate when the outcomes really are different "
+              f"quantities, worth a look when they are not",
+              *sorted(c.candidate_id for c in across))
+
+
+#: two readings of one datum a factor of ten apart are not two readings of one datum: one of them
+#: is in another unit, off another axis, or off another panel
+_UNIT_DECADE = 10.0
+#: a spread this many times its own mean, next to a route whose spread is proportionate, is a mean
+#: and a dispersion recorded in different units on the same candidate
+_SPREAD_OVER_MEAN = 20.0
+
+
+def _check_unit_coherence(found: Sequence[Candidate], out: list[CheckFlag]) -> None:
+    """Is one cell's arithmetic internally consistent — mean against mean, mean against spread?
+
+    `_check_units` compares the unit STRINGS the readers wrote down, which agree perfectly while
+    the numbers do not: Cressman's aftereffect group A carries read-outs at 61.6 and 62.0, a
+    `vlm_coords` at 0.0610 and a `vector` at 0.0383 whose dispersion is 2.106 — a mean in one unit
+    and a spread in another, on one candidate, all labelled "degrees (deg)".
+    """
+    for group in ("A", "B"):
+        rows = [c for c in found if c.group == group and c.mean is not None and c.mean != 0]
+        by_size = sorted(rows, key=lambda c: (abs(c.mean), c.candidate_id))
+        if len(by_size) >= 2 and abs(by_size[0].mean) > 0:
+            small, large = by_size[0], by_size[-1]
+            ratio = abs(large.mean) / abs(small.mean)
+            if ratio >= _UNIT_DECADE:
+                _flag(out, "unit_incoherent",
+                      f"group {group}: two readings of the same value are a factor of "
+                      f"{ratio:.0f} apart ({small.mean} and {large.mean}) — that is a unit, an "
+                      f"axis or a panel, not a reading error",
+                      small.candidate_id, large.candidate_id)
+        proportionate = [c for c in rows if c.dispersion_value is not None
+                         and abs(c.dispersion_value) <= 2.0 * abs(c.mean)]
+        for cand in rows:
+            spread = cand.dispersion_value
+            if spread is None or abs(spread) <= _SPREAD_OVER_MEAN * abs(cand.mean):
+                continue
+            if not proportionate:
+                continue
+            _flag(out, "unit_incoherent",
+                  f"group {group}: this reading pairs a mean of {cand.mean} with a spread of "
+                  f"{spread}, while another route of the same cell reads a spread proportionate "
+                  f"to its mean — the mean and the spread are not in the same unit",
+                  cand.candidate_id)
+    for cand in found:
+        _check_route_coherence(cand, out)
+
+
+def _route_means(pixel_provenance: dict | None) -> list[float]:
+    """The per-route means behind one digitised candidate, however that candidate recorded them."""
+    provenance = pixel_provenance if isinstance(pixel_provenance, dict) else {}
+    values: list[float] = []
+    for row in provenance.get("per_route") or []:
+        if isinstance(row, dict) and isinstance(row.get("mean"), (int, float)):
+            values.append(float(row["mean"]))
+    if values:
+        return values
+    routes = provenance.get("route_values")
+    if isinstance(routes, dict):
+        for row in routes.values():
+            if isinstance(row, dict) and isinstance(row.get("mean"), (int, float)):
+                values.append(float(row["mean"]))
+    return values
+
+
+def _check_route_coherence(cand: Candidate, out: list[CheckFlag]) -> None:
+    """The routes BEHIND one digitised value, against each other — a decade apart is a unit.
+
+    An ensemble whose routes span a factor of a thousand (Cressman's Fig. 5 group A: 61.6, 62.0,
+    50.0 and 0.061, 0.038) is not a noisy read: some routes answered in percent and some in
+    fractions, or off two different axes. The ensemble already reports that as a disagreement;
+    this says WHAT KIND, which is what tells a reviewer where to look.
+    """
+    means = [m for m in _route_means(cand.pixel_provenance) if m != 0]
+    if len(means) < 2:
+        return
+    low, high = min(abs(m) for m in means), max(abs(m) for m in means)
+    if low <= 0 or high / low < _UNIT_DECADE:
+        return
+    _flag(out, "unit_incoherent",
+          f"the routes behind this value span a factor of {high / low:.0f} "
+          f"({', '.join(f'{m:g}' for m in sorted(means))}) — some of them answered in another "
+          f"unit or off another axis, which is not a disagreement a median can settle",
+          cand.candidate_id)
 
 
 def _check_duplicates(found: Sequence[Candidate], others: Sequence[Candidate],
@@ -448,6 +598,7 @@ def run_checks(dataset: DatasetSpec, outcome_key: str, candidates: Sequence[Cand
     _check_se_against_sd(found, flags)
     _check_units(found, outcome, flags)
     _check_metric(found, others, flags)
+    _check_unit_coherence(found, flags)
     _check_duplicates(found, others, flags)
     _check_effect_size(found, dataset, flags)
     _check_outcome(outcome, orientation, flags)

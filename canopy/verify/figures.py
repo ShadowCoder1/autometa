@@ -28,7 +28,8 @@ from typing import Any
 from ..models import Candidate, SourceKind
 
 __all__ = ["FIGURE_KINDS", "is_figure", "FigureCalibration", "figure_calibration", "axis_limits",
-           "figure_tolerance", "AXIS_FRACTION", "TICK_FRACTION", "FALLBACK_FRACTION"]
+           "figure_tolerance", "calibration_status", "routes_agree", "AXIS_FRACTION",
+           "TICK_FRACTION", "FALLBACK_FRACTION"]
 
 AXIS_FRACTION = 0.02            # a digitised mean may differ by 2% of the axis range …
 TICK_FRACTION = 0.5             # … or half a tick, whichever is looser (amendment F)
@@ -145,6 +146,31 @@ def figure_calibration(pixel_provenance: dict[str, Any] | None,
         if recorded is not None and recorded > 0:
             out.mean_tolerance, out.source = recorded, "agreement"
     return out
+
+
+#: how corroborated the axis a digitised value was read against is — written by
+#: `digitize._choose_calibration`, read by the checks. An older record (or a hand-built candidate)
+#: carries none, and "unknown" is the honest answer for it: it is neither confirmed nor refuted.
+CAL_STATUSES = ("confirmed", "single_witness", "cal_refuted", "none")
+
+
+def calibration_status(pixel_provenance: dict[str, Any] | None) -> str:
+    """`confirmed` | `single_witness` | `cal_refuted` | `none` | `unknown` for one candidate."""
+    provenance = pixel_provenance if isinstance(pixel_provenance, dict) else {}
+    status = provenance.get("cal_status")
+    return status if status in CAL_STATUSES else "unknown"
+
+
+def routes_agree(pixel_provenance: dict[str, Any] | None) -> bool | None:
+    """Did the digitizer's own routes agree about the MEAN? `None` when it did not say."""
+    provenance = pixel_provenance if isinstance(pixel_provenance, dict) else {}
+    agreed = provenance.get("mean_agreement")
+    if isinstance(agreed, bool):
+        return agreed
+    agreement = provenance.get("agreement")
+    if isinstance(agreement, dict) and isinstance(agreement.get("mean_agrees"), bool):
+        return bool(agreement["mean_agrees"])
+    return None
 
 
 def axis_limits(pixel_provenance: dict[str, Any] | None) -> tuple[float, float] | None:

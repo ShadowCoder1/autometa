@@ -214,3 +214,88 @@ def test_bock_the_repaired_ensemble_moves_towards_the_published_effect():
     assert abs(d) > abs(stored)                          # the repair moves towards the gold
     assert abs(d) == pytest.approx(1.61, abs=0.05)
     assert abs(abs(d) - 1.676) < 0.08
+
+
+def _dataset_for(outcome_key: str, metric: str = "unknown"):
+    from canopy.models import DatasetSpec, GroupSpec, OutcomeSources
+
+    return DatasetSpec(dataset_id="d1", cluster_id="5039533c85ef", label="Cressman 2010",
+                       group_a=GroupSpec(label="younger", n=9),
+                       group_b=GroupSpec(label="older", n=10),
+                       outcomes=[OutcomeSources(outcome_key=outcome_key, units="deg",
+                                                analysis_metric=metric)])
+
+
+def _candidates(name: str, outcome: str) -> list:
+    from canopy.models import Candidate
+
+    return [Candidate.model_validate(c) for c in _record(name)
+            if c["outcome_key"] == outcome]
+
+
+def test_cressman_the_two_aftereffect_figures_are_not_the_same_quantity():
+    """Acceptance item 6: Fig 3b (deg, baseline-corrected) and Fig 5 (% of perturbation)."""
+    from canopy.pipeline.run import vote_candidates
+    from canopy.verify.checks import codes, run_checks
+
+    cell = vote_candidates(_candidates("cressman", "aftereffect"))
+    others = vote_candidates(_candidates("cressman", "late_adaptation"))
+    metrics = {c.analysis_metric for c in cell if c.status == "found"}
+    assert metrics == {"baseline_corrected"}, "the fixture no longer holds both metrics"
+    # …because Fig 5's own ensemble came out ambiguous. Add it back the way the vote would see it
+    # if it had resolved, and the per-outcome scope catches it:
+    fig5 = [c for c in _candidates("cressman", "aftereffect")
+            if c.extractor_id == "digitize:readout:claude-opus-5:direct"
+            and (c.pixel_provenance or {}).get("figure_id") == "fig05"]
+    assert fig5 and {c.analysis_metric for c in fig5} == {"percent_of_perturbation"}
+    flags = run_checks(_dataset_for("aftereffect"), "aftereffect", [*cell, *fig5],
+                       other_candidates=others)
+    assert "metric_mixed" in codes(flags)
+    mixed = next(f for f in flags if f.code == "metric_mixed")
+    assert "percent_of_perturbation" in mixed.message and "baseline_corrected" in mixed.message
+    # and the paper-wide comparison, which used to be the one that fired, is now only a note
+    across = [f for f in flags if f.code == "metric_mixed_across_outcomes"]
+    assert all(f.severity == "info" for f in across)
+
+
+def test_cressman_the_fig5_ensemble_says_its_routes_are_not_in_one_unit():
+    """Acceptance item 6, second half: 61.6 and 0.061 are not two reads of one number."""
+    from canopy.verify.checks import codes, run_checks
+
+    fig5 = [c for c in _candidates("cressman", "aftereffect")
+            if c.extractor_id == "digitize:ensemble"
+            and (c.pixel_provenance or {}).get("figure_id") == "fig05" and c.group == "A"]
+    assert len(fig5) == 1
+    means = sorted(row["mean"] for row in fig5[0].pixel_provenance["per_route"]
+                   if row["mean"] is not None)
+    assert means[0] < 0.1 and means[-1] > 60, f"the fixture no longer holds the split: {means}"
+    # the ensemble is `ambiguous`, so give the check a `found` copy of it — what is under test is
+    # the diagnosis, not the status
+    found = fig5[0].model_copy(update={"status": "found", "mean": 61.6})
+    flags = run_checks(_dataset_for("aftereffect"), "aftereffect", [found])
+    assert "unit_incoherent" in codes(flags)
+    flag = next(f for f in flags if f.code == "unit_incoherent")
+    assert "another unit or off another axis" in flag.message
+
+
+def test_cressman_late_adaptation_is_no_longer_convicted_by_its_own_bad_ladder(cressman_late):
+    """The F1 end state: the same record, after the fix, holds no `value_outside_axis` error."""
+    from canopy.digitize.digitizer import _choose_calibration
+    from canopy.verify.checks import codes, run_checks
+
+    cell = [c for c in _candidates("cressman", "late_adaptation")
+            if c.extractor_id == "digitize:ensemble"]
+    assert len(cell) == 2 and all(c.mean is not None for c in cell)
+    # the record's stored provenance still carries the 1..4 ladder and no status …
+    stale = run_checks(_dataset_for("late_adaptation"), "late_adaptation", cell)
+    assert "value_outside_axis" in codes(stale), "the fixture no longer shows the failure"
+    # … and with what `_choose_calibration` produces today, it does not fire at all
+    readouts = _readouts_from(*[c.pixel_provenance for c in cell])
+    choice = _choose_calibration(_core_from(cressman_late), None, None, readouts)
+    repaired = [c.model_copy(update={"pixel_provenance": {
+        **c.pixel_provenance, "cal_status": choice.status,
+        "cal": choice.usable_for_pixels.to_dict() if choice.usable_for_pixels else None}})
+        for c in cell]
+    flags = run_checks(_dataset_for("late_adaptation"), "late_adaptation", repaired)
+    assert "value_outside_axis" not in codes(flags)
+    assert not [f for f in flags if f.severity == "error"], codes(flags)
