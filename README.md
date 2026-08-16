@@ -288,10 +288,13 @@ digitiser accuracy — are in `validation/`, with commands, expected outputs and
 
 * **`needs_human` is a real answer, not a failure.** Canopy holds back anything it cannot verify.
   A run over difficult papers can leave a large fraction of cells queued; that is the design.
-* **Figures are read, not measured.** The digitiser's four routes agree to within ~0.1 % of the
-  axis range on clean synthetic figures, but a real published plot can have overlapping markers,
-  log axes, superscripted tick labels or a raster scan of a raster. Every figure-derived value
-  carries a digitisation sigma, and there is a sensitivity analysis that removes them all.
+* **Figures are read, not measured.** On a synthetic corpus with known truth, the two
+  *deterministic* routes land within the digitiser's own 2 % tolerance on 100 % (vector) and 93 %
+  (raster CV) of read-outs, with median errors of 0.00 % and 0.09 % of the axis range — but the
+  two model-driven routes have **never been measured against known truth**, and a real published
+  plot can have overlapping markers, log axes, superscripted tick labels or a raster scan of a
+  raster. Every figure-derived value carries a digitisation sigma, and there is a sensitivity
+  analysis that removes them all. See [`validation/README.md`](validation/README.md).
 * **Eligibility is the model's judgement.** It is recorded with a quote and a rationale and it is
   overridable in the UI, but a paper wrongly excluded at the mapping stage never gets extracted.
 * **Paywalled papers are not fetched.** `validation/papers_oa/fetch_oa_papers.py` finds only
@@ -318,10 +321,23 @@ going live. To re-record after changing a prompt:
 CANOPY_LIVE=1 CANOPY_RECORD=1 .venv/bin/python -m pytest tests/test_mapper.py -q
 ```
 
-Recordings still pending, with their commands and expected cost, are listed in
-[`docs/handoff.md`](docs/handoff.md). The architecture — stages, agents, models, verification
-gates, the data model and the provenance guarantees — is in
-[`docs/architecture.md`](docs/architecture.md).
+**Pending recordings.** Ten tests currently skip because their fixtures have never been recorded.
+Each prints its own command; together they cost about **$4.00–4.75**. Do them in this order — the
+last one reuses everything the others record:
+
+```bash
+CANOPY_LIVE=1 CANOPY_RECORD=1 .venv/bin/python -m pytest tests/test_extract_text.py -q      # 4 skips, ~$0.15
+CANOPY_LIVE=1 CANOPY_RECORD=1 .venv/bin/python -m pytest tests/test_verifier.py -q          # 4 skips, ~$0.40
+CANOPY_LIVE=1 CANOPY_RECORD=1 .venv/bin/python -m pytest tests/test_digitizer.py -q         # 1 skip,  ~$1.40
+CANOPY_LIVE=1 CANOPY_RECORD=1 .venv/bin/python -m pytest tests/test_pipeline_offline.py -q  # 1 skip,  ~$2.00-2.80
+```
+
+Zero replay skips is the gate before merging to `main`. The caveats (a temporary skip wrapper to
+delete, and why the pipeline's requests produce *new* fixtures rather than reusing the agents')
+are in [`docs/handoff.md`](docs/handoff.md), together with everything else outstanding.
+
+The architecture — stages, agents, models, verification gates, the data model and the provenance
+guarantees — is in [`docs/architecture.md`](docs/architecture.md).
 
 ---
 
