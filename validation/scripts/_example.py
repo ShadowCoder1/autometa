@@ -77,6 +77,21 @@ def pick(cells: Sequence[Cell], wants: Callable[[Cell], bool]) -> Cell | None:
 
 
 # ----------------------------------------------------------------------------- the printing
+def group_labels(protocol: Any) -> dict[str, str]:
+    """`{"A": "Older adults (A)", "B": "Younger adults (B)"}` — from the PROTOCOL, never hardcoded.
+
+    These scripts live under `validation/` and are Cisneros-specific, but a label that says
+    "older" when the protocol compares patients with controls is simply wrong, and the second
+    protocol (`clinical_vs_control_adaptation.yaml`) exists precisely to catch that.
+    """
+    out: dict[str, str] = {}
+    for key in ("A", "B"):
+        spec = getattr(protocol, f"group_{key.lower()}", None)
+        label = (getattr(spec, "label", "") or "").strip() or f"group {key}"
+        out[key] = f"{label} ({key})"
+    return out
+
+
 def disp(value: Any) -> str:
     """`DispersionType.SD` prints as `DispersionType.SD`; a reader wants `SD`."""
     return str(getattr(value, "value", None) or getattr(value, "name", None) or value)
@@ -186,7 +201,8 @@ def explain(cell: Cell, run: Any) -> str:
     lines.append(banner("5 · the effect size"))
     lines.append(f"  {record.estimator} = {fmt(record.es)}   var = {fmt(record.var, 4)}   "
                  f"SE = {fmt(record.se)}   95% CI [{fmt(low)}, {fmt(high)}]")
-    lines.append(f"  n = {record.n_a} (A, older) vs {record.n_b} (B, younger)   "
+    names = group_labels(run.protocol)
+    lines.append(f"  n = {record.n_a} ({names['A']}) vs {record.n_b} ({names['B']})   "
                  f"orientation applied: {record.orientation_applied}")
     if record.flags:
         lines.append(f"  flags: {', '.join(record.flags)}")
@@ -300,9 +316,10 @@ def figure(cell: Cell, run: Any, out_stem: Path, *, subtitle: str = "",
         def wrapped(text: str, indent: str = "      ") -> list[str]:
             return textwrap.wrap(text, width=62, subsequent_indent=indent) or [""]
 
+        names = group_labels(run.protocol)
         body: list[str] = ["what was read"]
         for verdict in sorted(cell.verdicts, key=lambda v: v.group or ""):
-            name = "older (A)" if verdict.group == "A" else "younger (B)"
+            name = names.get(verdict.group or "", f"group {verdict.group}")
             body.extend(wrapped(f"  {name}: {verdict.mean} {verdict.unit}"
                                 f"  {disp(verdict.dispersion_type)} {verdict.dispersion_value}"
                                 f"  n = {verdict.n}"))

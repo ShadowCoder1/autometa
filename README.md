@@ -107,8 +107,10 @@ does the same thing and is used below so the commands work from a bare checkout.
     --budget-usd 60 --max-usd-per-paper 12 --concurrency 3
 
 # start a protocol from a commented skeleton, or from a shipped example
-.venv/bin/python -m canopy.cli protocol init my-review.yaml
-.venv/bin/python -m canopy.cli protocol init my-review.yaml --from aging_sensorimotor_adaptation
+# (`init` takes a NAME and writes <name>.yaml — passing "my-review.yaml" gets you
+#  my-review.yaml.yaml)
+.venv/bin/python -m canopy.cli protocol init my-review
+.venv/bin/python -m canopy.cli protocol init my-review --from aging_sensorimotor_adaptation
 .venv/bin/python -m canopy.cli protocol check my-review.yaml
 
 # re-pool a finished run from its own stage files, with NO model calls, and check

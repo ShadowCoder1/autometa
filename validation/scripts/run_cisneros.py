@@ -24,7 +24,6 @@ account has already paid for.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 from pathlib import Path
@@ -32,7 +31,7 @@ from typing import Any, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from validation.scripts._common import PROTOCOL, REPO_ROOT, SPLITS, VALIDATION  # noqa: E402
+from validation.scripts._common import PROTOCOL, SPLITS, VALIDATION  # noqa: E402
 
 DEFAULT_PAPER_DIRS = (Path.home() / "Downloads" / "Systematic Review" / "papers",
                       VALIDATION / "papers_oa")
@@ -74,7 +73,11 @@ def build_split(groups: Sequence[Any]) -> dict[str, Any]:
             "sha256": group.sha256,
             "sha12": group.sha256[:12],
             "filename": group.representative.name,
-            "folder": str(group.representative.parent),
+            # a label, not a path: splits.json is read on machines where the corpus lives
+            # somewhere else, and an absolute home directory has no business in a committed file
+            "source": ("validation/papers_oa"
+                       if VALIDATION / "papers_oa" == group.representative.parent
+                       else "papers_folder"),
             "title": group.title,
             "doi": group.doi,
             "n_duplicate_files": len(group.duplicates),
@@ -138,16 +141,14 @@ def offline_client(mode: str, replay_dir: Path | None, out: Path) -> Any:
         return LLMClient(replay_dir=replay_dir, allow_live=False, cache_dir=out / "cache")
     # `--demo`: reuse the pipeline's OWN offline fake rather than keeping a second one alive here.
     # It answers every agent with model-shaped JSON built from the real fixture PDFs, so the run
-    # is real in every respect except the model.
+    # is real in every respect except the model. `_fake` is the single import seam (see its
+    # docstring for why the fake still lives in the test package).
     from canopy.llm.providers import FakeProvider
-    from tests.test_pipeline_offline import FakeSpec, PDFS, fake_router
 
-    from canopy.ingest.pdf import ingest_pdf
+    from validation.scripts._fake import demo_router
 
-    root = out / "demo_ingest"
-    specs = [FakeSpec(ingest_pdf(path, root / path.stem), a, b)
-             for path, a, b in ((PDFS[0], 44.6, 30.2), (PDFS[1], 21.5, 17.9))]
-    return LLMClient(provider=FakeProvider([fake_router(specs)]), allow_live=True, cache_dir=None)
+    return LLMClient(provider=FakeProvider([demo_router(out / "demo_ingest")]),
+                     allow_live=True, cache_dir=None)
 
 
 # ----------------------------------------------------------------------------- main
@@ -184,7 +185,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.demo:                                          # the demo corpus is the fixture PDFs
-        dirs = [REPO_ROOT / "tests" / "fixtures" / "pdfs"]
+        from validation.scripts._fake import demo_pdfs
+
+        dirs = sorted({p.parent for p in demo_pdfs()})
 
     groups = unique_papers(dirs)
     if args.demo:
@@ -206,12 +209,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     staged = stage_papers(chosen, out / "papers_in")
 
-    # the run keeps the protocol it actually used, with the profile resolved into it
+    # The run keeps the protocol it actually used, with the profile resolved into it. `PROFILE`
+    # is a floor, not a bulldozer: any `stats:` field the protocol sets EXPLICITLY wins, which is
+    # `apply_profile`'s own contract. (Reading the raw YAML is the only way to tell: `load_protocol`
+    # rebuilds settings from a full dump, after which every field looks explicitly set.)
+    import yaml
+
     from canopy.models import StatsSettings
     from canopy.protocol import apply_profile, dump_protocol, load_protocol
 
     protocol = load_protocol(args.protocol)
-    protocol.stats = apply_profile(StatsSettings(profile=PROFILE))
+    raw = yaml.safe_load(Path(args.protocol).read_text()) or {}
+    explicit = {k: v for k, v in (raw.get("stats") or {}).items() if k != "profile"}
+    protocol.stats = apply_profile(StatsSettings(profile=PROFILE, **explicit))
+    if explicit:
+        print(f"profile {PROFILE}; kept the protocol's own {', '.join(sorted(explicit))}")
     protocol_path = dump_protocol(protocol, out / "protocol.yaml")
 
     client = None

@@ -38,6 +38,11 @@ def test_first_author_survives_every_spelling_the_two_sides_use():
     assert common.first_author("Bock ") == "bock"
     assert common.first_author("Bock, O.") == "bock"
     assert common.first_author("J. Bock and R. Smith") == "bock"
+    # a particle belongs to the surname: "Van De Plas" is `vandeplas`, not `van` — and `van`
+    # would collide with every other Dutch first author in the corpus
+    assert common.first_author("Van De Plas et al.") == "vandeplas"
+    assert common.first_author("von der Heydt") == "vonderheydt"
+    assert common.first_author("De Xivry, J.") == "dexivry"
     assert common.first_author("") == ""
 
 
@@ -56,6 +61,78 @@ def test_gold_rows_load_with_their_numbers_and_their_row_numbers():
     # the row number is the CSV's own, so a person can find the line the number came from
     assert 1 <= bock.index <= len(rows) + 5
     assert all(r.te is not None for r in rows)                # TE-less rows are dropped
+
+
+def test_every_row_of_BOTH_gold_sheets_carries_the_numbers_the_join_and_the_pooling_need():
+    """The regression that made this test exist.
+
+    `aft_gsheet.csv` spells the column `N_yng`; `late_gsheet.csv` spells it `N_young`. Reading one
+    spelling left all 40 aftereffect rows with `n_young = None`, which silently made `_n_distance`
+    return None and every join rule that needs the group sizes unreachable — no error, no warning,
+    just a column of blanks in the committed discrepancy table.
+    """
+    from canopy.models import StatsSettings
+
+    for outcome in ("late_adaptation", "aftereffect"):
+        rows = common.load_gold(outcome, GOLD)
+        assert rows, outcome
+        for row in rows:
+            assert row.n_old is not None, f"{outcome} row {row.index}: n_old"
+            assert row.n_young is not None, f"{outcome} row {row.index}: n_young"
+            assert row.te is not None and row.se not in (None, 0.0), f"{outcome} row {row.index}"
+            assert row.author_key, f"{outcome} row {row.index}: author"
+        records = common.gold_records(rows, StatsSettings())
+        assert all(r.es is not None and r.var not in (None, 0) for r in records), outcome
+        assert all(r.n_a is not None and r.n_b is not None for r in records), outcome
+
+
+def test_the_one_gold_row_with_no_year_is_known_about():
+    """A gap in the DATA, not in the reader — pinned so it cannot grow unnoticed.
+
+    `aft_gsheet.csv` row 35 (Pacheco et al.) has a blank Year. Such a row can never match on
+    `author + year`, so it reaches the `author_year` fallback or stays unmatched. One row is a
+    known gap; a test that fails when it becomes ten is worth more than one that hides it.
+    """
+    undated = {outcome: [r.author_key for r in common.load_gold(outcome, GOLD) if r.year is None]
+               for outcome in ("late_adaptation", "aftereffect")}
+    assert undated["late_adaptation"] == []
+    assert undated["aftereffect"] == ["pacheco", "vandeplas"]
+
+
+def test_the_gold_column_aliases_resolve_for_every_shipped_spreadsheet():
+    import csv as _csv
+
+    for name in common.GOLD_FOR_OUTCOME.values():
+        path = GOLD / name
+        with path.open(newline="", encoding="utf-8-sig") as handle:
+            header = _csv.DictReader(handle).fieldnames or []
+        column = common.resolve_columns(header, path)
+        assert column["n_young"] in ("N_young", "N_yng"), name
+        assert column["n_old"] == "N_old", name
+    # late and aft really do disagree — that is the whole point of the alias table
+    with (GOLD / "late_gsheet.csv").open(newline="", encoding="utf-8-sig") as handle:
+        late = _csv.DictReader(handle).fieldnames or []
+    with (GOLD / "aft_gsheet.csv").open(newline="", encoding="utf-8-sig") as handle:
+        aft = _csv.DictReader(handle).fieldnames or []
+    assert common.resolve_columns(late)["n_young"] != common.resolve_columns(aft)["n_young"]
+
+    # `combined_gsheet.csv` is a WIDE summary (TE_Late / TE_Aft, no per-outcome TE), so it is not
+    # a `load_gold` input at all and the reader says so rather than half-reading it
+    import csv as _csv2
+
+    with (GOLD / "combined_gsheet.csv").open(newline="", encoding="utf-8-sig") as handle:
+        combined = _csv2.DictReader(handle).fieldnames or []
+    with pytest.raises(common.GoldSchemaError):
+        common.resolve_columns(combined, "combined_gsheet.csv")
+
+
+def test_a_spreadsheet_missing_a_required_column_fails_loudly(tmp_path):
+    # `load_gold` builds the filename from GOLD_FOR_OUTCOME, so the broken file has to use it
+    path = tmp_path / common.GOLD_FOR_OUTCOME["late_adaptation"]
+    path.write_text("Author,Year,TE,CI_low,CI_high,seTE\nBock,2005,-1.6,-2.6,-0.7,0.48\n")
+    with pytest.raises(common.GoldSchemaError) as excinfo:
+        common.load_gold("late_adaptation", tmp_path)
+    assert "n_young" in str(excinfo.value) and "N_yng" in str(excinfo.value)
 
 
 def test_an_outcome_with_no_gold_spreadsheet_says_so():
@@ -302,6 +379,86 @@ def test_the_time_series_case_takes_each_series_rightmost_mark():
     picked, status = synthetic_figures.select_marks(marks, case, lambda m: m.x)
     assert status == "read"
     assert [m.x for m in picked] == [3, 42]
+
+
+def test_the_empty_scatter_says_why_it_is_empty(tmp_path):
+    """Deliverable (a) owes the reader a file that explains itself, not a missing one."""
+    from canopy.protocol import load_protocol
+
+    outcome = load_protocol(ROOT / "examples" / "protocols" /
+                            "aging_sensorimotor_adaptation.yaml").outcome("late_adaptation")
+    summary = {"n_pairs": 0, "n_auto_rows": 2, "n_auto_without_effect": 2, "n_gold_rows": 50,
+               "gold_file": "late_gsheet.csv", "outcome_key": "late_adaptation",
+               "join_rules": {"author_year": 2, "unmatched_gold": 48}}
+    files = compare.empty_scatter(outcome, tmp_path / "manual_vs_auto_late_adaptation", summary)
+    assert Path(files["png"]).exists() and Path(files["svg"]).exists()
+    text = Path(files["svg"]).read_text()
+    assert "0 matched pairs" in text and "2 produced NO effect size" in text
+
+
+def test_a_ci_that_does_not_bracket_its_own_estimate_is_reported_not_hidden():
+    assert compare._brackets(0.5, 0.1, 0.9) == "true"
+    assert compare._brackets(0.5, 0.6, 0.9) == "false"      # drawn as a magnitude, flagged here
+    assert compare._brackets(None, 0.1, 0.9) == ""
+    assert compare._brackets(0.5, None, 0.9) == ""
+
+
+def test_the_synthetic_corpus_contains_the_log_axis_case_the_docstring_promises():
+    log_cases = [c for c in synthetic_figures.corpus() if c.log_y]
+    assert log_cases, "the module docstring claims a log-axis case"
+    assert "log" in synthetic_figures.__doc__
+
+
+def test_both_offline_routes_read_a_log_axis_without_falling_back_to_linear(tmp_path):
+    result = synthetic_figures.build(tmp_path, only=("points_log_axis",))
+    for route in ("A_vector", "B_raster_cv"):
+        entry = result["summary"][route]
+        assert entry["n_read"] == 2, f"{route} could not read the log-axis case"
+        # a linear fit through 1,3,10,30,100 is wrong by an order of magnitude, so this number
+        # only stays small if the log scale was actually chosen
+        assert entry["mae_pct_of_axis_range"] < 2.0, f"{route} read the log axis as linear"
+
+
+def test_the_example_group_labels_come_from_the_protocol():
+    """A label that says "older" when the protocol compares patients to controls is just wrong."""
+    from canopy.protocol import load_protocol
+    from validation.scripts import _example
+
+    aging = load_protocol(ROOT / "examples" / "protocols" /
+                          "aging_sensorimotor_adaptation.yaml")
+    clinical = load_protocol(ROOT / "examples" / "protocols" /
+                             "clinical_vs_control_adaptation.yaml")
+    assert _example.group_labels(aging) == {"A": "Older adults (A)", "B": "Younger adults (B)"}
+    assert _example.group_labels(clinical) == {"A": "Clinical group (A)",
+                                               "B": "Control group (B)"}
+
+
+def test_the_frozen_split_carries_no_absolute_path():
+    payload = run_cisneros.load_split()
+    for paper in payload["papers"]:
+        for key, value in paper.items():
+            assert not (isinstance(value, str) and value.startswith("/")), (key, value)
+        assert paper["source"] in ("validation/papers_oa", "papers_folder")
+
+
+def test_the_run_wrapper_never_overwrites_an_explicit_stats_field(tmp_path):
+    """`--profile cisneros2024` is a floor, not a bulldozer: an explicit `stats:` field wins."""
+    import yaml
+    from canopy.models import StatsSettings
+    from canopy.protocol import apply_profile
+
+    source = yaml.safe_load(
+        (ROOT / "examples" / "protocols" / "aging_sensorimotor_adaptation.yaml").read_text())
+    source["stats"] = {"profile": "cisneros2024", "hakn": True, "tau2_method": "DL"}
+    path = tmp_path / "explicit.yaml"
+    path.write_text(yaml.safe_dump(source))
+
+    raw = yaml.safe_load(path.read_text())
+    explicit = {k: v for k, v in raw["stats"].items() if k != "profile"}
+    settings = apply_profile(StatsSettings(profile="cisneros2024", **explicit))
+    assert settings.hakn is True                     # the profile says False; the protocol wins
+    assert settings.tau2_method == "DL"              # the profile says REML
+    assert settings.estimator == "cohen"             # unset -> the profile fills it in
 
 
 # ============================================================================ scripts on a run

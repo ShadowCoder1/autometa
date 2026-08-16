@@ -122,6 +122,12 @@ git tag validation-heldout-v1
 
 9 papers ≈ **$90–135**.
 
+**One thing to expect on the way.** All three `example_*.py` scripts currently land on the same
+Bock 2005 cell (two of them through their fallback paths); the text-M/SD one has nothing to show
+because neither Bock nor Wolpe prints its outcome means. An offline scan of all 19 papers' text
+layers says the paper that will carry it is **Kitchen 2021** (dev split, no tag needed) — *not*
+Heuer & Hegele 2008, which prints no M ± SD at all. The table is in `validation/README.md`.
+
 ### 3c · Adjudicate the discrepancies
 
 `validation/out/discrepancies_<outcome>.csv` has three empty columns

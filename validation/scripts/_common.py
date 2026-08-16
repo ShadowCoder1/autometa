@@ -33,6 +33,53 @@ PROTOCOL = REPO_ROOT / "examples" / "protocols" / "aging_sensorimotor_adaptation
 #: which gold spreadsheet holds which protocol outcome
 GOLD_FOR_OUTCOME = {"late_adaptation": "late_gsheet.csv", "aftereffect": "aft_gsheet.csv"}
 
+#: The gold spreadsheets do not agree with each other about their own column names: `late` writes
+#: `N_young` / `Age_Young`, `aft` and `combined` write `N_yng` / `Age_yng`.  Reading one spelling
+#: silently produced `n_young = None` for all 40 aftereffect rows, which made every join rule that
+#: needs the group sizes unreachable — so the aliases live in ONE place and a missing column is an
+#: error at load time rather than a blank column nobody notices.
+COLUMN_ALIASES: dict[str, tuple[tuple[str, ...], bool]] = {
+    # field:            (accepted headers, required)
+    "author":           (("Author",), True),
+    "title":            (("Title",), False),
+    "year":             (("Year",), True),
+    "task":             (("Task",), False),
+    "experiment":       (("Experiment",), False),
+    "figure":           (("Figure",), False),
+    "n_young":          (("N_young", "N_yng"), True),
+    "n_old":            (("N_old",), True),
+    "measure":          (("Dependent_Measure", "Dependent_measure"), False),
+    "phase":            (("Phase",), False),
+    "te":               (("TE",), True),
+    "ci_low":           (("CI_low",), True),
+    "ci_high":          (("CI_high",), True),
+    "se":               (("seTE", "seTE ", "SE"), True),
+}
+
+
+class GoldSchemaError(ValueError):
+    """A gold spreadsheet is missing a column the validation cannot work without."""
+
+
+def resolve_columns(header: Sequence[str], path: Any = "") -> dict[str, str]:
+    """Map each field to the header this file actually uses; raise on a missing required one."""
+    present = {h.strip(): h for h in header if h is not None}
+    resolved: dict[str, str] = {}
+    missing: list[str] = []
+    for field, (aliases, required) in COLUMN_ALIASES.items():
+        for alias in aliases:
+            if alias in present:
+                resolved[field] = present[alias]
+                break
+        else:
+            if required:
+                missing.append(f"{field} (any of {', '.join(aliases)})")
+    if missing:
+        raise GoldSchemaError(
+            f"{path or 'gold spreadsheet'} is missing required column(s): {'; '.join(missing)}. "
+            f"Headers found: {', '.join(sorted(present))}")
+    return resolved
+
 #: how close an auto d has to be to the manual d to count as "reproduced".  0.1 is the same
 #: threshold amendment F uses for the digitiser's own route agreement (`|Δd| < 0.1`), so the
 #: whole project has one definition of "these two readings are the same number".
@@ -44,19 +91,30 @@ def strip_accents(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
 
 
+#: surname particles that belong to the surname, not to a given name — "Van De Plas" is one
+#: author whose key must be `vandeplas`, not `van`
+_PARTICLES = {"van", "von", "de", "den", "der", "del", "della", "di", "da", "dos", "du", "la",
+              "le", "les", "ten", "ter", "vander", "vande", "st", "mac", "mc", "al", "el"}
+
+
 def first_author(authors: str) -> str:
     """The first author's surname, from either spreadsheet style or a citation string.
 
     `"Fernández-Ruiz et al."` -> `fernandezruiz`; `"Heuer & Hegele"` -> `heuer`;
-    `"Bock, O."` -> `bock`; `"J. Bock and R. Smith"` -> `bock`.
+    `"Bock, O."` -> `bock`; `"J. Bock and R. Smith"` -> `bock`;
+    `"Van De Plas et al."` -> `vandeplas` (a particle is part of the surname, not the whole of it).
     """
     text = strip_accents(str(authors or "")).strip()
     text = re.sub(r"\b(et al\.?|and others)\b", " ", text, flags=re.I)
     text = re.split(r"\s*(?:&|,| and )\s*", text)[0]
     words = [w for w in re.split(r"[^A-Za-z-]+", text) if w]
-    # initials ("J.", "O.") are single letters; the surname is the first word longer than one
-    surname = next((w for w in words if len(w) > 1), words[0] if words else "")
-    return re.sub(r"[^a-z]", "", surname.lower())
+    # initials ("J.", "O.") are single letters and are skipped; the surname starts at the first
+    # longer word and then swallows any particle chain it begins with
+    start = next((i for i, w in enumerate(words) if len(w) > 1), 0)
+    parts = words[start:start + 1]
+    while parts and parts[-1].lower() in _PARTICLES and start + len(parts) < len(words):
+        parts.append(words[start + len(parts)])
+    return re.sub(r"[^a-z]", "", "".join(parts).lower())
 
 
 def norm_measure(text: str) -> str:
@@ -123,22 +181,29 @@ def load_gold(outcome_key: str, gold_dir: str | Path = GOLD_DIR) -> list[GoldRow
     path = Path(gold_dir) / name
     rows: list[GoldRow] = []
     with path.open(newline="", encoding="utf-8-sig") as handle:
-        for index, raw in enumerate(csv.DictReader(handle), start=1):
-            te = as_float(raw.get("TE"))
+        reader = csv.DictReader(handle)
+        column = resolve_columns(reader.fieldnames or [], path)
+
+        def get(raw: dict[str, str], field: str) -> Any:
+            return raw.get(column[field]) if field in column else None
+
+        for index, raw in enumerate(reader, start=1):
+            te = as_float(get(raw, "te"))
             if te is None:
                 continue                                   # blank / "Unpublished" rows
-            author = str(raw.get("Author", "")).strip()
+            author = str(get(raw, "author") or "").strip()
             rows.append(GoldRow(
                 index=index, outcome_key=outcome_key, author=author,
-                author_key=first_author(author), year=as_int(raw.get("Year")),
-                title=str(raw.get("Title", "")).strip(),
-                experiment=norm_experiment(raw.get("Experiment")),
-                figure=str(raw.get("Figure", "")).strip(),
-                measure=norm_measure(raw.get("Dependent_Measure")),
-                phase=norm_measure(raw.get("Phase")),
-                n_young=as_int(raw.get("N_young")), n_old=as_int(raw.get("N_old")),
-                te=te, ci_low=as_float(raw.get("CI_low")), ci_high=as_float(raw.get("CI_high")),
-                se=as_float(raw.get("seTE")), task=str(raw.get("Task", "")).strip(), raw=dict(raw)))
+                author_key=first_author(author), year=as_int(get(raw, "year")),
+                title=str(get(raw, "title") or "").strip(),
+                experiment=norm_experiment(get(raw, "experiment")),
+                figure=str(get(raw, "figure") or "").strip(),
+                measure=norm_measure(get(raw, "measure")),
+                phase=norm_measure(get(raw, "phase")),
+                n_young=as_int(get(raw, "n_young")), n_old=as_int(get(raw, "n_old")),
+                te=te, ci_low=as_float(get(raw, "ci_low")),
+                ci_high=as_float(get(raw, "ci_high")), se=as_float(get(raw, "se")),
+                task=str(get(raw, "task") or "").strip(), raw=dict(raw)))
     return rows
 
 

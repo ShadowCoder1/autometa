@@ -83,7 +83,12 @@ git tag validation-heldout-v1
 # offline, no credit at all: the pipeline's own fake provider over the two fixture PDFs
 .venv/bin/python validation/scripts/run_cisneros.py --demo --out validation/out/demo_run
 
-# offline from recorded cassettes, once they exist
+# offline from recorded cassettes — ONLY once the WHOLE-PIPELINE ones exist. The agent tests'
+# fixtures are not enough: the orchestrator asks each agent a different question (it passes the
+# mapper's full Source list), so the pipeline needs its own recording. Until `pytest
+# tests/test_pipeline_offline.py` has been run under CANOPY_LIVE=1 CANOPY_RECORD=1 (see
+# "PENDING LIVE RECORDING" in docs/handoff.md), this raises MissingFixture rather than going
+# live — which is the intended behaviour, not a bug.
 .venv/bin/python validation/scripts/run_cisneros.py \
     --replay tests/fixtures/llm --papers tests/fixtures/pdfs \
     --out validation/out/run_bock_replay
@@ -164,6 +169,34 @@ Each picks one cell that took its route, prints the whole story — what the map
 every extractor read (with its own quote), what the vote and the verifier decided, the conversion
 chain, and the resulting d with its CI — and writes a figure showing the page crop with the quote
 highlighted (or the digitiser's overlay) beside the chain and the effect size.
+
+**What deliverable (c) actually shows today, and what it will show.** On the current run all three
+scripts land on the *same* Bock 2005 cell (`b511dbb76fa6:d1 / late_adaptation`, `not_convertible`),
+reached through two different fallback paths, plus one figure from the offline demo:
+
+| script | what it shows now | what it will show |
+|---|---|---|
+| `example_figure_only.py` | Bock 2005 Fig. 1 — the four digitiser routes' read-outs and the ensemble's tolerance failure, via the **held-back fallback** | the same cell as a *resolved* row, once the one-armed-error-bar rule (handoff limitation 7a) is fixed |
+| `example_test_statistic.py` | the same Bock cell — its seven F statistics and the ruling that **none** is admissible, via the **outranked fallback** | a paper whose t/F actually wins. This literature is overwhelmingly repeated-measures, whose F values do not convert to a between-groups d, so this may legitimately stay a fallback — and that is itself the finding, not a gap |
+| `example_text_ms.py` | **nothing on this run** — neither Bock nor Wolpe prints its outcome means in the text, so it exits 2 and lists the routes the run does have. The committed figure `example_text_ms_offline_demo.*` is from the offline demo run: real PDF, real page crop with the quote highlighted, real arithmetic, **model answers from the FakeProvider** | **Kitchen 2021** (`validation/papers_oa/Kitchen_2021.pdf`), which is in the **dev** split and needs no tag — see the survey below |
+
+So (c) is currently *one real cell seen two ways plus one demo*, not three independent papers.
+
+**Which paper will carry the text-M/SD example — measured, not guessed.** Scanning all 19 unique
+papers' text layers for `M = … SD/± …` near an outcome word (offline, seconds, no model):
+
+| paper | split | M/SD-ish sentences | near an outcome word |
+|---|---|---|---|
+| **Kitchen 2021** | **dev** | 32 | **2** |
+| Li 2021 | heldout | 14 | 2 |
+| `paper_15209` (Cressman) | heldout | 11 | 2 |
+| Hermans 2025 | heldout | 20 | 0 |
+| Panouillères 2015 | dev | 15 | 0 |
+| **Heuer & Hegele 2008** (`paper_1755470`) | heldout | **0** | **0** |
+
+Heuer & Hegele 2008 — the obvious guess, and the one the task brief suggested — prints **no M ± SD
+at all**; its numbers are entirely in figures. **Kitchen 2021 is the candidate**, and being in the
+dev split it costs one more dev paper rather than the held-out tag.
 
 Add `--paper path/to/one.pdf` to insist on a paper, `--outcome` / `--dataset` to narrow further.
 If the run has no cell that took that route, the script says so and lists the routes the run *does*
@@ -288,9 +321,18 @@ re-running costs only the calls that had not been made.
 .venv/bin/python -m pytest tests/test_validation_scripts.py -q
 ```
 
-30 tests, entirely offline: the join (including that one gold row is never claimed twice and that
-an override beats every automatic rule), the agreement statistics (CCC is 1 only for the identity
-and is punished by a scaled reading; a control test feeds the gold rows back in as if they were the
-tool's and asserts CCC 1.0 / MAE 0.0), the split's determinism, the gold reader, the synthetic
-corpus, and every script driven end to end against a real run directory built by the pipeline's own
-`FakeProvider`.
+**42 tests**, entirely offline: the gold reader (**every row of both spreadsheets must carry
+`n_old`, `n_young`, TE and seTE** — the regression that made this test exist is below), the column
+aliases, the join (including that one gold row is never claimed twice and that an override beats
+every automatic rule), the agreement statistics (CCC is 1 only for the identity and is punished by
+a scaled reading; a control test feeds the gold rows back in as if they were the tool's and asserts
+CCC 1.0 / MAE 0.0), the split's determinism and its freedom from absolute paths, the synthetic
+corpus including the log-axis case, and every script driven end to end against a real run directory
+built by the pipeline's own `FakeProvider`.
+
+> **The regression worth knowing about.** `late_gsheet.csv` names the column `N_young`;
+> `aft_gsheet.csv` names it `N_yng`. Reading one spelling left all 40 aftereffect gold rows with
+> `n_young = None`, which made `_n_distance` return `None` and every join rule that needs the group
+> sizes silently unreachable — no error, just a column of blanks in the committed table. The
+> aliases now live in one place (`COLUMN_ALIASES`), a missing required column raises
+> `GoldSchemaError` at load time, and a test asserts completeness on both sheets.

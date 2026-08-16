@@ -34,7 +34,9 @@ from validation.scripts._example import Cell, build_parser, run_example  # noqa:
 
 HINT = ("    .venv/bin/python validation/scripts/run_cisneros.py --split dev "
         "--out validation/out/run_cisneros_dev\n"
-        "  offline alternative (no credit, recorded cassettes):\n"
+        "  Offline alternative — ONLY once the whole-pipeline cassettes for Bock 2005 exist\n"
+        "  (see \"PENDING LIVE RECORDING\" in docs/handoff.md; until then this raises\n"
+        "  MissingFixture rather than going live, which is the intended behaviour):\n"
         "    .venv/bin/python validation/scripts/run_cisneros.py --replay tests/fixtures/llm "
         "--papers tests/fixtures/pdfs --out validation/out/run_bock_replay")
 

@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -83,6 +82,12 @@ class Case:
 
     @property
     def axis_range(self) -> float:
+        """The span an error is expressed as a percentage OF.
+
+        On a log axis a fixed number of data units is not a fixed fraction of the plot, so the
+        percentage is taken against the value range all the same — it is the quantity the
+        digitiser's own 2 % tolerance is defined on, and saying so beats inventing a second unit.
+        """
         return abs(self.y_hi - self.y_lo)
 
 
@@ -143,6 +148,11 @@ def corpus() -> list[Case]:
              _series([("young", 19.0, 2.6), ("older", 28.5, 3.9)]),
              0.0, 40.0, [0, 10, 20, 30, 40], "SD", noise=9.0,
              note="speckle over the raster, the way a scanned page arrives"),
+        Case("points_log_axis", "point",
+             _series([("young", 3.0, 0.5), ("older", 30.0, 5.0)]),
+             1.0, 100.0, [1, 3, 10, 30, 100], "SD", log_y=True,
+             note="a log y axis — a linear fit through these ticks is wrong by an order of "
+                  "magnitude, so `calibrate_from_scene`/`fit_axis` must pick the log scale"),
         Case("line_timeseries_endpoint", "line",
              _series([("young", 8.0, 1.2), ("older", 15.0, 2.3)], colours=("#3b6fb0", "#c1662f")),
              0.0, 25.0, [0, 5, 10, 15, 20, 25], "SD",
@@ -219,8 +229,12 @@ def draw(case: Case, out_dir: Path) -> Case:
                 ax.plot(xs, curve, "-o", color=item.colour, markersize=4.5, lw=1.3)
                 ax.errorbar(xs[-1], item.value, yerr=item.error, fmt="none", ecolor="#222222",
                             elinewidth=1.1, capsize=4.5, capthick=1.1)
+        if case.log_y:
+            ax.set_yscale("log")
         ax.set_ylim(case.y_lo, case.y_hi)
         ax.set_yticks(case.ticks)
+        ax.set_yticklabels([f"{v:g}" for v in case.ticks])
+        ax.minorticks_off()
         right = max(s.x for s in case.series) + (1.4 if case.kind == "line" else 0.95)
         ax.set_xlim(-0.75, right)
         ax.set_xticks([s.x for s in case.series])
@@ -271,7 +285,7 @@ def read_raster(case: Case) -> list[dict[str, Any]]:
     if len(pairs) < 2:
         return [{**base, "series": s.label, "status": "no_calibration",
                  "truth": s.value, "read": None, "error": None} for s in case.series]
-    cal = fit_axis(pairs, axis="y")
+    cal = fit_axis(pairs, scale="log" if case.log_y else "linear", axis="y")
     # a least-squares fit through mutually contradictory ticks still returns a calibration; its
     # residual is the only thing that says so, and nothing downstream looks at it
     base.update({"cal_rmse_px": cal.rmse, "cal_ticks": [v for _, v in cal.ticks],
@@ -344,7 +358,8 @@ def read_vector(case: Case, work_dir: Path) -> list[dict[str, Any]]:
 
     figure = paper.figures[0]
     scene = vector_candidates(paper, figure)
-    cal = calibrate_from_scene(scene, axis="y")
+    cal = calibrate_from_scene(scene, axis="y",
+                               scale="log" if case.log_y else "linear")
     base.update({"n_marks": len(scene.marks), "n_whiskers": len(scene.whiskers),
                  "n_tick_lines": len(scene.tick_lines), "n_warnings": len(scene.warnings)})
     if cal is None:

@@ -138,6 +138,13 @@ def pooled_comparison(run: Any, outcome_key: str, gold: Sequence[Any]) -> dict[s
 
 
 # ----------------------------------------------------------------------------- the table
+def _brackets(estimate: float | None, low: float | None, high: float | None) -> str:
+    """Does `[low, high]` actually contain `estimate`?  Blank when there is nothing to check."""
+    if estimate is None or low is None or high is None:
+        return ""
+    return str(low <= estimate <= high).lower()
+
+
 def discrepancy_rows(pairs: Sequence[Pair], run: Any) -> list[dict[str, Any]]:
     """One row per pair, with everything an adjudicator needs and the columns they fill in."""
     from canopy.report.methods_fig import route_group
@@ -185,6 +192,12 @@ def discrepancy_rows(pairs: Sequence[Pair], run: Any) -> list[dict[str, Any]]:
             "auto_page": page, "auto_quote": quote,
             "delta_auto_minus_manual": pair.delta,
             "abs_delta": None if pair.delta is None else abs(pair.delta),
+            # a CI that does not contain its own estimate is a real (and interesting) datum: the
+            # scatter draws its magnitude so the plot does not crash, and this column says so
+            "ci_brackets_estimate": _brackets(auto.es if auto else None, auto_low, auto_high),
+            "manual_ci_brackets_estimate": _brackets(
+                gold.te if gold else None, gold.ci_low if gold else None,
+                gold.ci_high if gold else None),
             "within_tolerance": ("" if pair.delta is None else str(pair.within_tolerance).lower()),
             # ---- filled in by hand while adjudicating (amendment J) ----
             "classification": "",
@@ -196,6 +209,38 @@ def discrepancy_rows(pairs: Sequence[Pair], run: Any) -> list[dict[str, Any]]:
 
 
 # ----------------------------------------------------------------------------- the figure
+def empty_scatter(outcome: Any, out_stem: str | Path, summary: dict[str, Any],
+                  formats: Sequence[str] = ("png", "svg")) -> dict[str, Path]:
+    """The figure deliverable (a) owes the reader when there is nothing to plot.
+
+    A missing file reads as "the script was never run". A file that says *why* it is empty is a
+    finding: the tool located the cells and declined to put a number in them.
+    """
+    import matplotlib.pyplot as plt
+    from canopy.report.theme import INK, INK_SECONDARY, MUTED, figure_style, save_figure
+
+    with figure_style(**{"savefig.bbox": "standard"}):
+        fig = plt.figure(figsize=(7.4, 4.6))
+        fig.text(0.5, 0.74, f"{outcome.label}: no point can be plotted yet", ha="center",
+                 fontsize=13, color=INK)
+        rules = ", ".join(f"{k} {v}" for k, v in sorted(summary["join_rules"].items()))
+        body = (f"0 matched pairs with a value on both axes\n\n"
+                f"{summary['n_auto_rows']} automatic row(s), of which "
+                f"{summary['n_auto_without_effect']} produced NO effect size "
+                f"(every cell was held for human review)\n"
+                f"{summary['n_gold_rows']} manual row(s) in "
+                f"{summary['gold_file']}\n"
+                f"join outcome: {rules}\n\n"
+                f"The join found the right gold rows — see "
+                f"discrepancies_{summary['outcome_key']}.csv.\n"
+                f"What is missing is a number to compare, not a match.")
+        fig.text(0.5, 0.40, body, ha="center", va="center", fontsize=9.2,
+                 color=INK_SECONDARY, linespacing=1.8)
+        fig.text(0.5, 0.06, "manual d (x) against Canopy d (y) — regenerated automatically once "
+                            "any cell resolves", ha="center", fontsize=7.6, color=MUTED)
+        return save_figure(fig, out_stem, formats=formats, bbox_inches=None)
+
+
 def scatter(pairs: Sequence[Pair], outcome: Any, out_stem: str | Path, *,
             summary: dict[str, Any], formats: Sequence[str] = ("png", "svg")) -> dict[str, Path]:
     """Manual d (x) against auto d (y), with CI bars on both axes."""
@@ -265,6 +310,9 @@ def scatter(pairs: Sequence[Pair], outcome: Any, out_stem: str | Path, *,
         ax.legend(loc="upper left", fontsize=7.4, frameon=False, handletextpad=0.5,
                   borderaxespad=0.4)
 
+        odd = sum(1 for p in matched
+                  if _brackets(p.auto.es, *ci_of(p.auto)) == "false"
+                  or _brackets(p.gold.te, p.gold.ci_low, p.gold.ci_high) == "false")
         text = (f"k = {summary['n_pairs']}   CCC = {fmt(summary['lins_ccc'])}   "
                 f"MAE = {fmt(summary['mae'])}   sign agreement = "
                 f"{fmt(summary['sign_agreement'], 2)}\n"
@@ -272,7 +320,9 @@ def scatter(pairs: Sequence[Pair], outcome: Any, out_stem: str | Path, *,
                 f"bias (auto − manual) = {fmt(summary['bland_altman']['bias'])}   "
                 f"hollow = held for human review\n"
                 f"unmatched: {summary['n_unmatched_auto']} auto, "
-                f"{summary['n_unmatched_gold']} manual")
+                f"{summary['n_unmatched_gold']} manual"
+                + (f"   ·   {odd} CI(s) do not bracket their own estimate — magnitude drawn"
+                   if odd else ""))
         fig.text(0.5, 0.012, text, ha="center", va="bottom", fontsize=7.2, color=MUTED,
                  linespacing=1.5)
         fig.subplots_adjust(bottom=0.16, top=0.94, left=0.11, right=0.97)
@@ -308,7 +358,9 @@ def compare(run_dir: str | Path, outcome_key: str, *, out_dir: str | Path = OUT_
     if summary["n_pairs"]:
         figures = scatter(pairs, outcome, out / f"manual_vs_auto_{outcome_key}",
                           summary=summary)
-        summary["files"].update({k: str(v) for k, v in figures.items()})
+    else:
+        figures = empty_scatter(outcome, out / f"manual_vs_auto_{outcome_key}", summary)
+    summary["files"].update({k: str(v) for k, v in figures.items()})
     summary["files"]["agreement"] = str(
         write_json(summary, out / f"agreement_{outcome_key}.json"))
     return summary

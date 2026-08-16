@@ -64,6 +64,8 @@
     "note": "both sides pooled by canopy.stats.meta.random_effects under the protocol's own settings; the manual side uses the spreadsheet's TE and seTE unchanged"
   },
   "files": {
-    "discrepancies": "/Users/sritejpadmanabhan/projects/canopy/validation/out/discrepancies_aftereffect.csv"
+    "discrepancies": "/Users/sritejpadmanabhan/projects/canopy/validation/out/discrepancies_aftereffect.csv",
+    "png": "/Users/sritejpadmanabhan/projects/canopy/validation/out/manual_vs_auto_aftereffect.png",
+    "svg": "/Users/sritejpadmanabhan/projects/canopy/validation/out/manual_vs_auto_aftereffect.svg"
   }
 }

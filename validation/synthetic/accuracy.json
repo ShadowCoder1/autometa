@@ -1,14 +1,14 @@
 {
   "A_vector": {
-    "n_series": 30,
-    "n_read": 30,
+    "n_series": 32,
+    "n_read": 32,
     "read_rate": 1.0,
-    "mae_pct_of_axis_range": 1.8595974081774234e-06,
+    "mae_pct_of_axis_range": 1.813532256840594e-06,
     "median_pct_of_axis_range": 1.4493439811265791e-06,
     "max_pct_of_axis_range": 5.0978259480416455e-06,
     "within_2pct_of_range": 1.0,
-    "error_bar_mae_pct_of_range": 1.0784464813752757e-06,
-    "n_error_bars_read": 16,
+    "error_bar_mae_pct_of_range": 1.1122710940846087e-06,
+    "n_error_bars_read": 18,
     "sigma_coverage_95": null,
     "n_sigma_checked": 0,
     "failures": [],
@@ -16,27 +16,27 @@
     "cases_where_cv_core_would_pick_bars_on_a_point_chart": []
   },
   "B_raster_cv": {
-    "n_series": 30,
-    "n_read": 28,
-    "read_rate": 0.9333333333333333,
-    "mae_pct_of_axis_range": 3.166391358074357,
-    "median_pct_of_axis_range": 0.08727007629325989,
+    "n_series": 32,
+    "n_read": 30,
+    "read_rate": 0.9375,
+    "mae_pct_of_axis_range": 2.9568976393259234,
+    "median_pct_of_axis_range": 0.07437391173397145,
     "max_pct_of_axis_range": 53.31417624521071,
-    "within_2pct_of_range": 0.9285714285714286,
-    "error_bar_mae_pct_of_range": 10.92208311748187,
-    "n_error_bars_read": 28,
-    "sigma_coverage_95": 0.9285714285714286,
-    "n_sigma_checked": 28,
+    "within_2pct_of_range": 0.9333333333333333,
+    "error_bar_mae_pct_of_range": 10.195555651194915,
+    "n_error_bars_read": 30,
+    "sigma_coverage_95": 0.9333333333333333,
+    "n_sigma_checked": 30,
     "failures": [
       "mark_count_mismatch:1_detected_2_plotted"
     ],
     "cases_with_implausible_calibration": [
-      "bars_negative_range",
       "bars_se_sparse_ticks"
     ],
     "cases_where_cv_core_would_pick_bars_on_a_point_chart": [
       "line_timeseries_endpoint",
       "points_high_dpi",
+      "points_log_axis",
       "points_low_dpi",
       "points_sd",
       "points_serif_font",
@@ -44,7 +44,7 @@
     ]
   },
   "_note": "routes C (VLM coordinates) and D (VLM read-out) are NOT measured here \u2014 they need a model.  Run them on this corpus once credit allows; see validation/README.md.",
-  "n_cases": 12,
+  "n_cases": 13,
   "corpus_dir": "/Users/sritejpadmanabhan/projects/canopy/validation/synthetic/corpus",
   "files": {
     "csv": "/Users/sritejpadmanabhan/projects/canopy/validation/synthetic/accuracy.csv",
