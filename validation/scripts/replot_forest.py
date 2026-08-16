@@ -68,16 +68,25 @@ def side_by_side(left_png: Path, right_png: Path, out_stem: Path,
 
     with figure_style():
         images = [mpimg.imread(left_png), mpimg.imread(right_png)]
-        heights = [im.shape[0] / im.shape[1] for im in images]
-        width = 15.0
-        fig = plt.figure(figsize=(width, width / 2 * max(heights) + 0.25))
+        # Both panels are drawn at the SAME horizontal scale and anchored to the TOP, so their
+        # column headers line up and a reader's eye can travel across. Centring them (the default)
+        # floats a 2-row auto forest in the middle of a 50-row manual one, which reads as a
+        # relationship between the rows that is not there.
+        panel_w = 7.5
+        heights = [panel_w * im.shape[0] / im.shape[1] for im in images]
+        title_in, pad_in = 0.34, 0.10
+        total_h = max(heights) + title_in + 2 * pad_in
+        total_w = 2 * panel_w + 3 * pad_in
+        fig = plt.figure(figsize=(total_w, total_h))
         for index, (image, title) in enumerate(zip(images, ("manual (human extraction)",
                                                             "automatic (Canopy)"))):
-            ax = fig.add_subplot(1, 2, index + 1)
+            left = (pad_in + index * (panel_w + pad_in)) / total_w
+            height = heights[index] / total_h
+            bottom = 1.0 - (title_in + pad_in) / total_h - height
+            ax = fig.add_axes([left, bottom, panel_w / total_w, height])
             ax.imshow(image)
             ax.set_title(title, fontsize=11, pad=6)
             ax.axis("off")
-        fig.subplots_adjust(left=0.005, right=0.995, top=0.965, bottom=0.005, wspace=0.02)
         return save_figure(fig, out_stem, formats=formats, bbox_inches=None)
 
 

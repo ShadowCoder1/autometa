@@ -446,7 +446,8 @@ def plot(rows: Sequence[dict[str, Any]], summary: dict[str, Any], out_stem: Path
         ax.set_xticks(range(len(cases)))
         ax.set_xticklabels(cases, rotation=35, ha="right", fontsize=7.4)
         ax.set_ylabel("absolute read-out error\n(% of axis range)", fontsize=8.6)
-        ax.set_yscale("symlog", linthresh=0.1)
+        ax.set_yscale("symlog", linthresh=0.01)
+        ax.set_ylim(bottom=0)                      # an ABSOLUTE error has no negative half
         ax.grid(axis="y", color=GRID, lw=0.6)
         ax.set_axisbelow(True)
         ax.legend(fontsize=7.6, frameon=False, loc="upper left")

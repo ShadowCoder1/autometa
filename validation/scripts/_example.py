@@ -76,14 +76,19 @@ def pick(cells: Sequence[Cell], wants: Callable[[Cell], bool]) -> Cell | None:
 
 
 # ----------------------------------------------------------------------------- the printing
+def disp(value: Any) -> str:
+    """`DispersionType.SD` prints as `DispersionType.SD`; a reader wants `SD`."""
+    return str(getattr(value, "value", None) or getattr(value, "name", None) or value)
+
+
 def _candidate_line(candidate: Any) -> str:
     bits = [f"    {candidate.candidate_id}"]
     if candidate.status != "found":
         bits.append(f"      status: {candidate.status}")
     if candidate.mean is not None:
         bits.append(f"      value:  {candidate.mean} {candidate.unit} "
-                    f"({candidate.dispersion_type.value if hasattr(candidate.dispersion_type, 'value') else candidate.dispersion_type}"
-                    f" = {candidate.dispersion_value}, n = {candidate.n})")
+                    f"({disp(candidate.dispersion_type)} = {candidate.dispersion_value}, "
+                    f"n = {candidate.n})")
     if candidate.stat_value is not None:
         bits.append(f"      stat:   {candidate.stat_type} = {candidate.stat_value}, "
                     f"df = {candidate.df or (candidate.df1, candidate.df2)}, "
@@ -160,7 +165,8 @@ def explain(cell: Cell, run: Any) -> str:
         if verdict.flags:
             lines.append(f"      flags:    {', '.join(str(f) for f in verdict.flags)}")
         lines.append(f"      resolved: mean {verdict.mean} {verdict.unit}, "
-                     f"{verdict.dispersion_type} {verdict.dispersion_value}, n {verdict.n}")
+                     f"{disp(verdict.dispersion_type)} {verdict.dispersion_value}, "
+                     f"n {verdict.n}")
         if verdict.higher_is_better is not None:
             lines.append(f"      direction: higher is "
                          f"{'better' if verdict.higher_is_better else 'worse'} — "
@@ -272,7 +278,7 @@ def figure(cell: Cell, run: Any, out_stem: Path, *, subtitle: str = "",
         for verdict in sorted(cell.verdicts, key=lambda v: v.group or ""):
             name = "older (A)" if verdict.group == "A" else "younger (B)"
             body.append(f"  {name}: {verdict.mean} {verdict.unit}"
-                        f"  {verdict.dispersion_type} {verdict.dispersion_value}"
+                        f"  {disp(verdict.dispersion_type)} {verdict.dispersion_value}"
                         f"  n = {verdict.n}")
         statistic = next((c for c in cell.candidates if c.stat_value is not None), None)
         if statistic is not None:
@@ -326,6 +332,10 @@ def build_parser(description: str) -> argparse.ArgumentParser:
                              "this route)")
     parser.add_argument("--outcome", default=None, help="outcome key (default: any)")
     parser.add_argument("--dataset", default=None, help="dataset id, when a paper has several")
+    parser.add_argument("--protocol", type=Path, default=None,
+                        help="a protocol to read the outcome labels and direction labels from; "
+                             "by default the run's own `protocol.yaml`, which is the one its "
+                             "numbers were produced under")
     parser.add_argument("--out", type=Path, default=OUT_DIR, help="where to write the figure")
     parser.add_argument("--name", default=None, help="output file stem")
     return parser
@@ -335,6 +345,11 @@ def run_example(args: argparse.Namespace, *, wants: Callable[[Cell], bool], stem
                 subtitle: str, missing_hint: str) -> int:
     """Load the run, pick the cell this example is about, print it and draw it."""
     run = load_run(args.run)
+    if getattr(args, "protocol", None):
+        from canopy.protocol import load_protocol
+
+        run.protocol = load_protocol(args.protocol)
+        print(f"(labels and directions read from {args.protocol}, not the run's own protocol)")
     sha = paper_sha(args.paper) if args.paper else ""
     if args.paper and sha not in {s.paper_id for s in run.manifest.papers}:
         print(f"{args.paper.name} is not in {args.run}.\n"

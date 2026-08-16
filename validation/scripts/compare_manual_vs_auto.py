@@ -230,11 +230,14 @@ def scatter(pairs: Sequence[Pair], outcome: Any, out_stem: str | Path, *,
             marker = ROUTE_MARKERS.get(bucket, "P")
             held = pair.auto.confidence == "needs_human"
             low, high = ci_of(pair.auto)
-            ax.errorbar(pair.manual_d, pair.auto_d,
-                        yerr=[[pair.auto_d - low], [high - pair.auto_d]] if None not in (low, high)
-                        else None,
-                        xerr=[[pair.manual_d - pair.gold.ci_low], [pair.gold.ci_high - pair.manual_d]]
-                        if None not in (pair.gold.ci_low, pair.gold.ci_high) else None,
+            # matplotlib refuses a negative error length; a CI that does not bracket its own
+            # estimate is a real (and interesting) datum, so draw its magnitude rather than crash
+            yerr = ([[abs(pair.auto_d - low)], [abs(high - pair.auto_d)]]
+                    if None not in (low, high) else None)
+            xerr = ([[abs(pair.manual_d - pair.gold.ci_low)],
+                     [abs(pair.gold.ci_high - pair.manual_d)]]
+                    if None not in (pair.gold.ci_low, pair.gold.ci_high) else None)
+            ax.errorbar(pair.manual_d, pair.auto_d, yerr=yerr, xerr=xerr,
                         fmt="none", ecolor=MUTED, elinewidth=0.8, capsize=0, zorder=2, alpha=0.75)
             label = None
             if bucket not in seen:
