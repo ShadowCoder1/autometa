@@ -77,8 +77,24 @@ def stage_path(out_dir: str | Path, paper_id: str, stage: str) -> Path:
 
 
 def stage_done(out_dir: str | Path, paper_id: str, stage: str) -> bool:
+    """Has this stage finished? A file that exists is not the same as a stage that completed.
+
+    Size alone used to answer this, which is exactly wrong once a stage writes as it goes: a paper
+    that died on its budget half way through extraction leaves a real, non-empty `extract.json`
+    holding the rows it managed, and `--resume` read that as "done" and truncated the paper for
+    good. A stage that writes incrementally marks its file `"complete": false` until it finishes,
+    and this refuses to call that done.
+    """
     path = stage_path(out_dir, paper_id, stage)
-    return path.exists() and path.stat().st_size > 0
+    if not (path.exists() and path.stat().st_size > 0):
+        return False
+    try:
+        payload = read_json(path)
+    except (OSError, ValueError):                    # a truncated or unreadable file is not done
+        return False
+    if isinstance(payload, dict) and payload.get("complete") is False:
+        return False
+    return True
 
 
 def write_stage(out_dir: str | Path, paper_id: str, stage: str, payload: Any) -> Path:
@@ -133,6 +149,10 @@ class PaperClient:
         return self._meter(self._client.tool_loop, kwargs)
 
     def _meter(self, call: Callable[..., Any], kwargs: dict[str, Any]) -> Any:
+        # the guard runs BEFORE the call and only before it. Guarding after the call as well meant
+        # the exception was raised holding a result that had already been paid for, and the unwind
+        # threw it away along with every candidate the stage had built (F7). Checked first, the
+        # cap stops the NEXT call and nothing bought is ever lost.
         self._guard()
         result = call(**kwargs)
         self.cost_usd += float(getattr(result, "cost_usd", 0.0) or 0.0)
@@ -141,11 +161,11 @@ class PaperClient:
             self.call_ids.extend(ids)
         elif getattr(result, "call_id", ""):
             self.call_ids.append(result.call_id)
-        self._guard()
         return result
 
     def _guard(self) -> None:
-        if self.max_usd is not None and self.cost_usd > self.max_usd:
+        """Raise before spending anything more, when the allowance is already gone."""
+        if self.max_usd is not None and self.cost_usd >= self.max_usd:
             raise PaperBudgetExceeded(
                 f"paper {sha12(self.paper_id)} has spent ${self.cost_usd:.4f} of its "
                 f"${self.max_usd:.4f} allowance")

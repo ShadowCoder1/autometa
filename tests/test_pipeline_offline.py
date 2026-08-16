@@ -89,9 +89,11 @@ def test_paper_client_meters_cost_and_stops_one_paper_at_its_cap():
             paper.structured(model="claude-opus-5", messages=[{"role": "user",
                                                                "content": f"hello {i}"}],
                              schema=schema)
-    assert paper.cost_usd > 0.02
+    assert paper.cost_usd >= 0.02
     assert "of its $0.0200 allowance" in str(excinfo.value)
-    assert paper.n_calls == calls                          # every call it made is accounted for
+    # the cap is checked BEFORE the call, so the iteration that raised bought nothing: the caller
+    # never loses a result it has already paid for, which is what let a $14 paper keep nothing (F7)
+    assert paper.n_calls == calls - 1
     assert client.total_cost() >= paper.cost_usd           # …and shows up on the shared client
 
 
@@ -857,3 +859,61 @@ def test_the_run_writes_a_provenance_bundle_the_report_links(tmp_path, papers_di
     assert any("provenance/" in t for t in targets)
     missing = sorted({t for t in targets if not (out / t).exists()})
     assert missing == [], f"dead links in the run's report.html: {missing}"
+
+
+# ============================================================================ task 16: budget (F7)
+def test_a_partial_stage_file_is_not_a_finished_stage(tmp_path):
+    """The sharp edge P7 would otherwise introduce: `--resume` truncating a paper for good."""
+    from canopy.pipeline.state import stage_done, write_stage
+
+    sha = "b" * 64
+    write_stage(tmp_path, sha, "extract", {"candidates": [], "complete": False})
+    assert stage_done(tmp_path, sha, "extract") is False
+    write_stage(tmp_path, sha, "extract", {"candidates": [], "complete": True})
+    assert stage_done(tmp_path, sha, "extract") is True
+    # a stage that never says anything about completeness is complete, as it always was
+    write_stage(tmp_path, sha, "map", {"study": {}})
+    assert stage_done(tmp_path, sha, "map") is True
+
+
+def test_a_budget_death_mid_extraction_keeps_the_rows_it_already_bought(tmp_path, papers_dir,
+                                                                       fake_specs):
+    """F7: Buch 2003 spent $14.37 against a $14 cap and nothing at all was kept."""
+    import json
+
+    from canopy.pipeline.run import run_pipeline
+    from canopy.pipeline.state import stage_done, stage_path
+
+    client = LLMClient(provider=FakeProvider([fake_router(fake_specs)]), allow_live=True,
+                       cache_dir=None)
+    out = tmp_path / "run"
+    # a cap that the mapper alone does not exhaust, but extraction does
+    manifest = run_pipeline(papers_dir, PROTOCOL, out, client=client, concurrency=1,
+                            max_usd_per_paper=0.02)
+    paper = manifest.papers[0]
+    assert paper.stages.get("extract") == "partial", (
+        f"the cap no longer bites inside extraction (stages {paper.stages}) — pick a tighter one "
+        f"rather than deleting the test, or F7 stops being covered")
+    assert paper.status == "error" and "allowance" in paper.error
+    payload = json.loads(stage_path(out, paper.paper_id, "extract").read_text())
+    assert payload["complete"] is False
+    assert payload["cells_budget_exhausted"], "no cell was recorded as budget_exhausted"
+    assert any("budget_exhausted" in w for w in paper.warnings)
+    # …and `--resume` re-enters the stage rather than reading the salvage as finished
+    assert stage_done(out, paper.paper_id, "extract") is False
+
+
+def test_an_extract_that_finished_is_marked_complete(tmp_path, papers_dir, fake_client):
+    import json
+
+    from canopy.pipeline.run import run_pipeline
+    from canopy.pipeline.state import stage_done, stage_path
+
+    out = tmp_path / "run"
+    manifest = run_pipeline(papers_dir, PROTOCOL, out, client=fake_client, concurrency=1)
+    paper = manifest.papers[0]
+    assert paper.stages["extract"] == "done"
+    payload = json.loads(stage_path(out, paper.paper_id, "extract").read_text())
+    assert payload["complete"] is True
+    assert payload["cells_extracted"] and not payload["cells_budget_exhausted"]
+    assert stage_done(out, paper.paper_id, "extract") is True

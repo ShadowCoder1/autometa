@@ -199,6 +199,21 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
     keys = ctx.outcome_keys()
     figures_dir = paper_dir(ctx.out_dir, paper.sha256) / "figures"
     candidates: list[Candidate] = []
+    done: list[str] = []
+    exhausted: list[str] = []
+    stopped = ""
+
+    def save(complete: bool) -> None:
+        # written after EVERY cell, not once at the end: Buch 2003 spent $14.37 against a $14 cap
+        # and the unwind threw away every candidate the stage had already paid for (F7). Until the
+        # stage finishes the file says `"complete": false`, so `--resume` re-enters it rather than
+        # reading a salvaged half-paper as a finished one.
+        write_stage(ctx.out_dir, paper.sha256, "extract",
+                    {"candidates": [c.model_dump(mode="json") for c in candidates],
+                     "complete": complete, "cells_extracted": list(done),
+                     "cells_budget_exhausted": list(exhausted),
+                     "budget_note": stopped})
+
     for dataset in study.datasets:
         for sources in dataset.outcomes:
             if sources.outcome_key not in keys:
@@ -206,19 +221,42 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
                     f"{dataset.dataset_id}: the mapper reported outcome "
                     f"{sources.outcome_key!r}, which is not in the protocol — skipped")
                 continue
-            candidates.extend(_extract_cell(ctx, paper, dataset, sources, figures_dir, status))
-    write_stage(ctx.out_dir, paper.sha256, "extract",
-                {"candidates": [c.model_dump(mode="json") for c in candidates]})
-    status.stages["extract"] = "done"
+            cell = f"{dataset.dataset_id}/{sources.outcome_key}"
+            if stopped:                       # the cap stops NEW cells; it does not undo old ones
+                exhausted.append(cell)
+                continue
+            try:
+                _extract_cell(ctx, paper, dataset, sources, figures_dir, status,
+                              out=candidates)
+            except PaperBudgetExceeded as exc:
+                stopped = str(exc)
+                exhausted.append(cell)
+                status.warnings.append(
+                    f"{cell}: budget_exhausted — {exc}; the rows this cell had already produced "
+                    f"are kept, the cells after it were not started")
+                continue
+            done.append(cell)
+            save(complete=False)
+    if exhausted:
+        status.warnings.append(
+            f"budget_exhausted: {len(done)} cell(s) extracted, {len(exhausted)} not started "
+            f"({', '.join(exhausted)}) — re-run with --resume once the cap is raised")
+        status.error = stopped or "the paper's budget was exhausted during extraction"
+    save(complete=not exhausted)
+    status.stages["extract"] = "partial" if exhausted else "done"
     return candidates
 
 
 def _extract_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                   sources: OutcomeSources, figures_dir: Path,
-                  status: PaperStatus) -> list[Candidate]:
-    """Both text variants, the statistic reader, and the digitiser once per figure source."""
+                  status: PaperStatus, out: list[Candidate] | None = None) -> list[Candidate]:
+    """Both text variants, the statistic reader, and the digitiser once per figure source.
+
+    `out` is filled as each reader answers rather than returned at the end, so a budget death half
+    way through a cell keeps the readings that were already paid for.
+    """
     key = sources.outcome_key
-    out: list[Candidate] = []
+    out = out if out is not None else []
     # the two heterogeneous text readings the vote needs (different model AND different prompt)
     out.extend(extract_group_stats(ctx.client, paper, ctx.protocol, dataset, key, sources.sources,
                                    variant="table_first", model=ctx.models["primary"]))
@@ -572,6 +610,10 @@ def _run_paper(ctx: RunContext, group: PaperGroup) -> PaperResult:
         status.status = "extracted"
         emit(ctx.progress, "extract", label, "done", cost_so_far=ctx.client.total_cost(),
              message=f"{len(result.candidates)} candidates")
+        if status.stages.get("extract") == "partial":
+            # the rows are on `result` and in the stage file; the paper stops here rather than
+            # walking into a verify stage whose first call would raise anyway
+            raise PaperBudgetExceeded(status.error)
 
         ctx.stop_if_cancelled()                            # …and between every two stages
         emit(ctx.progress, "verify", label, "started", cost_so_far=ctx.client.total_cost())
