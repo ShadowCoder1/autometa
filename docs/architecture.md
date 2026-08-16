@@ -16,14 +16,14 @@ accident.
 ```mermaid
 flowchart TB
     subgraph ING["1 · ingest — no model"]
-        A[folder of PDFs] --> B[dedupe<br/>sha256 · DOI · title]
-        B --> C[page rasters · word boxes<br/>figure regions · table blocks]
+        A["folder of PDFs"] --> B["dedupe<br/>sha256 · DOI · title"]
+        B --> C["page rasters · word boxes<br/>figure regions · table blocks"]
     end
 
     subgraph MAP["2 · map — agent"]
         C --> D["<b>mapper</b> · opus<br/>eligible? · all groups · chosen A/B pair<br/>+ rationale · where every outcome lives"]
         D --> E["<b>cross-check</b> · sonnet<br/>group mapping · error-bar type<br/>every figure and table ruled on"]
-        E -->|disagree| NH1([needs_human])
+        E -->|disagree| NH1(["needs_human"])
     end
 
     subgraph EXT["3 · extract — agents + code"]
@@ -47,8 +47,8 @@ flowchart TB
         N --> O["<b>adjudicator</b><br/>only when the vote failed,<br/>a verifier refuted, or a check errored"]
         O --> P["<b>orientation</b> · 2 agents must agree<br/>which direction is 'better'"]
         P --> Q{confidence}
-        Q -->|auto_accept · accept_with_note| R[resolve]
-        Q -->|needs_human| NH2([review queue,<br/>ordered by ΔΔpooled])
+        Q -->|auto_accept · accept_with_note| R["resolve"]
+        Q -->|needs_human| NH2(["review queue,<br/>ordered by |Δ pooled|"])
     end
 
     subgraph RES["5 · resolve + pool — code only"]
@@ -59,8 +59,8 @@ flowchart TB
     end
 
     subgraph REP["6 · report — code only"]
-        V --> W[forest · funnel · PRISMA<br/>sensitivity · leave-one-out]
-        V --> X[extraction table<br/>csv · json · xlsx]
+        V --> W["forest · funnel · PRISMA<br/>sensitivity · leave-one-out"]
+        V --> X["extraction table<br/>csv · json · xlsx"]
         R --> Y["provenance bundle<br/>one image per value"]
         W & X & Y --> Z[["report.html<br/>self-contained, every value linked"]]
         NH2 --> Z
