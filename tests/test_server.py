@@ -15,6 +15,7 @@ Three groups of tests:
 """
 from __future__ import annotations
 
+import io
 import json
 import shutil
 import time
@@ -133,35 +134,68 @@ def cloned(finished, tmp_path, specs) -> dict[str, Any]:
 
 
 # ============================================================================ units: uploads
-def test_a_non_pdf_upload_is_refused_by_its_magic_bytes():
-    from canopy.server.uploads import UploadRejected, validate_pdf
+def _stream(data: bytes, dest, name="paper.pdf", max_bytes=1_000_000, remaining=None):
+    from canopy.server.uploads import stream_upload
 
-    validate_pdf("ok.pdf", b"%PDF-1.7\nreal enough", max_bytes=1_000)
+    return stream_upload(io.BytesIO(data), dest, name, max_bytes=max_bytes,
+                         remaining_bytes=remaining)
+
+
+def test_a_non_pdf_upload_is_refused_by_its_magic_bytes(tmp_path):
+    from canopy.server.uploads import UploadRejected
+
+    _stream(b"%PDF-1.7\nreal enough", tmp_path)
     with pytest.raises(UploadRejected) as exc:
-        validate_pdf("evil.pdf", b"<?php system($_GET[0]); ?>", max_bytes=1_000)
+        _stream(b"<?php system($_GET[0]); ?>", tmp_path, "evil.pdf")
     assert "PDF" in str(exc.value)
     with pytest.raises(UploadRejected):
-        validate_pdf("evil.exe", b"%PDF-1.7 but the name lies", max_bytes=1_000)
+        _stream(b"%PDF-1.7 but the name lies", tmp_path, "evil.exe")
+    with pytest.raises(UploadRejected):
+        _stream(b"", tmp_path, "empty.pdf")
+    assert not list(tmp_path.glob(".upload-*")), "a refused upload leaves nothing behind"
 
 
-def test_an_oversize_upload_is_refused():
-    from canopy.server.uploads import UploadRejected, validate_pdf
+def test_an_oversize_upload_is_refused(tmp_path):
+    from canopy.server.uploads import UploadRejected
 
     with pytest.raises(UploadRejected) as exc:
-        validate_pdf("big.pdf", b"%PDF-1.7" + b"x" * 5_000, max_bytes=1_000)
-    assert "413" in str(exc.value.status_code) or exc.value.status_code == 413
+        _stream(b"%PDF-1.7" + b"x" * 5_000, tmp_path, "big.pdf", max_bytes=1_000)
+    assert exc.value.status_code == 413
+    with pytest.raises(UploadRejected) as total:
+        _stream(b"%PDF-1.7" + b"x" * 5_000, tmp_path, "big.pdf", remaining=1_000)
+    assert total.value.status_code == 413 and "total" in str(total.value)
+    assert not list(tmp_path.iterdir())
+
+
+def test_an_upload_is_streamed_to_disk_a_chunk_at_a_time(tmp_path, monkeypatch):
+    """Nothing larger than one chunk is ever in memory, whatever the file's size."""
+    from canopy.server import uploads
+
+    monkeypatch.setattr(uploads, "CHUNK", 1024)
+    data = b"%PDF-1.7\n" + b"x" * (8 * 1024)
+    reads: list[int] = []
+
+    class Counting(io.BytesIO):
+        def read(self, size=-1):                            # noqa: D401 - a spy
+            chunk = super().read(size)
+            reads.append(len(chunk))
+            return chunk
+
+    path, size = uploads.stream_upload(Counting(data), tmp_path, "paper.pdf",
+                                       max_bytes=1_000_000)
+    assert size == len(data) and path.read_bytes() == data
+    assert max(reads) <= 1024, f"a whole {max(reads)}-byte read is not streaming"
+    assert len(reads) >= 8
 
 
 def test_an_upload_is_stored_under_its_own_sha256(tmp_path):
     import hashlib
 
-    from canopy.server.uploads import save_upload
-
     data = PDFS[0].read_bytes()
-    path = save_upload(tmp_path, data)
+    path, size = _stream(data, tmp_path, PDFS[0].name, max_bytes=1e9)
     assert path.name == f"{hashlib.sha256(data).hexdigest()}.pdf"
-    assert path.read_bytes() == data
-    assert save_upload(tmp_path, data) == path             # the same bytes are the same file
+    assert path.read_bytes() == data and size == len(data)
+    assert _stream(data, tmp_path, PDFS[0].name, max_bytes=1e9)[0] == path   # same bytes, one file
 
 
 def test_a_hostile_pdf_cannot_hang_the_server(tmp_path):
@@ -178,6 +212,42 @@ def test_a_hostile_pdf_cannot_hang_the_server(tmp_path):
 
     stuck = probe_pdf(PDFS[0], timeout=0.0001)             # a PDF that never finishes
     assert stuck["ok"] is False and "timed out" in stuck["error"]
+
+
+def test_the_pipelines_own_ingestion_can_run_in_a_child_process(tmp_path):
+    """The run's ingest step, in a killable process, writing what a direct call would."""
+    from canopy.ingest.pdf import PaperRecord
+    from canopy.server.uploads import ingest_pdf_subprocess
+
+    paper = ingest_pdf_subprocess(PDFS[0], tmp_path / "ingest", timeout=120)
+    assert isinstance(paper, PaperRecord)
+    assert paper.n_pages > 0 and paper.sha256
+    assert (tmp_path / "ingest" / "pages" / "p001.png").exists(), "page rasters are needed later"
+    assert paper.page_text(1).strip()
+
+    with pytest.raises(TimeoutError) as exc:
+        ingest_pdf_subprocess(PDFS[0], tmp_path / "slow", timeout=0.0001)
+    assert "timed out" in str(exc.value)
+
+
+def test_a_paper_that_will_not_ingest_fails_only_itself(tmp_path, specs):
+    """A hostile PDF takes its child process down, not the run."""
+    from canopy.pipeline.run import run_pipeline
+
+    papers = tmp_path / "papers"
+    papers.mkdir()
+    shutil.copyfile(PDFS[0], papers / PDFS[0].name)
+
+    def refuse(pdf: Path, out_dir: Path):
+        raise TimeoutError("ingestion timed out after 300s: hostile.pdf")
+
+    client = LLMClient(provider=FakeProvider([fake_router(specs)]), allow_live=True,
+                       cache_dir=None)
+    manifest = run_pipeline(papers, PROTOCOL, tmp_path / "run", client=client, concurrency=1,
+                            ingest_fn=refuse)
+    assert manifest.papers[0].status == "error"
+    assert "timed out" in manifest.papers[0].error
+    assert (tmp_path / "run" / "manifest.json").exists()
 
 
 # ============================================================================ units: paths
@@ -459,7 +529,11 @@ def test_a_re_extract_request_is_recorded_and_reported_as_pending(cloned):
 
 
 def test_overrides_survive_a_resume(cloned, specs):
-    """`--resume` rewrites the outputs from the stage files; the override log outlives it."""
+    """`canopy run --resume` rebuilds every artefact from the stage files — and re-applies the log.
+
+    No server is involved in the resume: `run_pipeline` applies `overrides.jsonl` itself, which is
+    what amendment I asks for, because a reviewer's decision must outlive the artefacts it changed.
+    """
     from canopy.pipeline.run import run_pipeline
 
     api, run_id, token = cloned["api"], cloned["run_id"], cloned["token"]
@@ -476,17 +550,66 @@ def test_overrides_survive_a_resume(cloned, specs):
                          headers=auth(token)).json()["pooled"]["estimate"]
 
     fresh = LLMClient(provider=FakeProvider([fake_router(specs)]), allow_live=True, cache_dir=None)
+    events: list[dict[str, Any]] = []
     manifest = run_pipeline(run_dir / "uploads", run_dir / "protocol.yaml", run_dir,
-                            client=fresh, concurrency=1, resume=True)
+                            client=fresh, concurrency=1, resume=True, progress=events.append)
     assert manifest.n_llm_calls == 0                        # a resume spends nothing
-    from_stages = api.get(f"/api/runs/{run_id}/results/{OUTCOME}",
-                          headers=auth(token)).json()["pooled"]["estimate"]
-    assert from_stages != pytest.approx(overridden)         # the resume wrote the machine's value
 
-    again = api.post(f"/api/runs/{run_id}/repool", headers=auth(token)).json()
-    assert again["applied"] == 1
-    assert api.get(f"/api/runs/{run_id}/results/{OUTCOME}",
-                   headers=auth(token)).json()["pooled"]["estimate"] == pytest.approx(overridden)
+    after = api.get(f"/api/runs/{run_id}/results/{OUTCOME}", headers=auth(token)).json()
+    assert after["pooled"]["estimate"] == pytest.approx(overridden), \
+        "the resume rebuilt the artefacts and the override was not re-applied"
+    changed = next(r for r in after["rows"] if r["dataset_id"] == dataset_id)
+    assert changed["overridden"] is True and changed["inputs"]["mean_a"] == 12.0
+    assert any(e["stage"] == "review" and "override" in e["message"] for e in events)
+    assert json.loads((run_dir / "overrides_applied.json").read_text())["applied"] == 1
+
+
+def test_a_repool_writes_every_artefact_a_run_writes(cloned, monkeypatch):
+    """A reviewed run directory must be the same *kind* of thing a finished one is."""
+    from canopy.pipeline import overrides as pipeline_overrides
+
+    api, run_id, token = cloned["api"], cloned["run_id"], cloned["token"]
+    run_dir = Path(api.app.state.runs_dir) / run_id
+    rows = api.get(f"/api/runs/{run_id}/results/{OUTCOME}", headers=auth(token)).json()["rows"]
+    dataset_id = rows[0]["dataset_id"]
+    before_prisma = json.loads((run_dir / "prisma.json").read_text())
+    assert before_prisma["included_datasets"] == 2
+
+    # `all_rows` has no visible effect until a paper contributes two rows, so it is pinned at the
+    # seam: without it the per-outcome table silently loses the rows an aggregation replaced
+    seen: dict[str, Any] = {}
+    real = pipeline_overrides.write_outcome_outputs
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.setdefault("all_rows", kwargs.get("all_rows"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline_overrides, "write_outcome_outputs", spy)
+
+    api.post(f"/api/runs/{run_id}/overrides", headers=auth(token), json={
+        "kind": "exclude_dataset", "dataset_id": dataset_id, "outcome_key": OUTCOME,
+        "justification": "the participants also did experiment 2"})
+    api.post(f"/api/runs/{run_id}/repool", headers=auth(token))
+
+    assert seen["all_rows"] is not None, "the per-outcome table was written without all_rows"
+
+    # the run-wide table is rebuilt from the reviewed rows
+    table = (run_dir / "results" / "extraction_table_all.csv").read_text(encoding="utf-8")
+    assert dataset_id not in table
+    assert any(r["dataset_id"] in table for r in rows[1:])
+
+    # the PRISMA flow is re-counted, and still adds up
+    prisma = json.loads((run_dir / "prisma.json").read_text())
+    assert prisma["included_datasets"] == 1
+    assert prisma["datasets_excluded"] == before_prisma["datasets_excluded"] + 1
+    assert prisma["files"] == before_prisma["files"]        # screening cannot change
+    assert prisma.get("consistent", True) is True
+    assert "human_override" in prisma["exclusion_reasons"]
+
+    # and the report keeps the provenance it had
+    report = (run_dir / "report.html").read_text(encoding="utf-8")
+    assert "<h2>Provenance</h2>" in report
+    assert "provenance.json" in report
 
 
 # ============================================================================ cancel
@@ -524,7 +647,148 @@ def test_cancel_stops_the_run_and_still_writes_a_manifest(tmp_path, specs):
 
     final = wait_done(api, run_id, token, timeout=120)
     assert final["status"] == "cancelled"
-    assert (Path(api.app.state.runs_dir) / run_id / "manifest.json").exists()
+    manifest = json.loads((Path(api.app.state.runs_dir) / run_id / "manifest.json").read_text())
+    assert manifest["papers"], "a cancelled run still writes what it knows"
+    assert any(p["status"] == "cancelled" for p in manifest["papers"]), \
+        "a paper stopped between stages is cancelled, not failed"
+    assert all(p["status"] in ("cancelled", "resolved", "excluded") for p in manifest["papers"])
+
+
+# ============================================================================ options + limits
+@pytest.mark.parametrize("options, wrong", [
+    ({"budget_usd": "lots"}, "budget_usd"),
+    ({"budget_usd": -3}, "budget_usd"),
+    ({"max_usd_per_paper": "1.2.3"}, "max_usd_per_paper"),
+    ({"max_papers": "all of them"}, "max_papers"),
+    ({"max_papers": 0}, "max_papers"),
+    ({"concurrency": "four"}, "concurrency"),
+    ({"concurrency": 999}, "concurrency"),
+    ({"profile": "not_a_profile"}, "profile"),
+    ({"models": {"wizard": "claude-opus-5"}}, "models"),
+    ({"models": "claude-opus-5"}, "models"),
+    ({"totally_unknown": 1}, "totally_unknown"),
+])
+def test_malformed_options_are_a_readable_422_not_a_500(api, options, wrong):
+    """A browser sends what a person typed; the answer says which field is wrong."""
+    files = [("files", (PDFS[0].name, PDFS[0].read_bytes(), "application/pdf")),
+             ("protocol", ("protocol.yaml", PROTOCOL.read_bytes(), "text/yaml"))]
+    response = api.post("/api/runs", files=files, data={"options": json.dumps(options)})
+    assert response.status_code == 422, response.text
+    assert wrong in response.json()["detail"]
+
+
+def test_options_that_are_not_even_json_are_refused(api):
+    files = [("files", (PDFS[0].name, PDFS[0].read_bytes(), "application/pdf")),
+             ("protocol", ("protocol.yaml", PROTOCOL.read_bytes(), "text/yaml"))]
+    for bad in ("not json", "[1, 2, 3]", "null"):
+        response = api.post("/api/runs", files=files, data={"options": bad})
+        assert response.status_code == 422 and "JSON object" in response.json()["detail"]
+
+
+def test_an_untouched_number_field_means_no_cap(api):
+    """The form sends `""` for a box nobody typed in — that is "no cap", not zero."""
+    created = create_run(api, options={"budget_usd": "", "max_papers": "", "start": False})
+    assert created.status_code == 201, created.text
+    body = api.get(f"/api/runs/{created.json()['run_id']}",
+                   headers=auth(created.json()["token"])).json()
+    assert body["options"]["budget_usd"] is None and body["options"]["max_papers"] is None
+
+
+def test_a_giant_protocol_is_refused(api):
+    files = [("files", (PDFS[0].name, PDFS[0].read_bytes(), "application/pdf")),
+             ("protocol", ("protocol.yaml", b"title: x\n" + b"# padding\n" * 200_000,
+                           "text/yaml"))]
+    response = api.post("/api/runs", files=files, data={"options": "{}"})
+    assert response.status_code == 413 and "protocol" in response.json()["detail"]
+
+
+def test_uploads_are_handled_one_file_at_a_time(api, monkeypatch, tmp_path):
+    """Item 1 of the review: never hold the whole folder in memory.
+
+    Asserted at the seam, because "how much was resident" is not observable from outside: each
+    file must be streamed to disk and ingested before the next one is read off the wire.
+    """
+    from canopy.server import app as server_app
+
+    order: list[str] = []
+    real_stream = server_app.stream_upload
+
+    def stream(source, dest, name, **kwargs):
+        order.append(f"stream {name}")
+        return real_stream(source, dest, name, **kwargs)
+
+    def probe(path, timeout=0.0):
+        order.append(f"probe {Path(path).name[:8]}")
+        return {"ok": True, "n_pages": 1, "error": ""}
+
+    monkeypatch.setattr(server_app, "stream_upload", stream)
+    monkeypatch.setattr(server_app, "probe_pdf", probe)
+
+    created = create_run(api, pdfs=PDFS, options={"start": False})
+    assert created.status_code == 201, created.text
+    assert [step.split()[0] for step in order] == ["stream", "probe", "stream", "probe"]
+
+
+def test_a_second_run_is_refused_while_one_is_going(tmp_path, specs):
+    """One laptop, one API budget: the number of concurrent runs is capped.
+
+    The gate is opened in a `finally` because a run left blocked would be joined at interpreter
+    exit (`ThreadPoolExecutor` threads are not daemons), turning a failed assertion into a
+    four-minute test.
+    """
+    import threading
+
+    from canopy.server.app import create_app
+
+    gate = threading.Event()
+
+    def slow(run_dir: Path | None = None, **_: Any) -> LLMClient:
+        router = fake_router(specs)
+
+        def wait_then_answer(request):
+            gate.wait(timeout=60)
+            return router(request)
+
+        return LLMClient(provider=FakeProvider([wait_then_answer]), allow_live=True,
+                         cache_dir=None)
+
+    api = TestClient(create_app(runs_dir=tmp_path / "runs", client_factory=slow,
+                                max_active_runs=1))
+    assert api.get("/api/settings").json()["max_active_runs"] == 1
+    first = create_run(api, options={"concurrency": 1}).json()
+    try:
+        deadline = time.monotonic() + 60
+        while api.get(f"/api/runs/{first['run_id']}",
+                      headers=auth(first["token"])).json()["status"] == "queued":
+            assert time.monotonic() < deadline, "the first run never started"
+            time.sleep(0.02)
+
+        refused = create_run(api, options={"concurrency": 1})
+        assert refused.status_code == 429
+        assert "CANOPY_MAX_ACTIVE_RUNS" in refused.json()["detail"]
+
+        held = create_run(api, options={"concurrency": 1, "start": False}).json()
+        again = api.post(f"/api/runs/{held['run_id']}/start", headers=auth(held["token"]))
+        assert again.status_code == 429                    # …and the same gate holds on /start
+        assert "CANOPY_MAX_ACTIVE_RUNS" in again.json()["detail"]
+        assert api.post(f"/api/runs/{first['run_id']}/start",
+                        headers=auth(first["token"])).status_code == 409   # already going
+    finally:
+        api.post(f"/api/runs/{first['run_id']}/cancel", headers=auth(first["token"]))
+        gate.set()
+        wait_done(api, first["run_id"], first["token"], timeout=180)
+
+
+def test_the_event_stream_of_a_run_nobody_started_says_so_and_closes(api):
+    created = create_run(api, options={"start": False}).json()
+    with api.stream("GET", f"/api/runs/{created['run_id']}/events",
+                    headers=auth(created["token"])) as stream:
+        lines = list(stream.iter_lines())
+    names = [line[len("event: "):] for line in lines if line.startswith("event: ")]
+    payloads = [json.loads(line[len("data: "):]) for line in lines if line.startswith("data: ")]
+    assert names == ["end"]
+    assert payloads[-1]["status"] == "not_started"
+    assert "not been started" in payloads[-1]["message"]
 
 
 # ============================================================================ protocols
@@ -719,6 +983,19 @@ def test_the_spa_never_writes_untrusted_text_as_html():
     assert "insertAdjacentHTML" not in app_js
     assert "document.write" not in app_js
     assert "eval(" not in app_js
+
+
+def test_the_results_panes_are_reachable_with_a_keyboard():
+    """Each pane is a tab panel that names its tab, and the drawer hands focus back."""
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    for name in ("forest", "table", "flags", "figures", "downloads"):
+        assert f'aria-controls="pane-{name}"' in page
+        assert f'id="pane-{name}" role="tabpanel"' in page
+        assert f'aria-labelledby="tab-{name}"' in page
+    assert 'role="dialog"' in page
+    assert "state.returnFocus = document.activeElement" in app_js
+    assert "state.returnFocus.focus()" in app_js
 
 
 def test_the_spa_makes_no_external_requests():

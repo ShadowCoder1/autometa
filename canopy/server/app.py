@@ -32,25 +32,27 @@ import yaml
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ..config import MODELS, api_key, live_enabled, load_env
 from ..models import Protocol, StatsSettings
 from ..protocol import apply_profile, available_profiles, dump_protocol, load_protocol
-from .jobs import Job, JobManager
+from .jobs import Job, JobBusy, JobManager, TooManyRuns
 from .overrides import (OverrideRejected, append_override, apply_overrides_and_repool,
                         override_summary, read_overrides, repool_lock)
 from .security import (PathRejected, is_attachment, is_loopback, media_type, safe_run_path,
                        token_matches)
 from .uploads import (DEFAULT_MAX_FILES, DEFAULT_MAX_TOTAL_MB, DEFAULT_MAX_UPLOAD_MB,
-                      DEFAULT_PROBE_TIMEOUT, UploadRejected, probe_many, safe_filename,
-                      save_upload, validate_pdf)
+                      DEFAULT_PROBE_TIMEOUT, UploadRejected, probe_pdf, safe_filename,
+                      stream_upload)
 
 __all__ = ["create_app", "serve"]
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "examples" / "protocols"
 MAX_CONCURRENCY = 16
+#: a protocol is a page of YAML; anything larger is a mistake or an attack
+MAX_PROTOCOL_BYTES = 1_000_000
 #: methods that change something — a page on another origin may not use them
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
@@ -96,43 +98,78 @@ def _parse_protocol(text: str) -> Protocol:
     return protocol
 
 
-def _options(raw: str) -> dict[str, Any]:
+class RunOptions(BaseModel):
+    """Everything the New-run form may ask for, and nothing else.
+
+    This is a schema rather than a pile of `float(...)` calls because the caller is a browser and
+    the answer to `{"budget_usd": "lots"}` must be a 422 that says which field is wrong — not a
+    500 from a `ValueError` nobody caught.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    budget_usd: float | None = Field(default=None, gt=0)
+    max_usd_per_paper: float | None = Field(default=None, gt=0)
+    max_papers: int | None = Field(default=None, ge=1)
+    concurrency: int = Field(default=4, ge=1, le=MAX_CONCURRENCY)
+    resume: bool = True
+    start: bool = True
+    name: str = Field(default="", max_length=60)
+    profile: str | None = None
+    models: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("budget_usd", "max_usd_per_paper", "max_papers", "profile", mode="before")
+    @classmethod
+    def _blank_is_absent(cls, value: Any) -> Any:
+        """An untouched form field arrives as `""`; that means "no cap", not "zero"."""
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("profile")
+    @classmethod
+    def _known_profile(cls, value: str | None) -> str | None:
+        if value is not None and value not in available_profiles():
+            raise ValueError(f"unknown stats profile (available: {available_profiles()})")
+        return value
+
+    @field_validator("models")
+    @classmethod
+    def _known_roles(cls, value: dict[str, str]) -> dict[str, str]:
+        unknown = sorted(set(value) - set(MODELS))
+        if unknown:
+            raise ValueError(f"unknown model role(s) {unknown} (roles: {sorted(MODELS)})")
+        return {k: str(v)[:80] for k, v in value.items() if str(v).strip()}
+
+
+def _options(raw: str) -> RunOptions:
+    """The `options` form field as a validated model, or a 422 naming the field that is wrong."""
     try:
         parsed = json.loads(raw or "{}")
     except ValueError:
         raise HTTPException(status_code=422, detail="options must be a JSON object")
     if not isinstance(parsed, dict):
         raise HTTPException(status_code=422, detail="options must be a JSON object")
+    try:
+        return RunOptions.model_validate(parsed)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=f"bad options — {_validation_message(exc)}")
 
-    out: dict[str, Any] = {}
-    for name in ("budget_usd", "max_usd_per_paper"):
-        if parsed.get(name) not in (None, ""):
-            value = float(parsed[name])
-            if value <= 0:
-                raise HTTPException(status_code=422, detail=f"{name} must be positive")
-            out[name] = value
-    if parsed.get("max_papers") not in (None, ""):
-        out["max_papers"] = max(1, int(parsed["max_papers"]))
-    out["concurrency"] = max(1, min(MAX_CONCURRENCY, int(parsed.get("concurrency") or 4)))
-    out["resume"] = bool(parsed.get("resume", True))
-    models = parsed.get("models") or {}
-    if models:
-        if not isinstance(models, dict):
-            raise HTTPException(status_code=422, detail="models must be an object")
-        unknown = sorted(set(models) - set(MODELS))
-        if unknown:
-            raise HTTPException(status_code=422,
-                                detail=f"unknown model role(s) {unknown} (roles: {sorted(MODELS)})")
-        out["models"] = {k: str(v)[:80] for k, v in models.items() if str(v).strip()}
-    if parsed.get("profile"):
-        profile = str(parsed["profile"])
-        if profile not in available_profiles():
-            raise HTTPException(status_code=422, detail=f"unknown stats profile {profile!r} "
-                                                        f"(available: {available_profiles()})")
-        out["profile"] = profile
-    out["start"] = bool(parsed.get("start", True))
-    out["name"] = str(parsed.get("name") or "")[:60]
-    return out
+
+def _start(manager: JobManager, job: Job, *, dry_run: bool = False,
+           max_papers: int = 3) -> None:
+    """Hand a job to the worker, turning its two refusals into the HTTP answers they mean.
+
+    The checks live inside the manager, under its lock: a capacity check made here and acted on
+    there is a race, and two clicks on Run would win it.
+    """
+    try:
+        if dry_run:
+            manager.start_dry_run(job, max_papers=max_papers)
+        else:
+            manager.start(job)
+    except JobBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except TooManyRuns as exc:
+        raise HTTPException(status_code=429, detail=str(exc))
 
 
 def is_cross_site(request: Request) -> bool:
@@ -196,10 +233,12 @@ def create_app(runs_dir: str | Path = "runs", *,
                allowed_hosts: Sequence[str] | None = None,
                max_upload_mb: float | None = None,
                probe_timeout: float | None = None,
+               max_active_runs: int | None = None,
                loopback_only: bool = True) -> FastAPI:
     """Build the API. `client_factory` is the seam a test fills with a fake or replaying client."""
     app = FastAPI(title="Canopy", docs_url=None, redoc_url=None, openapi_url=None)
-    manager = JobManager(runs_dir, client_factory=client_factory)
+    manager = JobManager(runs_dir, client_factory=client_factory,
+                         **({} if max_active_runs is None else {"max_active": max_active_runs}))
     app.state.runs_dir = str(manager.runs_dir)
     app.state.jobs = manager
     app.state.max_upload_bytes = (max_upload_mb if max_upload_mb is not None
@@ -265,6 +304,7 @@ def create_app(runs_dir: str | Path = "runs", *,
             "max_files": DEFAULT_MAX_FILES,
             "max_total_mb": round(app.state.max_total_bytes / 1e6, 1),
             "loopback_only": app.state.loopback_only,
+            "max_active_runs": manager.max_active,
             "uses_real_models": manager.uses_real_models,
         }
 
@@ -326,11 +366,19 @@ def create_app(runs_dir: str | Path = "runs", *,
                    protocol: UploadFile | None = File(default=None),
                    protocol_text: str = Form(default=""),
                    options: str = Form(default="{}")) -> dict[str, Any]:
-        """A folder of PDFs and a protocol become a run directory and a background job."""
+        """A folder of PDFs and a protocol become a run directory and a background job.
+
+        Each file is streamed from the wire to `<sha256>.pdf` and ingested before the next one is
+        read, so the server holds one chunk of one upload at a time however large the folder is.
+        """
         chosen = _options(options)
-        text = protocol_text
+        text = protocol_text[:MAX_PROTOCOL_BYTES + 1]
         if not text and protocol is not None:
-            text = protocol.file.read().decode("utf-8", "replace")
+            text = protocol.file.read(MAX_PROTOCOL_BYTES + 1).decode("utf-8", "replace")
+        if len(text.encode("utf-8", "replace")) > MAX_PROTOCOL_BYTES:
+            raise HTTPException(status_code=413,
+                                detail=f"a protocol may not be larger than "
+                                       f"{MAX_PROTOCOL_BYTES / 1e6:.0f} MB")
         if not text.strip():
             raise HTTPException(status_code=422, detail="a run needs a protocol (YAML)")
         if not files:
@@ -338,54 +386,51 @@ def create_app(runs_dir: str | Path = "runs", *,
         if len(files) > DEFAULT_MAX_FILES:
             raise HTTPException(status_code=413,
                                 detail=f"{len(files)} files is over the {DEFAULT_MAX_FILES} limit")
-        if chosen["start"] and manager.key_required():
+        if chosen.start and manager.key_required():
             raise HTTPException(status_code=400, detail="no ANTHROPIC_API_KEY is configured — "
                                                         "add one to .env and try again")
+        if chosen.start and not manager.has_capacity():
+            raise HTTPException(status_code=429,
+                                detail=f"this server already has {manager.max_active} review(s) "
+                                       f"running; wait for one to finish (or raise "
+                                       f"CANOPY_MAX_ACTIVE_RUNS)")
 
         parsed = _parse_protocol(text)
-        if chosen.get("profile"):
+        if chosen.profile:
             # the same rule as `canopy run --profile`: an explicit choice replaces the
             # protocol's own statistics block, and the run directory keeps what it used
-            parsed.stats = apply_profile(StatsSettings(profile=chosen["profile"]))
+            parsed.stats = apply_profile(StatsSettings(profile=chosen.profile))
 
-        payloads: list[tuple[str, bytes]] = []
-        total = 0
-        for upload in files:
-            data = upload.file.read()
-            try:
-                validate_pdf(upload.filename or "upload.pdf", data, app.state.max_upload_bytes)
-            except UploadRejected as exc:
-                raise HTTPException(status_code=exc.status_code, detail=str(exc))
-            total += len(data)
-            if total > app.state.max_total_bytes:
-                raise HTTPException(status_code=413,
-                                    detail=f"this upload is over the "
-                                           f"{app.state.max_total_bytes / 1e6:.0f} MB total limit "
-                                           f"(raise it with CANOPY_MAX_UPLOAD_TOTAL_MB)")
-            payloads.append((safe_filename(upload.filename or "upload.pdf"), data))
-
-        job = manager.create(title=parsed.title or chosen.get("name") or "review",
-                             options=chosen)
+        job = manager.create(title=parsed.title or chosen.name or "review",
+                             options=chosen.model_dump())
         try:
             dump_protocol(parsed, job.run_dir / "protocol.yaml")
-            saved = [save_upload(job.run_dir / "uploads", data) for _, data in payloads]
-            names = {str(path): name for path, (name, _) in zip(saved, payloads)}
+            saved: dict[str, str] = {}
+            remaining = float(app.state.max_total_bytes)
+            for upload in files:
+                name = safe_filename(upload.filename or "upload.pdf")
+                try:
+                    path, size = stream_upload(upload.file, job.run_dir / "uploads", name,
+                                               max_bytes=app.state.max_upload_bytes,
+                                               remaining_bytes=remaining)
+                except UploadRejected as exc:
+                    raise HTTPException(status_code=exc.status_code, detail=str(exc))
+                remaining -= size
+                saved.setdefault(str(path), name)
+                probe = probe_pdf(path, timeout=app.state.probe_timeout)
+                if not probe.get("ok"):
+                    raise HTTPException(status_code=400, detail=f"{name}: {probe['error']}")
             (job.run_dir / "uploads" / "filenames.json").write_text(
-                json.dumps(names, ensure_ascii=False, indent=1), encoding="utf-8")
-            probes = probe_many(sorted(set(saved)), timeout=app.state.probe_timeout)
-            unreadable = [f"{names.get(path, Path(path).name)}: {result['error']}"
-                          for path, result in probes.items() if not result.get("ok")]
-            if unreadable:
-                raise HTTPException(status_code=400, detail="; ".join(unreadable[:5]))
+                json.dumps(saved, ensure_ascii=False, indent=1), encoding="utf-8")
         except BaseException:
             shutil.rmtree(job.run_dir, ignore_errors=True)
             manager.forget(job.run_id)
             raise
 
-        job.n_files = len(set(saved))
+        job.n_files = len(saved)
         job.save()
-        if chosen["start"]:
-            manager.start(job)
+        if chosen.start:
+            _start(manager, job)
         return {"run_id": job.run_id, "token": job.token, "n_files": job.n_files,
                 "status": job.status, "title": job.title}
 
@@ -432,13 +477,11 @@ def create_app(runs_dir: str | Path = "runs", *,
     def start_run(run_id: str, request: Request) -> dict[str, Any]:
         """Start a run that was created but held back — the dry-run-first path."""
         job = run_of(run_id, request)
-        if job.status in ("running", "queued"):
-            raise HTTPException(status_code=409, detail="this run is already going")
         if manager.key_required():
             raise HTTPException(status_code=400, detail="no ANTHROPIC_API_KEY is configured — "
                                                         "add one to .env and try again")
         job.kind = "run"
-        manager.start(job)
+        _start(manager, job)
         return {"run_id": job.run_id, "status": job.status}
 
     @app.post("/api/runs/{run_id}/cancel")
@@ -615,12 +658,10 @@ def create_app(runs_dir: str | Path = "runs", *,
                 body: dict[str, Any] | None = None) -> dict[str, Any]:
         job = run_of(run_id, request)
         body = body or {}
-        if job.status in ("running", "queued"):
-            raise HTTPException(status_code=409, detail="this run is already busy")
         if manager.key_required():
             raise HTTPException(status_code=400, detail="a dry run needs a model: set "
                                                         "ANTHROPIC_API_KEY in .env")
-        manager.start_dry_run(job, max_papers=int(body.get("max_papers") or 3))
+        _start(manager, job, max_papers=int(body.get("max_papers") or 3), dry_run=True)
         wait = min(float(body.get("wait_seconds") or 0.0), 600.0)
         if wait > 0 and job.thread is not None:
             job.thread.join(timeout=wait)

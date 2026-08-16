@@ -29,21 +29,32 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
 
+import os
+
 from ..config import MODELS, api_key, live_enabled
+from ..pipeline.run import RunCancelled
 from ..pipeline.state import sha12
 from ..protocol import load_protocol
-from .overrides import apply_overrides_and_repool, read_overrides
+from .uploads import DEFAULT_INGEST_TIMEOUT, ingest_pdf_subprocess
 
-__all__ = ["Job", "JobManager", "RunCancelled", "default_client_factory", "sse_pack",
-           "TERMINAL_STATES"]
+__all__ = ["Job", "JobManager", "JobBusy", "TooManyRuns", "RunCancelled",
+           "default_client_factory", "sse_pack", "TERMINAL_STATES", "STREAM_END_STATES"]
 
 TERMINAL_STATES = frozenset({"done", "error", "cancelled", "interrupted"})
+#: a run nobody has started yet has nothing to stream either — the stream says so and closes
+STREAM_END_STATES = TERMINAL_STATES | {"created"}
 MAX_EVENTS = 20_000
 HEARTBEAT_SECONDS = 15.0
+#: how many reviews may run at once (each is a thread pool of its own, and an API budget)
+MAX_ACTIVE_RUNS = max(1, int(os.environ.get("CANOPY_MAX_ACTIVE_RUNS", "2") or 2))
 
 
-class RunCancelled(RuntimeError):
-    """Raised inside the pipeline's progress callback when the reviewer pressed stop."""
+class JobBusy(RuntimeError):
+    """This run is already going."""
+
+
+class TooManyRuns(RuntimeError):
+    """The server is already running as many reviews as it allows."""
 
 
 def _now() -> str:
@@ -83,7 +94,6 @@ class Job:
     finished_at: str = ""
     kind: str = "run"                          # run | dry-run
     events: list[dict[str, Any]] = field(default_factory=list, repr=False)
-    stopped: set[str] = field(default_factory=set, repr=False)
     seq: int = 0
     cancel: threading.Event = field(default_factory=threading.Event, repr=False)
     subscribers: list["queue.Queue[dict[str, Any]]"] = field(default_factory=list, repr=False)
@@ -168,13 +178,28 @@ class JobManager:
     """Every run this server knows about: in memory while it runs, on disk for ever after."""
 
     def __init__(self, runs_dir: str | Path,
-                 client_factory: Callable[..., Any] | None = None):
+                 client_factory: Callable[..., Any] | None = None,
+                 max_active: int = MAX_ACTIVE_RUNS,
+                 ingest_timeout: float = DEFAULT_INGEST_TIMEOUT):
         self.runs_dir = Path(runs_dir)
         self.runs_dir.mkdir(parents=True, exist_ok=True)
         self.client_factory = client_factory or default_client_factory
         self.uses_real_models = client_factory is None
+        self.max_active = max(1, int(max_active))
+        self.ingest_timeout = float(ingest_timeout)
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
+
+    # ------------------------------------------------------------------ capacity
+    def active(self) -> int:
+        """Runs this process is working on right now. Call it holding `_lock`, or accept a race."""
+        return sum(1 for job in self._jobs.values()
+                   if job.status in ("queued", "running")
+                   and job.thread is not None and job.thread.is_alive())
+
+    def has_capacity(self) -> bool:
+        with self._lock:
+            return self.active() < self.max_active
 
     # ------------------------------------------------------------------ lookup
     def new_run_id(self, name: str = "") -> str:
@@ -235,38 +260,53 @@ class JobManager:
 
     # ------------------------------------------------------------------ running
     def start(self, job: Job) -> Job:
-        if job.thread is not None and job.thread.is_alive():
-            return job
-        job.status = "queued"
-        job.error = ""
-        job.save()
-        job.thread = threading.Thread(target=self._run, args=(job,), name=f"canopy-{job.run_id}",
-                                      daemon=True)
-        job.thread.start()
+        """Queue a run. The busy/capacity checks and the hand-off are one atomic step.
+
+        Both had races worth closing: two clicks on Run could start the same run twice, and two
+        runs could pass a capacity check that neither had taken yet.
+        """
+        with self._lock:
+            self._claim(job)
+            job.status = "queued"
+            job.error = ""
+            job.save()
+            job.thread = threading.Thread(target=self._run, args=(job,),
+                                          name=f"canopy-{job.run_id}", daemon=True)
+            job.thread.start()
         return job
+
+    def _claim(self, job: Job) -> None:
+        """Caller must hold `_lock`."""
+        if job.status in ("queued", "running") or (job.thread is not None
+                                                   and job.thread.is_alive()):
+            raise JobBusy(f"run {job.run_id} is already going")
+        if self.active() >= self.max_active:
+            raise TooManyRuns(f"this server runs at most {self.max_active} review(s) at a time "
+                              f"(raise it with CANOPY_MAX_ACTIVE_RUNS); the run is saved and can "
+                              f"be started when one finishes")
 
     def cancel(self, job: Job) -> str:
         if job.finished:
             return job.status
-        job.cancel.set()
+        job.cancel.set()                                   # the pipeline checks this itself
         job.publish({"stage": "run", "paper": "", "status": "cancelling",
                      "cost_so_far": job.cost_usd, "message": "stopping after the current step"})
         return "cancelling"
 
     def _progress(self, job: Job) -> Callable[[dict[str, Any]], None]:
+        """Publish, and nothing else. Cancellation is the pipeline's own `cancel_event`."""
         def progress(event: dict[str, Any]) -> None:
             job.cost_usd = float(event.get("cost_so_far") or job.cost_usd)
             job.publish(event)
-            # The only cancellation point the pipeline offers is its progress callback, and the
-            # orchestrator turns an exception raised there into *that paper's* failure. Raise at
-            # most once per paper: the orchestrator emits one more event for the paper it just
-            # caught, and raising again inside its own `except` block would escape the run
-            # entirely — before the manifest and the outputs are written.
-            paper = str(event.get("paper") or "")
-            if job.cancel.is_set() and paper and paper not in job.stopped:
-                job.stopped.add(paper)
-                raise RunCancelled("cancelled by the reviewer")
         return progress
+
+    def _ingest_fn(self) -> Callable[..., Any]:
+        """Ingestion in a child process with a timeout — a hostile PDF cannot hang a run."""
+        timeout = self.ingest_timeout
+
+        def ingest(pdf: Path, out_dir: Path) -> Any:
+            return ingest_pdf_subprocess(pdf, out_dir, timeout=timeout)
+        return ingest
 
     def _finish(self, job: Job, status: str, message: str = "") -> None:
         job.status = status
@@ -294,15 +334,10 @@ class JobManager:
                 resume=bool(options.get("resume", True)), max_papers=options.get("max_papers"),
                 concurrency=int(options.get("concurrency") or 4),
                 progress=self._progress(job), max_usd_per_paper=options.get("max_usd_per_paper"),
-                client=client)
+                client=client, cancel_event=job.cancel, ingest_fn=self._ingest_fn())
             job.cost_usd = float(manifest.cost_usd)
-            if read_overrides(job.run_dir):
-                # a resumed run rewrites the outputs from the stage files; the reviewer's
-                # decisions are re-applied on top so they survive it (amendment I)
-                summary = apply_overrides_and_repool(job.run_dir)
-                job.publish({"stage": "review", "paper": "", "status": "done",
-                             "cost_so_far": job.cost_usd,
-                             "message": f"{summary['applied']} override(s) re-applied"})
+            # `run_pipeline` re-applies `overrides.jsonl` itself, so a run and a `--resume` from
+            # the command line behave identically here
             if job.cancel.is_set():
                 self._finish(job, "cancelled", "stopped by the reviewer")
             else:
@@ -315,14 +350,14 @@ class JobManager:
 
     # ------------------------------------------------------------------ dry run
     def start_dry_run(self, job: Job, max_papers: int = 3) -> Job:
-        if job.thread is not None and job.thread.is_alive():
-            return job
-        job.status = "running"
-        job.kind = "dry-run"
-        job.save()
-        job.thread = threading.Thread(target=self._dry_run, args=(job, max_papers),
-                                      name=f"canopy-dry-{job.run_id}", daemon=True)
-        job.thread.start()
+        with self._lock:
+            self._claim(job)
+            job.status = "running"
+            job.kind = "dry-run"
+            job.save()
+            job.thread = threading.Thread(target=self._dry_run, args=(job, max_papers),
+                                          name=f"canopy-dry-{job.run_id}", daemon=True)
+            job.thread.start()
         return job
 
     def dry_run_result(self, job: Job) -> dict[str, Any]:
@@ -392,7 +427,7 @@ class JobManager:
                 yield sse_pack("progress", event, seen)
             last_beat = time.monotonic()
             while True:
-                if job.finished and channel.empty():
+                if job.status in STREAM_END_STATES and channel.empty():
                     break
                 try:
                     event = channel.get(timeout=0.25)
@@ -405,9 +440,13 @@ class JobManager:
                     continue
                 seen = int(event.get("seq") or seen + 1)
                 yield sse_pack("progress", event, seen)
-            yield sse_pack("end", {"stage": "run", "paper": "", "status": job.status,
-                                   "cost_so_far": job.cost_usd, "message": job.error or "",
-                                   "run_id": job.run_id}, seen + 1)
+            started = job.status != "created"
+            yield sse_pack("end", {
+                "stage": "run", "paper": "", "run_id": job.run_id,
+                "status": job.status if started else "not_started",
+                "cost_so_far": job.cost_usd,
+                "message": job.error or ("" if started else
+                                         "this run has not been started yet")}, seen + 1)
         finally:
             job.unsubscribe(channel)
 

@@ -23,6 +23,7 @@ orientation, decided once per measure by two independent agents → confidence �
 """
 from __future__ import annotations
 
+import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -57,6 +58,7 @@ from ..verify.checks import run_checks
 from ..verify.confidence import resolve_cell
 from ..verify.vote import VoteResult, vote_groups
 from .aggregate import AGGREGATED_FLAG, Aggregation, aggregate_one_row_per_paper
+from .overrides import OVERRIDES_FILE, apply_overrides_and_repool, read_overrides
 from .resolve import (ReportedValues, ResolvedValues, StatisticValues, apply_shared_control,
                       multi_group_flags, resolve_effect)
 from .state import (PaperBudgetExceeded, PaperClient, emit, load_manifest, paper_dir,
@@ -71,6 +73,10 @@ FIGURE_KINDS = frozenset({SourceKind.figure_bar, SourceKind.figure_line, SourceK
 
 
 # ----------------------------------------------------------------------------- context
+class RunCancelled(RuntimeError):
+    """`cancel_event` was set: this paper stops here and the run finishes with what it has."""
+
+
 @dataclass
 class RunContext:
     protocol: Protocol
@@ -81,6 +87,15 @@ class RunContext:
     max_usd_per_paper: float | None = None
     progress: Callable[[dict[str, Any]], None] | None = None
     warnings: list[str] = field(default_factory=list)
+    #: set by the caller (the UI's stop button) — checked between papers and between stages
+    cancel_event: threading.Event | None = None
+    #: how a paper is ingested; the server passes a subprocess-backed one so that a PDF built to
+    #: hang a parser takes a child process with it instead of the run
+    ingest_fn: Callable[[Path, Path], PaperRecord] = ingest_pdf
+
+    def stop_if_cancelled(self) -> None:
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise RunCancelled("cancelled by the reviewer")
 
     @property
     def settings(self) -> StatsSettings:
@@ -136,7 +151,7 @@ def _ingest(ctx: RunContext, group: PaperGroup, status: PaperStatus) -> PaperRec
     if ctx.resume and stage_done(ctx.out_dir, group.sha256, "ingest"):
         status.stages["ingest"] = "skipped"
         return PaperRecord.load(directory)
-    paper = ingest_pdf(group.representative, directory)
+    paper = ctx.ingest_fn(group.representative, directory)
     write_stage(ctx.out_dir, group.sha256, "ingest", {
         "sha256": paper.sha256, "filename": paper.filename, "source_path": paper.source_path,
         "out_dir": str(directory), "n_pages": paper.n_pages, "title": paper.title,
@@ -513,9 +528,11 @@ def _run_paper(ctx: RunContext, group: PaperGroup) -> PaperResult:
     paper_client = PaperClient(ctx.client, group.sha256, ctx.max_usd_per_paper)
     paper_ctx = RunContext(protocol=ctx.protocol, out_dir=ctx.out_dir, client=paper_client,
                            models=ctx.models, resume=ctx.resume,
-                           max_usd_per_paper=ctx.max_usd_per_paper, progress=ctx.progress)
+                           max_usd_per_paper=ctx.max_usd_per_paper, progress=ctx.progress,
+                           cancel_event=ctx.cancel_event, ingest_fn=ctx.ingest_fn)
     label = sha12(group.sha256)
     try:
+        ctx.stop_if_cancelled()                            # before this paper starts at all
         emit(ctx.progress, "ingest", label, "started", cost_so_far=ctx.client.total_cost())
         paper = _ingest(paper_ctx, group, status)
         result.paper = paper
@@ -528,6 +545,7 @@ def _run_paper(ctx: RunContext, group: PaperGroup) -> PaperResult:
         emit(ctx.progress, "ingest", label, "done", cost_so_far=ctx.client.total_cost(),
              message=f"{paper.n_pages} pages, {len(paper.figures)} figures")
 
+        ctx.stop_if_cancelled()                            # …and between every two stages
         emit(ctx.progress, "map", label, "started", cost_so_far=ctx.client.total_cost())
         study, file_id = _map(paper_ctx, paper, group, status)
         result.study = study
@@ -545,24 +563,32 @@ def _run_paper(ctx: RunContext, group: PaperGroup) -> PaperResult:
         emit(ctx.progress, "map", label, "done", cost_so_far=ctx.client.total_cost(),
              message=f"{len(study.datasets)} datasets")
 
+        ctx.stop_if_cancelled()                            # …and between every two stages
         emit(ctx.progress, "extract", label, "started", cost_so_far=ctx.client.total_cost())
         result.candidates = _extract(paper_ctx, paper, study, status)
         status.status = "extracted"
         emit(ctx.progress, "extract", label, "done", cost_so_far=ctx.client.total_cost(),
              message=f"{len(result.candidates)} candidates")
 
+        ctx.stop_if_cancelled()                            # …and between every two stages
         emit(ctx.progress, "verify", label, "started", cost_so_far=ctx.client.total_cost())
         result.verdicts = _verify(paper_ctx, paper, study, result.candidates, file_id, status)
         status.status = "verified"
         emit(ctx.progress, "verify", label, "done", cost_so_far=ctx.client.total_cost(),
              message=f"{sum(1 for v in result.verdicts if v.needs_human)} cells need a human")
 
+        ctx.stop_if_cancelled()                            # …and between every two stages
         emit(ctx.progress, "resolve", label, "started", cost_so_far=ctx.client.total_cost())
         result.records = _resolve(paper_ctx, paper, study, result.candidates, result.verdicts,
                                   status)
         status.status = "resolved"
         emit(ctx.progress, "resolve", label, "done", cost_so_far=ctx.client.total_cost(),
              message=f"{len(result.records)} effect sizes")
+    except RunCancelled:
+        status.status = "cancelled"
+        status.error = "cancelled by the reviewer"
+        emit(ctx.progress, "paper", label, "cancelled", cost_so_far=ctx.client.total_cost(),
+             message="stopped before the next stage; --resume will carry on from here")
     except PaperBudgetExceeded as exc:
         status.status = "error"
         status.error = str(exc)
@@ -649,11 +675,19 @@ def run_pipeline(papers_dir: str | Path, protocol_path: str | Path, out_dir: str
                  progress: Callable[[dict[str, Any]], None] | None = None,
                  max_usd_per_paper: float | None = None,
                  client: LLMClient | None = None,
-                 allow_live: bool | None = None) -> RunManifest:
+                 allow_live: bool | None = None,
+                 cancel_event: threading.Event | None = None,
+                 ingest_fn: Callable[[Path, Path], PaperRecord] | None = None) -> RunManifest:
     """Run the whole review and write `<out_dir>`; returns the manifest it saved.
 
     `resume=True` (the default) skips any stage whose file already exists, so re-running after a
     budget stop, a crash or a new paper costs only what is genuinely new.
+
+    `cancel_event` stops the run at the next paper or stage boundary: the papers that had not
+    finished end `status="cancelled"`, everything that did finish is written, and `--resume`
+    carries on from there. `ingest_fn(pdf, out_dir) -> PaperRecord` replaces the ingestion call —
+    the server passes one that runs in a child process with a timeout, so a hostile PDF cannot
+    hang the run.
     """
     started = time.perf_counter()
     out = Path(out_dir)
@@ -667,7 +701,8 @@ def run_pipeline(papers_dir: str | Path, protocol_path: str | Path, out_dir: str
                            allow_live=bool(allow_live) if allow_live is not None
                            else live_enabled())
     ctx = RunContext(protocol=protocol, out_dir=out, client=client, models=chosen, resume=resume,
-                     max_usd_per_paper=max_usd_per_paper, progress=progress)
+                     max_usd_per_paper=max_usd_per_paper, progress=progress,
+                     cancel_event=cancel_event, ingest_fn=ingest_fn or ingest_pdf)
 
     paths = _discover(papers_dir)
     emit(progress, "discover", "", "done", message=f"{len(paths)} PDF file(s)")
@@ -702,6 +737,14 @@ def run_pipeline(papers_dir: str | Path, protocol_path: str | Path, out_dir: str
     manifest.cost_usd = round(client.total_cost(), 6)
     manifest.seconds = round(time.perf_counter() - started, 3)
     save_manifest(out, manifest)
+    if read_overrides(out):
+        # amendment I: this run has just rebuilt every artefact from the stage files, so a
+        # reviewer's decisions would be undone by it. The log outlives what it changes — it is
+        # re-applied here, which is what makes an override survive `canopy run --resume`.
+        summary = apply_overrides_and_repool(out)
+        emit(progress, "review", "", "done", cost_so_far=manifest.cost_usd,
+             message=f"{summary['applied']} override(s) re-applied from {OVERRIDES_FILE}")
+        manifest = load_manifest(out)
     emit(progress, "run", "", "done", cost_so_far=manifest.cost_usd,
          message=f"{len(results)} paper(s), ${manifest.cost_usd:.2f}, "
                  f"{manifest.n_llm_calls} calls")

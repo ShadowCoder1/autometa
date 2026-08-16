@@ -55,7 +55,7 @@
   var state = {
     settings: null, examples: [], runId: "", token: "", run: null, results: null,
     outcome: "", files: [], events: [], papers: {}, source: null, mode: "guided",
-    started: false
+    started: false, returnFocus: null
   };
 
   function toast(message) {
@@ -548,8 +548,9 @@
       onEvent(event);
       source.close();
       state.source = null;
-      $("monitor-sub").textContent = "Run " + (event.status || "finished")
-        + (event.message ? " — " + event.message : "");
+      $("monitor-sub").textContent = (event.status === "not_started"
+        ? "This run has not been started yet."
+        : "Run " + (event.status || "finished") + (event.message ? " — " + event.message : ""));
       refreshRun().then(function () {
         if (event.status === "done" || event.status === "cancelled") { loadResults(); }
       });
@@ -963,8 +964,14 @@
   }
 
   function closeDrawer() {
-    show($("drawer"), false);
+    var drawer = $("drawer");
+    if (drawer.hidden) { return; }
+    show(drawer, false);
     show($("scrim"), false);
+    if (state.returnFocus && document.contains(state.returnFocus)) {
+      state.returnFocus.focus();                 // back where the reader was, not at the top
+    }
+    state.returnFocus = null;
   }
   $("drawer-close").addEventListener("click", closeDrawer);
   $("scrim").addEventListener("click", closeDrawer);
@@ -974,7 +981,9 @@
 
   function openDrawer(datasetId, outcomeKey) {
     if (!datasetId) { return; }
+    state.returnFocus = document.activeElement;
     show($("drawer"), true);
+    $("drawer-close").focus();                   // the drawer is where the keyboard is now
     show($("scrim"), window.matchMedia("(max-width: 52rem)").matches);
     var body = $("drawer-body");
     clear(body);

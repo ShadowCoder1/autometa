@@ -552,7 +552,7 @@ class PaperStatus(CanopyModel):
     paper_id: str
     filename: str = ""
     status: Literal["pending", "ingested", "mapped", "extracted", "verified", "resolved",
-                    "excluded", "error"] = "pending"
+                    "excluded", "error", "cancelled"] = "pending"
     eligible: bool | None = None
     stages: dict[str, str] = Field(default_factory=dict)     # stage -> "done"/"skipped"/error text
     cost_usd: float = 0.0

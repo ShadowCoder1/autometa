@@ -1,9 +1,9 @@
 """Draft a protocol from one sentence (amendment I).
 
-This is a *starting point*, never a finished protocol: the model turns "do older adults adapt
-less?" into the shape of a protocol — two groups with definitions and synonyms, one or more
-outcomes with windows and direction labels, eligibility bullets — and the reviewer then edits
-every line of it. It is the only place in Canopy where a model writes something a human is
+This is a *starting point*, never a finished protocol: the model turns one sentence — "does
+treatment X change outcome Y in adults, compared with controls?" — into the *shape* of a protocol:
+two groups with definitions and synonyms, one or more outcomes with windows and direction labels,
+eligibility bullets. The reviewer then edits every line of it. It is the only place in Canopy where a model writes something a human is
 expected to change rather than to check.
 
 The schema deliberately contains no statistics: the profile is chosen in the form, not by a model,

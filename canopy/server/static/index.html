@@ -67,7 +67,7 @@
           <label class="field grow">
             <span class="label">Describe your review in one sentence</span>
             <input type="text" id="draft-sentence"
-                   placeholder="Do older adults adapt less than younger adults to a visuomotor rotation?">
+                   placeholder="Does treatment X change outcome Y in adults, compared with controls?">
           </label>
           <button type="button" class="btn" id="draft-btn">Draft it for me</button>
         </div>
@@ -212,19 +212,26 @@
     <div class="headline card" id="pooled-card"></div>
 
     <div class="tabs" role="tablist" aria-label="Results views">
-      <button type="button" class="tab is-on" data-tab="forest" role="tab" aria-selected="true">Forest</button>
-      <button type="button" class="tab" data-tab="table" role="tab" aria-selected="false">Extraction table</button>
-      <button type="button" class="tab" data-tab="flags" role="tab" aria-selected="false">Flags</button>
-      <button type="button" class="tab" data-tab="figures" role="tab" aria-selected="false">Figures</button>
-      <button type="button" class="tab" data-tab="downloads" role="tab" aria-selected="false">Downloads</button>
+      <button type="button" class="tab is-on" data-tab="forest" role="tab" id="tab-forest"
+              aria-controls="pane-forest" aria-selected="true">Forest</button>
+      <button type="button" class="tab" data-tab="table" role="tab" id="tab-table"
+              aria-controls="pane-table" aria-selected="false">Extraction table</button>
+      <button type="button" class="tab" data-tab="flags" role="tab" id="tab-flags"
+              aria-controls="pane-flags" aria-selected="false">Flags</button>
+      <button type="button" class="tab" data-tab="figures" role="tab" id="tab-figures"
+              aria-controls="pane-figures" aria-selected="false">Figures</button>
+      <button type="button" class="tab" data-tab="downloads" role="tab" id="tab-downloads"
+              aria-controls="pane-downloads" aria-selected="false">Downloads</button>
     </div>
 
-    <div class="card pane" id="pane-forest">
+    <div class="card pane" id="pane-forest" role="tabpanel" tabindex="0"
+         aria-labelledby="tab-forest">
       <div class="forest-holder" id="forest"></div>
       <p class="hint">Hover a row for its numbers; click it for the evidence behind them.</p>
     </div>
 
-    <div class="card pane" id="pane-table" hidden>
+    <div class="card pane" id="pane-table" role="tabpanel" tabindex="0"
+         aria-labelledby="tab-table" hidden>
       <div class="filters">
         <label class="field inline"><span class="label">Route</span>
           <select id="filter-route"></select></label>
@@ -236,14 +243,17 @@
       <div class="table-wrap"><table class="grid" id="extraction"><thead></thead><tbody></tbody></table></div>
     </div>
 
-    <div class="card pane" id="pane-flags" hidden>
+    <div class="card pane" id="pane-flags" role="tabpanel" tabindex="0"
+         aria-labelledby="tab-flags" hidden>
       <p class="hint">Sorted by how far the pooled estimate would move if the value changed — the
          top of this list is where an hour of your time is worth most.</p>
       <div id="flags"></div>
     </div>
 
-    <div class="card pane" id="pane-figures" hidden><div class="thumbs" id="figures"></div></div>
-    <div class="card pane" id="pane-downloads" hidden><ul class="downloads" id="downloads"></ul></div>
+    <div class="card pane" id="pane-figures" role="tabpanel" tabindex="0"
+         aria-labelledby="tab-figures" hidden><div class="thumbs" id="figures"></div></div>
+    <div class="card pane" id="pane-downloads" role="tabpanel" tabindex="0"
+         aria-labelledby="tab-downloads" hidden><ul class="downloads" id="downloads"></ul></div>
   </section>
 
   <!-- ───────────────────────────────── runs ───────────────────────────────── -->
