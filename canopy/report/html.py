@@ -23,6 +23,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from ..models import EffectSizeRecord, Protocol, RunManifest
 from ..stats.meta import MetaResult, prediction_interval
 from . import theme
+from .naming import url_path
 from .theme import estimator_label, pi_label, variance_label
 
 __all__ = ["write_html_report", "methods_paragraph", "human_review_table",
@@ -83,6 +84,16 @@ def _rel(path: Any, run_dir: Path) -> str:
         return Path(path).resolve().relative_to(run_dir.resolve()).as_posix()
     except (ValueError, TypeError):                        # outside the run: link by name only
         return Path(str(path)).name
+
+
+def _link(path: Any, run_dir: Path) -> str:
+    """A run-relative path as an `href`/`src` value: percent-encoded, then HTML-escaped.
+
+    Both steps are needed and they are not the same step. Encoding is what makes a name that
+    contains `#`, `%` or a space reach its file at all (a browser truncates a URL at `#`);
+    escaping is what stops a file name from closing the attribute.
+    """
+    return _e(url_path(_rel(path, run_dir)))
 
 
 def _num(value: Any, digits: int = 2) -> str:
@@ -147,7 +158,7 @@ def _links(outputs: Mapping[str, Any], run_dir: Path, keys: Sequence[str]) -> st
         path = outputs.get(key)
         if path is None:
             continue
-        parts.append(f'<a href="{_e(_rel(path, run_dir))}">{_e(key.replace("_", " "))}</a>')
+        parts.append(f'<a href="{_link(path, run_dir)}">{_e(key.replace("_", " "))}</a>')
     return f'<p class="files">{"".join(parts)}</p>' if parts else ""
 
 
@@ -222,7 +233,10 @@ def methods_paragraph(manifest: RunManifest, protocol: Protocol,
             pi_low = pi_high = float("nan")
             pi_df = 0
         papers_k = len({r.cluster_id or r.paper_id or r.dataset_id for r in rows})
-        lines.append(
+        # the pooled sentence is written whether or not the protocol still carries this outcome
+        # key (a run can be re-pooled against an edited protocol); only the direction sentence
+        # depends on the outcome definition, so only that one is conditional
+        sentence = (
             f"For **{label}**, k = {pooled.k} datasets from {papers_k} papers were pooled "
             f"(a further {len(held)} were held for human review). The pooled "
             f"{estimator_label(settings)} was {pooled.estimate:.2f} "
@@ -230,9 +244,12 @@ def methods_paragraph(manifest: RunManifest, protocol: Protocol,
             f"{'t' if pooled.hakn else 'z'} = {pooled.z:.2f}, p {theme.fmt_p(pooled.p)}), with "
             f"τ² = {pooled.tau2:.3f}, I² = {100 * pooled.I2:.1f}% and a "
             f"{settings.ci_level * 100:g}% prediction interval of {pi_low:.2f} to {pi_high:.2f}"
-            f"{f' (df = {pi_df})' if isinstance(pi_df, int) else ''}. "
-            f"Positive values mean “{outcome.positive_direction_label}” and negative values "
-            f"“{outcome.negative_direction_label}”." if outcome is not None else "")
+            f"{f' (df = {pi_df})' if isinstance(pi_df, int) else ''}.")
+        if outcome is not None and (outcome.positive_direction_label
+                                    or outcome.negative_direction_label):
+            sentence += (f" Positive values mean “{outcome.positive_direction_label}” and "
+                         f"negative values “{outcome.negative_direction_label}”.")
+        lines.append(sentence)
         lines.append("")
     lines.append("Sensitivity analyses re-pooled each outcome excluding figure-derived rows, "
                  "excluding rows converted from test statistics, including the rows held for "
@@ -252,7 +269,7 @@ def provenance_table(entries: Mapping[str, Mapping[str, Any]], run_dir: Path) ->
                                                          str(e.get("outcome_key", "")),
                                                          str(e.get("group", "")))):
         crop = entry.get("crop") or ""
-        link = (f'<a href="{_e(_rel(crop, run_dir))}">evidence</a>' if crop
+        link = (f'<a href="{_link(crop, run_dir)}">evidence</a>' if crop
                 else _e(entry.get("note", "") or "—"))
         value = entry.get("mean")
         spread = entry.get("dispersion_value")
@@ -328,12 +345,13 @@ def write_html_report(run_dir: str | Path, manifest: RunManifest, protocol: Prot
         forest = outputs.get("forest_png")
         if forest is not None:
             parts.append(
-                f'<figure><img src="{_e(_rel(forest, directory))}" '
+                f'<figure><img src="{_link(forest, directory)}" '
                 f'alt="Forest plot for {_e(outcome.label if outcome else key)}">'
-                f"<figcaption>Squares are individual datasets, area proportional to their "
-                f"random-effects weight; the diamond is the pooled estimate and the bar beneath "
-                f"it the prediction interval. Hollow squares were held for human review and are "
-                f"not pooled.</figcaption></figure>")
+                f"<figcaption>Squares are individual datasets; a square's area grows with "
+                f"its random-effects weight (from a floor, so a near-zero weight is still "
+                f"visible — the exact weight is printed beside it). The diamond is the pooled "
+                f"estimate and the bar beneath it the prediction interval. Hollow squares were "
+                f"held for human review and are not pooled.</figcaption></figure>")
         for name, caption in (("sensitivity_png",
                                "Each panel re-pools this outcome under one changed choice."),
                               ("funnel_png",
@@ -341,7 +359,7 @@ def write_html_report(run_dir: str | Path, manifest: RunManifest, protocol: Prot
                                "the accompanying JSON.")):
             path = outputs.get(name)
             if path is not None:
-                parts.append(f'<figure><img src="{_e(_rel(path, directory))}" alt="{_e(name)}">'
+                parts.append(f'<figure><img src="{_link(path, directory)}" alt="{_e(name)}">'
                              f"<figcaption>{_e(caption)}</figcaption></figure>")
         parts.append(_links(outputs, directory, [
             "forest_png", "forest_svg", "forest_pdf", "extraction_csv", "extraction_json",
@@ -351,14 +369,14 @@ def write_html_report(run_dir: str | Path, manifest: RunManifest, protocol: Prot
     methods_fig = run_outputs.get("methods_fig_png")
     if methods_fig is not None:
         parts.append("<h2>How each value was obtained</h2>")
-        parts.append(f'<figure><img src="{_e(_rel(methods_fig, directory))}" '
+        parts.append(f'<figure><img src="{_link(methods_fig, directory)}" '
                      f'alt="Extraction routes"><figcaption>Share of datasets by extraction '
                      f"route, with real examples: page crops with the extracted quote "
                      f"highlighted, and the digitiser's overlays.</figcaption></figure>")
     prisma = run_outputs.get("prisma_png")
     if prisma is not None:
         parts.append("<h2>Flow of records</h2>")
-        parts.append(f'<figure><img src="{_e(_rel(prisma, directory))}" alt="PRISMA-style flow">'
+        parts.append(f'<figure><img src="{_link(prisma, directory)}" alt="PRISMA-style flow">'
                      f"<figcaption>Files found → unique papers → eligible papers → datasets → "
                      f"datasets included.</figcaption></figure>")
 
@@ -374,7 +392,7 @@ def write_html_report(run_dir: str | Path, manifest: RunManifest, protocol: Prot
         parts.append(provenance_table(provenance, directory))
         prov_json = run_outputs.get("provenance_json")
         if prov_json is not None:
-            parts.append(f'<p class="files"><a href="{_e(_rel(prov_json, directory))}">'
+            parts.append(f'<p class="files"><a href="{_link(prov_json, directory)}">'
                          f"provenance.json</a></p>")
 
     parts.append("<h2>Exclusions</h2>")

@@ -20,6 +20,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from ..ingest.pdf import FigureRegion, PaperRecord
 from ..models import Candidate
+from .naming import safe_name
 from .theme import ACCENT
 
 __all__ = ["quote_crop", "figure_provenance", "provenance_bundle", "normalise_words"]
@@ -181,7 +182,9 @@ def provenance_bundle(paper: PaperRecord | Iterable[PaperRecord], candidates: Se
             "n": candidate.n, "unit": candidate.unit, "sigma": candidate.sigma,
             "grounded": candidate.grounded, "matched": False, "crop": "", "note": "",
         }
-        target = directory / f"{candidate.candidate_id or 'candidate'}.png"
+        # a candidate id carries `:` and ends in `#N`; a browser truncates a link at the `#`,
+        # so the file it points at is named with the shared sanitiser and nothing else
+        target = directory / f"{safe_name(candidate.candidate_id or 'candidate')}.png"
         existing = candidate.overlay_path or candidate.crop_path
         figure_id = str((candidate.pixel_provenance or {}).get("figure_id") or "")
         if existing and record is not None and (Path(record.out_dir) / existing).exists():

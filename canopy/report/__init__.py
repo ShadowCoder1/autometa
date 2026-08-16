@@ -9,6 +9,7 @@ from .forest import forest_layout, forest_plot
 from .html import (human_review_table, methods_paragraph, provenance_table,
                    write_html_report)
 from .methods_fig import methods_figure, route_counts, route_examples, route_group
+from .naming import safe_name, url_path
 from .outputs import outcome_dir, write_outcome_outputs
 from .provenance import figure_provenance, provenance_bundle, quote_crop
 from .tables import (EXCLUSION_REASONS, EXTRACTION_COLUMNS, SENSITIVITY_ANALYSES,
@@ -22,4 +23,4 @@ __all__ = ["forest_plot", "forest_layout", "extraction_table", "EXTRACTION_COLUM
            "pool_rows", "write_rows", "methods_figure", "route_counts", "route_examples",
            "route_group", "quote_crop", "figure_provenance", "provenance_bundle",
            "write_html_report", "methods_paragraph", "human_review_table", "provenance_table",
-           "write_outcome_outputs", "outcome_dir", "dump_json"]
+           "write_outcome_outputs", "outcome_dir", "dump_json", "safe_name", "url_path"]

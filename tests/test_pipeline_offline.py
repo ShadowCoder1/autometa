@@ -14,11 +14,13 @@ from __future__ import annotations
 import csv
 import json
 import re
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from canopy.config import MODELS
 from canopy.llm.client import LLMClient, MissingFixture
 from canopy.llm.providers import FakeProvider, LLMRequest
 
@@ -170,16 +172,23 @@ def _mapper_payload(paper, page: int, quote: str) -> dict[str, Any]:
     }
 
 
-def _sources_payload(page: int, quote: str) -> dict[str, Any]:
-    source = {"kind": "text_mean_sd", "page": page, "locator": "Results \u00b61", "quote": quote,
-              "figure_id": None, "table_id": None, "error_bar_type": "SD",
-              "error_bar_scope": "between_subject", "error_bar_evidence": quote,
-              "analysis_metric": "endpoint", "values_in_text": quote, "notes": ""}
+def _sources_payload(page: int, quote: str, figure=None) -> dict[str, Any]:
+    sources = [{"kind": "text_mean_sd", "page": page, "locator": "Results \u00b61", "quote": quote,
+                "figure_id": None, "table_id": None, "error_bar_type": "SD",
+                "error_bar_scope": "between_subject", "error_bar_evidence": quote,
+                "analysis_metric": "endpoint", "values_in_text": quote, "notes": ""}]
+    if figure is not None:                                 # \u2026and the same value plotted
+        sources.append({
+            "kind": "figure_bar", "page": figure.page, "locator": figure.label or "Fig 1",
+            "quote": figure.caption[:200], "figure_id": figure.id, "table_id": None,
+            "error_bar_type": "SD", "error_bar_scope": "between_subject",
+            "error_bar_evidence": figure.caption[:200], "analysis_metric": "endpoint",
+            "values_in_text": "", "notes": ""})
     return {"notes": "", "datasets": [{"dataset_index": 1, "outcomes": [{
         "outcome_key": "late_adaptation", "measure_name": "mean direction error",
         "units": "deg", "higher_is_better": False,
         "higher_is_better_evidence": quote, "operationalization": "mean of the last block",
-        "analysis_metric": "endpoint", "sources": [source]}]}]}
+        "analysis_metric": "endpoint", "sources": sources}]}]}
 
 
 def _crosscheck_payload() -> dict[str, Any]:
@@ -202,18 +211,54 @@ def _text_group(group: str, page: int, quote: str, mean: float, sd: float) -> di
 
 
 class FakeSpec:
-    """One paper's canned answers, plus the strings that identify its requests."""
+    """One paper's canned answers, plus the strings that identify its requests.
 
-    def __init__(self, paper, mean_a: float, mean_b: float, sd: float = 6.0):
+    The knobs are the four wiring branches a text-only, agreeing paper never reaches:
+    `figure_id` makes the mapper report a figure source (so `digitize()` runs), `disagreement`
+    makes the second text extractor read a different number (so the vote asks for a third
+    candidate and the adjudicator is called), and `refute` makes every verifier refute (so the
+    cell is re-opened up to the amendment-G limit).
+    """
+
+    def __init__(self, paper, mean_a: float, mean_b: float, sd: float = 6.0, *,
+                 figure_id: str = "", disagreement: float = 0.0, refute: bool = False):
         self.paper = paper
         self.page, self.quote, printed_a, printed_b = _quote_with_numbers(paper)
         self.mean_a = mean_a if mean_a is not None else printed_a
         self.mean_b = mean_b if mean_b is not None else printed_b
         self.sd = sd
+        self.disagreement = disagreement
+        self.refute = refute
+        self.figure = next((f for f in paper.figures if f.id == figure_id), None)
+        self.figure_size = (600, 400)
+        if self.figure is not None:
+            from PIL import Image
+
+            with Image.open(Path(paper.out_dir) / self.figure.crop_png) as image:
+                self.figure_size = image.size
         self.markers = [self.quote[:60]]
         self.markers += [f.caption[:40] for f in paper.figures if len(f.caption) > 20]
         self.markers += [t.caption[:40] for t in paper.tables if len(t.caption) > 20]
         self.markers = [m for m in self.markers if m.strip()]
+
+    # the digitiser's own two payloads, on the crop's real pixel geometry ------------------
+    def _y_px(self, value: float) -> float:
+        """A linear axis: value 0 at 90% of the height, ten units per 12% of the height."""
+        return self.figure_size[1] * (0.9 - 0.012 * value)
+
+    def coords_payload(self) -> dict[str, Any]:
+        width = self.figure_size[0]
+        groups = []
+        for key, mean, x in (("A", self.mean_a, 0.35), ("B", self.mean_b, 0.65)):
+            groups.append({
+                "group": key, "label_read": "elderly" if key == "A" else "young",
+                "x_px": width * x, "y_px": self._y_px(mean),
+                "bar_x0_px": width * (x - 0.06), "bar_x1_px": width * (x + 0.06),
+                "cap_top_px": self._y_px(mean + self.sd),
+                "cap_bottom_px": self._y_px(mean - self.sd), "notes": ""})
+        return {"status": "found", "panel": "Fig 1", "unit": "deg", "confidence": 0.9, "notes": "",
+                "ticks": [{"value": v, "y_px": self._y_px(v)} for v in (0, 10, 20, 30, 40, 50)],
+                "groups": groups}
 
 
 def _request_text(request: LLMRequest) -> str:
@@ -228,6 +273,27 @@ def _request_text(request: LLMRequest) -> str:
             if isinstance(block, dict) and block.get("type") == "text":
                 parts.append(str(block.get("text", "")))
     return "\n".join(parts)
+
+
+def _digitizer_turn(request: LLMRequest, spec: "FakeSpec") -> Any:
+    """The digitiser's three tool loops, scripted the way `tests/test_digitizer.py` scripts them."""
+    from tests.test_digitizer import _readout_payload
+
+    system = _system_text(request)
+    tools = request.tools or []
+    name = next((t["name"] for t in tools if "submit" in str(t.get("name", ""))),
+                tools[-1]["name"] if tools else "submit")
+    if "read numeric values" in system:
+        payload: Any = _readout_payload(spec.mean_a, spec.sd, spec.mean_b, spec.sd)
+    elif "locate features" in system:
+        payload = spec.coords_payload()
+    else:                                                  # overlay verification
+        payload = {"marks": [], "notes": ""}
+    return [{"type": "tool_use", "id": "t1", "name": name, "input": payload}]
+
+
+def _system_text(request: LLMRequest) -> str:
+    return request.system if isinstance(request.system, str) else json.dumps(request.system)
 
 
 def fake_router(specs: "list[FakeSpec]"):
@@ -246,9 +312,7 @@ def fake_router(specs: "list[FakeSpec]"):
         spec = which(request)
         page, quote, sd = spec.page, spec.quote, spec.sd
         if request.tools:                                  # the digitiser's tool loop
-            final = next((t for t in request.tools if "submit" in str(t.get("name", ""))),
-                         request.tools[-1])
-            return [{"type": "tool_use", "id": "t1", "name": final["name"], "input": {}}]
+            return _digitizer_turn(request, spec)
         if {"citation", "datasets", "roster"} <= props:
             return _mapper_payload(spec.paper, page, quote)
         if "roster_error_bars" in props:
@@ -259,7 +323,7 @@ def fake_router(specs: "list[FakeSpec]"):
             return {"eligible": True, "eligibility_rationale": "", "notes": "",
                     "error_bar_rulings": [], "datasets": []}
         if props == {"datasets", "notes"}:
-            return _sources_payload(page, quote)
+            return _sources_payload(page, quote, spec.figure)
         if "statistics" in props:
             return {"notes": "", "statistics": []}
         if "groups" in props and "rationale" in props:     # adjudicator
@@ -271,10 +335,21 @@ def fake_router(specs: "list[FakeSpec]"):
                                 "needs_human": False}
                                for g, m in (("A", spec.mean_a), ("B", spec.mean_b))]}
         if "groups" in props:                              # text extractor
+            # the second reader (a different model) is the one that can disagree
+            shift = spec.disagreement if request.model != MODELS["primary"] else 0.0
             return {"notes": "",
-                    "groups": [_text_group("A", page, quote, spec.mean_a, sd),
-                               _text_group("B", page, quote, spec.mean_b, sd)]}
+                    "groups": [_text_group("A", page, quote, spec.mean_a + shift, sd),
+                               _text_group("B", page, quote, spec.mean_b + shift, sd)]}
         if "verdict" in props:
+            if spec.refute:
+                return {"verdict": "refuted",
+                        "reason": "the quoted sentence reports the baseline block, not the "
+                                  "late block this outcome asks for",
+                        "checked": ["wrong_group", "wrong_time_window", "se_vs_sd"],
+                        "alt_mean": None, "alt_dispersion_value": None,
+                        "alt_dispersion_type": "UNKNOWN", "alt_n": None, "alt_page": None,
+                        "alt_quote": "", "better_source": "", "better_source_page": None,
+                        "notes": ""}
             return {"verdict": "confirmed", "reason": "the value is printed on this page",
                     "checked": ["wrong_group", "se_vs_sd", "time_window"], "alt_mean": None,
                     "alt_dispersion_value": None, "alt_dispersion_type": "UNKNOWN",
@@ -319,6 +394,37 @@ def papers_dir(tmp_path):
     return directory
 
 
+@pytest.fixture(scope="module")
+def hard_specs(tmp_path_factory) -> "list[FakeSpec]":
+    """Bock again, but as the paper the wiring is afraid of.
+
+    A plotted source (so the digitiser runs), two text readers that disagree (so the vote asks for
+    a third candidate and the adjudicator is called) and a verifier that refuses to confirm (so
+    the cell is re-opened).
+    """
+    from canopy.ingest.pdf import ingest_pdf
+
+    root = tmp_path_factory.mktemp("hard_papers")
+    paper = ingest_pdf(PDFS[0], root / PDFS[0].stem)
+    return [FakeSpec(paper, 44.6, 30.2, figure_id="fig01", disagreement=9.0, refute=True)]
+
+
+@pytest.fixture
+def hard_client(hard_specs):
+    return LLMClient(provider=FakeProvider([fake_router(hard_specs)]), allow_live=True,
+                     cache_dir=None)
+
+
+@pytest.fixture
+def bock_dir(tmp_path):
+    import shutil
+
+    directory = tmp_path / "one_paper"
+    directory.mkdir()
+    shutil.copyfile(PDFS[0], directory / PDFS[0].name)
+    return directory
+
+
 def test_offline_run_produces_every_artefact(tmp_path, papers_dir, fake_client):
     from canopy.pipeline.run import run_pipeline
 
@@ -338,6 +444,13 @@ def test_offline_run_produces_every_artefact(tmp_path, papers_dir, fake_client):
     assert len(rows) >= 1
     assert rows[0]["dataset_id"] and rows[0]["outcome_key"] == "late_adaptation"
     assert rows[0]["route"] and rows[0]["conversion_chain"]
+    assert rows[0]["primary_row"] in ("true", "false")
+
+    combined = list(csv.DictReader(                      # one table for the whole run as well
+        (out / "results" / "extraction_table_all.csv").open(newline="", encoding="utf-8")))
+    assert len(combined) >= len(rows)
+    assert {r["outcome_key"] for r in combined} >= {"late_adaptation"}
+    assert any(r["primary_row"] == "true" for r in combined)
 
     assert manifest.papers and manifest.papers[0].status == "resolved"
     assert manifest.papers[0].stages == {s: "done" for s in
@@ -428,6 +541,141 @@ def test_validate_repools_a_finished_run_without_any_model_call(tmp_path, papers
     assert report["protocol_matches_manifest"] is True
 
 
+def test_the_riskiest_branches_all_execute_offline(tmp_path, bock_dir, hard_client, monkeypatch):
+    """digitize → third candidate → adjudication → a verifier re-open, in one green run.
+
+    Also the controller's ruling on what may vote: the digitiser contributes four or five route
+    samples per group, and only its ENSEMBLE candidate is allowed into the vote — a printed value
+    must not be outvoted by however many ways one picture was measured.
+    """
+    from canopy.pipeline import run as run_module
+    from canopy.pipeline.state import read_stage
+
+    seen: list[list[Any]] = []
+    real_vote = run_module.vote_groups
+
+    def spy(candidates, *args, **kwargs):
+        seen.append(list(candidates))
+        return real_vote(candidates, *args, **kwargs)
+
+    monkeypatch.setattr(run_module, "vote_groups", spy)
+
+    out = tmp_path / "run"
+    manifest = run_module.run_pipeline(bock_dir, PROTOCOL, out, client=hard_client, concurrency=1)
+    sha = manifest.papers[0].paper_id
+    assert manifest.papers[0].error == ""
+
+    extract = read_stage(out, sha, "extract")
+    extractors = {c["extractor_id"] for c in extract["candidates"]}
+    assert any(e.startswith("digitize:") and e != "digitize:ensemble" for e in extractors), \
+        "the digitiser's route samples are missing from the stage file"
+    assert "digitize:ensemble" in extractors
+
+    verify = read_stage(out, sha, "verify")
+    assert len(verify["adjudications"]) >= 1               # the disagreement reached adjudication
+    assert len(verify["extra_candidates"]) >= 1            # amendment G's third cheap reading
+    assert verify["reopens"] >= 1                          # …and the verifier re-opened the cell
+
+    voted = [cell for cell in seen
+             if any(c.extractor_id.startswith("digitize:") for c in cell)]
+    assert voted, "no figure candidate reached the vote at all"
+    for cell in voted:
+        figures = [c for c in cell if c.extractor_id.startswith("digitize:")]
+        assert all(c.extractor_id == "digitize:ensemble" for c in figures), \
+            "a per-route digitiser sample reached the vote"
+        counts = Counter(c.group for c in figures)
+        assert set(counts.values()) == {1}, f"more than one figure candidate per group: {counts}"
+
+
+def test_only_the_ensemble_figure_candidate_is_offered_to_the_vote():
+    """The unit behind the ruling: route samples stay in the stage file, the ensemble votes."""
+    from canopy.models import Candidate
+    from canopy.pipeline.run import vote_candidates
+
+    def figure(extractor_id: str, group: str) -> Candidate:
+        return Candidate(candidate_id=f"d1:late:{group}:{extractor_id}", dataset_id="d1",
+                         outcome_key="late", kind="group_stats", group=group, mean=30.0,
+                         route="figure", extractor_id=extractor_id, model="claude-opus-5")
+
+    text = [Candidate(candidate_id=f"d1:late:{g}:text", dataset_id="d1", outcome_key="late",
+                      kind="group_stats", group=g, mean=31.0, route="text_mean_sd",
+                      extractor_id="text:table_first", model="claude-opus-5")
+            for g in ("A", "B")]
+    samples = [figure(f"digitize:{route}:claude-opus-5:direct", g)
+               for route in ("readout", "coords", "raster", "vector") for g in ("A", "B")]
+    ensemble = [figure("digitize:ensemble", g) for g in ("A", "B")]
+
+    kept = vote_candidates([*text, *samples, *ensemble])
+    assert [c.extractor_id for c in kept if c.extractor_id.startswith("digitize:")] == \
+        ["digitize:ensemble", "digitize:ensemble"]
+    assert [c.candidate_id for c in text] == [c.candidate_id for c in kept
+                                              if not c.extractor_id.startswith("digitize:")]
+    assert vote_candidates([]) == []
+
+
+def test_one_row_per_paper_aggregates_the_primary_analysis_and_records_what_it_replaced():
+    """Amendment A in the orchestrator's own split: combine, keep the paper trail, never select."""
+    from canopy.models import EffectSizeRecord, StatsSettings
+    from canopy.pipeline.aggregate import AGGREGATED_FLAG
+    from canopy.pipeline.run import _split_rows
+
+    def row(dataset_id, es, var, sample_id="", confidence="auto_accept"):
+        return EffectSizeRecord(paper_id="p1", cluster_id="p1", sample_id=sample_id,
+                                dataset_id=dataset_id, outcome_key="late_adaptation", es=es,
+                                var=var, se=var ** 0.5, route="text_mean_sd",
+                                confidence=confidence)
+
+    rows = [row("d1", -1.2, 0.16, "p1|Experiment 1"), row("d2", -0.4, 0.36, "p1|Experiment 2"),
+            row("d3", -3.0, 0.20, confidence="needs_human")]
+
+    split = _split_rows(rows, StatsSettings(one_row_per_paper=True))
+    assert len(split.primary) == 1                       # one row for this paper, not the best row
+    assert AGGREGATED_FLAG in split.primary[0].flags
+    assert [r.dataset_id for r in split.held] == ["d3"]  # held rows are never aggregated away
+    assert {r.dataset_id for r in split.every} >= {"d1", "d2", "d3", "d1+d2"}
+    assert sorted(e["dataset_id"] for e in split.exclusions) == ["d1", "d2"]
+    assert all(e["reason"].startswith("aggregated_into:") for e in split.exclusions)
+
+    off = _split_rows(rows, StatsSettings(one_row_per_paper=False))
+    assert [r.dataset_id for r in off.primary] == ["d1", "d2"]
+    assert off.exclusions == []
+
+
+def test_prisma_still_adds_up_when_max_papers_stops_the_run_early(tmp_path, papers_dir,
+                                                                  fake_client):
+    """A partial run must not claim it excluded the papers it never opened."""
+    from canopy.pipeline.run import run_pipeline
+
+    out = tmp_path / "run"
+    run_pipeline(papers_dir, PROTOCOL, out, client=fake_client, concurrency=1, max_papers=1)
+    prisma = json.loads((out / "prisma.json").read_text())
+    assert prisma["unique_papers"] == 2                   # both papers are in the folder
+    assert prisma["not_processed"] == 1                   # …one was never looked at
+    assert prisma["papers_excluded"] == 0                 # …and nothing was rejected
+    assert prisma["consistent"] is True, prisma["problems"]
+
+
+def test_validate_reads_the_protocol_the_run_kept_beside_its_stage_files(tmp_path, papers_dir,
+                                                                         fake_client):
+    """`canopy run` copies the protocol into the run; re-pooling must use that copy."""
+    import shutil
+
+    from canopy.pipeline.run import revalidate, run_pipeline
+
+    moved = tmp_path / "elsewhere" / "protocol.yaml"
+    moved.parent.mkdir(parents=True)
+    shutil.copyfile(PROTOCOL, moved)
+    out = tmp_path / "run"
+    run_pipeline(papers_dir, moved, out, client=fake_client, concurrency=1)
+    shutil.copyfile(moved, out / "protocol.yaml")         # what the CLI writes
+    moved.unlink()                                        # the user's own copy is gone
+
+    report = revalidate(out)
+    assert report["records"] >= 1
+    assert report["protocol_matches_manifest"] is True
+    assert "late_adaptation" in report["outcomes"]
+
+
 def test_target_spec_is_built_from_the_mapper_and_the_protocol():
     from canopy.models import DispersionType, OutcomeSources, Source, SourceKind
     from canopy.pipeline.run import target_for_source
@@ -509,12 +757,27 @@ def test_cli_validate_fails_loudly_when_an_artefact_is_missing(tmp_path, papers_
     assert "missing output" in result.output
 
 
-def test_cli_serve_says_what_is_missing_until_task_12_lands():
+def test_cli_serve_hands_off_to_the_web_ui_and_never_binds_a_port(monkeypatch):
+    """`canopy serve` delegates to the Task-12 server, and says what is missing when it is absent.
+
+    The server is stubbed out on purpose: a test that really called `serve` would bind a socket
+    and never return (it did, once — that is why this test looks like this).
+    """
     from canopy.cli import app
 
-    result = _runner().invoke(app, ["serve"])
-    assert result.exit_code == 1
-    assert "report.html" in result.output
+    try:
+        from canopy.server import app as server_app
+    except Exception:                                      # the UI is not in this build
+        result = _runner().invoke(app, ["serve"])
+        assert result.exit_code == 1
+        assert "report.html" in result.output
+        return
+
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(server_app, "serve", lambda **kwargs: seen.update(kwargs))
+    result = _runner().invoke(app, ["serve", "--port", "8123", "--host", "127.0.0.1"])
+    assert result.exit_code == 0, result.output
+    assert seen["port"] == 8123 and seen["host"] == "127.0.0.1"
 
 
 def test_cli_never_prints_the_api_key(tmp_path, papers_dir, monkeypatch):
@@ -585,3 +848,12 @@ def test_the_run_writes_a_provenance_bundle_the_report_links(tmp_path, papers_di
 
     html = (out / "report.html").read_text(encoding="utf-8")
     assert "Provenance" in html and "provenance/" in html
+
+    # …and every one of those links actually opens a file: candidate ids carry `:` and end in
+    # `#N`, and a browser truncates a URL at the `#`
+    from tests.test_report import local_links
+
+    targets = local_links(html)
+    assert any("provenance/" in t for t in targets)
+    missing = sorted({t for t in targets if not (out / t).exists()})
+    assert missing == [], f"dead links in the run's report.html: {missing}"

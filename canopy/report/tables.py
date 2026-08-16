@@ -40,11 +40,15 @@ __all__ = ["extraction_table", "EXTRACTION_COLUMNS", "exclusions_table", "EXCLUS
            "SENSITIVITY_ANALYSES", "funnel_plot", "prisma_flow", "PRISMA_CHAIN", "pool_rows",
            "write_rows", "dump_json"]
 
-#: the reasons a paper or a dataset can leave the review — a free-text reason becomes `other`
+#: the reasons a paper or a dataset can leave the review — a free-text reason becomes `other`.
+#: A reason may carry a target after a colon (`aggregated_into:d1+d2`): the part before the colon
+#: is the enum, the whole string is kept in `reason_as_given`.
 EXCLUSION_REASONS: tuple[str, ...] = (
     "duplicate", "not_eligible", "ineligible_design", "no_usable_data", "outcome_not_reported",
-    "not_convertible", "needs_human", "superseded_by_dataset_rule", "ingest_failed",
+    "not_convertible", "needs_human", "aggregated", "superseded_by_dataset_rule", "ingest_failed",
     "budget_exhausted", "error", "human_override", "other")
+#: `aggregated_into:<row>` is written by the within-paper aggregation and read as `aggregated`
+_REASON_ALIASES: dict[str, str] = {"aggregated_into": "aggregated"}
 
 #: the analyses amendment H requires; `by_analysis_metric` fans out to one entry per metric
 SENSITIVITY_ANALYSES: tuple[str, ...] = (
@@ -52,10 +56,13 @@ SENSITIVITY_ANALYSES: tuple[str, ...] = (
     "hartung_knapp", "normal_z", "with_digitization_variance", "without_digitization_variance",
     "by_analysis_metric", "one_row_per_paper", "all_rows")
 
-PRISMA_CHAIN: tuple[tuple[str, str, str], ...] = (
-    ("files", "duplicates_removed", "unique_papers"),
-    ("unique_papers", "papers_excluded", "eligible_papers"),
-    ("datasets", "datasets_excluded", "included_datasets"),
+#: `(start, removals, end)` — every step must satisfy `start − Σ removals = end`. `not_processed`
+#: is what `--max-papers` left out: a partial run still has to add up, so the papers it never
+#: looked at are a removal of their own rather than being folded into "excluded".
+PRISMA_CHAIN: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    ("files", ("duplicates_removed",), "unique_papers"),
+    ("unique_papers", ("not_processed", "papers_excluded"), "eligible_papers"),
+    ("datasets", ("datasets_excluded",), "included_datasets"),
 )
 
 
@@ -76,8 +83,16 @@ def _cell(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, float):
-        return "" if math.isnan(value) else repr(round(value, 10)).rstrip("0").rstrip(".") \
-            if value != int(value) else str(int(value))
+        # NaN is "no value" and prints as empty; ±inf is a value (a variance that overflowed, a
+        # ratio with a zero denominator) and prints as itself. `int(inf)` raises, so neither may
+        # reach the rounding branch.
+        if math.isnan(value):
+            return ""
+        if math.isinf(value):
+            return "inf" if value > 0 else "-inf"
+        if value == int(value):
+            return str(int(value))
+        return repr(round(value, 10)).rstrip("0").rstrip(".")
     if isinstance(value, (list, tuple, set)):
         return "; ".join(str(v) for v in value)
     if isinstance(value, dict):
@@ -143,8 +158,8 @@ def write_rows(rows: Sequence[Mapping[str, Any]], out_stem: str | Path, columns:
 
 # ----------------------------------------------------------------------------- extraction table
 EXTRACTION_COLUMNS: tuple[str, ...] = (
-    "paper_id", "cluster_id", "dataset_id", "outcome_key", "label", "first_author", "year",
-    "route", "analysis_metric", "confidence", "flags",
+    "paper_id", "cluster_id", "sample_id", "dataset_id", "outcome_key", "label", "first_author",
+    "year", "primary_row", "route", "analysis_metric", "confidence", "flags",
     "n_a", "mean_a", "dispersion_a", "dispersion_type_a", "unit_a", "route_a",
     "page_a", "quote_a", "crop_a", "overlay_a", "sigma_a",
     "n_b", "mean_b", "dispersion_b", "dispersion_type_b", "unit_b", "route_b",
@@ -196,9 +211,11 @@ def _group_provenance(record: EffectSizeRecord, group: str, verdicts: Mapping[tu
 
 
 def extraction_row(record: EffectSizeRecord, verdicts: Mapping[tuple, Verdict],
-                   candidates: Mapping[str, Candidate]) -> dict[str, Any]:
+                   candidates: Mapping[str, Candidate],
+                   primary_row: bool | None = None) -> dict[str, Any]:
     row: dict[str, Any] = {
         "paper_id": record.paper_id, "cluster_id": record.cluster_id,
+        "sample_id": record.sample_id, "primary_row": primary_row,
         "dataset_id": record.dataset_id, "outcome_key": record.outcome_key,
         "label": record.label, "first_author": record.citation.first_author,
         "year": record.citation.year, "route": record.route,
@@ -226,11 +243,23 @@ def extraction_row(record: EffectSizeRecord, verdicts: Mapping[tuple, Verdict],
 
 def extraction_table(rows: Sequence[EffectSizeRecord], out_stem: str | Path, *,
                      verdicts: Sequence[Verdict] = (), candidates: Sequence[Candidate] = (),
+                     primary: Sequence[EffectSizeRecord] | None = None,
                      formats: Sequence[str] = ("csv", "json", "xlsx")) -> dict[str, Path]:
-    """One row per dataset × outcome, with the raw values and where each of them was read."""
+    """One row per dataset × outcome, with the raw values and where each of them was read.
+
+    `rows` is EVERY row the outcome produced — the ones that were pooled, the ones a paper's
+    aggregation replaced and the ones held for review — because this is the table a reviewer
+    checks the review with. `primary` names the subset that actually entered the pool; each row
+    then carries `primary_row`. Without it the column is left empty rather than guessed.
+    """
     by_cell = {(v.dataset_id, v.outcome_key, v.group): v for v in verdicts}
     by_id = {c.candidate_id: c for c in candidates}
-    table = [extraction_row(record, by_cell, by_id) for record in rows]
+    in_primary = (None if primary is None
+                  else {(r.dataset_id, r.outcome_key) for r in primary})
+    table = [extraction_row(record, by_cell, by_id,
+                            None if in_primary is None
+                            else (record.dataset_id, record.outcome_key) in in_primary)
+             for record in rows]
     moderator_columns: list[str] = []
     for row in table:
         for key in row:
@@ -251,7 +280,8 @@ def exclusions_table(entries: Iterable[Mapping[str, Any]], out_stem: str | Path,
     rows: list[dict[str, Any]] = []
     for entry in entries:
         given = str(entry.get("reason", "") or "")
-        known = given if given in EXCLUSION_REASONS else "other"
+        head = given.split(":", 1)[0]
+        known = _REASON_ALIASES.get(head, head if head in EXCLUSION_REASONS else "other")
         rows.append({
             "paper_id": entry.get("paper_id", ""), "filename": entry.get("filename", ""),
             "dataset_id": entry.get("dataset_id", ""), "outcome_key": entry.get("outcome_key", ""),
@@ -326,20 +356,19 @@ def _is_statistic_route(route: str) -> bool:
     return (route or "").split(":", 1)[0] in ("test_statistic", "p_value")
 
 
-def _one_per_paper(rows: Sequence[EffectSizeRecord]) -> list[EffectSizeRecord]:
-    """The most precise row from each paper.
+def _one_per_paper(rows: Sequence[EffectSizeRecord],
+                   settings: StatsSettings) -> list[EffectSizeRecord]:
+    """One row per paper, by the SAME rule the primary analysis uses (amendment A).
 
-    Deliberately a *selection*, not a within-paper pooling: combining dependent rows as if they
-    were independent would understate the variance, and hiding that inside a sensitivity analysis
-    is exactly the kind of quiet assumption this tool exists to avoid.
+    The sensitivity set exists to show what a choice costs, so this must be the choice the primary
+    analysis would make — a Borenstein composite of the paper's rows, not a pick of the most
+    precise one. Imported lazily because the aggregation lives in `canopy.pipeline` (it is part of
+    the analysis, not of the report) and this package must not depend on that package at import
+    time.
     """
-    best: dict[str, EffectSizeRecord] = {}
-    for record in rows:
-        key = record.cluster_id or record.paper_id or record.dataset_id
-        current = best.get(key)
-        if current is None or (record.var or math.inf) < (current.var or math.inf):
-            best[key] = record
-    return [r for r in rows if best.get(r.cluster_id or r.paper_id or r.dataset_id) is r]
+    from ..pipeline.aggregate import aggregate_one_row_per_paper
+
+    return aggregate_one_row_per_paper(rows, settings).rows
 
 
 def _entry(name: str, description: str, rows: Sequence[EffectSizeRecord],
@@ -399,8 +428,8 @@ def sensitivity_analyses(rows: Sequence[EffectSizeRecord], settings: StatsSettin
             "digitisation uncertainty added to each figure-derived sampling variance", rows,
             digitization=True),
         add("without_digitization_variance", "sampling variance only", rows, digitization=False),
-        add("one_row_per_paper", "the most precise row from each paper only",
-            _one_per_paper(rows)),
+        add("one_row_per_paper", "each paper's rows combined into one (amendment A)",
+            _one_per_paper(rows, settings)),
         add("all_rows", "every row, including several from the same paper", rows),
     ]
     metrics: list[str] = []
@@ -607,11 +636,13 @@ def prisma_flow(counts: Mapping[str, Any], out_stem: str | Path,
     """
     data = {k: v for k, v in counts.items()}
     problems: list[str] = []
-    for start, removed, end in PRISMA_CHAIN:
-        if all(isinstance(data.get(k), int) for k in (start, removed, end)):
-            if data[start] - data[removed] != data[end]:
-                problems.append(f"{start} ({data[start]}) − {removed} ({data[removed]}) "
-                                f"≠ {end} ({data[end]})")
+    for start, removals, end in PRISMA_CHAIN:
+        if not all(isinstance(data.get(k), int) for k in (start, end)):
+            continue
+        taken = {k: data.get(k) for k in removals if isinstance(data.get(k), int)}
+        if data[start] - sum(taken.values()) != data[end]:
+            printed = " − ".join(f"{k} ({v})" for k, v in taken.items()) or "0"
+            problems.append(f"{start} ({data[start]}) − {printed} ≠ {end} ({data[end]})")
     data["problems"] = problems
     data["consistent"] = not problems
     stem = Path(out_stem)
@@ -623,6 +654,7 @@ def prisma_flow(counts: Mapping[str, Any], out_stem: str | Path,
              ("Datasets found", data.get("datasets")),
              ("Datasets included", data.get("included_datasets"))]
     asides = [("Duplicates removed", data.get("duplicates_removed"), 0),
+              ("Not processed (--max-papers)", data.get("not_processed") or None, 1),
               ("Papers excluded", data.get("papers_excluded"), 1),
               ("Datasets excluded", data.get("datasets_excluded"), 3)]
     reasons = data.get("exclusion_reasons") or {}
@@ -648,17 +680,25 @@ def prisma_flow(counts: Mapping[str, Any], out_stem: str | Path,
                                              (0.4 + box_w / 2, y - 0.42),
                                              arrowstyle="-|>", mutation_scale=9, color=AXIS,
                                              linewidth=0.9))
+        # several removals can share one gap (a partial run loses papers to `--max-papers` AND to
+        # eligibility): they go in ONE box, stacked, rather than two boxes drawn over each other
+        by_gap: dict[int, list[tuple[str, Any]]] = {}
         for label, value, after in asides:
             if value is None:
                 continue
-            y = len(steps) - after - 1.15          # centred in the gap, not over the stage box
-            ax.add_patch(FancyBboxPatch((5.3, y), 4.3, box_h,
+            by_gap.setdefault(after, []).append((label, value))
+        for after, items in by_gap.items():
+            tall = box_h * (1.0 + 0.62 * (len(items) - 1))
+            y = len(steps) - after - 1.15 - (tall - box_h) / 2   # centred in the gap
+            ax.add_patch(FancyBboxPatch((5.3, y), 4.3, tall,
                                         boxstyle="round,pad=0.04,rounding_size=0.06",
                                         linewidth=0.9, edgecolor=GRID, facecolor="none"))
-            ax.text(5.5, y + box_h / 2, label, fontsize=8.2, color=MUTED, va="center", ha="left")
-            ax.text(9.4, y + box_h / 2, str(value), fontsize=8.6, color=INK_SECONDARY,
-                    va="center", ha="right")
-            ax.add_patch(FancyArrowPatch((0.4 + box_w / 2, y + box_h / 2), (5.25, y + box_h / 2),
+            for i, (label, value) in enumerate(items):
+                row_y = y + tall - (i + 0.5) * (tall / len(items))
+                ax.text(5.5, row_y, label, fontsize=8.2, color=MUTED, va="center", ha="left")
+                ax.text(9.4, row_y, str(value), fontsize=8.6, color=INK_SECONDARY,
+                        va="center", ha="right")
+            ax.add_patch(FancyArrowPatch((0.4 + box_w / 2, y + tall / 2), (5.25, y + tall / 2),
                                          arrowstyle="-|>", mutation_scale=8, color=GRID,
                                          linewidth=0.9))
         footer = []

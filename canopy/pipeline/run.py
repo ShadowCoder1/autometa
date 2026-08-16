@@ -29,7 +29,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Sequence
 
 from ..agents.adjudicator import adjudicate
 from ..agents.extract_stats import extract_test_statistics
@@ -49,19 +49,22 @@ from ..models import (Adjudication, Candidate, DatasetSpec, EffectSizeRecord, Or
                       OutcomeSources, PaperStatus, Protocol, RunManifest, SourceKind, Source,
                       StatsSettings, StudyMap, Verdict)
 from ..protocol import load_protocol
-from ..report import (exclusions_table, methods_figure, prisma_flow, provenance_bundle,
-                      route_examples, write_html_report, write_outcome_outputs, write_rows)
-from ..stats.meta import MetaResult, random_effects
+from ..report import (exclusions_table, extraction_table, methods_figure, pool_rows,
+                      prisma_flow, provenance_bundle, route_examples, write_html_report,
+                      write_outcome_outputs, write_rows)
+from ..stats.meta import MetaResult
 from ..verify.checks import run_checks
 from ..verify.confidence import resolve_cell
 from ..verify.vote import VoteResult, vote_groups
+from .aggregate import AGGREGATED_FLAG, Aggregation, aggregate_one_row_per_paper
 from .resolve import (ReportedValues, ResolvedValues, StatisticValues, apply_shared_control,
                       multi_group_flags, resolve_effect)
-from .state import (PaperBudgetExceeded, PaperClient, STAGES, emit, load_manifest, paper_dir,
+from .state import (PaperBudgetExceeded, PaperClient, emit, load_manifest, paper_dir,
                     read_stage, review_entry, save_manifest, sha12, sort_review_queue,
-                    stage_done, write_json, write_stage)
+                    stage_done, write_stage)
 
-__all__ = ["run_pipeline", "RunContext", "PaperResult", "revalidate", "target_for_source"]
+__all__ = ["run_pipeline", "RunContext", "PaperResult", "revalidate", "target_for_source",
+           "vote_candidates", "sample_key"]
 
 FIGURE_KINDS = frozenset({SourceKind.figure_bar, SourceKind.figure_line, SourceKind.figure_points,
                           SourceKind.figure_box})
@@ -232,12 +235,30 @@ class _CellVerification:
     extra_candidates: list[Candidate] = field(default_factory=list)
     adjudication: Adjudication | None = None
     orientation: OrientationVerdict | None = None
+    reopens: int = 0
 
 
 def _cell_candidates(candidates: Sequence[Candidate], dataset_id: str,
                      outcome_key: str) -> list[Candidate]:
     return [c for c in candidates
             if c.dataset_id == dataset_id and c.outcome_key == outcome_key]
+
+
+ENSEMBLE = "digitize:ensemble"
+
+
+def vote_candidates(candidates: Sequence[Candidate]) -> list[Candidate]:
+    """The candidates the verification layer may see: one figure reading per group, not five.
+
+    `digitize()` returns a `Candidate` per (group, route sample) *and* one ensemble candidate per
+    group. The route samples belong in the stage file and the provenance bundle — that is where a
+    reviewer checks how the picture was measured — but they must not enter the vote: the
+    digitiser's four or five ways of measuring one figure would otherwise outvote the value the
+    paper printed, and the ensemble (amendment F's median-of-routes, with the per-route detail in
+    its `pixel_provenance`) is already their consensus. Controller ruling, fix round 1.
+    """
+    return [c for c in candidates
+            if not c.extractor_id.startswith("digitize:") or c.extractor_id == ENSEMBLE]
 
 
 def _winner(candidates: Sequence[Candidate], result: VoteResult | None,
@@ -260,9 +281,10 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                  orientation: OrientationVerdict | None) -> _CellVerification:
     key = sources.outcome_key
     outcome_def = ctx.protocol.outcome(key)
-    cell = list(candidates)
-    others = [c for c in all_candidates
-              if c.dataset_id != dataset.dataset_id or c.outcome_key != key]
+    # the digitiser's per-route samples stay in the stage file; only its ensemble votes
+    cell = vote_candidates(candidates)
+    others = vote_candidates([c for c in all_candidates
+                              if c.dataset_id != dataset.dataset_id or c.outcome_key != key])
     n_a, n_b = dataset.group_a.n, dataset.group_b.n
     total_n = (n_a or 0) + (n_b or 0) or None
     out = _CellVerification(orientation=orientation)
@@ -306,6 +328,7 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
             if reopen >= MAX_REOPENS:
                 break
             reopen += 1
+            out.reopens += 1
 
     disagreed = any(v.agreement == "disagree" for v in votes.values())
     errors = any(f.severity == "error" for f in flags)
@@ -337,6 +360,7 @@ def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: li
     extra: list[Candidate] = []
     orientations: dict[tuple[str, str], OrientationVerdict] = {}
     adjudications: list[dict[str, Any]] = []
+    reopens = 0
     for dataset in study.datasets:
         for sources in dataset.outcomes:
             if sources.outcome_key not in keys:
@@ -356,6 +380,7 @@ def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: li
                                   file_id, orientations[measure])
             extra.extend(result.extra_candidates)
             verdicts.extend(result.verdicts)
+            reopens += result.reopens
             if result.adjudication is not None:
                 adjudications.append(result.adjudication.model_dump(mode="json"))
     candidates.extend(extra)
@@ -364,9 +389,31 @@ def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: li
         "extra_candidates": [c.model_dump(mode="json") for c in extra],
         "orientation": {f"{k[0]}|{k[1]}": v.model_dump(mode="json")
                         for k, v in orientations.items()},
-        "adjudications": adjudications})
+        "adjudications": adjudications,
+        "reopens": reopens})
     status.stages["verify"] = "done"
     return verdicts
+
+
+def sample_key(dataset: DatasetSpec, paper_id: str) -> str:
+    """Which PARTICIPANT sample this dataset came from — or `""` when none can be claimed.
+
+    `one_row_per_paper` has to know whether a paper's two rows are two samples (combine them as
+    independent) or the same people twice (combine them as dependent, with a correlation). The
+    only honest source for that is the mapper's own description of the dataset, and its contract
+    (`canopy/llm/prompts/mapper.md`) is exactly this: a dataset is "one independent participant
+    sample under one condition", `experiment` is the paper's own label, and `exposure_order` says
+    whether these data are the participants' FIRST exposure.
+
+    So a dataset claims its own sample only when the paper labelled the experiment it belongs to
+    and the mapper called it a first exposure. Everything else — an unlabelled experiment, a
+    repeated exposure, a counterbalanced set — returns `""`, which the aggregation reads as "same
+    people, treat as dependent". Guessing the other way would understate the variance.
+    """
+    experiment = (dataset.experiment or "").strip()
+    if not experiment or str(dataset.exposure_order) != "first":
+        return ""
+    return f"{paper_id}|{experiment}"
 
 
 def _statistic_values(candidates: Sequence[Candidate]) -> StatisticValues | None:
@@ -444,6 +491,7 @@ def _resolve(ctx: RunContext, paper: PaperRecord, study: StudyMap,
         record = resolve_effect(dataset, ctx.protocol.outcome(key), values, ctx.settings)
         record.paper_id = paper.sha256
         record.cluster_id = record.cluster_id or paper.sha256
+        record.sample_id = sample_key(dataset, paper.sha256)
         record.citation = study.citation
         record.label = record.label or dataset.label or dataset.dataset_id
         verdict_a = by_cell.get((dataset.dataset_id, key, "A"))
@@ -539,41 +587,52 @@ def _run_paper(ctx: RunContext, group: PaperGroup) -> PaperResult:
 
 
 # ----------------------------------------------------------------------------- pooling
-def _primary_rows(records: Sequence[EffectSizeRecord], settings: StatsSettings
-                  ) -> tuple[list[EffectSizeRecord], list[EffectSizeRecord], list[str]]:
-    """Split an outcome's rows into (pooled, held back) under the protocol's own rules."""
+@dataclass
+class _Split:
+    """One outcome's rows, sorted into what is pooled, what is held, and what was combined away."""
+
+    primary: list[EffectSizeRecord] = field(default_factory=list)
+    held: list[EffectSizeRecord] = field(default_factory=list)
+    every: list[EffectSizeRecord] = field(default_factory=list)
+    exclusions: list[dict[str, Any]] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+def _split_rows(records: Sequence[EffectSizeRecord], settings: StatsSettings) -> _Split:
+    """Apply the protocol's own rules: confidence first, then amendment A's `one_row_per_paper`.
+
+    Aggregation happens AFTER the confidence filter — a row a human still has to look at is not
+    combined into a number, it is held for that human — and it replaces the rows it combined, so
+    a paper contributes exactly one row per outcome. Every replaced row stays in `every` (the
+    extraction table shows it, with `primary_row` false) and in `exclusions`.
+    """
     admitted = list(settings.primary_analysis_includes)
-    notes: list[str] = []
-    primary, held = [], []
+    split = _Split(every=list(records))
     for record in records:
         if record.confidence in admitted and record.es is not None and record.var:
-            primary.append(record)
+            split.primary.append(record)
         else:
-            held.append(record)
-    if settings.one_row_per_paper:
-        best: dict[str, EffectSizeRecord] = {}
-        for record in primary:
-            cluster = record.cluster_id or record.paper_id or record.dataset_id
-            current = best.get(cluster)
-            if current is None or (record.var or float("inf")) < (current.var or float("inf")):
-                best[cluster] = record
-        keep = {id(r) for r in best.values()}
-        dropped = [r for r in primary if id(r) not in keep]
-        if dropped:
-            notes.append(f"one_row_per_paper: {len(dropped)} further row(s) from papers that "
-                         f"contributed more than one were kept out of the primary analysis "
-                         f"(they are in the extraction table and the all_rows sensitivity "
-                         f"analysis): {', '.join(r.dataset_id for r in dropped)}")
-        primary = [r for r in primary if id(r) in keep]
-    return primary, held, notes
+            split.held.append(record)
+    if settings.one_row_per_paper and split.primary:
+        aggregated: Aggregation = aggregate_one_row_per_paper(split.primary, settings)
+        composites = [r for r in aggregated.rows if AGGREGATED_FLAG in r.flags]
+        split.primary = aggregated.rows
+        split.every = [*split.every, *composites]
+        split.exclusions.extend(aggregated.exclusions)
+        split.notes.extend(f"one_row_per_paper: {note}" for note in aggregated.notes)
+    return split
+
+
+def _primary_rows(records: Sequence[EffectSizeRecord], settings: StatsSettings
+                  ) -> tuple[list[EffectSizeRecord], list[EffectSizeRecord], list[str]]:
+    """`(pooled, held back, notes)` — the shape the server's re-pool also calls."""
+    split = _split_rows(records, settings)
+    return split.primary, split.held, split.notes
 
 
 def _pool(rows: Sequence[EffectSizeRecord], settings: StatsSettings) -> MetaResult | None:
-    if len(rows) < 2:
-        return None
-    return random_effects([r.es for r in rows], [r.var for r in rows],
-                          method=settings.tau2_method, hakn=settings.hakn,
-                          level=settings.ci_level)
+    """The one pooler: `canopy.report.tables.pool_rows`, which drops what cannot be pooled."""
+    return pool_rows(rows, settings)
 
 
 # ----------------------------------------------------------------------------- the run
@@ -665,17 +724,24 @@ def _write_outputs(ctx: RunContext, manifest: RunManifest, results: Sequence[Pap
     per_outcome: dict[str, dict[str, Any]] = {}
     by_dataset = {(r.dataset_id, r.outcome_key): r for r in records}
 
+    every_row: list[EffectSizeRecord] = []
+    primary_rows: list[EffectSizeRecord] = []
     for outcome in ctx.protocol.outcomes:
         mine = [r for r in records if r.outcome_key == outcome.key]
-        primary, held, notes = _primary_rows(mine, settings)
-        manifest.warnings.extend(f"{outcome.key}: {n}" for n in notes)
+        split = _split_rows(mine, settings)
+        primary, held = split.primary, split.held
+        manifest.warnings.extend(f"{outcome.key}: {n}" for n in split.notes)
+        exclusions.extend(split.exclusions)
+        every_row.extend(split.every)
+        primary_rows.extend(primary)
         pooled = _pool(primary, settings)
         emit(ctx.progress, "pool", "", "done", cost_so_far=ctx.client.total_cost(),
              message=f"{outcome.key}: k={len(primary)}, held={len(held)}")
         artefacts = write_outcome_outputs(out, outcome, primary, pooled, settings,
                                           needs_human_rows=held, verdicts=verdicts,
                                           candidates=candidates,
-                                          moderators=ctx.protocol.moderators or None)
+                                          moderators=ctx.protocol.moderators or None,
+                                          all_rows=split.every)
         outputs.update({f"{outcome.key}.{k}": v for k, v in artefacts.items()})
         per_outcome[outcome.key] = {"pooled": pooled, "outputs": artefacts, "rows": primary,
                                     "needs_human_rows": held}
@@ -694,6 +760,12 @@ def _write_outputs(ctx: RunContext, manifest: RunManifest, results: Sequence[Pap
                     "stage": "resolve", "reason": "not_convertible",
                     "quote": "", "decider": "code", "detail": record.not_convertible_reason})
 
+    # one table for the whole run beside the per-outcome ones: every row of every outcome, with
+    # the raw values, the route and whether it was pooled — the file a reviewer opens first
+    outputs.update({f"extraction_table_all.{k}": v for k, v in extraction_table(
+        every_row, out / "results" / "extraction_table_all", verdicts=verdicts,
+        candidates=candidates, primary=primary_rows).items()})
+
     manifest.human_review_queue = sort_review_queue(review)
     if manifest.human_review_queue:
         outputs.update({f"human_review_queue.{k}": v for k, v in write_rows(
@@ -704,7 +776,7 @@ def _write_outputs(ctx: RunContext, manifest: RunManifest, results: Sequence[Pap
     outputs.update({f"exclusions.{k}": v for k, v in
                     exclusions_table(exclusions, out / "exclusions").items()})
 
-    counts = _prisma_counts(results, paths, groups, n_duplicates, records, exclusions)
+    counts = _prisma_counts(results, paths, n_duplicates, records, exclusions)
     outputs.update({f"prisma.{k}": v for k, v in prisma_flow(counts, out / "prisma").items()})
 
     examples = route_examples(records, candidates=candidates, verdicts=verdicts, papers=papers,
@@ -730,20 +802,28 @@ def _write_outputs(ctx: RunContext, manifest: RunManifest, results: Sequence[Pap
     return outputs
 
 
-def _prisma_counts(results: Sequence[PaperResult], paths: Sequence[Path],
-                   groups: Sequence[PaperGroup], n_duplicates: int,
+def _prisma_counts(results: Sequence[PaperResult], paths: Sequence[Path], n_duplicates: int,
                    records: Sequence[EffectSizeRecord],
                    exclusions: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    """The PRISMA chain, counted so that it still adds up under `--max-papers`.
+
+    `unique_papers` is every unique paper the folder held, not the subset this run looked at, and
+    the ones a `--max-papers` cap left out are their own count (`not_processed`). Folding them
+    into "excluded" would claim the review rejected papers it never opened.
+    """
     eligible = [r for r in results if r.status.eligible]
     datasets = sum(len(r.study.datasets) for r in results if r.study is not None)
     included = [r for r in records if r.route != "not_convertible"]
+    unique = max(0, len(paths) - n_duplicates)
     reasons: dict[str, int] = {}
     for entry in exclusions:
-        reasons[str(entry.get("reason", "other"))] = \
-            reasons.get(str(entry.get("reason", "other")), 0) + 1
+        # `aggregated_into:<row>` counts as `aggregated`, the same head the exclusions table uses
+        name = str(entry.get("reason", "other") or "other").split(":", 1)[0]
+        reasons[name] = reasons.get(name, 0) + 1
     return {
         "files": len(paths), "duplicates_removed": n_duplicates,
-        "unique_papers": max(0, len(paths) - n_duplicates),
+        "unique_papers": unique,
+        "not_processed": max(0, unique - len(results)),
         "papers_excluded": len(results) - len(eligible),
         "eligible_papers": len(eligible),
         "datasets": datasets,
@@ -784,7 +864,13 @@ def revalidate(run_dir: str | Path, protocol_path: str | Path | None = None) -> 
     """
     out = Path(run_dir)
     manifest = load_manifest(out)
-    protocol = load_protocol(protocol_path or manifest.protocol_path)
+    # the run's OWN copy first: `canopy run` writes `<run_dir>/protocol.yaml`, and that is the
+    # protocol these stage files were produced under. `manifest.protocol_path` points at wherever
+    # the user's file was at the time, which may have moved, changed or never existed on this
+    # machine — a run must be re-poolable from the directory alone.
+    local = out / "protocol.yaml"
+    protocol = load_protocol(protocol_path or (local if local.exists()
+                                               else manifest.protocol_path))
     settings = protocol.stats
     records: list[EffectSizeRecord] = []
     stages_missing: list[str] = []
@@ -801,7 +887,7 @@ def revalidate(run_dir: str | Path, protocol_path: str | Path | None = None) -> 
     outcomes: dict[str, Any] = {}
     for outcome in protocol.outcomes:
         mine = [r for r in records if r.outcome_key == outcome.key]
-        primary, held, _ = _primary_rows(mine, settings)
+        primary, held, _notes = _primary_rows(mine, settings)
         pooled = _pool(primary, settings)
         outcomes[outcome.key] = {
             "k": 0 if pooled is None else pooled.k, "n_needs_human": len(held),

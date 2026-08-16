@@ -59,12 +59,14 @@ ROUTE_GLYPHS: dict[str, str] = {
     "p_value": "ƒ",
     "reported_d": "†",
     "adjudicated": "¶",
+    "composite": "Σ",
     "not_convertible": "⌀",
     "": "·",
 }
 ROUTE_LABELS: dict[str, str] = {
     "¶": "text", "▦": "table", "▤": "figure", "ƒ": "test statistic",
-    "†": "reported effect size", "⌀": "not convertible", "·": "unknown",
+    "†": "reported effect size", "Σ": "this paper's rows combined", "⌀": "not convertible",
+    "·": "unknown",
 }
 #: a value a human replaced carries this flag (the review workflow writes it) and this marker
 OVERRIDE_FLAG = "human_override"
@@ -162,9 +164,15 @@ def pi_label(settings: StatsSettings, pooled: MetaResult | None = None) -> str:
 
 
 def conventions_footer(settings: StatsSettings, pooled: MetaResult, *, k_papers: int,
-                       k_datasets: int, n_excluded: int = 0, level: float | None = None,
-                       extra: Sequence[str] = ()) -> list[str]:
-    """Every statistical convention that moved a number on this plot, as footer lines."""
+                       k_datasets: int, n_excluded: int = 0, n_not_convertible: int = 0,
+                       level: float | None = None, extra: Sequence[str] = ()) -> list[str]:
+    """Every statistical convention that moved a number on this plot, as footer lines.
+
+    `n_excluded` is every row held back from the pool and `n_not_convertible` how many of those
+    were held because no route could produce an effect size at all. The two are different
+    findings — one is a question for a reviewer, the other is a paper that did not report enough —
+    so the footer never folds the second into the first.
+    """
     level = float(level if level is not None else settings.ci_level)
     pct = f"{level * 100:g}%"
     lines = [
@@ -179,7 +187,8 @@ def conventions_footer(settings: StatsSettings, pooled: MetaResult, *, k_papers:
         + (f"{pct} prediction interval: {pi_label(settings, pooled)}" if pooled.k >= 3 else
            f"no prediction interval: it needs k ≥ 3 and k = {pooled.k}"),
         f"k = {k_datasets} datasets from {k_papers} papers · "
-        f"{n_excluded} rows excluded (needs_human): drawn hollow, not pooled",
+        f"{n_excluded} rows excluded (needs_human {max(0, n_excluded - n_not_convertible)}, "
+        f"not convertible {n_not_convertible}): drawn hollow, not pooled",
     ]
     lines.extend(str(line) for line in extra if line)
     return lines

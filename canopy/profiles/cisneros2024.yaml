@@ -9,3 +9,7 @@ variance: hedges_olkin_df
 tau2_method: REML
 hakn: false
 pi_method: HTS
+# The published review pooled all 50 datasets, several of them from the same paper: dependency is
+# a sensitivity analysis there, not the primary model. Reproducing it therefore means NOT
+# collapsing a paper's rows into one.
+one_row_per_paper: false

@@ -12,6 +12,10 @@ What this file is careful about, beyond drawing:
   rows were held back — a reader can reproduce the pooled row from the footer alone.
 * **Nothing is computed here.** Weights are `1/(vᵢ + τ²)` from the `MetaResult` the caller
   already computed; the pooled estimate, CI and prediction interval are read off it.
+* **The square area is AFFINE in the weight, not proportional to it**:
+  `MIN_SQUARE + (MAX_SQUARE − MIN_SQUARE)·wᵢ/w_max`. A strictly proportional area makes a
+  0.2 %-weight study invisible, which is a worse lie than a floor; the printed `Weight` column
+  carries the exact percentage, and this is said here rather than being called proportional.
 """
 from __future__ import annotations
 
@@ -25,7 +29,7 @@ from scipy import stats as sps
 from ..models import EffectSizeRecord, OutcomeDef, StatsSettings
 from ..stats.meta import MetaResult, prediction_interval
 from . import theme
-from .theme import (ACCENT, ACCENT_SOFT, AXIS, GRID, INK, INK_SECONDARY, MARK, MUTED, SURFACE,
+from .theme import (ACCENT, ACCENT_SOFT, AXIS, GRID, INK, INK_SECONDARY, MARK, MUTED,
                     figure_style, fmt, fmt_ci, is_overridden, route_glyph, save_figure,
                     study_label)
 
@@ -283,6 +287,8 @@ def _draw_row(ax, row: ForestRow, xlim: tuple[float, float], max_weight: float) 
         ax.scatter([row.es], [row.y], s=MIN_SQUARE * 3, marker="s", facecolors="none",
                    edgecolors=MARK, linewidths=1.0, zorder=3)
         return
+    # affine in the weight, not proportional to it: the floor keeps a near-zero-weight study
+    # visible, and the `Weight` column prints the exact percentage next to it
     area = MIN_SQUARE + (MAX_SQUARE - MIN_SQUARE) * (row.weight / max_weight if max_weight else 0)
     ax.scatter([row.es], [row.y], s=area, marker="s", facecolors=MARK, edgecolors=MARK,
                linewidths=0.0, zorder=3)
@@ -310,7 +316,9 @@ def forest_plot(rows: Sequence[EffectSizeRecord], pooled: MetaResult, outcome: O
 
     `rows` are the rows that were pooled (primary analysis); `needs_human_rows` are shown hollow,
     below the pooled diamond, and excluded from it. Direction labels, moderator columns and the
-    outcome label all come from the protocol — nothing here knows what is being reviewed.
+    outcome label all come from the protocol — nothing here knows what is being reviewed. A
+    square's AREA is affine in its random-effects weight (see the module docstring); the exact
+    weight is printed beside it.
     """
     layout = forest_layout(rows, pooled, settings, needs_human_rows=needs_human_rows,
                            moderators=moderators, pi=pi)
@@ -320,9 +328,12 @@ def forest_plot(rows: Sequence[EffectSizeRecord], pooled: MetaResult, outcome: O
     left_ch, right_ch = _measure(left), _measure(right)
     header_lines = max([1] + [c.header.count("\n") + 1 for c in (*left, *right)])
 
+    not_convertible = sum(1 for r in layout.excluded
+                          if r.record.route == "not_convertible" or r.record.not_convertible_reason)
     footer = theme.conventions_footer(settings, pooled, k_papers=layout.k_papers,
                                       k_datasets=layout.k_datasets,
-                                      n_excluded=len(layout.excluded))
+                                      n_excluded=len(layout.excluded),
+                                      n_not_convertible=not_convertible)
     footer.append(theme.GLYPH_LEGEND([r.record.route for r in all_rows],
                                      overridden=any(r.overridden for r in all_rows)))
 

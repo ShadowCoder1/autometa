@@ -20,12 +20,11 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from ..models import (Candidate, EffectSizeRecord, RunManifest, StatsSettings, Verdict)
-from ..stats.meta import random_effects
+from ..report.tables import pool_rows
 
 __all__ = ["STAGES", "atomic_write", "write_json", "read_json", "paper_dir", "stage_path",
            "stage_done", "write_stage", "read_stage", "manifest_path", "save_manifest",
@@ -160,18 +159,10 @@ class PaperClient:
 
 
 # ----------------------------------------------------------------------------- review queue
-def _poolable(rows: Iterable[EffectSizeRecord]) -> list[EffectSizeRecord]:
-    return [r for r in rows if r.es is not None and r.var and r.var > 0]
-
-
 def _pool(rows: Sequence[EffectSizeRecord], settings: StatsSettings) -> float | None:
-    keep = _poolable(rows)
-    if len(keep) < 2:
-        return None
-    result = random_effects([r.es for r in keep], [r.var for r in keep],
-                            method=settings.tau2_method, hakn=settings.hakn,
-                            level=settings.ci_level)
-    return float(result.estimate)
+    """The pooled estimate, or `None` below k = 2. One pooler for the whole codebase."""
+    result = pool_rows(rows, settings)
+    return None if result is None else float(result.estimate)
 
 
 def pooled_impact(primary: Sequence[EffectSizeRecord], record: EffectSizeRecord | None,
@@ -236,25 +227,6 @@ def sort_review_queue(queue: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]
 
 
 # ----------------------------------------------------------------------------- progress
-@dataclass
-class Progress:
-    """The orchestrator's one way of saying anything out loud."""
-
-    callback: Callable[[dict[str, Any]], None] | None = None
-    events: list[dict[str, Any]] = field(default_factory=list)
-    keep: bool = False
-
-    def __call__(self, stage: str, paper: str = "", status: str = "started", *,
-                 cost_so_far: float = 0.0, message: str = "") -> dict[str, Any]:
-        event = {"stage": stage, "paper": paper, "status": status,
-                 "cost_so_far": round(float(cost_so_far), 6), "message": message}
-        if self.keep:
-            self.events.append(event)
-        if self.callback is not None:
-            self.callback(dict(event))
-        return event
-
-
 def emit(progress: Callable[[dict[str, Any]], None] | None, stage: str, paper: str = "",
          status: str = "started", *, cost_so_far: float = 0.0, message: str = "") -> None:
     if progress is None:

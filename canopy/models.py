@@ -116,6 +116,9 @@ class StatsSettings(CanopyModel):
         "closest_to_definition"
     digitization_variance: Literal["off", "sensitivity", "primary"] = "sensitivity"
     one_row_per_paper: bool = True
+    #: correlation assumed between two rows of one paper that came from the SAME participants,
+    #: used by the within-paper composite (`canopy.pipeline.aggregate`, Borenstein ch. 24)
+    within_paper_r: float = 0.5
     ci_level: float = 0.95
 
 
@@ -501,6 +504,10 @@ class EffectSizeRecord(CanopyModel):
 
     paper_id: str = ""
     cluster_id: str = ""
+    #: which PARTICIPANT sample this row came from, when the paper identifies one (the
+    #: orchestrator stamps it from the mapper's experiment label for a first exposure). Empty means
+    #: "no separate sample can be claimed", so `one_row_per_paper` treats such rows as dependent.
+    sample_id: str = ""
     dataset_id: str = ""
     outcome_key: str = ""
     label: str = ""

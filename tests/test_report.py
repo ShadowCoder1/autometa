@@ -9,9 +9,12 @@ moderators, a wide effect range — has been tested on something.
 from __future__ import annotations
 
 import csv
+import html as _html
 import json
 import math
+import re
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 import pytest
 
@@ -136,6 +139,25 @@ def test_needs_human_rows_are_hollow_excluded_and_counted(tmp_path, gold_rows, p
     assert svg.count("fill: none") + svg.count('fill="none"') >= 2
 
 
+def test_footer_counts_needs_human_and_not_convertible_separately(tmp_path, gold_rows,
+                                                                  pooled_gold, outcome, settings):
+    """"Held for a human" and "no route could convert it" are different findings, so both print."""
+    from canopy.report.forest import forest_plot
+    from canopy.report.theme import conventions_footer
+
+    lines = "\n".join(conventions_footer(settings, pooled_gold, k_papers=50, k_datasets=50,
+                                         n_excluded=3, n_not_convertible=2))
+    assert "3 rows excluded (needs_human 1, not convertible 2)" in lines
+
+    held = [gold_rows[0].model_copy(update={"confidence": "needs_human", "dataset_id": "dQ"}),
+            gold_rows[1].model_copy(update={"confidence": "needs_human", "dataset_id": "dR",
+                                            "route": "not_convertible",
+                                            "not_convertible_reason": "no dispersion was reported"})]
+    svg = forest_plot(gold_rows, pooled_gold, outcome, settings,
+                      tmp_path / "forest", needs_human_rows=held)["svg"].read_text()
+    assert "2 rows excluded (needs_human 1, not convertible 1)" in svg
+
+
 def test_forest_plot_is_sorted_by_effect(tmp_path, gold_rows, pooled_gold, outcome, settings):
     from canopy.report.forest import forest_plot, forest_layout
 
@@ -225,6 +247,36 @@ def test_extraction_table_survives_a_row_with_no_verdicts(tmp_path, resolved_row
     row = list(csv.DictReader(out["csv"].open(newline="", encoding="utf-8")))[0]
     assert row["mean_a"] == "44.67"          # falls back to the record's own inputs
     assert row["quote_a"] == ""
+
+
+def test_extraction_table_writes_an_infinite_value_instead_of_raising(tmp_path, resolved_row):
+    """A variance that overflowed is a finding; `int(inf)` raises, so it must never be rounded."""
+    from canopy.report.tables import extraction_table
+
+    broken = resolved_row.model_copy(update={"var": float("inf"), "se": float("inf"),
+                                             "digitization_var_share": float("-inf"),
+                                             "ci_high": float("nan")})
+    out = extraction_table([broken], tmp_path / "t")
+    row = list(csv.DictReader(out["csv"].open(newline="", encoding="utf-8")))[0]
+    assert row["var"] == "inf" and row["se"] == "inf"
+    assert row["digitization_var_share"] == "-inf"
+    assert row["ci_high"] == ""                        # NaN is "no value", and prints as none
+
+
+def test_extraction_table_marks_which_rows_were_pooled(tmp_path, resolved_row):
+    """The table keeps every row — the ones an aggregation replaced included — and says which."""
+    from canopy.report.tables import extraction_table
+
+    kept = resolved_row.model_copy(update={"dataset_id": "d1+d2"})
+    member = resolved_row.model_copy(update={"dataset_id": "d1"})
+    out = extraction_table([kept, member], tmp_path / "t", primary=[kept])
+    rows = {r["dataset_id"]: r["primary_row"]
+            for r in csv.DictReader(out["csv"].open(newline="", encoding="utf-8"))}
+    assert rows == {"d1+d2": "true", "d1": "false"}
+
+    unknown = extraction_table([kept], tmp_path / "u")   # no caller opinion: no claim made
+    assert list(csv.DictReader(
+        unknown["csv"].open(newline="", encoding="utf-8")))[0]["primary_row"] == ""
 
 
 def test_exclusions_table_normalises_the_reason_enum(tmp_path):
@@ -536,6 +588,23 @@ def test_methods_paragraph_uses_only_manifest_numbers(tmp_path, small_rows, outc
     assert f"{pooled.estimate:.2f}" in text
 
 
+def test_methods_paragraph_still_reports_an_outcome_the_protocol_no_longer_names(tmp_path,
+                                                                                 small_rows,
+                                                                                 settings,
+                                                                                 protocol):
+    """A run re-pooled against an edited protocol must not lose its pooled result silently."""
+    from canopy.report import methods_paragraph
+
+    pooled = random_effects([r.es for r in small_rows], [r.var for r in small_rows],
+                            method=settings.tau2_method)
+    text = methods_paragraph(_manifest(tmp_path, protocol.hash()), protocol,
+                             results={"an_outcome_this_protocol_dropped": {
+                                 "pooled": pooled, "rows": small_rows, "needs_human_rows": []}})
+    assert "an_outcome_this_protocol_dropped" in text
+    assert f"k = {pooled.k} datasets" in text
+    assert f"{pooled.estimate:.2f}" in text
+
+
 def test_human_review_queue_is_sorted_by_impact(tmp_path):
     from canopy.report import human_review_table
 
@@ -606,6 +675,65 @@ def test_footer_does_not_claim_a_prediction_interval_it_could_not_compute(gold_r
                                  method=settings.tau2_method)
     lines = "\n".join(conventions_footer(settings, pooled_many, k_papers=6, k_datasets=6))
     assert "prediction interval: HTS" in lines
+
+
+def local_links(page: str) -> list[str]:
+    """Every in-run target the page asks a browser to fetch, decoded the way a browser would."""
+    out: list[str] = []
+    for raw in re.findall(r'(?:href|src)="([^"]*)"', page):
+        value = _html.unescape(raw)
+        if not value or value.startswith(("http://", "https://", "data:", "mailto:", "#")):
+            continue
+        out.append(unquote(urlparse(value).path))     # a browser drops everything after `#`
+    return out
+
+
+def test_provenance_image_names_survive_being_used_as_a_url(tmp_path, paper):
+    """A candidate id ends in `#1`; a browser truncates the link there, so the file must not."""
+    from canopy.models import Candidate, DispersionType
+    from canopy.report.provenance import provenance_bundle
+
+    page, quote = _bock_quote(paper)
+    cid = "sha:d1:late_adaptation:A:text:table_first:claude-opus-5#1"
+    cand = Candidate(candidate_id=cid, paper_id=paper.sha256, dataset_id="sha:d1",
+                     outcome_key="late_adaptation", kind="group_stats", group="A", mean=42.5,
+                     dispersion_value=6.9, dispersion_type=DispersionType.SD, n=12, page=page,
+                     quote=quote, route="text", model="claude-opus-5")
+    bundle = provenance_bundle(paper, [cand], tmp_path / "provenance")
+    crop = Path(bundle["entries"][cid]["crop"])
+    assert crop.exists() and crop.stat().st_size > 0
+    assert "#" not in crop.name and ":" not in crop.name
+
+
+def test_every_link_in_the_html_report_resolves(tmp_path, paper, small_rows, outcome, settings,
+                                                protocol):
+    """Not "a link is present" — every href and src the page emits must name a file that is there."""
+    from canopy.models import Candidate, DispersionType
+    from canopy.report import provenance_bundle, write_html_report, write_outcome_outputs
+
+    page, quote = _bock_quote(paper)
+    cands = [Candidate(candidate_id=f"sha:d{i}:late_adaptation:A:text:table_first:opus#{i + 1}",
+                       paper_id=paper.sha256, dataset_id=f"d{i}", outcome_key=outcome.key,
+                       kind="group_stats", group="A", mean=42.5 + i, dispersion_value=6.9,
+                       dispersion_type=DispersionType.SD, n=12, page=page, quote=quote,
+                       route="text", model="claude-opus-5")
+             for i in range(2)]
+    bundle = provenance_bundle(paper, cands, tmp_path / "provenance")
+    pooled = random_effects([r.es for r in small_rows], [r.var for r in small_rows],
+                            method=settings.tau2_method)
+    outputs = write_outcome_outputs(tmp_path, outcome, small_rows, pooled, settings)
+    out = write_html_report(
+        tmp_path, _manifest(tmp_path, protocol.hash()), protocol,
+        results={outcome.key: {"pooled": pooled, "outputs": outputs, "rows": small_rows,
+                               "needs_human_rows": []}},
+        provenance=bundle["entries"],
+        run_outputs={"provenance_json": bundle["json"]})
+    (tmp_path / "manifest.json").write_text("{}", encoding="utf-8")   # linked from the footer
+
+    targets = local_links(out["html"].read_text(encoding="utf-8"))
+    assert any("provenance/" in t for t in targets), "the per-value evidence is not linked at all"
+    missing = [t for t in targets if not (tmp_path / t).exists()]
+    assert missing == [], f"dead links in report.html: {missing}"
 
 
 def test_forest_weights_are_the_pooled_models_own_weights(gold_rows, pooled_gold, settings):

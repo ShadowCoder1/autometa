@@ -61,8 +61,14 @@ def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
                           needs_human_rows: Sequence[EffectSizeRecord] = (),
                           verdicts: Sequence[Verdict] = (),
                           candidates: Sequence[Candidate] = (),
-                          moderators: Sequence[str] | None = None) -> dict[str, Path]:
+                          moderators: Sequence[str] | None = None,
+                          all_rows: Sequence[EffectSizeRecord] | None = None) -> dict[str, Path]:
     """Write one outcome's artefacts under `<run_dir>/results/<outcome.key>/`.
+
+    `rows` are the rows that were pooled and `needs_human_rows` the ones held for review.
+    `all_rows` is every row the outcome produced, including any a within-paper aggregation
+    replaced (amendment A); the extraction table holds all of them and marks which were pooled,
+    because a row that was combined away is still a row a reviewer has to be able to check.
 
     Returns `{artefact_key: path}` — the same keys the HTML report and the manifest link by.
     """
@@ -75,8 +81,10 @@ def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
                              needs_human_rows=needs_human_rows, moderators=moderators)
         out.update({f"forest_{k}": v for k, v in forest.items()})
 
-    table = extraction_table([*rows, *needs_human_rows], directory / "extraction_table",
-                             verdicts=verdicts, candidates=candidates)
+    table = extraction_table(list(all_rows) if all_rows is not None
+                             else [*rows, *needs_human_rows],
+                             directory / "extraction_table",
+                             verdicts=verdicts, candidates=candidates, primary=rows)
     out.update({f"extraction_{k}": v for k, v in table.items()})
 
     loo = leave_one_out_table(rows, settings, directory / "leave_one_out")
