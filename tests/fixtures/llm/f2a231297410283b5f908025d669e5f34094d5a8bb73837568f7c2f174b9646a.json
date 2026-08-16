@@ -1,0 +1,155 @@
+{
+ "key": "f2a231297410283b5f908025d669e5f34094d5a8bb73837568f7c2f174b9646a",
+ "model": "claude-sonnet-5",
+ "served_model": "claude-sonnet-5",
+ "stop_reason": "end_turn",
+ "usage": {
+  "input_tokens": 2463,
+  "output_tokens": 3477,
+  "cache_creation_input_tokens": 19308,
+  "cache_read_input_tokens": 0
+ },
+ "text": "{\"eligible\":true,\"eligibility_rationale\":\"The study used an upper-extremity visuomotor rotation adaptation task (60° rotated visual feedback during a center-out pointing task), compared twelve young and twelve older adults, reported performance during the perturbation (adaptation) phase and during a subsequent no-feedback after-effect phase, and is written in English.\",\"datasets\":[{\"label\":\"Pointing adaptation to 60° visual rotation: Old vs Young\",\"experiment\":\"Experiment 1 (pointing task, first experimental session): baseline, 60° rotated-feedback adaptation, and no-feedback after-effect phases\",\"condition\":\"60-deg rotated visual feedback during center-out pointing (adaptation phase) and removal of feedback (after-effect phase)\",\"group_a\":{\"label\":\"older\",\"n\":12,\"n_evidence\":\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\"},\"group_b\":{\"label\":\"young\",\"n\":12,\"n_evidence\":\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\"},\"outcomes\":[{\"outcome_key\":\"late_adaptation\",\"sources\":[{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, adaptation-phase episodes (approx. episodes 6-20)\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"quote\":\"Also shown are the standard deviations\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, ANOVA for adaptation phase\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"quote\":\"significant effects were yielded for Age (F(1,22)=7.58, P<0.05), Episode (F(14,308)=41.14, P<0.001), and their interaction (F(14,308)=3.44, P<0.001).\"},{\"kind\":\"reported_effect_size\",\"page\":3,\"locator\":\"Results, exponential fit of adaptation curves\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"quote\":\"An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects.\"}]},{\"outcome_key\":\"aftereffect\",\"sources\":[{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, after-effect episodes (open symbols, no-feedback pointing)\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"quote\":\"Also shown are the standard deviations\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, ANOVA for after-effect phase\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"quote\":\"ANOVA yielded significant effects for Episode (F(4,88)=66.84, P<0.001) and the interaction (F(4,88)=3.95, P<0.01); indeed a close look at Fig. 1 reveals that the after-effect declined somewhat faster in the young group.\"}]}]}],\"roster_error_bars\":[{\"id\":\"fig01\",\"error_bar_type\":\"SD\",\"error_bar_scope\":\"between_subject\",\"evidence\":\"Fig. 1 caption: 'Also shown are the standard deviations' — computed across the twelve subjects per group at each episode, i.e. between-subject variability, with no statement of within-subject normalization.\"},{\"id\":\"fig02\",\"error_bar_type\":\"UNKNOWN\",\"error_bar_scope\":\"unknown\",\"evidence\":\"Fig. 2 caption: 'Mean tracking errors of young (triangles) and old (squares) subjects before and during exposure to rotated visual feedback. Bold lines represent experimental subjects... thin lines represent control subjects not pre-adapted with pointing' — the caption and surrounding text never state what the plotted error bars represent.\"},{\"id\":\"p1t1\",\"error_bar_type\":\"NONE\",\"error_bar_scope\":\"unknown\",\"evidence\":\"This roster entry corresponds only to the 'RESEARCH NOTES' section header text on page 1, with no caption or tabulated data and no error bars of any kind.\"}],\"notes\":\"Only the first (pointing) experiment is used per dataset rule 1, since the same 'experimental' subjects also performed a subsequent tracking-transfer experiment (Fig. 2) that is excluded here as a second experiment on the same participants; separate control groups recruited only for the tracking-transfer analysis (twelve young 22.6±1.9 y and twelve old 72.5±6.0 y) are likewise excluded because they did not perform the pointing adaptation task and are not part of the primary Old-vs-Young pointing contrast. No table of numeric means/SDs for the pointing task was found; all quantitative pointing data are conveyed via Fig. 1 (with SD error bars) and via inferential statistics (ANOVA F-values, exponential-fit parameters) in the Results text, none of which carry stated error bars themselves.\"}",
+ "parsed": {
+  "eligible": true,
+  "eligibility_rationale": "The study used an upper-extremity visuomotor rotation adaptation task (60° rotated visual feedback during a center-out pointing task), compared twelve young and twelve older adults, reported performance during the perturbation (adaptation) phase and during a subsequent no-feedback after-effect phase, and is written in English.",
+  "datasets": [
+   {
+    "label": "Pointing adaptation to 60° visual rotation: Old vs Young",
+    "experiment": "Experiment 1 (pointing task, first experimental session): baseline, 60° rotated-feedback adaptation, and no-feedback after-effect phases",
+    "condition": "60-deg rotated visual feedback during center-out pointing (adaptation phase) and removal of feedback (after-effect phase)",
+    "group_a": {
+     "label": "older",
+     "n": 12,
+     "n_evidence": "Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects."
+    },
+    "group_b": {
+     "label": "young",
+     "n": 12,
+     "n_evidence": "Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects."
+    },
+    "outcomes": [
+     {
+      "outcome_key": "late_adaptation",
+      "sources": [
+       {
+        "kind": "figure_line",
+        "page": 3,
+        "locator": "Fig. 1, adaptation-phase episodes (approx. episodes 6-20)",
+        "figure_id": "fig01",
+        "table_id": "",
+        "error_bar_type": "SD",
+        "quote": "Also shown are the standard deviations"
+       },
+       {
+        "kind": "test_statistic",
+        "page": 3,
+        "locator": "Results, ANOVA for adaptation phase",
+        "figure_id": "",
+        "table_id": "",
+        "error_bar_type": "NONE",
+        "quote": "significant effects were yielded for Age (F(1,22)=7.58, P<0.05), Episode (F(14,308)=41.14, P<0.001), and their interaction (F(14,308)=3.44, P<0.001)."
+       },
+       {
+        "kind": "reported_effect_size",
+        "page": 3,
+        "locator": "Results, exponential fit of adaptation curves",
+        "figure_id": "",
+        "table_id": "",
+        "error_bar_type": "NONE",
+        "quote": "An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects."
+       }
+      ]
+     },
+     {
+      "outcome_key": "aftereffect",
+      "sources": [
+       {
+        "kind": "figure_line",
+        "page": 3,
+        "locator": "Fig. 1, after-effect episodes (open symbols, no-feedback pointing)",
+        "figure_id": "fig01",
+        "table_id": "",
+        "error_bar_type": "SD",
+        "quote": "Also shown are the standard deviations"
+       },
+       {
+        "kind": "test_statistic",
+        "page": 3,
+        "locator": "Results, ANOVA for after-effect phase",
+        "figure_id": "",
+        "table_id": "",
+        "error_bar_type": "NONE",
+        "quote": "ANOVA yielded significant effects for Episode (F(4,88)=66.84, P<0.001) and the interaction (F(4,88)=3.95, P<0.01); indeed a close look at Fig. 1 reveals that the after-effect declined somewhat faster in the young group."
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "roster_error_bars": [
+   {
+    "id": "fig01",
+    "error_bar_type": "SD",
+    "error_bar_scope": "between_subject",
+    "evidence": "Fig. 1 caption: 'Also shown are the standard deviations' — computed across the twelve subjects per group at each episode, i.e. between-subject variability, with no statement of within-subject normalization."
+   },
+   {
+    "id": "fig02",
+    "error_bar_type": "UNKNOWN",
+    "error_bar_scope": "unknown",
+    "evidence": "Fig. 2 caption: 'Mean tracking errors of young (triangles) and old (squares) subjects before and during exposure to rotated visual feedback. Bold lines represent experimental subjects... thin lines represent control subjects not pre-adapted with pointing' — the caption and surrounding text never state what the plotted error bars represent."
+   },
+   {
+    "id": "p1t1",
+    "error_bar_type": "NONE",
+    "error_bar_scope": "unknown",
+    "evidence": "This roster entry corresponds only to the 'RESEARCH NOTES' section header text on page 1, with no caption or tabulated data and no error bars of any kind."
+   }
+  ],
+  "notes": "Only the first (pointing) experiment is used per dataset rule 1, since the same 'experimental' subjects also performed a subsequent tracking-transfer experiment (Fig. 2) that is excluded here as a second experiment on the same participants; separate control groups recruited only for the tracking-transfer analysis (twelve young 22.6±1.9 y and twelve old 72.5±6.0 y) are likewise excluded because they did not perform the pointing adaptation task and are not part of the primary Old-vs-Young pointing contrast. No table of numeric means/SDs for the pointing task was found; all quantitative pointing data are conveyed via Fig. 1 (with SD error bars) and via inferential statistics (ANOVA F-values, exponential-fit parameters) in the Results text, none of which carry stated error bars themselves."
+ },
+ "response": {
+  "id": "msg_011Ce51DY3JUW5NGZ3bhngGj",
+  "container": null,
+  "content": [
+   {
+    "signature": "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",
+    "thinking": "",
+    "type": "thinking"
+   },
+   {
+    "citations": null,
+    "text": "{\"eligible\":true,\"eligibility_rationale\":\"The study used an upper-extremity visuomotor rotation adaptation task (60° rotated visual feedback during a center-out pointing task), compared twelve young and twelve older adults, reported performance during the perturbation (adaptation) phase and during a subsequent no-feedback after-effect phase, and is written in English.\",\"datasets\":[{\"label\":\"Pointing adaptation to 60° visual rotation: Old vs Young\",\"experiment\":\"Experiment 1 (pointing task, first experimental session): baseline, 60° rotated-feedback adaptation, and no-feedback after-effect phases\",\"condition\":\"60-deg rotated visual feedback during center-out pointing (adaptation phase) and removal of feedback (after-effect phase)\",\"group_a\":{\"label\":\"older\",\"n\":12,\"n_evidence\":\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\"},\"group_b\":{\"label\":\"young\",\"n\":12,\"n_evidence\":\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\"},\"outcomes\":[{\"outcome_key\":\"late_adaptation\",\"sources\":[{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, adaptation-phase episodes (approx. episodes 6-20)\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"quote\":\"Also shown are the standard deviations\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, ANOVA for adaptation phase\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"quote\":\"significant effects were yielded for Age (F(1,22)=7.58, P<0.05), Episode (F(14,308)=41.14, P<0.001), and their interaction (F(14,308)=3.44, P<0.001).\"},{\"kind\":\"reported_effect_size\",\"page\":3,\"locator\":\"Results, exponential fit of adaptation curves\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"quote\":\"An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects.\"}]},{\"outcome_key\":\"aftereffect\",\"sources\":[{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, after-effect episodes (open symbols, no-feedback pointing)\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"quote\":\"Also shown are the standard deviations\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, ANOVA for after-effect phase\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"quote\":\"ANOVA yielded significant effects for Episode (F(4,88)=66.84, P<0.001) and the interaction (F(4,88)=3.95, P<0.01); indeed a close look at Fig. 1 reveals that the after-effect declined somewhat faster in the young group.\"}]}]}],\"roster_error_bars\":[{\"id\":\"fig01\",\"error_bar_type\":\"SD\",\"error_bar_scope\":\"between_subject\",\"evidence\":\"Fig. 1 caption: 'Also shown are the standard deviations' — computed across the twelve subjects per group at each episode, i.e. between-subject variability, with no statement of within-subject normalization.\"},{\"id\":\"fig02\",\"error_bar_type\":\"UNKNOWN\",\"error_bar_scope\":\"unknown\",\"evidence\":\"Fig. 2 caption: 'Mean tracking errors of young (triangles) and old (squares) subjects before and during exposure to rotated visual feedback. Bold lines represent experimental subjects... thin lines represent control subjects not pre-adapted with pointing' — the caption and surrounding text never state what the plotted error bars represent.\"},{\"id\":\"p1t1\",\"error_bar_type\":\"NONE\",\"error_bar_scope\":\"unknown\",\"evidence\":\"This roster entry corresponds only to the 'RESEARCH NOTES' section header text on page 1, with no caption or tabulated data and no error bars of any kind.\"}],\"notes\":\"Only the first (pointing) experiment is used per dataset rule 1, since the same 'experimental' subjects also performed a subsequent tracking-transfer experiment (Fig. 2) that is excluded here as a second experiment on the same participants; separate control groups recruited only for the tracking-transfer analysis (twelve young 22.6±1.9 y and twelve old 72.5±6.0 y) are likewise excluded because they did not perform the pointing adaptation task and are not part of the primary Old-vs-Young pointing contrast. No table of numeric means/SDs for the pointing task was found; all quantitative pointing data are conveyed via Fig. 1 (with SD error bars) and via inferential statistics (ANOVA F-values, exponential-fit parameters) in the Results text, none of which carry stated error bars themselves.\"}",
+    "type": "text"
+   }
+  ],
+  "model": "claude-sonnet-5",
+  "role": "assistant",
+  "stop_details": null,
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "type": "message",
+  "usage": {
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 0,
+    "ephemeral_5m_input_tokens": 19308
+   },
+   "cache_creation_input_tokens": 19308,
+   "cache_read_input_tokens": 0,
+   "inference_geo": "global",
+   "input_tokens": 2463,
+   "output_tokens": 3477,
+   "output_tokens_details": {
+    "thinking_tokens": 1758
+   },
+   "server_tool_use": null,
+   "service_tier": "standard"
+  }
+ },
+ "request_id": "req_011Ce51DVwHsd78sdaz2fQVe",
+ "effort": "medium",
+ "max_tokens": 16000,
+ "cost_usd": 0.087966,
+ "created_at": "2026-08-15T18:26:44+00:00"
+}

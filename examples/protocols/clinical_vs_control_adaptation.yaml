@@ -1,0 +1,107 @@
+# Canopy protocol — a SECOND, deliberately different review, used to show that nothing in the
+# pipeline is specific to the ageing question (plan amendment J: "second toy protocol ... to prove
+# generality").
+#
+# Everything a protocol controls is different here:
+#   * the contrast is clinical vs control, not older vs younger;
+#   * the outcomes are named and defined differently, and one of them is a retention measure;
+#   * the moderators are different;
+#   * the statistics profile is `metafor` (Hedges' g, Borenstein large-sample variance, REML,
+#     normal prediction interval) rather than `cisneros2024` (Cohen's d, Hedges-Olkin df-based
+#     variance, HTS prediction interval).
+#
+# It runs on a two-paper open-access corpus that is already in this repository:
+#
+#   .venv/bin/python -m canopy.cli run \
+#       --papers validation/papers_oa/toy_clinical \
+#       --protocol examples/protocols/clinical_vs_control_adaptation.yaml \
+#       --out validation/out/run_toy_clinical --budget-usd 12
+#
+# (create the folder first — see validation/README.md, "Second protocol".)
+
+title: Sensorimotor adaptation in a clinical group versus matched controls
+
+research_question: >-
+  Do people with a neurological or psychiatric condition adapt differently from matched control
+  participants when a visuomotor or force-field perturbation is applied, and how much of the
+  adaptation is retained once the perturbation is removed?
+
+group_a:
+  key: A
+  label: Clinical group
+  definition: >-
+    The group defined by a diagnosis, injury or clinical condition (for example stroke,
+    schizophrenia, Parkinson's disease), as the study itself defines and labels it. When a study
+    reports several clinical subgroups, take the one that matches the study's own primary
+    contrast.
+  synonyms: [patients, patient group, clinical group, stroke, schizophrenia, participants with,
+             affected group, lesion group]
+
+group_b:
+  key: B
+  label: Control group
+  definition: >-
+    The comparison group of participants without the condition, as the study labels it —
+    healthy controls, matched controls, or a control arm.
+  synonyms: [controls, healthy controls, matched controls, control group, comparison group,
+             neurotypical, unaffected]
+
+outcomes:
+  - key: adaptation_extent
+    label: Extent of adaptation
+    definition: >-
+      How far performance moved towards full compensation by the end of the perturbation block.
+      Use the block average the paper reports when there is one; otherwise the final measure of
+      overall performance while the perturbation was applied.
+    measurement_window: >-
+      The end of the first perturbation block, with the perturbation still applied.
+    higher_is_better_hint: >-
+      Depends on the measure. Error-like measures (deviation, absolute error, directional error)
+      are better when smaller; compensation-like measures (percent adaptation, adaptation index)
+      are better when larger. Decide per dataset from the paper's own wording and quote it.
+    positive_direction_label: Greater in patients
+    negative_direction_label: Reduced in patients
+    units_hint: degrees, cm, N, or a unitless index — record exactly what the paper prints.
+
+  - key: retention
+    label: Retention
+    definition: >-
+      How much of the adaptation survived after the perturbation was removed, or after a delay —
+      the paper's own retention, washout or savings measure for the first exposure.
+    measurement_window: >-
+      The first measurement after the perturbation was removed, or the paper's own retention
+      test; do not use a re-adaptation block.
+    higher_is_better_hint: >-
+      A larger retained aftereffect usually means more implicit learning was kept, but a signed
+      error measure may be better when smaller. Decide per dataset from the paper's own wording.
+    positive_direction_label: Greater in patients
+    negative_direction_label: Reduced in patients
+    units_hint: degrees, cm, N, or a unitless index — record exactly what the paper prints.
+
+eligibility:
+  - The study used an upper-extremity motor adaptation task with a visuomotor displacement of feedback or a force field.
+  - The study compared a clinically defined group with a control group of participants without that condition.
+  - The study reported performance during the perturbation block and/or after the perturbation was removed.
+  - The study is written in English.
+
+dataset_rules:
+  - When the same participants took part in two experiments, include only the first experiment.
+  - When a study reports several clinical subgroups against one control group, record every subgroup and mark the control arm as shared.
+  - When a study used multiple perturbation blocks, use the initial round of adaptation.
+
+moderators:
+  - condition
+  - perturbation_type
+  - time_since_onset_months
+
+stats:
+  profile: metafor
+
+notes: >-
+  Moderators to record for every dataset:
+  condition — the clinical condition as the paper names it;
+  perturbation_type — "visuomotor" or "force_field";
+  time_since_onset_months — months since diagnosis or injury when the paper reports one,
+  otherwise leave blank.
+  Group A is the clinical group and group B the control group, so a positive effect means
+  "Greater in patients".

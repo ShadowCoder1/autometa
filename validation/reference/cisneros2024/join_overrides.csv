@@ -1,0 +1,12 @@
+# Hand-written joins between one AUTO row and one GOLD spreadsheet row, for the cases the
+# matcher in validation/scripts/_common.py::join_rows cannot make on evidence alone.
+#
+# Fill one line per hard case:
+#   outcome_key    late_adaptation | aftereffect
+#   dataset_id     the auto row's dataset id (see discrepancies_<outcome>.csv)
+#   gold_row_index the 1-based row number in late_gsheet.csv / aft_gsheet.csv
+#   reason         why the automatic rules could not make this join (for the next reader)
+#
+# An override always wins, so keep this file short and justified: loosening the matcher for
+# everyone is worse, but so is pairing two rows that are not the same dataset.
+outcome_key,dataset_id,gold_row_index,reason

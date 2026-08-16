@@ -1,0 +1,339 @@
+"""Provider seam.
+
+`LLMClient` never talks to a vendor SDK directly; it talks to an `LLMProvider`:
+
+* `AnthropicProvider` — the real Messages API (lazy SDK construction, `max_retries=4`);
+* `ReplayProvider`    — reads recorded fixtures keyed by request hash (offline tests);
+* `FakeProvider`      — canned payloads for unit tests.
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Protocol, runtime_checkable
+
+from .errors import MissingFixture
+
+#: models that reject `output_config.effort` (verified live: haiku returns 400 for it)
+MODELS_WITHOUT_EFFORT: frozenset[str] = frozenset({"claude-haiku-4-5"})
+
+
+def supports_effort(model: str) -> bool:
+    name = model.split("/")[-1]
+    return not any(name.startswith(m) for m in MODELS_WITHOUT_EFFORT)
+
+
+#: only these models accept server-side `fallbacks` (with the server-side-fallback beta)
+FALLBACK_MODELS: frozenset[str] = frozenset({"claude-fable-5"})
+
+
+def supports_fallbacks(model: str) -> bool:
+    name = model.split("/")[-1]
+    return any(name.startswith(m) for m in FALLBACK_MODELS)
+
+
+@dataclass
+class LLMRequest:
+    model: str
+    system: Any = ""
+    messages: list[Any] = field(default_factory=list)
+    schema: dict | None = None
+    effort: str | None = "high"
+    max_tokens: int = 16000
+    betas: list[str] | None = None
+    fallbacks: str | None = None
+    stream: bool = False
+    key: str = ""
+    tools: list[dict] | None = None                 # tool-use loop only (see LLMClient.tool_loop)
+    tool_choice: dict | None = None
+
+
+@dataclass
+class ProviderResponse:
+    text: str                                       # the FIRST text block (unchanged contract)
+    stop_reason: str = "end_turn"
+    model: str = ""
+    usage: dict[str, Any] = field(default_factory=dict)
+    request_id: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
+    content: list[dict[str, Any]] = field(default_factory=list)   # every content block, as plain dicts
+
+
+@runtime_checkable
+class LLMProvider(Protocol):
+    name: str
+    is_live: bool
+
+    def complete(self, request: LLMRequest) -> ProviderResponse:
+        ...
+
+
+# ----------------------------------------------------------------------------- helpers
+def _usage_dict(usage: Any) -> dict[str, Any]:
+    if usage is None:
+        return {}
+    if isinstance(usage, dict):
+        data = dict(usage)
+    else:
+        data = {}
+        for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens",
+                  "cache_read_input_tokens"):
+            v = getattr(usage, k, None)
+            if v is not None:
+                data[k] = v
+    return {k: (v if isinstance(v, (int, float)) else v) for k, v in data.items()}
+
+
+def _first_text(message: Any) -> str:
+    content = getattr(message, "content", None)
+    if content is None and isinstance(message, dict):
+        content = message.get("content")
+    for block in content or []:
+        btype = getattr(block, "type", None) or (block.get("type") if isinstance(block, dict) else None)
+        if btype == "text":
+            return getattr(block, "text", None) or (block.get("text") if isinstance(block, dict) else "") or ""
+    return ""
+
+
+def _content_blocks(message: Any, raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every content block of a response as plain JSON dicts (tool_use blocks included)."""
+    blocks = raw.get("content")
+    if isinstance(blocks, list) and all(isinstance(b, dict) for b in blocks):
+        return blocks
+    content = getattr(message, "content", None)
+    if content is None and isinstance(message, dict):
+        content = message.get("content")
+    out: list[dict[str, Any]] = []
+    for block in content or []:
+        if isinstance(block, dict):
+            out.append(block)
+            continue
+        dump = getattr(block, "model_dump", None)
+        if callable(dump):
+            try:
+                out.append(dump(mode="json"))
+            except TypeError:                              # pragma: no cover - defensive
+                out.append(dump())
+    return out
+
+
+def _raw_dict(message: Any) -> dict[str, Any]:
+    dump = getattr(message, "model_dump", None)
+    if callable(dump):
+        try:
+            return dump(mode="json")
+        except TypeError:                                  # pragma: no cover - defensive
+            return dump()
+    return message if isinstance(message, dict) else {}
+
+
+# ----------------------------------------------------------------------------- anthropic
+class AnthropicProvider:
+    """The real API. The SDK object is built on first use so importing/creating is key-free."""
+
+    name = "anthropic"
+    is_live = True
+
+    def __init__(self, client: Any = None, max_retries: int = 4, api_key: str | None = None):
+        self._client = client
+        self._max_retries = max_retries
+        self._api_key = api_key
+
+    @property
+    def client(self) -> Any:
+        if self._client is None:
+            import anthropic
+
+            from ..config import api_key as env_key
+            from ..config import load_env
+
+            load_env()
+            kwargs: dict[str, Any] = {"max_retries": self._max_retries}
+            key = self._api_key or env_key()
+            if key:
+                kwargs["api_key"] = key
+            self._client = anthropic.Anthropic(**kwargs)
+        return self._client
+
+    def _kwargs(self, req: LLMRequest) -> dict[str, Any]:
+        if req.fallbacks and not supports_fallbacks(req.model):
+            raise ValueError(
+                f"fallbacks={req.fallbacks!r} is only supported for {sorted(FALLBACK_MODELS)}, "
+                f"not {req.model!r} (betas are fine on any model)")
+        if req.tools and req.schema is not None:
+            raise ValueError(
+                "tools and a structured-output schema cannot be combined: the API rejects "
+                "`output_config.format` alongside `tools`. Put the answer schema on a terminal "
+                "tool with `strict: true` instead (see LLMClient.tool_loop).")
+        output_config: dict[str, Any] = {}
+        if req.effort and supports_effort(req.model):
+            output_config["effort"] = req.effort
+        if req.schema is not None:
+            output_config["format"] = {"type": "json_schema", "schema": req.schema}
+        kwargs: dict[str, Any] = {
+            "model": req.model,
+            "max_tokens": req.max_tokens,
+            "messages": req.messages,
+        }
+        if output_config:
+            kwargs["output_config"] = output_config
+        if req.system:
+            kwargs["system"] = req.system
+        if req.betas:
+            kwargs["betas"] = list(req.betas)
+        if req.tools:
+            kwargs["tools"] = list(req.tools)
+        if req.tool_choice:
+            kwargs["tool_choice"] = dict(req.tool_choice)
+        if req.fallbacks:
+            kwargs["fallbacks"] = req.fallbacks
+        # NOTE: never pass `temperature` or `thinking` — these models think adaptively.
+        return kwargs
+
+    def _endpoint(self, req: LLMRequest) -> Any:
+        if req.betas or req.fallbacks:
+            return self.client.beta.messages
+        return self.client.messages
+
+    def complete(self, request: LLMRequest) -> ProviderResponse:
+        kwargs = self._kwargs(request)
+        endpoint = self._endpoint(request)
+        if request.stream:
+            with endpoint.stream(**kwargs) as stream:
+                message = stream.get_final_message()
+        else:
+            message = endpoint.create(**kwargs)
+        raw = _raw_dict(message)
+        return ProviderResponse(
+            text=_first_text(message),
+            stop_reason=getattr(message, "stop_reason", "") or "",
+            model=getattr(message, "model", "") or request.model,
+            usage=_usage_dict(getattr(message, "usage", None)),
+            request_id=str(getattr(message, "_request_id", "") or getattr(message, "id", "") or ""),
+            raw=raw,
+            content=_content_blocks(message, raw),
+        )
+
+    def count_tokens(self, *, model: str, system: Any, messages: list[Any]) -> int:
+        kwargs: dict[str, Any] = {"model": model, "messages": messages}
+        if system:
+            kwargs["system"] = system
+        res = self.client.messages.count_tokens(**kwargs)
+        return int(getattr(res, "input_tokens", 0) or 0)
+
+    def upload_file(self, path: str | Path, media_type: str = "application/pdf",
+                    betas: list[str] | None = None) -> str:
+        p = Path(path)
+        kwargs: dict[str, Any] = {}
+        if betas:
+            kwargs["betas"] = list(betas)
+        with open(p, "rb") as fh:
+            uploaded = self.client.beta.files.upload(file=(p.name, fh, media_type), **kwargs)
+        return str(getattr(uploaded, "id", "") or "")
+
+
+# ----------------------------------------------------------------------------- replay
+class ReplayProvider:
+    """Serves recorded fixtures from `<dir>/<key>.json`; never touches the network."""
+
+    name = "replay"
+    is_live = False
+
+    def __init__(self, replay_dir: str | Path):
+        self.dir = Path(replay_dir)
+
+    def path(self, key: str) -> Path:
+        return self.dir / f"{key}.json"
+
+    def load(self, key: str) -> dict[str, Any] | None:
+        p = self.path(key)
+        if not p.exists():
+            return None
+        return json.loads(p.read_text())
+
+    def complete(self, request: LLMRequest) -> ProviderResponse:
+        record = self.load(request.key)
+        if record is None:
+            raise MissingFixture(
+                f"no fixture {request.key}.json in {self.dir} — record one with "
+                f"CANOPY_LIVE=1 CANOPY_RECORD=1")
+        return response_from_record(record, default_model=request.model)
+
+
+def response_from_record(record: dict[str, Any], default_model: str = "") -> ProviderResponse:
+    """Build a `ProviderResponse` from a cached/recorded fixture dict."""
+    text = record.get("text")
+    if text is None and record.get("parsed") is not None:
+        text = json.dumps(record["parsed"])
+    raw = record.get("response") or {}
+    content = record.get("content")
+    if not isinstance(content, list):
+        blocks = raw.get("content") if isinstance(raw, dict) else None
+        content = blocks if isinstance(blocks, list) else []
+    return ProviderResponse(
+        text=text or "",
+        stop_reason=record.get("stop_reason", "end_turn"),
+        model=record.get("served_model") or record.get("model") or default_model,
+        usage=record.get("usage") or {},
+        request_id=record.get("request_id", ""),
+        raw=raw,
+        content=[b for b in content if isinstance(b, dict)],
+    )
+
+
+# ----------------------------------------------------------------------------- fake
+class FakeProvider:
+    """Canned responses for unit tests. `payloads` may be dicts (JSON-dumped) or raw strings."""
+
+    name = "fake"
+    is_live = False
+
+    def __init__(self, payloads: Any = None, stop_reason: str = "end_turn",
+                 usage: dict[str, Any] | None = None, model: str = ""):
+        if payloads is None:
+            payloads = [{"ok": True}]
+        if isinstance(payloads, (dict, str)):
+            payloads = [payloads]
+        self.payloads = list(payloads)
+        self.stop_reason = stop_reason
+        self.usage = usage or {"input_tokens": 1000, "output_tokens": 100,
+                               "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+        self.model = model
+        self.requests: list[LLMRequest] = []
+        self.uploads: list[dict[str, Any]] = []
+
+    def complete(self, request: LLMRequest) -> ProviderResponse:
+        self.requests.append(request)
+        if not self.payloads:
+            raise IndexError("FakeProvider has no payloads left")
+        i = min(len(self.requests) - 1, len(self.payloads) - 1)
+        payload = self.payloads[i]
+        if callable(payload):
+            payload = payload(request)
+        if isinstance(payload, list):                    # a canned multi-block turn
+            content = [dict(b) for b in payload]
+            text = next((b.get("text", "") for b in content if b.get("type") == "text"), "")
+            stop = "tool_use" if any(b.get("type") == "tool_use" for b in content) else self.stop_reason
+        else:
+            text = payload if isinstance(payload, str) else json.dumps(payload)
+            content = [{"type": "text", "text": text}]
+            stop = self.stop_reason
+        rid = f"fake_{len(self.requests)}"
+        return ProviderResponse(text=text, stop_reason=stop,
+                                model=self.model or request.model, usage=dict(self.usage),
+                                request_id=rid, raw={"id": rid, "content": content},
+                                content=content)
+
+    def count_tokens(self, *, model: str, system: Any, messages: list[Any]) -> int:
+        from .costs import approx_tokens
+
+        return approx_tokens(system, messages)
+
+    def upload_file(self, path: str | Path, media_type: str = "application/pdf",
+                    betas: list[str] | None = None) -> str:
+        import hashlib
+
+        digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()[:12]
+        self.uploads.append({"path": str(path), "media_type": media_type, "betas": betas})
+        return f"file_fake_{digest}"

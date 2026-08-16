@@ -23,6 +23,19 @@ from PIL import Image
 
 from .images import prepare_for_claude
 
+
+def _union(a: pymupdf.Rect, b: pymupdf.Rect) -> pymupdf.Rect:
+    """Bounding box of two rects that also works for degenerate ones — `Rect | Rect` follows MuPDF and IGNORES an
+    'empty' operand (zero width or height), so straight lines would never grow a cluster."""
+    return pymupdf.Rect(min(a.x0, b.x0), min(a.y0, b.y0), max(a.x1, b.x1), max(a.y1, b.y1))
+
+
+def _overlaps(a, b) -> bool:
+    """Inclusive rectangle overlap that also works for degenerate (zero-area) rects such as straight lines —
+    `pymupdf.Rect.intersects` returns False for those and silently drops axes, ticks and error-bar stems."""
+    return not (a.x1 < b.x0 or b.x1 < a.x0 or a.y1 < b.y0 or b.y1 < a.y0)
+
+
 PAGE_DPI = 200          # page rasters sent to text/table extractors
 FIG_DPI = 500           # crops of vector figures
 RASTER_UPSCALE = 4      # crops of embedded raster figures (native pixels × this, capped by tier)
@@ -179,11 +192,16 @@ def _norm_ws(t: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
-BODY_VERB_RE = re.compile(r"^\s*(fig(?:ure)?\.?|figs\.?)\s*s?\d+[a-z]?\s*(?:[,–-]\s*\d+[a-z]?\s*)?"
+_BODY_HEAD = r"^\s*(?i:fig(?:ure)?\.?|figs\.?)\s*[sS]?\d+[a-zA-Z]?\s*(?:[,–-]\s*\d+[a-zA-Z]?\s*)?"
+#: "Figure 2 illustrates ..." — a body sentence, not a caption (verbs: any case)
+BODY_VERB_RE = re.compile(_BODY_HEAD +
                           r"(illustrates|shows|show|depicts|displays|reveals|presents|summarizes|summarises|"
                           r"plots|gives|indicates|demonstrates|provides|compares|contains|represents|is|are|and|"
-                          r"also|thus|therefore|which|where|as|for|in|of|the|a|an|we|this|these|but|that|it|"
+                          r"also|thus|therefore|which|where|as|for|in|of|but|that|"
                           r"revealed|showed|depicted|illustrated|confirms|suggests|highlights|makes)\b", re.I)
+#: "Fig. 5 the ..." with a LOWERCASE function word is body text; "Fig. 5 The changes in ..." (capitalised) is how
+#: Springer/Elsevier set real captions, so these words are matched case-sensitively.
+BODY_FUNC_RE = re.compile(_BODY_HEAD + r"(the|a|an|we|this|these|it)\b")
 
 
 def caption_score(txt: str) -> float:
@@ -191,7 +209,7 @@ def caption_score(txt: str) -> float:
     t = _norm_ws(txt)
     if not CAPTION_RE.match(t):
         return 0.0
-    if BODY_VERB_RE.match(t):
+    if BODY_VERB_RE.match(t) or BODY_FUNC_RE.match(t):
         return 0.1
     m = CAPTION_RE.match(t)
     rest = t[m.end():].lstrip()
@@ -217,8 +235,8 @@ def _cluster_rects(rects: list[pymupdf.Rect], gap: float = 12.0) -> list[pymupdf
         merged = False
         for i, c in enumerate(clusters):
             grown = pymupdf.Rect(c.x0 - gap, c.y0 - gap, c.x1 + gap, c.y1 + gap)
-            if grown.intersects(r):
-                clusters[i] = c | r
+            if _overlaps(grown, r):
+                clusters[i] = _union(c, r)
                 merged = True
                 break
         if not merged:
@@ -231,8 +249,8 @@ def _cluster_rects(rects: list[pymupdf.Rect], gap: float = 12.0) -> list[pymupdf
         for c in clusters:
             for i, o in enumerate(out):
                 grown = pymupdf.Rect(o.x0 - gap, o.y0 - gap, o.x1 + gap, o.y1 + gap)
-                if grown.intersects(c):
-                    out[i] = o | c
+                if _overlaps(grown, c):
+                    out[i] = _union(o, c)
                     changed = True
                     break
             else:
@@ -277,7 +295,7 @@ def _figure_regions(page: pymupdf.Page, page_no: int) -> list[dict]:
             continue
         draw_rects.append(pymupdf.Rect(r))
     clusters = [c for c in _cluster_rects(draw_rects, gap=10) if c.width > 60 and c.height > 40]
-    counts = [sum(1 for r in draw_rects if c.intersects(r)) for c in clusters]
+    counts = [sum(1 for r in draw_rects if _overlaps(c, r)) for c in clusters]
     clusters = [c for c, n in zip(clusters, counts) if n >= 15]
     counts = [n for n in counts if n >= 15]
     # drop vector clusters that are really tables (overlap a detected table region heavily)
@@ -285,10 +303,12 @@ def _figure_regions(page: pymupdf.Page, page_no: int) -> list[dict]:
                  [dict(rect=c, kind="vector", n_draw=n) for c, n in zip(clusters, counts)]
     caps = _caption_blocks(page)
 
-    def best_caption(r: pymupdf.Rect):
-        best, best_key = None, None
+    def ranked_captions(r: pymupdf.Rect):
+        """All plausible captions for a graphic, best first: (cap, relation, key)."""
+        out = []
         for cap in caps:
             cap_rect, cap_txt, label, score = cap
+            rel = None
             horiz = min(r.x1, cap_rect.x1) - max(r.x0, cap_rect.x0)
             vert = min(r.y1, cap_rect.y1) - max(r.y0, cap_rect.y0)
             dist = None
@@ -296,26 +316,65 @@ def _figure_regions(page: pymupdf.Page, page_no: int) -> list[dict]:
                 below = cap_rect.y0 - r.y1          # caption below graphic (usual)
                 above = r.y0 - cap_rect.y1          # caption above graphic (some journals)
                 if -0.3 * r.height <= below <= 260:
-                    dist = max(below, 0)
+                    dist, rel = max(below, 0), "below"
                 elif -0.3 * cap_rect.height <= above <= 60:
-                    dist = max(above, 0) + 30
+                    dist, rel = max(above, 0) + 30, "above"
                 elif vert > 0 and cap_rect.y0 > r.y0 + 0.4 * r.height:
-                    dist = 20                       # caption inside the lower part of a wide figure's span
+                    dist, rel = 20, "inside"        # caption inside the lower part of a wide figure's span
             elif vert > 0.5 * cap_rect.height:
                 gap = max(r.x0 - cap_rect.x1, cap_rect.x0 - r.x1)
                 if 0 <= gap <= 45:                  # side (margin) caption, vertically aligned
-                    dist = 50 + gap
+                    dist, rel = 50 + gap, "side"
             if dist is None:
                 continue
-            key = (-round(score, 1), dist)          # real captions first, then nearest
-            if best_key is None or key < best_key:
-                best, best_key = cap, key
-        return best
+            out.append((cap, rel, (0 if score >= 0.6 else 1, dist)))   # real captions first, then nearest
+            # (a band, not the raw score: a slightly 'nicer' caption 200 pt away must not beat the adjacent one)
+        out.sort(key=lambda t: t[2])
+        return out
 
+    def assign_captions():
+        """Best caption per graphic, then resolve conflicts. When several graphics claim ONE caption with mixed
+        relations (one sees it below itself, another above — i.e. the caption sits between two different
+        figures) the graphics are re-paired with their plausible captions in reading order, because figure
+        numbers increase down the page. Multi-panel figures (all claims 'below'/'inside') still merge."""
+        ranked = {id(c): ranked_captions(c["rect"]) for c in candidates}
+        choice = {id(c): (ranked[id(c)][0][:2] if ranked[id(c)] else (None, None)) for c in candidates}
+        claims: dict[int, list] = {}
+        for c in candidates:
+            cap, rel = choice[id(c)]
+            if cap is not None:
+                claims.setdefault(id(cap), []).append((c, rel))
+        for cap_id, cl in claims.items():
+            rels = {rel for _, rel in cl}
+            if len(cl) < 2 or "above" not in rels or rels == {"above"}:
+                continue
+            graphics = sorted((c for c, _ in cl), key=lambda c: (c["rect"].y0, c["rect"].x0))
+            pool = {}
+            for c in graphics:
+                for cap, rel, _ in ranked[id(c)]:
+                    pool[id(cap)] = cap
+            ordered = sorted(pool.values(), key=lambda cap: (cap[0].y0, cap[0].x0))
+            paired = None
+            if len(ordered) >= len(graphics):
+                trial = list(zip(graphics, ordered))
+                if all(any(id(cap) == id(t[0]) for t in ranked[id(c)]) for c, cap in trial):
+                    paired = trial
+            if paired is not None:
+                for c, cap in paired:
+                    rel = next(t[1] for t in ranked[id(c)] if id(t[0]) == id(cap))
+                    choice[id(c)] = (cap, rel)
+            else:                                   # fallback: the 'above' claimants take their next-best caption
+                for c, rel in cl:
+                    if rel == "above":
+                        alt = [t for t in ranked[id(c)] if id(t[0]) != cap_id]
+                        choice[id(c)] = alt[0][:2] if alt else (None, None)
+        return {k: v[0] for k, v in choice.items()}
+
+    assignment = assign_captions()
     groups: dict[str, dict] = {}
     loose = []
     for c in candidates:
-        cap = best_caption(c["rect"])
+        cap = assignment[id(c)]
         if cap is None:
             loose.append(c)
             continue
@@ -327,7 +386,7 @@ def _figure_regions(page: pymupdf.Page, page_no: int) -> list[dict]:
     for g in groups.values():
         union = g["rects"][0]
         for r in g["rects"][1:]:
-            union = union | r
+            union = _union(union, r)
         cap_rect, cap_txt, label, score = g["cap"]
         kind = "raster" if g["kinds"] == {"raster"} else "vector" if g["kinds"] == {"vector"} else "mixed"
         npx = native.get((round(union.x0), round(union.y0))) if (kind == "raster" and g["n_img"] == 1) else None
@@ -350,8 +409,13 @@ def _figure_regions(page: pymupdf.Page, page_no: int) -> list[dict]:
                                 n_drawings=0, native_px=None, confidence=0.3))
     for c in loose:   # graphics without any caption nearby: keep if large (caption may be on the next page)
         r = c["rect"]
-        if r.width * r.height > 0.08 * W * H:
-            regions.append(dict(bbox=r, caption="", label="", kind=c["kind"], n_images=int(c["kind"] == "raster"),
+        if r.width * r.height <= 0.08 * W * H:
+            continue
+        if page_no == 1 and r.y1 < 0.2 * H:      # journal banner / logo rules on the title page
+            continue
+        if c["kind"] == "vector" and c["n_draw"] / (r.width * r.height / 1e4) < 1.0:
+            continue                             # a few page-wide rules and boxes, not a chart (sparse line art)
+        regions.append(dict(bbox=r, caption="", label="", kind=c["kind"], n_images=int(c["kind"] == "raster"),
                                 n_drawings=c["n_draw"], native_px=native.get((round(r.x0), round(r.y0))), confidence=0.4))
     regions.sort(key=lambda d: (d["bbox"].y0, d["bbox"].x0))
     return regions

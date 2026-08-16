@@ -1,0 +1,17 @@
+{
+  "run_dir": "validation/out/demo_run",
+  "paper_id": "3570e4ce2a9c77369570581f2b66d0543307d06336944015952078950e06b97c",
+  "dataset_id": "3570e4ce2a9c:d1",
+  "outcome_key": "late_adaptation",
+  "route": "text_mean_sd",
+  "confidence": "auto_accept",
+  "es": -0.6000000000000002,
+  "se": 0.4181488788081164,
+  "ci_low": -1.4195567426397122,
+  "ci_high": 0.2195567426397118,
+  "conversion_chain": "group A: mean 21.5, SD 6 as printed (n = 12); group B: mean 17.9, SD 6 as printed (n = 12); pooled SD = \u221a((((12\u22121)\u00b76\u00b2 + (12\u22121)\u00b76\u00b2) / (12+12\u22122)) = 6; d = (21.5 \u2212 17.9) / 6 = 0.6; oriented: a larger raw value means more of the construct = False, so d = -0.6; var (hedges_olkin_df) = 0.1748, SE = 0.4181, 95% CI [-1.42, 0.2196]",
+  "files": {
+    "png": "validation/out/example_text_ms_offline_demo.png",
+    "svg": "validation/out/example_text_ms_offline_demo.svg"
+  }
+}

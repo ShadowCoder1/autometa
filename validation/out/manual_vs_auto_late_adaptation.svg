@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="532.8pt" height="331.2pt" viewBox="0 0 532.8 331.2" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-08-16T01:13:40.684433</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.11.1, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 331.2 
+L 532.8 331.2 
+L 532.8 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="text_1">
+   <text style="font-size: 13px; font-family: 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #0b0b0b" x="266.4" y="86.112" transform="rotate(-0 266.4 86.112)">Late adaptation: no point can be plotted yet</text>
+  </g>
+  <g id="text_2">
+   <text style="font-size: 9.2px; font-family: 'DejaVu Sans', sans-serif; fill: #52514e" transform="translate(168.222344 143.298625)">0 matched pairs with a value on both axes</text>
+   <text style="font-size: 9.2px; font-family: 'DejaVu Sans', sans-serif; fill: #52514e" transform="translate(266.4 157.32)"/>
+   <text style="font-size: 9.2px; font-family: 'DejaVu Sans', sans-serif; fill: #52514e" transform="translate(48.454875 176.418625)">2 automatic row(s), of which 2 produced NO effect size (every cell was held for human review)</text>
+   <text style="font-size: 9.2px; font-family: 'DejaVu Sans', sans-serif; fill: #52514e" transform="translate(183.089688 192.850687)">50 manual row(s) in late_gsheet.csv</text>
+   <text style="font-size: 9.2px; font-family: 'DejaVu Sans', sans-serif; fill: #52514e" transform="translate(152.741188 209.410687)">join outcome: author_year 2, unmatched_gold 48</text>
+   <text style="font-size: 9.2px; font-family: 'DejaVu Sans', sans-serif; fill: #52514e" transform="translate(266.4 223.56)"/>
+   <text style="font-size: 9.2px; font-family: 'DejaVu Sans', sans-serif; fill: #52514e" transform="translate(91.61725 242.530687)">The join found the right gold rows — see discrepancies_late_adaptation.csv.</text>
+   <text style="font-size: 9.2px; font-family: 'DejaVu Sans', sans-serif; fill: #52514e" transform="translate(141.284313 259.218625)">What is missing is a number to compare, not a match.</text>
+  </g>
+  <g id="text_3">
+   <text style="font-size: 7.6px; font-family: 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #898781" x="266.4" y="311.328" transform="rotate(-0 266.4 311.328)">manual d (x) against Canopy d (y) — regenerated automatically once any cell resolves</text>
+  </g>
+ </g>
+</svg>

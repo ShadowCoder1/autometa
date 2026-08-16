@@ -1,0 +1,98 @@
+{
+ "key": "6b49579ed689cab9535a2e9f2f9733cd46a0eff083d0d5b282ae02d17d35f74e",
+ "model": "claude-sonnet-5",
+ "served_model": "claude-sonnet-5",
+ "stop_reason": "end_turn",
+ "usage": {
+  "input_tokens": 5239,
+  "output_tokens": 697,
+  "cache_creation_input_tokens": 0,
+  "cache_read_input_tokens": 0
+ },
+ "text": "{\"groups\":[{\"group\":\"A\",\"group_label_as_written\":\"old subjects\",\"status\":\"found\",\"page\":3,\"kind\":\"text_mean_sd\",\"quote\":\"In the trail-making test, the completion time for young subjects was 27.4±7.2 s and that for old subjects was 42.5±6.9 s; the difference was statistically significant (t(22)=5.25; P<0.001).\",\"row_header\":\"\",\"col_header\":\"\",\"value_as_written\":\"42.5±6.9 s\",\"mean\":42.5,\"dispersion_value\":6.9,\"dispersion_type\":\"SD\",\"unit\":\"s\",\"n\":null,\"n_quote\":\"\",\"raw_value_semantics\":\"higher_more_error\",\"analysis_metric\":\"endpoint\",\"error_bar_scope\":\"between_subject\",\"notes\":\"Dispersion type not explicitly labeled as SD but reported using ± notation consistent with the age-of-subjects SD convention used earlier in the paper.\"},{\"group\":\"B\",\"group_label_as_written\":\"young subjects\",\"status\":\"found\",\"page\":3,\"kind\":\"text_mean_sd\",\"quote\":\"In the trail-making test, the completion time for young subjects was 27.4±7.2 s and that for old subjects was 42.5±6.9 s; the difference was statistically significant (t(22)=5.25; P<0.001).\",\"row_header\":\"\",\"col_header\":\"\",\"value_as_written\":\"27.4±7.2 s\",\"mean\":27.4,\"dispersion_value\":7.2,\"dispersion_type\":\"SD\",\"unit\":\"s\",\"n\":null,\"n_quote\":\"\",\"raw_value_semantics\":\"higher_more_error\",\"analysis_metric\":\"endpoint\",\"error_bar_scope\":\"between_subject\",\"notes\":\"Dispersion type not explicitly labeled as SD but reported using ± notation consistent with the age-of-subjects SD convention used earlier in the paper.\"}],\"notes\":\"Both values found in the same sentence on page 3, giving trail-making (screening) test completion times for young and old subjects with ± values not explicitly labeled but inferred to be SD by convention with earlier demographic reporting (e.g., '26.0±5.0 years of age').\"}",
+ "parsed": {
+  "groups": [
+   {
+    "group": "A",
+    "group_label_as_written": "old subjects",
+    "status": "found",
+    "page": 3,
+    "kind": "text_mean_sd",
+    "quote": "In the trail-making test, the completion time for young subjects was 27.4±7.2 s and that for old subjects was 42.5±6.9 s; the difference was statistically significant (t(22)=5.25; P<0.001).",
+    "row_header": "",
+    "col_header": "",
+    "value_as_written": "42.5±6.9 s",
+    "mean": 42.5,
+    "dispersion_value": 6.9,
+    "dispersion_type": "SD",
+    "unit": "s",
+    "n": null,
+    "n_quote": "",
+    "raw_value_semantics": "higher_more_error",
+    "analysis_metric": "endpoint",
+    "error_bar_scope": "between_subject",
+    "notes": "Dispersion type not explicitly labeled as SD but reported using ± notation consistent with the age-of-subjects SD convention used earlier in the paper."
+   },
+   {
+    "group": "B",
+    "group_label_as_written": "young subjects",
+    "status": "found",
+    "page": 3,
+    "kind": "text_mean_sd",
+    "quote": "In the trail-making test, the completion time for young subjects was 27.4±7.2 s and that for old subjects was 42.5±6.9 s; the difference was statistically significant (t(22)=5.25; P<0.001).",
+    "row_header": "",
+    "col_header": "",
+    "value_as_written": "27.4±7.2 s",
+    "mean": 27.4,
+    "dispersion_value": 7.2,
+    "dispersion_type": "SD",
+    "unit": "s",
+    "n": null,
+    "n_quote": "",
+    "raw_value_semantics": "higher_more_error",
+    "analysis_metric": "endpoint",
+    "error_bar_scope": "between_subject",
+    "notes": "Dispersion type not explicitly labeled as SD but reported using ± notation consistent with the age-of-subjects SD convention used earlier in the paper."
+   }
+  ],
+  "notes": "Both values found in the same sentence on page 3, giving trail-making (screening) test completion times for young and old subjects with ± values not explicitly labeled but inferred to be SD by convention with earlier demographic reporting (e.g., '26.0±5.0 years of age')."
+ },
+ "response": {
+  "id": "msg_011Ce54GooWuArNybbYvFBQN",
+  "container": null,
+  "content": [
+   {
+    "citations": null,
+    "text": "{\"groups\":[{\"group\":\"A\",\"group_label_as_written\":\"old subjects\",\"status\":\"found\",\"page\":3,\"kind\":\"text_mean_sd\",\"quote\":\"In the trail-making test, the completion time for young subjects was 27.4±7.2 s and that for old subjects was 42.5±6.9 s; the difference was statistically significant (t(22)=5.25; P<0.001).\",\"row_header\":\"\",\"col_header\":\"\",\"value_as_written\":\"42.5±6.9 s\",\"mean\":42.5,\"dispersion_value\":6.9,\"dispersion_type\":\"SD\",\"unit\":\"s\",\"n\":null,\"n_quote\":\"\",\"raw_value_semantics\":\"higher_more_error\",\"analysis_metric\":\"endpoint\",\"error_bar_scope\":\"between_subject\",\"notes\":\"Dispersion type not explicitly labeled as SD but reported using ± notation consistent with the age-of-subjects SD convention used earlier in the paper.\"},{\"group\":\"B\",\"group_label_as_written\":\"young subjects\",\"status\":\"found\",\"page\":3,\"kind\":\"text_mean_sd\",\"quote\":\"In the trail-making test, the completion time for young subjects was 27.4±7.2 s and that for old subjects was 42.5±6.9 s; the difference was statistically significant (t(22)=5.25; P<0.001).\",\"row_header\":\"\",\"col_header\":\"\",\"value_as_written\":\"27.4±7.2 s\",\"mean\":27.4,\"dispersion_value\":7.2,\"dispersion_type\":\"SD\",\"unit\":\"s\",\"n\":null,\"n_quote\":\"\",\"raw_value_semantics\":\"higher_more_error\",\"analysis_metric\":\"endpoint\",\"error_bar_scope\":\"between_subject\",\"notes\":\"Dispersion type not explicitly labeled as SD but reported using ± notation consistent with the age-of-subjects SD convention used earlier in the paper.\"}],\"notes\":\"Both values found in the same sentence on page 3, giving trail-making (screening) test completion times for young and old subjects with ± values not explicitly labeled but inferred to be SD by convention with earlier demographic reporting (e.g., '26.0±5.0 years of age').\"}",
+    "type": "text"
+   }
+  ],
+  "model": "claude-sonnet-5",
+  "role": "assistant",
+  "stop_details": null,
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "type": "message",
+  "usage": {
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 0,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "cache_creation_input_tokens": 0,
+   "cache_read_input_tokens": 0,
+   "inference_geo": "global",
+   "input_tokens": 5239,
+   "output_tokens": 697,
+   "output_tokens_details": {
+    "thinking_tokens": 0
+   },
+   "server_tool_use": null,
+   "service_tier": "standard"
+  }
+ },
+ "request_id": "req_011Ce54GnjGzJ2bN2hywNJoi",
+ "effort": "medium",
+ "max_tokens": 8000,
+ "cost_usd": 0.017448,
+ "created_at": "2026-08-15T19:06:21+00:00"
+}

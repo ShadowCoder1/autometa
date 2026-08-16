@@ -1,0 +1,266 @@
+{
+ "key": "fddfe0f3bf55a5e33ee0cbdd4ee09dafbd90642654b9258059d9c6858563e9db",
+ "model": "claude-opus-5",
+ "served_model": "claude-opus-5",
+ "stop_reason": "end_turn",
+ "usage": {
+  "input_tokens": 3294,
+  "output_tokens": 5441,
+  "cache_creation_input_tokens": 19781,
+  "cache_read_input_tokens": 0
+ },
+ "text": "{\"citation\":{\"authors\":\"Bock O\",\"year\":2005,\"title\":\"Components of sensorimotor adaptation in young and elderly subjects\",\"journal\":\"Experimental Brain Research\",\"doi\":\"10.1007/s00221-004-2133-5\",\"first_author\":\"Bock\"},\"eligible\":true,\"eligibility_rationale\":\"Upper-extremity visuomotor rotation task comparing age groups, with performance reported during the perturbation and during a no-feedback aftereffect phase: \\\"Twelve young and twelve old subjects executed center-out pointing movements while visual feedback about their fingertip was either veridical (baseline), 60-deg rotated (adaptation), or absent (after-effect).\\\" Written in English.\",\"exclusion_reason\":\"\",\"design_notes\":\"(1) Repeated exposure: the same experimental young/old subjects who adapted in the pointing task were subsequently transferred to a rotated tracking task (\\\"The experiment concluded with ten transfer episodes of tracking with +60° rotated feedback\\\"); this transfer phase is a repeated/second exposure in the same participants and is not used as an independent adaptation dataset. (2) Contextual change: the pointing aftereffect phase uses the same pointing task as adaptation (\\\"Next came five after-effect episodes of pointing without feedback\\\"), so no contextual change affects the late_adaptation/aftereffect pair; the tracking transfer, by contrast, is a different movement category and is only a transfer measure, with the rotation still applied (not an aftereffect). (3) Multiple rounds: a \\\"refresh\\\" phase of three rotated pointing episodes followed the aftereffect phase after a five-minute break; only the initial 15-episode adaptation round is used. (4) Separate control samples (young and old) performed tracking only and were never exposed to pointing adaptation (\\\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers. Those subjects only executed ten tracking episodes with veridical feedback on the first day and five tracking episodes with +60° rotated feedback on the second day\\\"). (5) N discrepancy: the text states 12 per group (48 total), yet the transfer ANOVA reports \\\"F(1,43)=144,09\\\", whose error df suggests 47 rather than 48 analysed subjects; the paper never explains this, so 12 per group (the stated analysed n) is reported. (6) All group means for adaptation/aftereffect appear only in Fig. 1 (means ± SD plotted); the text reports only exponential fits and ANOVA statistics, no tabulated adaptation or aftereffect values.\",\"datasets\":[{\"label\":\"Pointing adaptation to 60° visual rotation: old vs young (experimental subjects)\",\"experiment\":\"Main experiment (pointing task, experimental subjects)\",\"condition\":\"+60° rotated visual feedback (adaptation) and no-feedback after-effect\",\"shared_control\":false,\"exposure_order\":\"first\",\"group_a\":{\"label\":\"old (older) subjects\",\"n\":12,\"n_evidence\":\"\\\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\\\"\",\"age_mean\":69.5,\"age_sd\":7.5,\"age_range\":\"\",\"notes\":\"Recruited from a seniors' activity center; ANOVA between-factor Age used F(1,22), consistent with 12 per group.\"},\"group_b\":{\"label\":\"young subjects\",\"n\":12,\"n_evidence\":\"\\\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\\\"\",\"age_mean\":26.0,\"age_sd\":5.0,\"age_range\":\"\",\"notes\":\"ANOVA for adaptation phase: \\\"significant effects were yielded for Age (F(1,22)=7.58, P<0.05)\\\", consistent with 12 per group.\"},\"all_groups_listed\":[{\"label\":\"young (experimental, pointing + tracking transfer)\",\"n\":12,\"n_evidence\":\"\\\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\\\"\",\"age_mean\":26.0,\"age_sd\":5.0,\"age_range\":\"\",\"notes\":\"Experimental group that adapted with pointing before tracking transfer.\"},{\"label\":\"older (experimental, pointing + tracking transfer)\",\"n\":12,\"n_evidence\":\"\\\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\\\"\",\"age_mean\":69.5,\"age_sd\":7.5,\"age_range\":\"\",\"notes\":\"Experimental group that adapted with pointing before tracking transfer.\"},{\"label\":\"young control (tracking only)\",\"n\":12,\"n_evidence\":\"\\\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers. Those subjects only executed ten tracking episodes with veridical feedback on the first day and five tracking episodes with +60° rotated feedback on the second day.\\\"\",\"age_mean\":22.6,\"age_sd\":1.9,\"age_range\":\"\",\"notes\":\"No pointing task; tracking under rotation only.\"},{\"label\":\"old control (tracking only)\",\"n\":12,\"n_evidence\":\"\\\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers.\\\"\",\"age_mean\":72.5,\"age_sd\":6.0,\"age_range\":\"\",\"notes\":\"No pointing task; tracking under rotation only.\"},{\"label\":\"supplementary pooled seniors sample (for correlation analysis, includes subjects from two previous unpublished experiments)\",\"n\":54,\"n_evidence\":\"\\\"In effect, our sample size thus increased to 54 seniors aged 64.0±4.5 years, all healthy and naïve to the experiment.\\\"\",\"age_mean\":64.0,\"age_sd\":4.5,\"age_range\":\"\",\"notes\":\"Pooled across experiments for a regression of adaptation magnitude on trail-making score; not an A-vs-B age contrast within this study.\"}],\"chosen_pair_rationale\":\"The experimental young and older pointing groups are the only pair exposed to the visuomotor rotation in a pointing task with both an adaptation phase and a no-feedback after-effect phase; the tracking-only control groups (young control, old control) were not chosen for this dataset because they never performed the perturbed pointing task, and the pooled 54-senior sample is not an age contrast.\",\"moderators\":[{\"name\":\"task_type\",\"value\":\"visuomotor\"},{\"name\":\"perturbation_size_deg\",\"value\":\"+60°\"},{\"name\":\"n_targets\",\"value\":\"eight\"}],\"notes\":\"Late adaptation would come from the end of the 15 adaptation episodes and the aftereffect from the five no-feedback pointing episodes; both are plotted only in Fig. 1 (means with SD). Text gives exponential fits (\\\"y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects\\\") and ANOVA results, but no printed group means. Dropped from this dataset: refresh phase (second exposure to rotation) and the tracking transfer phase (different movement category, rotation still present).\"},{\"label\":\"Tracking adaptation to 60° visual rotation: old vs young control subjects (no prior pointing adaptation)\",\"experiment\":\"Control sample (tracking task only)\",\"condition\":\"+60° rotated visual feedback during tracking, no pre-adaptation\",\"shared_control\":false,\"exposure_order\":\"first\",\"group_a\":{\"label\":\"old (control)\",\"n\":12,\"n_evidence\":\"\\\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers.\\\"\",\"age_mean\":72.5,\"age_sd\":6.0,\"age_range\":\"\",\"notes\":\"\\\"Those subjects only executed ten tracking episodes with veridical feedback on the first day and five tracking episodes with +60° rotated feedback on the second day.\\\"\"},\"group_b\":{\"label\":\"young (control)\",\"n\":12,\"n_evidence\":\"\\\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers.\\\"\",\"age_mean\":22.6,\"age_sd\":1.9,\"age_range\":\"\",\"notes\":\"Same control procedure as the old control group.\"},\"all_groups_listed\":[{\"label\":\"young (experimental, pointing + tracking transfer)\",\"n\":12,\"n_evidence\":\"\\\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\\\"\",\"age_mean\":26.0,\"age_sd\":5.0,\"age_range\":\"\",\"notes\":\"\"},{\"label\":\"older (experimental, pointing + tracking transfer)\",\"n\":12,\"n_evidence\":\"\\\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\\\"\",\"age_mean\":69.5,\"age_sd\":7.5,\"age_range\":\"\",\"notes\":\"\"},{\"label\":\"young control (tracking only)\",\"n\":12,\"n_evidence\":\"\\\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers.\\\"\",\"age_mean\":22.6,\"age_sd\":1.9,\"age_range\":\"\",\"notes\":\"\"},{\"label\":\"old control (tracking only)\",\"n\":12,\"n_evidence\":\"\\\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers.\\\"\",\"age_mean\":72.5,\"age_sd\":6.0,\"age_range\":\"\",\"notes\":\"\"}],\"chosen_pair_rationale\":\"Within the control sample the only two groups are old control and young control, matching the protocol's older/younger definitions; the experimental pointing groups form the separate first dataset.\",\"moderators\":[{\"name\":\"task_type\",\"value\":\"visuomotor\"},{\"name\":\"perturbation_size_deg\",\"value\":\"+60°\"},{\"name\":\"n_targets\",\"value\":\"one continuously moving target (\\\"a target moved on the tablet's surface along an unpredictable path\\\")\"}],\"notes\":\"Independent sample, first exposure to the rotation, but a tracking (not pointing) task and RMSE measure; no aftereffect phase was run for these subjects. All values appear only in Fig. 2 (thin lines) — no numeric tracking RMSE values are printed in the text. Include only if the review accepts continuous-tracking adaptation; the author notes \\\"The time-course of adaptation in the tracking task was not a purpose of the present study\\\".\"}],\"related_files\":[],\"roster\":[{\"id\":\"fig01\",\"relevant\":true,\"reason\":\"Plots mean pointing errors ± SD for young and old across baseline, adaptation and after-effect episodes — the source for late adaptation and aftereffect values (figure-only data).\",\"outcome_keys\":[\"late_adaptation\",\"aftereffect\"]},{\"id\":\"fig02\",\"relevant\":true,\"reason\":\"Plots mean tracking RMSE ± SD for young and old experimental (transfer) and control subjects under rotated feedback; carries the control-sample adaptation values (figure-only data).\",\"outcome_keys\":[\"late_adaptation\"]},{\"id\":\"p1t1\",\"relevant\":false,\"reason\":\"Parsing noise — the 'RESEARCH NOTES' header banner on page 1, not a data table.\",\"outcome_keys\":[]}],\"notes\":\"No supplementary material, appendix or data-availability statement is mentioned. Numeric group means for the adaptation and aftereffect phases are not printed anywhere in the text or in a table; they exist only as plotted points in Figs. 1 and 2, so a numeric extraction pass may find no reportable values. Reported numeric statistics include adaptation ANOVA (Age F(1,22)=7.58, P<0.05), after-effect ANOVA (Episode F(4,88)=66.84; interaction F(4,88)=3.95), refresh ANOVA, transfer ANOVA (Procedure F(1,43)=144,09), trail-making times (27.4±7.2 s young; 42.5±6.9 s old) and pooled-senior adaptation magnitude (0.49±0.21).\"}",
+ "parsed": {
+  "citation": {
+   "authors": "Bock O",
+   "year": 2005,
+   "title": "Components of sensorimotor adaptation in young and elderly subjects",
+   "journal": "Experimental Brain Research",
+   "doi": "10.1007/s00221-004-2133-5",
+   "first_author": "Bock"
+  },
+  "eligible": true,
+  "eligibility_rationale": "Upper-extremity visuomotor rotation task comparing age groups, with performance reported during the perturbation and during a no-feedback aftereffect phase: \"Twelve young and twelve old subjects executed center-out pointing movements while visual feedback about their fingertip was either veridical (baseline), 60-deg rotated (adaptation), or absent (after-effect).\" Written in English.",
+  "exclusion_reason": "",
+  "design_notes": "(1) Repeated exposure: the same experimental young/old subjects who adapted in the pointing task were subsequently transferred to a rotated tracking task (\"The experiment concluded with ten transfer episodes of tracking with +60° rotated feedback\"); this transfer phase is a repeated/second exposure in the same participants and is not used as an independent adaptation dataset. (2) Contextual change: the pointing aftereffect phase uses the same pointing task as adaptation (\"Next came five after-effect episodes of pointing without feedback\"), so no contextual change affects the late_adaptation/aftereffect pair; the tracking transfer, by contrast, is a different movement category and is only a transfer measure, with the rotation still applied (not an aftereffect). (3) Multiple rounds: a \"refresh\" phase of three rotated pointing episodes followed the aftereffect phase after a five-minute break; only the initial 15-episode adaptation round is used. (4) Separate control samples (young and old) performed tracking only and were never exposed to pointing adaptation (\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers. Those subjects only executed ten tracking episodes with veridical feedback on the first day and five tracking episodes with +60° rotated feedback on the second day\"). (5) N discrepancy: the text states 12 per group (48 total), yet the transfer ANOVA reports \"F(1,43)=144,09\", whose error df suggests 47 rather than 48 analysed subjects; the paper never explains this, so 12 per group (the stated analysed n) is reported. (6) All group means for adaptation/aftereffect appear only in Fig. 1 (means ± SD plotted); the text reports only exponential fits and ANOVA statistics, no tabulated adaptation or aftereffect values.",
+  "datasets": [
+   {
+    "label": "Pointing adaptation to 60° visual rotation: old vs young (experimental subjects)",
+    "experiment": "Main experiment (pointing task, experimental subjects)",
+    "condition": "+60° rotated visual feedback (adaptation) and no-feedback after-effect",
+    "shared_control": false,
+    "exposure_order": "first",
+    "group_a": {
+     "label": "old (older) subjects",
+     "n": 12,
+     "n_evidence": "\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\"",
+     "age_mean": 69.5,
+     "age_sd": 7.5,
+     "age_range": "",
+     "notes": "Recruited from a seniors' activity center; ANOVA between-factor Age used F(1,22), consistent with 12 per group."
+    },
+    "group_b": {
+     "label": "young subjects",
+     "n": 12,
+     "n_evidence": "\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\"",
+     "age_mean": 26.0,
+     "age_sd": 5.0,
+     "age_range": "",
+     "notes": "ANOVA for adaptation phase: \"significant effects were yielded for Age (F(1,22)=7.58, P<0.05)\", consistent with 12 per group."
+    },
+    "all_groups_listed": [
+     {
+      "label": "young (experimental, pointing + tracking transfer)",
+      "n": 12,
+      "n_evidence": "\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\"",
+      "age_mean": 26.0,
+      "age_sd": 5.0,
+      "age_range": "",
+      "notes": "Experimental group that adapted with pointing before tracking transfer."
+     },
+     {
+      "label": "older (experimental, pointing + tracking transfer)",
+      "n": 12,
+      "n_evidence": "\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\"",
+      "age_mean": 69.5,
+      "age_sd": 7.5,
+      "age_range": "",
+      "notes": "Experimental group that adapted with pointing before tracking transfer."
+     },
+     {
+      "label": "young control (tracking only)",
+      "n": 12,
+      "n_evidence": "\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers. Those subjects only executed ten tracking episodes with veridical feedback on the first day and five tracking episodes with +60° rotated feedback on the second day.\"",
+      "age_mean": 22.6,
+      "age_sd": 1.9,
+      "age_range": "",
+      "notes": "No pointing task; tracking under rotation only."
+     },
+     {
+      "label": "old control (tracking only)",
+      "n": 12,
+      "n_evidence": "\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers.\"",
+      "age_mean": 72.5,
+      "age_sd": 6.0,
+      "age_range": "",
+      "notes": "No pointing task; tracking under rotation only."
+     },
+     {
+      "label": "supplementary pooled seniors sample (for correlation analysis, includes subjects from two previous unpublished experiments)",
+      "n": 54,
+      "n_evidence": "\"In effect, our sample size thus increased to 54 seniors aged 64.0±4.5 years, all healthy and naïve to the experiment.\"",
+      "age_mean": 64.0,
+      "age_sd": 4.5,
+      "age_range": "",
+      "notes": "Pooled across experiments for a regression of adaptation magnitude on trail-making score; not an A-vs-B age contrast within this study."
+     }
+    ],
+    "chosen_pair_rationale": "The experimental young and older pointing groups are the only pair exposed to the visuomotor rotation in a pointing task with both an adaptation phase and a no-feedback after-effect phase; the tracking-only control groups (young control, old control) were not chosen for this dataset because they never performed the perturbed pointing task, and the pooled 54-senior sample is not an age contrast.",
+    "moderators": [
+     {
+      "name": "task_type",
+      "value": "visuomotor"
+     },
+     {
+      "name": "perturbation_size_deg",
+      "value": "+60°"
+     },
+     {
+      "name": "n_targets",
+      "value": "eight"
+     }
+    ],
+    "notes": "Late adaptation would come from the end of the 15 adaptation episodes and the aftereffect from the five no-feedback pointing episodes; both are plotted only in Fig. 1 (means with SD). Text gives exponential fits (\"y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects\") and ANOVA results, but no printed group means. Dropped from this dataset: refresh phase (second exposure to rotation) and the tracking transfer phase (different movement category, rotation still present)."
+   },
+   {
+    "label": "Tracking adaptation to 60° visual rotation: old vs young control subjects (no prior pointing adaptation)",
+    "experiment": "Control sample (tracking task only)",
+    "condition": "+60° rotated visual feedback during tracking, no pre-adaptation",
+    "shared_control": false,
+    "exposure_order": "first",
+    "group_a": {
+     "label": "old (control)",
+     "n": 12,
+     "n_evidence": "\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers.\"",
+     "age_mean": 72.5,
+     "age_sd": 6.0,
+     "age_range": "",
+     "notes": "\"Those subjects only executed ten tracking episodes with veridical feedback on the first day and five tracking episodes with +60° rotated feedback on the second day.\""
+    },
+    "group_b": {
+     "label": "young (control)",
+     "n": 12,
+     "n_evidence": "\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers.\"",
+     "age_mean": 22.6,
+     "age_sd": 1.9,
+     "age_range": "",
+     "notes": "Same control procedure as the old control group."
+    },
+    "all_groups_listed": [
+     {
+      "label": "young (experimental, pointing + tracking transfer)",
+      "n": 12,
+      "n_evidence": "\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\"",
+      "age_mean": 26.0,
+      "age_sd": 5.0,
+      "age_range": "",
+      "notes": ""
+     },
+     {
+      "label": "older (experimental, pointing + tracking transfer)",
+      "n": 12,
+      "n_evidence": "\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\"",
+      "age_mean": 69.5,
+      "age_sd": 7.5,
+      "age_range": "",
+      "notes": ""
+     },
+     {
+      "label": "young control (tracking only)",
+      "n": 12,
+      "n_evidence": "\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers.\"",
+      "age_mean": 22.6,
+      "age_sd": 1.9,
+      "age_range": "",
+      "notes": ""
+     },
+     {
+      "label": "old control (tracking only)",
+      "n": 12,
+      "n_evidence": "\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers.\"",
+      "age_mean": 72.5,
+      "age_sd": 6.0,
+      "age_range": "",
+      "notes": ""
+     }
+    ],
+    "chosen_pair_rationale": "Within the control sample the only two groups are old control and young control, matching the protocol's older/younger definitions; the experimental pointing groups form the separate first dataset.",
+    "moderators": [
+     {
+      "name": "task_type",
+      "value": "visuomotor"
+     },
+     {
+      "name": "perturbation_size_deg",
+      "value": "+60°"
+     },
+     {
+      "name": "n_targets",
+      "value": "one continuously moving target (\"a target moved on the tablet's surface along an unpredictable path\")"
+     }
+    ],
+    "notes": "Independent sample, first exposure to the rotation, but a tracking (not pointing) task and RMSE measure; no aftereffect phase was run for these subjects. All values appear only in Fig. 2 (thin lines) — no numeric tracking RMSE values are printed in the text. Include only if the review accepts continuous-tracking adaptation; the author notes \"The time-course of adaptation in the tracking task was not a purpose of the present study\"."
+   }
+  ],
+  "related_files": [],
+  "roster": [
+   {
+    "id": "fig01",
+    "relevant": true,
+    "reason": "Plots mean pointing errors ± SD for young and old across baseline, adaptation and after-effect episodes — the source for late adaptation and aftereffect values (figure-only data).",
+    "outcome_keys": [
+     "late_adaptation",
+     "aftereffect"
+    ]
+   },
+   {
+    "id": "fig02",
+    "relevant": true,
+    "reason": "Plots mean tracking RMSE ± SD for young and old experimental (transfer) and control subjects under rotated feedback; carries the control-sample adaptation values (figure-only data).",
+    "outcome_keys": [
+     "late_adaptation"
+    ]
+   },
+   {
+    "id": "p1t1",
+    "relevant": false,
+    "reason": "Parsing noise — the 'RESEARCH NOTES' header banner on page 1, not a data table.",
+    "outcome_keys": []
+   }
+  ],
+  "notes": "No supplementary material, appendix or data-availability statement is mentioned. Numeric group means for the adaptation and aftereffect phases are not printed anywhere in the text or in a table; they exist only as plotted points in Figs. 1 and 2, so a numeric extraction pass may find no reportable values. Reported numeric statistics include adaptation ANOVA (Age F(1,22)=7.58, P<0.05), after-effect ANOVA (Episode F(4,88)=66.84; interaction F(4,88)=3.95), refresh ANOVA, transfer ANOVA (Procedure F(1,43)=144,09), trail-making times (27.4±7.2 s young; 42.5±6.9 s old) and pooled-senior adaptation magnitude (0.49±0.21)."
+ },
+ "response": {
+  "id": "msg_011Ce514GRSqTfMEhXAaCNhP",
+  "container": null,
+  "content": [
+   {
+    "signature": "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",
+    "thinking": "",
+    "type": "thinking"
+   },
+   {
+    "citations": null,
+    "text": "{\"citation\":{\"authors\":\"Bock O\",\"year\":2005,\"title\":\"Components of sensorimotor adaptation in young and elderly subjects\",\"journal\":\"Experimental Brain Research\",\"doi\":\"10.1007/s00221-004-2133-5\",\"first_author\":\"Bock\"},\"eligible\":true,\"eligibility_rationale\":\"Upper-extremity visuomotor rotation task comparing age groups, with performance reported during the perturbation and during a no-feedback aftereffect phase: \\\"Twelve young and twelve old subjects executed center-out pointing movements while visual feedback about their fingertip was either veridical (baseline), 60-deg rotated (adaptation), or absent (after-effect).\\\" Written in English.\",\"exclusion_reason\":\"\",\"design_notes\":\"(1) Repeated exposure: the same experimental young/old subjects who adapted in the pointing task were subsequently transferred to a rotated tracking task (\\\"The experiment concluded with ten transfer episodes of tracking with +60° rotated feedback\\\"); this transfer phase is a repeated/second exposure in the same participants and is not used as an independent adaptation dataset. (2) Contextual change: the pointing aftereffect phase uses the same pointing task as adaptation (\\\"Next came five after-effect episodes of pointing without feedback\\\"), so no contextual change affects the late_adaptation/aftereffect pair; the tracking transfer, by contrast, is a different movement category and is only a transfer measure, with the rotation still applied (not an aftereffect). (3) Multiple rounds: a \\\"refresh\\\" phase of three rotated pointing episodes followed the aftereffect phase after a five-minute break; only the initial 15-episode adaptation round is used. (4) Separate control samples (young and old) performed tracking only and were never exposed to pointing adaptation (\\\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers. Those subjects only executed ten tracking episodes with veridical feedback on the first day and five tracking episodes with +60° rotated feedback on the second day\\\"). (5) N discrepancy: the text states 12 per group (48 total), yet the transfer ANOVA reports \\\"F(1,43)=144,09\\\", whose error df suggests 47 rather than 48 analysed subjects; the paper never explains this, so 12 per group (the stated analysed n) is reported. (6) All group means for adaptation/aftereffect appear only in Fig. 1 (means ± SD plotted); the text reports only exponential fits and ANOVA statistics, no tabulated adaptation or aftereffect values.\",\"datasets\":[{\"label\":\"Pointing adaptation to 60° visual rotation: old vs young (experimental subjects)\",\"experiment\":\"Main experiment (pointing task, experimental subjects)\",\"condition\":\"+60° rotated visual feedback (adaptation) and no-feedback after-effect\",\"shared_control\":false,\"exposure_order\":\"first\",\"group_a\":{\"label\":\"old (older) subjects\",\"n\":12,\"n_evidence\":\"\\\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\\\"\",\"age_mean\":69.5,\"age_sd\":7.5,\"age_range\":\"\",\"notes\":\"Recruited from a seniors' activity center; ANOVA between-factor Age used F(1,22), consistent with 12 per group.\"},\"group_b\":{\"label\":\"young subjects\",\"n\":12,\"n_evidence\":\"\\\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\\\"\",\"age_mean\":26.0,\"age_sd\":5.0,\"age_range\":\"\",\"notes\":\"ANOVA for adaptation phase: \\\"significant effects were yielded for Age (F(1,22)=7.58, P<0.05)\\\", consistent with 12 per group.\"},\"all_groups_listed\":[{\"label\":\"young (experimental, pointing + tracking transfer)\",\"n\":12,\"n_evidence\":\"\\\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\\\"\",\"age_mean\":26.0,\"age_sd\":5.0,\"age_range\":\"\",\"notes\":\"Experimental group that adapted with pointing before tracking transfer.\"},{\"label\":\"older (experimental, pointing + tracking transfer)\",\"n\":12,\"n_evidence\":\"\\\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\\\"\",\"age_mean\":69.5,\"age_sd\":7.5,\"age_range\":\"\",\"notes\":\"Experimental group that adapted with pointing before tracking transfer.\"},{\"label\":\"young control (tracking only)\",\"n\":12,\"n_evidence\":\"\\\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers. Those subjects only executed ten tracking episodes with veridical feedback on the first day and five tracking episodes with +60° rotated feedback on the second day.\\\"\",\"age_mean\":22.6,\"age_sd\":1.9,\"age_range\":\"\",\"notes\":\"No pointing task; tracking under rotation only.\"},{\"label\":\"old control (tracking only)\",\"n\":12,\"n_evidence\":\"\\\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers.\\\"\",\"age_mean\":72.5,\"age_sd\":6.0,\"age_range\":\"\",\"notes\":\"No pointing task; tracking under rotation only.\"},{\"label\":\"supplementary pooled seniors sample (for correlation analysis, includes subjects from two previous unpublished experiments)\",\"n\":54,\"n_evidence\":\"\\\"In effect, our sample size thus increased to 54 seniors aged 64.0±4.5 years, all healthy and naïve to the experiment.\\\"\",\"age_mean\":64.0,\"age_sd\":4.5,\"age_range\":\"\",\"notes\":\"Pooled across experiments for a regression of adaptation magnitude on trail-making score; not an A-vs-B age contrast within this study.\"}],\"chosen_pair_rationale\":\"The experimental young and older pointing groups are the only pair exposed to the visuomotor rotation in a pointing task with both an adaptation phase and a no-feedback after-effect phase; the tracking-only control groups (young control, old control) were not chosen for this dataset because they never performed the perturbed pointing task, and the pooled 54-senior sample is not an age contrast.\",\"moderators\":[{\"name\":\"task_type\",\"value\":\"visuomotor\"},{\"name\":\"perturbation_size_deg\",\"value\":\"+60°\"},{\"name\":\"n_targets\",\"value\":\"eight\"}],\"notes\":\"Late adaptation would come from the end of the 15 adaptation episodes and the aftereffect from the five no-feedback pointing episodes; both are plotted only in Fig. 1 (means with SD). Text gives exponential fits (\\\"y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects\\\") and ANOVA results, but no printed group means. Dropped from this dataset: refresh phase (second exposure to rotation) and the tracking transfer phase (different movement category, rotation still present).\"},{\"label\":\"Tracking adaptation to 60° visual rotation: old vs young control subjects (no prior pointing adaptation)\",\"experiment\":\"Control sample (tracking task only)\",\"condition\":\"+60° rotated visual feedback during tracking, no pre-adaptation\",\"shared_control\":false,\"exposure_order\":\"first\",\"group_a\":{\"label\":\"old (control)\",\"n\":12,\"n_evidence\":\"\\\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers.\\\"\",\"age_mean\":72.5,\"age_sd\":6.0,\"age_range\":\"\",\"notes\":\"\\\"Those subjects only executed ten tracking episodes with veridical feedback on the first day and five tracking episodes with +60° rotated feedback on the second day.\\\"\"},\"group_b\":{\"label\":\"young (control)\",\"n\":12,\"n_evidence\":\"\\\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers.\\\"\",\"age_mean\":22.6,\"age_sd\":1.9,\"age_range\":\"\",\"notes\":\"Same control procedure as the old control group.\"},\"all_groups_listed\":[{\"label\":\"young (experimental, pointing + tracking transfer)\",\"n\":12,\"n_evidence\":\"\\\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\\\"\",\"age_mean\":26.0,\"age_sd\":5.0,\"age_range\":\"\",\"notes\":\"\"},{\"label\":\"older (experimental, pointing + tracking transfer)\",\"n\":12,\"n_evidence\":\"\\\"Data were collected from twelve young (26.0±5.0 years of age) and twelve older (69.5±7.5 years of age) subjects.\\\"\",\"age_mean\":69.5,\"age_sd\":7.5,\"age_range\":\"\",\"notes\":\"\"},{\"label\":\"young control (tracking only)\",\"n\":12,\"n_evidence\":\"\\\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers.\\\"\",\"age_mean\":22.6,\"age_sd\":1.9,\"age_range\":\"\",\"notes\":\"\"},{\"label\":\"old control (tracking only)\",\"n\":12,\"n_evidence\":\"\\\"we recruited additional twelve young (22.6±1.9 years of age) and twelve old (72.5±6.0 years of age) healthy and naïve volunteers.\\\"\",\"age_mean\":72.5,\"age_sd\":6.0,\"age_range\":\"\",\"notes\":\"\"}],\"chosen_pair_rationale\":\"Within the control sample the only two groups are old control and young control, matching the protocol's older/younger definitions; the experimental pointing groups form the separate first dataset.\",\"moderators\":[{\"name\":\"task_type\",\"value\":\"visuomotor\"},{\"name\":\"perturbation_size_deg\",\"value\":\"+60°\"},{\"name\":\"n_targets\",\"value\":\"one continuously moving target (\\\"a target moved on the tablet's surface along an unpredictable path\\\")\"}],\"notes\":\"Independent sample, first exposure to the rotation, but a tracking (not pointing) task and RMSE measure; no aftereffect phase was run for these subjects. All values appear only in Fig. 2 (thin lines) — no numeric tracking RMSE values are printed in the text. Include only if the review accepts continuous-tracking adaptation; the author notes \\\"The time-course of adaptation in the tracking task was not a purpose of the present study\\\".\"}],\"related_files\":[],\"roster\":[{\"id\":\"fig01\",\"relevant\":true,\"reason\":\"Plots mean pointing errors ± SD for young and old across baseline, adaptation and after-effect episodes — the source for late adaptation and aftereffect values (figure-only data).\",\"outcome_keys\":[\"late_adaptation\",\"aftereffect\"]},{\"id\":\"fig02\",\"relevant\":true,\"reason\":\"Plots mean tracking RMSE ± SD for young and old experimental (transfer) and control subjects under rotated feedback; carries the control-sample adaptation values (figure-only data).\",\"outcome_keys\":[\"late_adaptation\"]},{\"id\":\"p1t1\",\"relevant\":false,\"reason\":\"Parsing noise — the 'RESEARCH NOTES' header banner on page 1, not a data table.\",\"outcome_keys\":[]}],\"notes\":\"No supplementary material, appendix or data-availability statement is mentioned. Numeric group means for the adaptation and aftereffect phases are not printed anywhere in the text or in a table; they exist only as plotted points in Figs. 1 and 2, so a numeric extraction pass may find no reportable values. Reported numeric statistics include adaptation ANOVA (Age F(1,22)=7.58, P<0.05), after-effect ANOVA (Episode F(4,88)=66.84; interaction F(4,88)=3.95), refresh ANOVA, transfer ANOVA (Procedure F(1,43)=144,09), trail-making times (27.4±7.2 s young; 42.5±6.9 s old) and pooled-senior adaptation magnitude (0.49±0.21).\"}",
+    "type": "text"
+   }
+  ],
+  "model": "claude-opus-5",
+  "role": "assistant",
+  "stop_details": null,
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "type": "message",
+  "usage": {
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 0,
+    "ephemeral_5m_input_tokens": 19781
+   },
+   "cache_creation_input_tokens": 19781,
+   "cache_read_input_tokens": 0,
+   "inference_geo": "global",
+   "input_tokens": 3294,
+   "output_tokens": 5441,
+   "output_tokens_details": {
+    "thinking_tokens": 1208
+   },
+   "server_tool_use": null,
+   "service_tier": "standard"
+  }
+ },
+ "request_id": "req_011Ce514E4K8JwjrLXVwJDjw",
+ "effort": "high",
+ "max_tokens": 16000,
+ "cost_usd": 0.27612625,
+ "created_at": "2026-08-15T18:25:03+00:00"
+}

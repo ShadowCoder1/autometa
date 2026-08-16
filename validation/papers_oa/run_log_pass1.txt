@@ -1,0 +1,99 @@
+[1/32] Fernández-Ruiz et al. (2000) -- Prism adaptation in normal aging: slower adaptation rate and larger aftereffect
+    DOI: 10.1016/s0926-6410(99)00057-9  (crossref sim=1.00 author_match=False year_close=True matched_title="Prism adaptation in normal aging: slower adaptation rate and larger aftereffect")
+    OA: none found -> paywalled
+[2/32] Roller et al. (2001) -- Effects of normal aging on visuo-motor plasticity
+    DOI: 10.1016/s0197-4580(01)00264-0  (crossref sim=1.00 author_match=True year_close=True matched_title="Effects of normal aging on visuo-motor plasticity")
+    OA: none found -> paywalled
+[3/32] Seidler (2006) -- Differential effects of age on sequence learning and sensorimotor adaptation
+    DOI: 10.1016/j.brainresbull.2006.06.008  (crossref sim=1.00 author_match=True year_close=True matched_title="Differential effects of age on sequence learning and sensorimotor adaptation")
+    OA: none found -> paywalled
+[4/32] Messier et al. (2007) -- Visuomotor learning in immersive 3D virtual reality in Parkinson's disease and in aging
+    DOI: 10.1007/s00221-006-0802-2  (crossref sim=1.00 author_match=True year_close=True matched_title="Visuomotor learning in immersive 3D virtual reality in Parkinson’s disease and in aging")
+    OA: none found -> paywalled
+[5/32] Hegele & Heuer (2010) -- The impact of augmented information on visuo-motor adaptation in younger and older adults
+    already in manifest with status=downloaded, skipping
+[6/32] Heuer & Hegele (2011) -- Generalization of implicit and explicit adjustments to visuomotor rotations across the workspace in younger and older adults
+    DOI: 10.1152/jn.00043.2011  (crossref sim=1.00 author_match=True year_close=True matched_title="Generalization of implicit and explicit adjustments to visuomotor rotations across the workspace in younger and older adults")
+    OA: none found -> paywalled
+[7/32] Wang et al. (2011) -- Aging reduces asymmetries in interlimb transfer of visuomotor adaptation
+    DOI: 10.1007/s00221-011-2631-1  (crossref sim=1.00 author_match=True year_close=True matched_title="Aging reduces asymmetries in interlimb transfer of visuomotor adaptation")
+    OA: candidates found but download/verify failed -> paywalled (unpaywall:best_oa_location(url) https://www.ncbi.nlm.nih.gov/pmc/articles/3116897 -> `file` did not report PDF)
+[8/32] Hardwick & Celnik (2013) -- Cerebellar direct current stimulation enhances motor learning in older adults
+    DOI: 10.1016/j.neurobiolaging.2014.03.030  (crossref sim=1.00 author_match=True year_close=True matched_title="Cerebellar direct current stimulation enhances motor learning in older adults")
+    OA: candidates found but download/verify failed -> paywalled (unpaywall:best_oa_location(url) https://www.ncbi.nlm.nih.gov/pmc/articles/4087063 -> `file` did not report PDF)
+[9/32] Hegele & Heuer (2013) -- Age-Related Variations of Visuomotor Adaptation Result From Both the Acquisition and the Application of Explicit Knowledge
+    DOI: 10.1037/a0031914  (crossref sim=1.00 author_match=True year_close=True matched_title="Age-related variations of visuomotor adaptation result from both the acquisition and the application of explicit knowledge.")
+    OA: none found -> paywalled
+[10/32] Huang & Ahmed (2013) -- Older adults learn less, but still reduce metabolic cost, during motor adaptation
+    DOI: 10.1152/jn.00401.2013  (crossref sim=1.00 author_match=True year_close=True matched_title="Older adults learn less, but still reduce metabolic cost, during motor adaptation")
+    OA: candidates found but download/verify failed -> paywalled (unpaywall:best_oa_location(url) https://www.ncbi.nlm.nih.gov/pmc/articles/3921372 -> `file` did not report PDF)
+[11/32] Trewartha et al. (2014) -- Fast But Fleeting: Adaptive Motor Learning Processes Associated with Aging and Cognitive Decline
+    DOI: 10.1523/jneurosci.1489-14.2014  (crossref sim=1.00 author_match=True year_close=True matched_title="Fast But Fleeting: Adaptive Motor Learning Processes Associated with Aging and Cognitive Decline")
+    OA: candidates found but download/verify failed -> paywalled (unpaywall:best_oa_location https://www.jneurosci.org/content/jneuro/34/40/13411.full.pdf -> download failed: curl exit 56: curl: (56) The requested URL returned error: 403)
+[12/32] Nemanich & Earhart (2015) -- How do age and nature of the motor task influence visuomotor adaptation?
+    DOI: 10.1016/j.gaitpost.2015.09.001  (crossref sim=1.00 author_match=True year_close=True matched_title="How do age and nature of the motor task influence visuomotor adaptation?")
+    OA: candidates found but download/verify failed -> paywalled (unpaywall:best_oa_location(url) https://www.ncbi.nlm.nih.gov/pmc/articles/4651796 -> `file` did not report PDF)
+[13/32] Panouilleres et al. (2015) -- Reversing motor adaptation deficits in the ageing brain using non-invasive stimulation
+    already in manifest with status=downloaded, skipping
+[14/32] Uresti-Cabrera et al. (2015) -- Effects of aging on strategic-based visuomotor learning
+    DOI: 10.1016/j.brainres.2015.05.022  (crossref sim=1.00 author_match=False year_close=True matched_title="Effects of aging on strategic-based visuomotor learning")
+    OA: none found -> paywalled
+[15/32] Uresti-Cabrera et al. (2015) -- The Effect of Spatial Working Memory Deterioration on Strategic Visuomotor Learning across Aging
+    already in manifest with status=downloaded, skipping
+[16/32] Simon & Bock (2016) -- Influence of divergent and convergent thinking on visuomotor adaptation in young and older adults
+    DOI: 10.1016/j.humov.2015.11.020  (crossref sim=1.00 author_match=True year_close=True matched_title="Influence of divergent and convergent thinking on visuomotor adaptation in young and older adults")
+    OA: none found -> paywalled
+[17/32] Simon & Bock (2017) -- The role of cognition for different stages of visuomotor adaptation in younger and older adults
+    DOI: 10.1016/j.humov.2017.02.011  (crossref sim=1.00 author_match=True year_close=True matched_title="The role of cognition for different stages of visuomotor adaptation in younger and older adults")
+    OA: none found -> paywalled
+[18/32] Lei et al. (2018) -- The effect of proprioceptive acuity variability on motor adaptation in older adults
+    DOI: 10.1007/s00221-017-5150-x  (crossref sim=1.00 author_match=True year_close=True matched_title="The effect of proprioceptive acuity variability on motor adaptation in older adults")
+    OA: none found -> paywalled
+[19/32] Vandevoorde et al. (2019) -- Internal Model Recalibration Does Not Deteriorate with Age While Motor Adaptation Does.
+    DOI: 10.1016/j.neurobiolaging.2019.03.020  (crossref sim=1.00 author_match=True year_close=True matched_title="Internal model recalibration does not deteriorate with age while motor adaptation does")
+    OA: candidates found but download/verify failed -> paywalled (unpaywall:best_oa_location(url) https://lirias.kuleuven.be/bitstream/123456789/644805/2/NeurobiologyOfAging_revision_final.pdf -> download failed: curl exit 22: curl: (22) The requested URL returned error: 404)
+[20/32] Reuter et al. (2020) -- Task Feedback Processing Differs Between Young and Older Adults in Visuomotor Rotation Learning Despite Similar Initial Adaptation and Savings
+    DOI: 10.1016/j.neuroscience.2020.09.038  (crossref sim=1.00 author_match=True year_close=True matched_title="Task Feedback Processing Differs Between Young and Older Adults in Visuomotor Rotation Learning Despite Similar Initial Adaptation and Savings")
+    OA: none found -> paywalled
+[21/32] Vandevoorde & de Xivry (2020) -- Why is the explicit component of motor adaptation limited in elderly adults?
+    DOI: 10.1152/jn.00659.2019  (crossref sim=1.00 author_match=True year_close=True matched_title="Why is the explicit component of motor adaptation limited in elderly adults?")
+    OA: candidates found but download/verify failed -> paywalled (unpaywall:best_oa_location(url) https://lirias.kuleuven.be/handle/123456789/660854 -> file too small (4784 bytes))
+[22/32] Weightman et al. (2020) -- Targeted tDCS selectively improves motor adaptation with the proximal and distal upper limb
+    DOI: 10.1016/j.brs.2020.02.013  (crossref sim=1.00 author_match=True year_close=True matched_title="Targeted tDCS selectively improves motor adaptation with the proximal and distal upper limb")
+    OA: candidates found but download/verify failed -> paywalled (unpaywall:best_oa_location http://www.brainstimjrnl.com/article/S1935861X20300358/pdf -> download failed: curl exit 56: curl: (56) The requested URL returned error: 403)
+[23/32] Bindra et al. (2021) -- Normal aging affects the short-term temporal stability of implicit, but not explicit, motor learning following visuomotor adaptation
+    already in manifest with status=downloaded, skipping
+[24/32] Cornelis et al. (2021) -- Impaired Sensorimotor Adaption in Schizophrenia in Comparison to Age-Matched and Elderly Controls
+    DOI: 10.1159/000518867  (crossref sim=1.00 author_match=True year_close=True matched_title="Impaired Sensorimotor Adaption in Schizophrenia in Comparison to Age-Matched and Elderly Controls")
+    OA: downloaded (downloaded) <- https://pure.amsterdamumc.nl/ws/files/173979621/Impaired-sensorimotor-adaption-in-schizophrenia-in-comparison-to-age-matched-and-elderly-controls.pdf
+[25/32] Kitchen & Miall (2021) -- Adaptation of reach action to a novel force‑field is not predicted by acuity of dynamic proprioception in either older or younger adults
+    already in manifest with status=downloaded, skipping
+[26/32] Li et al. (2021) -- Aging Effect on Visuomotor Adaptation: Mediated by Cognitive Decline
+    DOI: 10.3389/fnagi.2021.742928  (crossref sim=1.00 author_match=True year_close=True matched_title="Aging Effect on Visuomotor Adaptation: Mediated by Cognitive Decline")
+    OA: downloaded (downloaded) <- https://www.frontiersin.org/articles/10.3389/fnagi.2021.742928/pdf
+[27/32] Bansal et al. (2022) -- Motor adaptation does not differ when a perturbation is introduced abruptly or gradually
+    DOI: 10.1007/s00221-023-06699-2  (crossref sim=1.00 author_match=True year_close=True matched_title="Motor adaptation does not differ when a perturbation is introduced abruptly or gradually")
+    OA: candidates found but download/verify failed -> paywalled (unpaywall:best_oa_location https://link.springer.com/content/pdf/10.1007/s00221-023-06699-2.pdf -> file too small (3038 bytes))
+[28/32] Khanafer et al. (2022) -- The Influence of Age on the Intermanual Transferand Retention of Implicit Visuomotor Adaptation
+    DOI: 10.1080/00222895.2022.2156451  (crossref sim=0.99 author_match=True year_close=True matched_title="The Influence of Age on the Intermanual Transfer and Retention of Implicit Visuomotor Adaptation")
+    OA: none found -> paywalled
+[29/32] T. Wang et al. (2022) -- Age‑related enhancement  in visuomotor learning by a dual‑task
+    DOI: 10.1038/s41598-022-09553-7  (crossref sim=1.00 author_match=True year_close=True matched_title="Age-related enhancement in visuomotor learning by a dual-task")
+    OA: downloaded (downloaded) <- https://www.nature.com/articles/s41598-022-09553-7.pdf
+[30/32] Binyamin-Netser et al. (2023) -- Cognitive Impairments After Stroke Do Not Attenuate Explicit Visuomotor Adaptation in Reaching and Savings With the Unaffected Arm
+    DOI: 10.1177/15459683231177605  (crossref sim=1.00 author_match=False year_close=True matched_title="Cognitive Impairments After Stroke Do Not Attenuate Explicit Visuomotor Adaptation in Reaching and Savings With the Unaffected Arm")
+    OA: candidates found but download/verify failed -> paywalled (unpaywall:best_oa_location https://journals.sagepub.com/doi/pdf/10.1177/15459683231177605 -> download failed: curl exit 56: curl: (56) The requested URL returned error: 403; unpaywall:oa_locations https://pmc.ncbi.nlm.nih.gov/articles/PMC10350698/pdf/10.1177_15459683231177605.pdf -> file too small (1817 bytes))
+[31/32] Lazar-Kurz et al. (2023) -- Age-related changes to electroencephalographic markers of visuomotor error processing and learning in prism adaptation
+    DOI: 10.1016/j.neuropsychologia.2023.108546  (crossref sim=1.00 author_match=False year_close=True matched_title="Age-related changes to electroencephalographic markers of visuomotor error processing and learning in prism adaptation")
+    OA: none found -> paywalled
+[32/32] Hermans et al. (2024) -- Not fleeting but lasting: Limited influence of aging on implicit adaptative motor learning and its short-term retention
+    DOI: 10.1152/jn.00412.2024  (crossref sim=1.00 author_match=True year_close=True matched_title="Not fleeting but lasting: limited influence of aging on implicit adaptative motor learning and its short-term retention")
+    OA: downloaded (downloaded) <- https://lirias.kuleuven.be/retrieve/bdbfe316-3e23-4cb0-9843-8469e1248b6d
+
+=== Summary ===
+downloaded:          9
+preprint_downloaded: 0
+paywalled:           23
+not_found:           0
+total processed:     32
+Manifest written to: /Users/sritejpadmanabhan/projects/canopy/validation/papers_oa/MANIFEST.csv

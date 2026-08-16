@@ -1,0 +1,52 @@
+{
+  "A_vector": {
+    "n_series": 32,
+    "n_read": 32,
+    "read_rate": 1.0,
+    "mae_pct_of_axis_range": 1.813532256840594e-06,
+    "median_pct_of_axis_range": 1.4493439811265791e-06,
+    "max_pct_of_axis_range": 5.0978259480416455e-06,
+    "within_2pct_of_range": 1.0,
+    "error_bar_mae_pct_of_range": 1.1122710940846087e-06,
+    "n_error_bars_read": 18,
+    "sigma_coverage_95": null,
+    "n_sigma_checked": 0,
+    "failures": [],
+    "cases_with_implausible_calibration": [],
+    "cases_where_cv_core_would_pick_bars_on_a_point_chart": []
+  },
+  "B_raster_cv": {
+    "n_series": 32,
+    "n_read": 30,
+    "read_rate": 0.9375,
+    "mae_pct_of_axis_range": 0.07488749626749992,
+    "median_pct_of_axis_range": 0.07437391173397145,
+    "max_pct_of_axis_range": 0.1746230407056564,
+    "within_2pct_of_range": 1.0,
+    "error_bar_mae_pct_of_range": 12.055034876295718,
+    "n_error_bars_read": 30,
+    "sigma_coverage_95": 1.0,
+    "n_sigma_checked": 30,
+    "failures": [
+      "mark_count_mismatch:1_detected_2_plotted"
+    ],
+    "cases_with_implausible_calibration": [],
+    "cases_where_cv_core_would_pick_bars_on_a_point_chart": [
+      "line_timeseries_endpoint",
+      "points_high_dpi",
+      "points_log_axis",
+      "points_low_dpi",
+      "points_sd",
+      "points_serif_font",
+      "points_small_font"
+    ]
+  },
+  "_note": "routes C (VLM coordinates) and D (VLM read-out) are NOT measured here \u2014 they need a model.  Run them on this corpus once credit allows; see validation/README.md.",
+  "n_cases": 13,
+  "corpus_dir": "validation/synthetic/corpus",
+  "files": {
+    "csv": "validation/synthetic/accuracy.csv",
+    "png": "validation/synthetic/accuracy.png",
+    "svg": "validation/synthetic/accuracy.svg"
+  }
+}

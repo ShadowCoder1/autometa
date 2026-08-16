@@ -1,0 +1,17 @@
+{
+  "run_dir": "validation/out/run_cisneros_dev",
+  "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+  "dataset_id": "b511dbb76fa6:d1",
+  "outcome_key": "late_adaptation",
+  "route": "not_convertible",
+  "confidence": "needs_human",
+  "es": null,
+  "se": null,
+  "ci_low": null,
+  "ci_high": null,
+  "conversion_chain": "not convertible: text_mean_sd: group(s) A, B have no mean, group size and dispersion; table: group(s) A, B have no mean, group size and dispersion; text_mean_se_ci: group(s) A, B have no mean, group size and dispersion; figure: group(s) A, B have no mean, group size and dispersion; test_statistic: no t or F statistic was resolved for this contrast; p_value: no p value was resolved for this contrast; reported_d: the paper reports no effect size for this contrast",
+  "files": {
+    "png": "/Users/sritejpadmanabhan/projects/canopy/validation/out/example_test_statistic.png",
+    "svg": "/Users/sritejpadmanabhan/projects/canopy/validation/out/example_test_statistic.svg"
+  }
+}

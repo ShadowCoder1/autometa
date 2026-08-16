@@ -125,5 +125,49 @@ r <- rma(yi = yi, vi = vi, method = "REML"); ci <- confint(r)
 out$synthetic_k5$tau2_ci <- list(tau2 = ci$random[1, 1], lb = ci$random[1, 2], ub = ci$random[1, 3],
                                  I2 = ci$random[3, 1], I2_lb = ci$random[3, 2], I2_ub = ci$random[3, 3])
 
+
+## ---------- 6. Amendment C: combining arms, five-number summaries, leave-one-out, modified Egger ----------
+# (a) combine_groups (Cochrane 6.5.2.10): two subgroups' summaries must reproduce the whole sample.
+set.seed(7)
+g1 <- rnorm(12, 31.5, 11.1); g2 <- rnorm(9, 12.3, 11.8); both <- c(g1, g2)
+out$combine_raw <- list(m1 = mean(g1), sd1 = sd(g1), n1 = length(g1),
+                        m2 = mean(g2), sd2 = sd(g2), n2 = length(g2),
+                        mean = mean(both), sd = sd(both), n = length(both))
+# escalc on the combined arm vs a control, so the combined values are checked where they are used
+ctrl <- list(m = 20.0, sd = 9.0, n = 15)
+es_comb <- escalc(measure = "SMD", m1i = mean(both), sd1i = sd(both), n1i = length(both),
+                  m2i = ctrl$m, sd2i = ctrl$sd, n2i = ctrl$n, correct = FALSE)
+out$combine_raw$control <- ctrl
+out$combine_raw$escalc_d_yi <- as.numeric(es_comb$yi)
+out$combine_raw$escalc_d_vi <- as.numeric(es_comb$vi)
+
+# (b) five-number summary -> mean/SD: a large normal sample whose true mean/SD are known
+set.seed(11)
+x <- rnorm(200, 50, 10); qs <- quantile(x, c(0.25, 0.5, 0.75), type = 7)
+out$five_number <- list(n = length(x), min = min(x), q1 = qs[[1]], median = qs[[2]],
+                        q3 = qs[[3]], max = max(x), mean = mean(x), sd = sd(x))
+set.seed(12)
+xs <- rnorm(15, 8, 2); qss <- quantile(xs, c(0.25, 0.5, 0.75), type = 7)
+out$five_number_small <- list(n = length(xs), min = min(xs), q1 = qss[[1]], median = qss[[2]],
+                              q3 = qss[[3]], max = max(xs), mean = mean(xs), sd = sd(xs))
+
+# (c) leave-one-out on the Cisneros late table (metafor::leave1out, REML)
+late <- read.csv(file.path(ref_dir, "late_gsheet.csv"), check.names = FALSE, stringsAsFactors = FALSE)
+l1o <- leave1out(rma(yi = TE, vi = seTE^2, data = late, method = "REML"))
+out$leave_one_out <- list(estimate = as.numeric(l1o$estimate), se = as.numeric(l1o$se),
+                          ci.lb = as.numeric(l1o$ci.lb), ci.ub = as.numeric(l1o$ci.ub),
+                          tau2 = as.numeric(l1o$tau2), I2 = as.numeric(l1o$I2),
+                          Q = as.numeric(l1o$QE), k = nrow(late))
+
+# (d) Egger with the Pustejovsky-Rodgers predictor sqrt((nA+nB)/(nA nB)) = sqrt(1/ni_eff)
+nA <- late$N_old; nB <- late$N_young; ni_eff <- nA * nB / (nA + nB)
+rt_pr <- regtest(x = late$TE, vi = late$seTE^2, ni = ni_eff, predictor = "sqrtninv", model = "lm")
+out$egger_pr <- list(zval = rt_pr$zval, pval = rt_pr$pval, dfs = rt_pr$dfs,
+                     est = as.numeric(rt_pr$est), ci.lb = as.numeric(rt_pr$ci.lb),
+                     ci.ub = as.numeric(rt_pr$ci.ub),
+                     n_a = nA, n_b = nB, TE = late$TE, seTE = late$seTE)
+rt_sei <- regtest(x = late$TE, vi = late$seTE^2, predictor = "sei", model = "lm")
+out$egger_sei_lm <- list(zval = rt_sei$zval, pval = rt_sei$pval, dfs = rt_sei$dfs)
+
 write_json(out, here("r_reference.json"), auto_unbox = TRUE, digits = 12, pretty = TRUE, na = "null")
 cat("wrote", here("r_reference.json"), "\n")

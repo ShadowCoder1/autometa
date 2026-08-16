@@ -1,0 +1,102 @@
+{
+  "run_dir": "validation/out/run_cisneros_dev",
+  "files": {
+    "png": "/Users/sritejpadmanabhan/projects/canopy/validation/out/extraction_routes.png",
+    "svg": "/Users/sritejpadmanabhan/projects/canopy/validation/out/extraction_routes.svg",
+    "late_adaptation_png": "/Users/sritejpadmanabhan/projects/canopy/validation/out/extraction_routes_late_adaptation.png",
+    "late_adaptation_svg": "/Users/sritejpadmanabhan/projects/canopy/validation/out/extraction_routes_late_adaptation.svg",
+    "aftereffect_png": "/Users/sritejpadmanabhan/projects/canopy/validation/out/extraction_routes_aftereffect.png",
+    "aftereffect_svg": "/Users/sritejpadmanabhan/projects/canopy/validation/out/extraction_routes_aftereffect.svg",
+    "attempted_png": "/Users/sritejpadmanabhan/projects/canopy/validation/out/extraction_routes_attempted.png",
+    "attempted_svg": "/Users/sritejpadmanabhan/projects/canopy/validation/out/extraction_routes_attempted.svg",
+    "csv": "/Users/sritejpadmanabhan/projects/canopy/validation/out/extraction_routes.csv"
+  },
+  "outcomes": {
+    "late_adaptation": {
+      "n_datasets": 2,
+      "counts": {
+        "not_convertible": {
+          "n": 2,
+          "pct": 100.0,
+          "routes": [
+            "not_convertible"
+          ]
+        }
+      },
+      "n_examples": {
+        "not_convertible": 2
+      },
+      "files": {
+        "png": "/Users/sritejpadmanabhan/projects/canopy/validation/out/extraction_routes_late_adaptation.png",
+        "svg": "/Users/sritejpadmanabhan/projects/canopy/validation/out/extraction_routes_late_adaptation.svg"
+      }
+    },
+    "aftereffect": {
+      "n_datasets": 2,
+      "counts": {
+        "not_convertible": {
+          "n": 2,
+          "pct": 100.0,
+          "routes": [
+            "not_convertible"
+          ]
+        }
+      },
+      "n_examples": {
+        "not_convertible": 2
+      },
+      "files": {
+        "png": "/Users/sritejpadmanabhan/projects/canopy/validation/out/extraction_routes_aftereffect.png",
+        "svg": "/Users/sritejpadmanabhan/projects/canopy/validation/out/extraction_routes_aftereffect.svg"
+      }
+    }
+  },
+  "overall": {
+    "n_datasets": 4,
+    "counts": {
+      "not_convertible": {
+        "n": 4,
+        "pct": 100.0,
+        "routes": [
+          "not_convertible"
+        ]
+      }
+    },
+    "n_examples": {
+      "not_convertible": 3
+    },
+    "files": {
+      "png": "/Users/sritejpadmanabhan/projects/canopy/validation/out/extraction_routes.png",
+      "svg": "/Users/sritejpadmanabhan/projects/canopy/validation/out/extraction_routes.svg"
+    }
+  },
+  "attempted": {
+    "figure": {
+      "n": 4,
+      "pct": 100.0,
+      "datasets": [
+        "b511dbb76fa6:d1/late_adaptation",
+        "b511dbb76fa6:d1/aftereffect",
+        "fcd89b422627:d1/late_adaptation",
+        "fcd89b422627:d1/aftereffect"
+      ]
+    },
+    "test_statistic": {
+      "n": 3,
+      "pct": 75.0,
+      "datasets": [
+        "b511dbb76fa6:d1/late_adaptation",
+        "b511dbb76fa6:d1/aftereffect",
+        "fcd89b422627:d1/late_adaptation"
+      ]
+    },
+    "reported_d": {
+      "n": 2,
+      "pct": 50.0,
+      "datasets": [
+        "fcd89b422627:d1/late_adaptation",
+        "fcd89b422627:d1/aftereffect"
+      ]
+    }
+  }
+}

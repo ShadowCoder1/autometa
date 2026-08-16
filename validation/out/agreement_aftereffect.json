@@ -1,0 +1,71 @@
+{
+  "n_pairs": 0,
+  "n_unmatched_auto": 1,
+  "n_unmatched_gold": 39,
+  "n_auto_without_effect": 2,
+  "join_rules": {
+    "author_year": 1,
+    "unmatched_auto": 1,
+    "unmatched_gold": 39
+  },
+  "tolerance_d": 0.1,
+  "lins_ccc": null,
+  "mae": null,
+  "rmse": null,
+  "sign_agreement": null,
+  "within_tolerance": null,
+  "bland_altman": {
+    "bias": null,
+    "sd": null,
+    "loa_low": null,
+    "loa_high": null
+  },
+  "max_abs_delta": null,
+  "calibration_by_confidence": {},
+  "auto_accept_precision": null,
+  "by_route": {},
+  "outcome_key": "aftereffect",
+  "run_dir": "validation/out/run_cisneros_dev",
+  "gold_file": "aft_gsheet.csv",
+  "n_gold_rows": 40,
+  "n_auto_rows": 2,
+  "pooled": {
+    "manual": {
+      "k": 40,
+      "estimate": 0.35065592237329574,
+      "ci_low": 0.15200330939988121,
+      "ci_high": 0.5493085353467102,
+      "se": 0.10135523639228118,
+      "tau2": 0.2858277119320969,
+      "i2_pct": 68.69396054271691,
+      "q": 124.57660143569191,
+      "p": 0.0005408327730013592
+    },
+    "auto": {
+      "k": 0,
+      "estimate": null,
+      "ci_low": null,
+      "ci_high": null,
+      "se": null,
+      "tau2": null,
+      "i2_pct": null,
+      "q": null,
+      "p": null
+    },
+    "delta_estimate": null,
+    "cis_overlap": null,
+    "settings": {
+      "estimator": "cohen",
+      "variance": "hedges_olkin_df",
+      "tau2_method": "REML",
+      "hakn": false,
+      "pi_method": "HTS"
+    },
+    "note": "both sides pooled by canopy.stats.meta.random_effects under the protocol's own settings; the manual side uses the spreadsheet's TE and seTE unchanged"
+  },
+  "files": {
+    "discrepancies": "/Users/sritejpadmanabhan/projects/canopy/validation/out/discrepancies_aftereffect.csv",
+    "png": "/Users/sritejpadmanabhan/projects/canopy/validation/out/manual_vs_auto_aftereffect.png",
+    "svg": "/Users/sritejpadmanabhan/projects/canopy/validation/out/manual_vs_auto_aftereffect.svg"
+  }
+}

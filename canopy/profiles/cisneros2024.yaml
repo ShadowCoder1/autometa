@@ -1,0 +1,15 @@
+name: cisneros2024
+description: >-
+  Conventions of the reference aging-adaptation review: Cohen's d with the Hedges & Olkin
+  df-based variance, REML between-study variance, no Knapp-Hartung adjustment, and the
+  Higgins-Thompson-Spiegelhalter t-based prediction interval.
+reference: "R meta::metacont(sm='SMD', method.smd='Cohen', method.tau='REML', method.predict='HTS')"
+estimator: cohen
+variance: hedges_olkin_df
+tau2_method: REML
+hakn: false
+pi_method: HTS
+# The published review pooled all 50 datasets, several of them from the same paper: dependency is
+# a sensitivity analysis there, not the primary model. Reproducing it therefore means NOT
+# collapsing a paper's rows into one.
+one_row_per_paper: false
