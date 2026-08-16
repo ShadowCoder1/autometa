@@ -55,8 +55,38 @@
   var state = {
     settings: null, examples: [], runId: "", token: "", run: null, results: null,
     outcome: "", files: [], events: [], papers: {}, source: null, mode: "guided",
-    started: false, returnFocus: null
+    started: false, returnFocus: null, live: {}, poll: null, names: {}
   };
+
+  /* The run a reload must not lose. Tokens are kept per run id (so any run this browser
+     started can be re-opened); `current` is the one the page re-attaches to. */
+  var STORE_TOKENS = "canopy.tokens";
+  var STORE_CURRENT = "canopy.current";
+
+  function store(key, value) {
+    try {
+      if (value === null) { window.localStorage.removeItem(key); }
+      else { window.localStorage.setItem(key, JSON.stringify(value)); }
+    } catch (err) { /* private mode, or a full disk: the UI still works, it just forgets */ }
+  }
+
+  function stored(key, fallback) {
+    try {
+      var raw = window.localStorage.getItem(key);
+      return raw === null ? fallback : JSON.parse(raw);
+    } catch (err) { return fallback; }
+  }
+
+  function rememberRun(runId, token) {
+    var tokens = stored(STORE_TOKENS, {}) || {};
+    tokens[runId] = token;
+    store(STORE_TOKENS, tokens);
+    store(STORE_CURRENT, runId);
+  }
+
+  function forgetCurrentRun() { store(STORE_CURRENT, null); }
+
+  function tokenFor(runId) { return (stored(STORE_TOKENS, {}) || {})[runId] || ""; }
 
   function toast(message) {
     var box = $("toast");
@@ -113,7 +143,11 @@
   }
 
   Array.prototype.forEach.call(document.querySelectorAll(".step"), function (button) {
-    button.addEventListener("click", function () { goto(button.getAttribute("data-screen")); });
+    button.addEventListener("click", function () {
+      var screen = button.getAttribute("data-screen");
+      if (screen === "new") { forgetCurrentRun(); }   // the next reload starts on a clean form
+      goto(screen);
+    });
   });
 
   /* ───────────────────────────────────────────────────────── settings */
@@ -397,6 +431,10 @@
       state.runId = body.run_id;
       state.token = body.token;
       state.started = !!start;
+      state.papers = {};
+      state.live = {};
+      state.names = {};
+      rememberRun(body.run_id, body.token);
       $("run-title").textContent = body.title + " · " + body.run_id;
       show($("cost-meter"), true);
       return body;
@@ -521,23 +559,74 @@
     return "dot";
   }
 
-  function paperRow(id) {
-    if (state.papers[id]) { return state.papers[id]; }
-    var cells = {};
-    var row = h("tr");
-    row.appendChild(h("td", { cls: "id", text: id }));
-    STAGES.forEach(function (stage) {
-      var cell = h("td");
-      var dot = h("span", { cls: "dot", text: "" });
-      cell.appendChild(dot);
-      cells[stage] = dot;
-      row.appendChild(cell);
+  function paperRow(id, meta) {
+    var entry = state.papers[id];
+    if (!entry) {
+      var cells = {};
+      var row = h("tr");
+      var label = h("strong", { text: id });
+      var sub = h("span", { cls: "hint", text: id });
+      row.appendChild(h("td", { cls: "paper" }, [label, h("br"), sub]));
+      STAGES.forEach(function (stage) {
+        var cell = h("td");
+        var dot = h("span", { cls: "dot", text: "" });
+        cell.appendChild(dot);
+        cells[stage] = dot;
+        row.appendChild(cell);
+      });
+      var cost = h("td", { cls: "num", text: "—" });
+      row.appendChild(cost);
+      $("stage-grid").tBodies[0].appendChild(row);
+      entry = { row: row, cells: cells, cost: cost, label: label, sub: sub };
+      state.papers[id] = entry;
+    }
+    if (meta) {
+      entry.label.textContent = meta.study_label || meta.filename || id;
+      entry.sub.textContent = meta.filename ? meta.filename + " · " + id : id;
+      entry.row.setAttribute("title", meta.paper_id || id);
+      if (meta.error) { entry.row.setAttribute("title", meta.error); }
+    }
+    return entry;
+  }
+
+  function applyStage(entry, stage, status, message) {
+    var dot = entry.cells[stage];
+    if (!dot) { return; }
+    dot.className = stageClass(status);
+    dot.textContent = status === "skipped" ? "cached" : "";
+    if (message) { dot.setAttribute("title", message); }
+  }
+
+  /* The manifest is the truth about a finished run: a monitor opened after the fact — or after a
+     reload — paints the same grid the live events would have drawn. Events are an overlay on top
+     of it, which is what keeps a running paper's ◐ from being erased by a refresh. */
+  function renderPapers(papers) {
+    (papers || []).forEach(function (paper) {
+      var id = paper.sha12 || String(paper.paper_id || "").slice(0, 12);
+      if (!id) { return; }
+      var entry = paperRow(id, paper);
+      STAGES.forEach(function (stage) {
+        var status = (paper.stages || {})[stage];
+        if (status) { applyStage(entry, stage, status, ""); }
+      });
+      if (paper.status === "error" || paper.status === "cancelled") {
+        STAGES.forEach(function (stage) {
+          if (!(paper.stages || {})[stage]) {
+            applyStage(entry, stage, paper.status, paper.error || paper.status);
+          }
+        });
+      }
+      entry.cost.textContent = money(paper.cost_usd);
     });
-    var cost = h("td", { cls: "num", text: "—" });
-    row.appendChild(cost);
-    $("stage-grid").tBodies[0].appendChild(row);
-    state.papers[id] = { row: row, cells: cells, cost: cost };
-    return state.papers[id];
+    Object.keys(state.live).forEach(function (id) {           // live events win over the manifest
+      var entry = state.papers[id];
+      if (!entry) { return; }
+      Object.keys(state.live[id]).forEach(function (stage) {
+        var seen = state.live[id][stage];
+        if (seen.status === "started") { applyStage(entry, stage, "started", seen.message); }
+      });
+    });
+    $("stage-summary").textContent = Object.keys(state.papers).length + " paper(s)";
   }
 
   function onEvent(event) {
@@ -547,14 +636,13 @@
       show($("cost-meter"), true);
     }
     if (event.paper && STAGES.indexOf(event.stage) >= 0) {
-      var entry = paperRow(event.paper);
-      var dot = entry.cells[event.stage];
-      dot.className = stageClass(event.status);
-      dot.textContent = event.status === "skipped" ? "cached" : "";
-      if (event.message) { dot.setAttribute("title", event.message); }
+      state.live[event.paper] = state.live[event.paper] || {};
+      state.live[event.paper][event.stage] = { status: event.status, message: event.message };
+      applyStage(paperRow(event.paper, state.names[event.paper]), event.stage, event.status,
+                 event.message);
     }
     if (event.paper && event.stage === "paper") {
-      var failed = paperRow(event.paper);
+      var failed = paperRow(event.paper, state.names[event.paper]);
       STAGES.forEach(function (stage) {
         if (!failed.cells[stage].className.match(/done|skip/)) {
           failed.cells[stage].className = "dot error";
@@ -562,9 +650,10 @@
       });
     }
     var log = $("log");
+    var who = (state.names[event.paper] || {}).study_label || event.paper || "—";
     log.appendChild(h("li", {}, [
       h("b", { text: event.stage }),
-      h("span", { cls: "who", text: event.paper || "—" }),
+      h("span", { cls: "who", text: who, attrs: { title: event.paper || "" } }),
       h("span", { cls: "msg", text: (event.status || "") + (event.message ? " · " + event.message : "") })
     ]));
     while (log.children.length > 400) { log.removeChild(log.firstChild); }
@@ -590,8 +679,8 @@
         ? "This run has not been started yet."
         : "Run " + (event.status || "finished") + (event.message ? " — " + event.message : ""));
       refreshRun().then(function () {
-        if (event.status === "done" || event.status === "cancelled") { loadResults(); }
-      });
+        if (event.status === "done") { loadResults(); }
+      }).catch(function (error) { toast(error.message); });
     });
     source.onerror = function () { source.close(); state.source = null; };
   }
@@ -608,10 +697,13 @@
   });
 
   /* ───────────────────────────────────────────────────────── run state */
+  var TERMINAL = ["done", "error", "cancelled", "interrupted"];
+
   function refreshRun() {
     if (!state.runId) { return Promise.resolve(null); }
     return api("/api/runs/" + state.runId).then(function (run) {
       state.run = run;
+      rememberRun(state.runId, state.token);
       $("run-title").textContent = (run.title || run.run_id) + " · " + run.status;
       $("cost-value").textContent = money(run.cost_usd);
       show($("cost-meter"), true);
@@ -625,18 +717,77 @@
       });
       if (!state.outcome && (run.outcomes || []).length) { state.outcome = run.outcomes[0].key; }
       picker.value = state.outcome;
-      (run.manifest && run.manifest.papers ? run.manifest.papers : []).forEach(function (paper) {
-        var entry = paperRow(String(paper.paper_id).slice(0, 12));
-        STAGES.forEach(function (stage) {
-          var status = (paper.stages || {})[stage];
-          if (status) {
-            entry.cells[stage].className = stageClass(status);
-            entry.cells[stage].textContent = status === "skipped" ? "cached" : "";
-          }
-        });
-        entry.cost.textContent = money(paper.cost_usd);
-        if (paper.status === "error") { entry.row.setAttribute("title", paper.error || "failed"); }
+      (run.papers || []).forEach(function (paper) {
+        state.names[paper.sha12 || String(paper.paper_id || "").slice(0, 12)] = paper;
       });
+      renderPapers(run.papers || []);
+      showRunState(run);
+      return run;
+    });
+  }
+
+  function showRunState(run) {
+    var finished = TERMINAL.indexOf(run.status) >= 0;
+    var stop = $("cancel-btn");
+    stop.disabled = finished;
+    stop.textContent = finished ? "Run " + run.status : "Stop the run";
+    if (finished) { stop.setAttribute("title", "this run has already finished"); }
+    else { stop.removeAttribute("title"); }
+
+    var banner = $("monitor-banner");
+    clear(banner);
+    show(banner, finished);
+    if (finished) {
+      var word = run.status === "done" ? "Run finished." : "Run " + run.status + ".";
+      banner.appendChild(h("span", { text: word + " " + money(run.cost_usd) + " over "
+        + (run.papers || []).length + " paper(s)." }));
+      if (run.status !== "error") {
+        banner.appendChild(h("button", {
+          cls: "btn primary small", text: "Open Results", attrs: { type: "button" },
+          on: { click: function () { loadResults(); } }
+        }));
+      }
+    }
+    pollWhileRunning(run);
+  }
+
+  /* A run outlives the page that started it: while one is going the monitor asks the server for
+     the manifest every few seconds, so cost and stages are right even if the event stream dropped
+     or the tab was asleep. */
+  function pollWhileRunning(run) {
+    var going = TERMINAL.indexOf(run.status) < 0;
+    if (going && !state.poll) {
+      state.poll = window.setInterval(function () {
+        refreshRun().catch(function () { /* a transient failure is not worth a toast */ });
+      }, 5000);
+    }
+    if (!going && state.poll) {
+      window.clearInterval(state.poll);
+      state.poll = null;
+    }
+  }
+
+  function attach(runId, token) {
+    state.runId = runId;
+    state.token = token;
+    state.outcome = "";
+    state.papers = {};
+    state.live = {};
+    state.names = {};
+    clear($("stage-grid").tBodies[0]);
+    clear($("log"));
+    state.events = [];
+    return refreshRun().then(function (run) {
+      state.started = run.status !== "created";
+      rememberRun(runId, token);
+      if (TERMINAL.indexOf(run.status) < 0) {
+        goto("monitor");
+        listen();
+      } else if ((run.outcomes || []).some(function (o) { return o.has_results; })) {
+        loadResults();
+      } else {
+        goto("monitor");
+      }
       return run;
     });
   }
@@ -661,6 +812,20 @@
     });
   });
 
+  $("repool-btn").addEventListener("click", function () {
+    var button = $("repool-btn");
+    button.disabled = true;
+    api("/api/runs/" + state.runId + "/repool", { method: "POST" })
+      .then(function (summary) {
+        toast(summary.applied + " override(s) applied"
+          + (summary.pending.length ? ", " + summary.pending.length + " need a re-run" : ""));
+        highlightRepool(false);
+        return refreshRun().then(loadResults);
+      })
+      .catch(function (error) { toast(error.message); })
+      .then(function () { button.disabled = false; });
+  });
+
   function loadResults() {
     if (!state.runId || !state.outcome) { return Promise.resolve(null); }
     return api("/api/runs/" + state.runId + "/results/" + encodeURIComponent(state.outcome))
@@ -668,6 +833,7 @@
         state.results = results;
         goto("results");
         renderPooled(results);
+        highlightRepool(false);
         renderTable(results);
         renderFlags(results);
         renderFigures(results);
@@ -834,10 +1000,12 @@
   }
 
   /* ── extraction table ── */
+  // a sha is how Canopy identifies a row; a name and a page number are how a reader checks one
   var COLUMNS = [
-    ["label", "study"], ["dataset_id", "dataset"], ["n_a", "n A"], ["n_b", "n B"],
-    ["mean_a", "mean A"], ["mean_b", "mean B"], ["es", "effect"], ["ci_low", "CI low"],
-    ["ci_high", "CI high"], ["route", "route"], ["confidence", "confidence"]
+    ["study_label", "study"], ["dataset_label", "dataset"], ["pages", "page"],
+    ["n_a", "n A"], ["n_b", "n B"], ["mean_a", "mean A"], ["mean_b", "mean B"],
+    ["es", "effect"], ["ci_low", "CI low"], ["ci_high", "CI high"],
+    ["route", "route"], ["confidence", "confidence"]
   ];
 
   function fillFilter(select, values, all) {
@@ -884,15 +1052,15 @@
       if (confidence && row.confidence !== confidence) { return; }
       if (needle && JSON.stringify(row).toLowerCase().indexOf(needle) < 0) { return; }
       var tr = h("tr", { cls: "is-clickable" + (row.in_primary ? "" : " is-held"),
+        attrs: { title: row.dataset_id + (row.paper_filename ? " · " + row.paper_filename : "") },
         on: { click: function () { openDrawer(row.dataset_id, state.outcome); } } });
       COLUMNS.forEach(function (column) {
         var value = row[column[0]];
         var isNumber = typeof value === "number";
-        tr.appendChild(h("td", {
-          cls: isNumber ? "num" : (column[0] === "dataset_id" ? "id" : ""),
-          text: isNumber ? num(value, column[0] === "n_a" || column[0] === "n_b" ? 0 : 3)
-            : (value === null || value === undefined ? "—" : String(value))
-        }));
+        var text = isNumber ? num(value, column[0] === "n_a" || column[0] === "n_b" ? 0 : 3)
+          : (value === null || value === undefined || value === "" ? "—" : String(value));
+        if (column[0] === "study_label" && text === "—") { text = row.dataset_id; }
+        tr.appendChild(h("td", { cls: isNumber ? "num" : "", text: text }));
       });
       var marks = h("td");
       if (row.overridden) { marks.appendChild(h("span", { cls: "badge warn", text: "△ override" })); }
@@ -909,6 +1077,31 @@
   $("filter-text").addEventListener("input", drawRows);
 
   /* ── flags / review queue ── */
+  function decide(entry, payload, done) {
+    api("/api/runs/" + state.runId + "/overrides", { method: "POST", json: payload })
+      .then(function (body) {
+        toast("recorded as override #" + body.override.seq + " — re-pool to see it");
+        highlightRepool(true);
+        if (done) { done(); }
+      })
+      .catch(function (error) { toast(error.message); });
+  }
+
+  function highlightRepool(on) {
+    var button = $("repool-btn");
+    if (!button) { return; }
+    show(button, true);
+    button.classList.toggle("primary", !!on);
+    button.classList.toggle("pending", !!on);
+  }
+
+  function flagTitle(entry) {
+    var name = entry.study_label || entry.first_author || "";
+    var parts = [name, entry.dataset_label, entry.group ? "group " + entry.group : "",
+                 entry.pages].filter(Boolean);
+    return parts.join(" · ") || entry.dataset_id;
+  }
+
   function renderFlags(results) {
     var holder = $("flags");
     clear(holder);
@@ -920,7 +1113,8 @@
       var impact = entry.impact_abs_delta_pooled;
       var card = h("div", { cls: "flag" }, [
         h("div", { cls: "flag-head" }, [
-          h("span", { cls: "id", text: entry.dataset_id + " · " + (entry.group || "—") }),
+          h("span", { cls: "id", text: flagTitle(entry),
+            attrs: { title: entry.dataset_id + " · " + entry.outcome_key } }),
           h("span", { cls: "flag-impact", text: impact === null || impact === undefined
             ? "impact unknown" : "|Δ pooled| " + num(impact) })
         ]),
@@ -932,10 +1126,41 @@
           + " (" + (candidate.dispersion_type || "?") + "), n=" + (candidate.n || "?")
           + ", p." + (candidate.page || "?") }));
       });
-      card.appendChild(h("button", {
-        cls: "btn small", text: "Open the evidence", attrs: { type: "button" },
-        on: { click: function () { openDrawer(entry.dataset_id, entry.outcome_key || state.outcome); } }
-      }));
+
+      var outcomeKey = entry.outcome_key || state.outcome;
+      var reason = h("input", { attrs: { type: "text", placeholder:
+        "why — e.g. “checked against Table 2, the reading is right”" } });
+      var accept = h("button", {
+        cls: "btn primary small", text: "Accept as read", attrs: { type: "button" },
+        on: { click: function () {
+          var why = reason.value.trim() || "checked against the paper; the reading is right";
+          accept.disabled = true;
+          decide(entry, { kind: "mark_reviewed", dataset_id: entry.dataset_id,
+                          outcome_key: outcomeKey, justification: why },
+                 function () { card.classList.add("is-decided"); });
+        } } });
+      var override = h("button", {
+        cls: "btn small", text: "Override value…", attrs: { type: "button" },
+        on: { click: function () { openDrawer(entry.dataset_id, outcomeKey); } } });
+      var exclude = h("button", {
+        cls: "btn small", text: "Exclude dataset", attrs: { type: "button" },
+        on: { click: function () {
+          var why = reason.value.trim();
+          if (!why) { toast("say why this dataset should not be pooled"); reason.focus(); return; }
+          exclude.disabled = true;
+          decide(entry, { kind: "exclude_dataset", dataset_id: entry.dataset_id,
+                          outcome_key: outcomeKey, justification: why },
+                 function () { card.classList.add("is-decided"); });
+        } } });
+
+      card.appendChild(h("label", { cls: "field" },
+        [h("span", { cls: "label", text: "your note" }), reason]));
+      card.appendChild(h("div", { cls: "flag-actions" }, [
+        accept, override, exclude,
+        h("button", { cls: "btn ghost small", text: "Open the evidence",
+          attrs: { type: "button" },
+          on: { click: function () { openDrawer(entry.dataset_id, outcomeKey); } } })
+      ]));
       holder.appendChild(card);
     });
 
@@ -1204,6 +1429,7 @@
             status.textContent = "recorded as override #" + body.override.seq
               + " — re-pool to see it in the plot";
             justification.value = "";
+            highlightRepool(true);
           })
           .catch(function (error) { status.textContent = error.message; })
           .then(function () { submit.disabled = false; });
@@ -1277,4 +1503,14 @@
   addOutcome(null);
   loadSettings().catch(function (error) { toast(error.message); });
   loadExamples().catch(function (error) { toast(error.message); });
+
+  // a reload must not lose the run: re-attach to the one this browser was watching, if it is
+  // still there and its token still works
+  var saved = stored(STORE_CURRENT, "");
+  if (saved) {
+    var savedToken = tokenFor(saved);
+    if (savedToken) {
+      attach(saved, savedToken).catch(function () { forgetCurrentRun(); });
+    }
+  }
 })();

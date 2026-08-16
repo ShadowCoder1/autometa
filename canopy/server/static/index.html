@@ -185,6 +185,7 @@
       </div>
       <button type="button" class="btn danger" id="cancel-btn">Stop the run</button>
     </div>
+    <p class="banner" id="monitor-banner" hidden></p>
     <div class="grid-stage">
       <div class="card">
         <div class="card-head"><h2>Papers</h2><span class="hint" id="stage-summary"></span></div>
@@ -246,8 +247,11 @@
 
     <div class="card pane" id="pane-flags" role="tabpanel" tabindex="0"
          aria-labelledby="tab-flags" hidden>
-      <p class="hint">Sorted by how far the pooled estimate would move if the value changed — the
-         top of this list is where an hour of your time is worth most.</p>
+      <div class="card-head">
+        <p class="hint">Sorted by how far the pooled estimate would move if the value changed —
+           the top of this list is where an hour of your time is worth most.</p>
+        <button type="button" class="btn small" id="repool-btn">Re-pool</button>
+      </div>
       <div id="flags"></div>
     </div>
 

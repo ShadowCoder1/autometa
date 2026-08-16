@@ -387,3 +387,22 @@ table.grid tr.is-held td { color: var(--muted); }
   .steps, .topbar-right, .actions, .tabs, .drawer, .scrim { display: none; }
   .card { break-inside: avoid; border-color: #999; }
 }
+
+/* ── review round 2: names instead of ids, a finished-run banner, one-click decisions ── */
+table.grid td.paper { line-height: 1.3; }
+table.grid td.paper strong { font-weight: 600; }
+table.grid td.paper .hint { font-size: .72rem; font-family: var(--mono); }
+
+.banner {
+  display: flex; align-items: center; gap: .8rem; flex-wrap: wrap;
+  border: 1px solid var(--accent); background: var(--accent-wash); color: var(--ink);
+  border-radius: var(--r); padding: .6rem .9rem; margin: -.4rem 0 var(--gap); font-size: .9rem;
+}
+
+.flag-actions { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .6rem; }
+.flag.is-decided { opacity: .6; border-left-color: var(--ok); }
+.btn.pending {
+  animation: nudge 1.4s ease-in-out 3;
+}
+@keyframes nudge { 50% { box-shadow: 0 0 0 4px var(--accent-wash); } }
+@media (prefers-reduced-motion: reduce) { .btn.pending { animation: none; } }

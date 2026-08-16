@@ -435,6 +435,107 @@ def test_listing_runs_survives_a_restart(finished):
                      headers=auth(row["token"])).status_code == 200
 
 
+# ============================================================================ names, not shas
+def test_the_run_state_lists_its_papers_by_name_with_their_cost(finished):
+    """A sha is how Canopy identifies a paper; it is not how anybody reads one."""
+    api, run_id, token = finished["api"], finished["run_id"], finished["token"]
+    body = api.get(f"/api/runs/{run_id}", headers=auth(token)).json()
+
+    papers = body["papers"]
+    assert len(papers) == 2
+    for paper in papers:
+        assert paper["study_label"] and paper["study_label"] != paper["sha12"]
+        assert str(paper["year"]) in paper["study_label"]
+        assert paper["filename"].endswith(".pdf")
+        assert paper["sha12"] == paper["paper_id"][:12]
+        assert paper["stages"]["resolve"] in ("done", "skipped")
+        assert isinstance(paper["cost_usd"], (int, float))
+    assert body["manifest"]["papers"], "the raw manifest is still there for anything else"
+
+
+def test_results_rows_carry_the_study_the_dataset_and_the_page(finished):
+    api, run_id, token = finished["api"], finished["run_id"], finished["token"]
+    body = api.get(f"/api/runs/{run_id}/results/{OUTCOME}", headers=auth(token)).json()
+
+    for row in body["rows"]:
+        assert row["study_label"] and row["study_label"] != row["dataset_id"]
+        assert row["dataset_label"]
+        assert row["pages"].startswith("p"), row["pages"]
+        assert row["paper_filename"].endswith(".pdf")
+        assert row["dataset_id"], "the id stays, as the second line"
+    assert body["papers"] and body["papers"][0]["study_label"]
+
+
+def test_the_review_queue_is_named_too(cloned):
+    """A flag a reviewer cannot place in a paper is a flag they cannot act on."""
+    api, run_id, token = cloned["api"], cloned["run_id"], cloned["token"]
+    rows = api.get(f"/api/runs/{run_id}/results/{OUTCOME}", headers=auth(token)).json()["rows"]
+    dataset_id = rows[0]["dataset_id"]
+
+    # make one cell need a human, the way a reviewer would
+    api.post(f"/api/runs/{run_id}/overrides", headers=auth(token), json={
+        "kind": "mark_reviewed", "dataset_id": dataset_id, "outcome_key": OUTCOME,
+        "confidence": "needs_human", "justification": "the figure panel is ambiguous"})
+    api.post(f"/api/runs/{run_id}/repool", headers=auth(token))
+
+    queue = api.get(f"/api/runs/{run_id}/review", headers=auth(token)).json()["queue"]
+    assert queue, "the cell we just flagged should be waiting"
+    entry = next(e for e in queue if e["dataset_id"] == dataset_id)
+    assert entry["study_label"] and str(entry["year"]) in entry["study_label"]
+    assert entry["dataset_label"] and entry["outcome_label"]
+    assert entry["dataset_id"] == dataset_id               # …and the id is still there
+
+    evidence = api.get(f"/api/runs/{run_id}/evidence/{dataset_id}/{OUTCOME}",
+                       headers=auth(token)).json()
+    assert evidence["study_label"] and evidence["dataset_label"]
+
+
+def test_the_monitor_paints_a_finished_run_from_the_manifest():
+    """Item 2: a tab that slept through the run must still repaint it correctly."""
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "function renderPapers(" in app_js
+    assert "renderPapers(run.papers || [])" in app_js, "the grid is drawn from the manifest"
+    assert "entry.cost.textContent = money(paper.cost_usd)" in app_js
+    assert "state.live" in app_js, "live events stay as an overlay on top of it"
+    assert "pollWhileRunning" in app_js
+
+
+def test_the_spa_remembers_its_run_across_a_reload():
+    """Item 3: reloading the page must not lose the run."""
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "window.localStorage" in app_js
+    assert "canopy.tokens" in app_js and "canopy.current" in app_js
+    assert "function rememberRun(" in app_js and "function forgetCurrentRun(" in app_js
+    assert "rememberRun(body.run_id, body.token)" in app_js, "a new run is remembered"
+    assert "attach(saved, savedToken)" in app_js, "and re-attached on load"
+    assert 'if (screen === "new") { forgetCurrentRun(); }' in app_js
+
+
+def test_the_monitor_says_when_the_run_has_already_finished():
+    """Item 4: `Stop the run` on a finished run should say so, and offer the results."""
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'id="monitor-banner"' in page
+    assert "stop.disabled = finished" in app_js
+    assert "Open Results" in app_js
+
+
+def test_a_flag_can_be_accepted_in_one_click(cloned):
+    """Item 5: the primary action is "accept as read", and it is a real override."""
+    api, run_id, token = cloned["api"], cloned["run_id"], cloned["token"]
+    rows = api.get(f"/api/runs/{run_id}/results/{OUTCOME}", headers=auth(token)).json()["rows"]
+    posted = api.post(f"/api/runs/{run_id}/overrides", headers=auth(token), json={
+        "kind": "mark_reviewed", "dataset_id": rows[0]["dataset_id"], "outcome_key": OUTCOME,
+        "justification": "checked against the paper; the reading is right"})
+    assert posted.status_code == 201
+    assert posted.json()["override"]["confidence"] == "accept_with_note"
+
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert '"Accept as read"' in app_js and "highlightRepool" in app_js
+    assert app_js.index('"Accept as read"') < app_js.index('"Override value…"')
+    assert '"Exclude dataset"' in app_js
+
+
 # ============================================================================ review workflow
 def test_an_override_is_appended_to_an_immutable_log(tmp_path):
     from canopy.server.overrides import append_override, read_overrides

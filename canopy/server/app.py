@@ -196,6 +196,84 @@ def is_cross_site(request: Request) -> bool:
     return False
 
 
+def _study_label(citation: Mapping[str, Any] | None, fallback: str = "") -> str:
+    """`Bock 2005` — how a person names a paper, with the file name as the fallback.
+
+    A sha256 is how Canopy identifies a paper; it is not how anybody reads one. Every list the UI
+    shows joins the citation the mapper read back onto the id, and keeps the id as the second line.
+    """
+    citation = citation or {}
+    name = str(citation.get("first_author") or "").strip()
+    if not name:
+        authors = str(citation.get("authors") or "").strip()
+        name = authors.split(",")[0].strip() if authors else ""
+    year = citation.get("year")
+    if name and year:
+        return f"{name} {year}"
+    if name:
+        return name
+    stem = Path(str(fallback or "")).stem
+    return stem or "this paper"
+
+
+def _pages(*values: Any) -> str:
+    """`p. 3` / `pp. 3, 5` — where in the paper the numbers were read."""
+    seen: list[str] = []
+    for value in values:
+        text = str(value if value is not None else "").strip()
+        if text and text not in seen and text.lower() not in ("none", "nan", "0"):
+            seen.append(text)
+    if not seen:
+        return ""
+    return ("p. " if len(seen) == 1 else "pp. ") + ", ".join(seen)
+
+
+def _paper_rows(job: Job, manifest: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """One row per paper: what the run did with it, under the name its authors would use.
+
+    The status, the stages and the cost come from the manifest, so a monitor that opens after the
+    run finished paints the same grid the live events would have drawn.
+    """
+    studies = _run_index(job)["studies"]
+    rows: list[dict[str, Any]] = []
+    for status in (manifest or {}).get("papers") or []:
+        paper_id = str(status.get("paper_id") or "")
+        citation = (studies.get(paper_id) or {}).get("citation") or {}
+        filename = str(status.get("filename") or "")
+        rows.append({
+            "paper_id": paper_id, "sha12": paper_id[:12], "filename": filename,
+            "study_label": _study_label(citation, filename),
+            "first_author": citation.get("first_author") or "", "year": citation.get("year"),
+            "title": citation.get("title") or "",
+            "status": status.get("status", ""), "stages": status.get("stages") or {},
+            "cost_usd": status.get("cost_usd", 0.0), "seconds": status.get("seconds", 0.0),
+            "eligible": status.get("eligible"), "error": status.get("error", ""),
+            "n_datasets": len((studies.get(paper_id) or {}).get("datasets") or []),
+        })
+    return rows
+
+
+def _dataset_labels(job: Job) -> dict[str, dict[str, Any]]:
+    """dataset_id → what to call it: the paper, the dataset's own label, the group names."""
+    index = _run_index(job)
+    out: dict[str, dict[str, Any]] = {}
+    for paper_id, study in index["studies"].items():
+        citation = study.get("citation") or {}
+        for dataset in study.get("datasets") or []:
+            dataset_id = str(dataset.get("dataset_id") or "")
+            out[dataset_id] = {
+                "paper_id": paper_id,
+                "study_label": _study_label(citation, ""),
+                "first_author": citation.get("first_author") or "",
+                "year": citation.get("year"),
+                "dataset_label": str(dataset.get("label") or dataset.get("experiment") or ""),
+                "condition": str(dataset.get("condition") or ""),
+                "group_a": (dataset.get("group_a") or {}).get("label", ""),
+                "group_b": (dataset.get("group_b") or {}).get("label", ""),
+            }
+    return out
+
+
 def _run_index(job: Job) -> dict[str, Any]:
     """dataset_id → paper_id, and the study maps, read from the run's own stage files."""
     datasets: dict[str, str] = {}
@@ -456,6 +534,7 @@ def create_app(runs_dir: str | Path = "runs", *,
             "finished_at": job.finished_at, "error": job.error,
             "cost_usd": round(job.cost_usd, 6), "n_files": job.n_files, "options": job.options,
             "manifest": manifest, "outcomes": outcomes,
+            "papers": _paper_rows(job, manifest),
             "protocol": None if protocol is None else {
                 "title": protocol.title, "research_question": protocol.research_question,
                 "group_a": protocol.group_a.model_dump(mode="json"),
@@ -503,11 +582,21 @@ def create_app(runs_dir: str | Path = "runs", *,
         directory = job.run_dir / "results" / outcome_key
         pooled = _read_json(directory / "pooled.json", {}) or {}
         held = set(pooled.get("needs_human_dataset_ids") or [])
+        names = _dataset_labels(job)
+        papers = {p["paper_id"]: p for p in _paper_rows(job, _read_json(
+            job.run_dir / "manifest.json", {}) or {})}
         rows = []
         for row in _read_json(directory / "extraction_table.json", []) or []:
             flags = row.get("flags") or []
+            named = names.get(str(row.get("dataset_id") or ""), {})
+            paper = papers.get(str(row.get("paper_id") or ""), {})
             rows.append({**row, "in_primary": row.get("dataset_id") not in held,
-                         "overridden": "human_override" in flags})
+                         "overridden": "human_override" in flags,
+                         "study_label": (named.get("study_label")
+                                         or _study_label(row, paper.get("filename", ""))),
+                         "dataset_label": named.get("dataset_label") or row.get("label") or "",
+                         "paper_filename": paper.get("filename", ""),
+                         "pages": _pages(row.get("page_a"), row.get("page_b"))})
         summary = override_summary(job.run_dir)
         return {
             "outcome": outcome.model_dump(mode="json"),
@@ -522,6 +611,7 @@ def create_app(runs_dir: str | Path = "runs", *,
                         for name in ("sensitivity", "funnel")
                         if (directory / f"{name}.png").exists()},
             "review": [e for e in _review_queue(job) if e.get("outcome_key") == outcome_key],
+            "papers": list(papers.values()),
             "excluded": [e for e in summary.get("excluded", [])
                          if e.get("outcome_key") in ("", outcome_key)],
             "settings": protocol.stats.model_dump(mode="json"),
@@ -534,7 +624,21 @@ def create_app(runs_dir: str | Path = "runs", *,
         if queue is None:
             manifest = _read_json(job.run_dir / "manifest.json", {}) or {}
             queue = manifest.get("human_review_queue") or []
-        return sort_review_queue([e for e in queue if isinstance(e, dict)])
+        names = _dataset_labels(job)
+        outcomes = {o.key: o.label for o in _protocol_of(job).outcomes} \
+            if (job.run_dir / "protocol.yaml").exists() else {}
+        labelled = []
+        for entry in queue:
+            if not isinstance(entry, dict):
+                continue
+            named = names.get(str(entry.get("dataset_id") or ""), {})
+            pages = _pages(*[c.get("page") for c in entry.get("candidates") or []])
+            labelled.append({**entry, "study_label": named.get("study_label", ""),
+                             "dataset_label": named.get("dataset_label", ""),
+                             "first_author": named.get("first_author", ""),
+                             "year": named.get("year"), "pages": pages,
+                             "outcome_label": outcomes.get(str(entry.get("outcome_key")), "")})
+        return sort_review_queue(labelled)
 
     @app.get("/api/runs/{run_id}/review")
     def run_review(run_id: str, request: Request) -> dict[str, Any]:
@@ -568,6 +672,8 @@ def create_app(runs_dir: str | Path = "runs", *,
         return {
             "run_id": job.run_id, "dataset_id": dataset_id, "outcome_key": outcome_key,
             "paper_id": paper_id, "citation": study.get("citation", {}),
+            "study_label": _study_label(study.get("citation") or {}, ""),
+            "dataset_label": str(dataset.get("label") or dataset.get("experiment") or ""),
             "dataset": dataset, "record": record,
             "conversion_chain": record.get("conversion_chain", ""),
             "conversion_steps": _conversion_steps(job, paper_id, dataset_id, outcome_key),
