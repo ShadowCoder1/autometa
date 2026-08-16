@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import shutil
 import time
 from pathlib import Path
@@ -996,6 +997,20 @@ def test_the_results_panes_are_reachable_with_a_keyboard():
     assert 'role="dialog"' in page
     assert "state.returnFocus = document.activeElement" in app_js
     assert "state.returnFocus.focus()" in app_js
+
+
+def test_hidden_really_hides_every_element_the_spa_toggles():
+    """`show(node, false)` sets the `hidden` attribute — which a class that sets `display` would
+    otherwise override, leaving the evidence drawer on screen after the close button was pressed."""
+    css = (STATIC / "styles.css").read_text(encoding="utf-8")
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert re.search(r"\[hidden\]\s*\{[^}]*display:\s*none\s*!important", css), \
+        "the stylesheet must force [hidden] to win over any display rule"
+    toggled = set(re.findall(r'show\(\$\("([a-z0-9-]+)"\)', app_js))
+    assert "drawer" in toggled and "scrim" in toggled
+    for element_id in toggled:
+        assert f'id="{element_id}"' in page, element_id
 
 
 def test_the_spa_makes_no_external_requests():

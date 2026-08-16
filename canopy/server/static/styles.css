@@ -64,6 +64,11 @@
 
 * { box-sizing: border-box; }
 
+/* `hidden` must win over any layout rule below: a class that sets `display` (`.drawer`, `.meter`)
+ * otherwise overrides the browser's own `[hidden] { display: none }` and the element stays on
+ * screen after JS has "closed" it. */
+[hidden] { display: none !important; }
+
 html { -webkit-text-size-adjust: 100%; }
 
 body {
