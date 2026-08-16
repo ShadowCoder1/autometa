@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -201,14 +202,16 @@ def provenance_images(cell: Cell, out_dir: Path) -> list[tuple[str, Path]]:
     from canopy.report.provenance import figure_provenance, quote_crop
 
     paper = cell.paper
-    images: list[tuple[str, Path]] = []
+    images: list[tuple[str, Path, str]] = []          # caption, file, identity of the SOURCE
     if paper is None:
-        return images
+        return []
     seen: set[str] = set()
     chosen_ids = {i for v in cell.verdicts for i in v.candidate_ids}
+    # prefer the candidate the verdict accepted, then one that carries the digitiser's OVERLAY
+    # (its marks drawn on the figure) over a bare crop — the overlay is the thing worth showing
     ordered = sorted(cell.candidates,
-                     key=lambda c: (c.candidate_id not in chosen_ids, c.group or "",
-                                    c.candidate_id))
+                     key=lambda c: (c.candidate_id not in chosen_ids, not c.overlay_path,
+                                    c.group or "", c.candidate_id))
     for candidate in ordered:
         if candidate.group in seen or candidate.group is None:
             continue
@@ -218,21 +221,33 @@ def provenance_images(cell: Cell, out_dir: Path) -> list[tuple[str, Path]]:
         if existing and (Path(paper.out_dir) / existing).exists():
             seen.add(candidate.group)
             images.append((f"group {candidate.group}: {candidate.route or candidate.kind}",
-                           Path(paper.out_dir) / existing))
+                           Path(paper.out_dir) / existing, str(existing)))
         elif figure_id:
             marks = (candidate.pixel_provenance or {}).get("marks") or []
             result = figure_provenance(paper, figure_id, stem, marks=marks)
             if result["matched"]:
                 seen.add(candidate.group)
                 images.append((f"group {candidate.group}: {figure_id} "
-                               f"(page {result.get('page')})", Path(result["path"])))
+                               f"(page {result.get('page')})", Path(result["path"]),
+                               f"fig:{figure_id}:{bool(marks)}"))
         elif candidate.quote and candidate.page:
             result = quote_crop(paper, int(candidate.page), candidate.quote, stem)
             if result["matched"]:
                 seen.add(candidate.group)
                 images.append((f"group {candidate.group}: page {candidate.page}, quote "
-                               f"highlighted", Path(result["path"])))
-    return images
+                               f"highlighted", Path(result["path"]),
+                               f"quote:{candidate.page}:{candidate.quote[:80]}"))
+
+    # both groups usually live in ONE figure (or one sentence); showing the same picture twice
+    # wastes half the page, so identical sources are collapsed and the caption names both groups
+    merged: dict[str, tuple[str, Path]] = {}
+    for caption, path, key in images:
+        if key in merged:
+            existing, kept = merged[key]
+            merged[key] = (f"{existing} · {caption.split(':', 1)[0]}", kept)
+        else:
+            merged[key] = (caption, path)
+    return list(merged.values())
 
 
 def figure(cell: Cell, run: Any, out_stem: Path, *, subtitle: str = "",
@@ -248,18 +263,24 @@ def figure(cell: Cell, run: Any, out_stem: Path, *, subtitle: str = "",
     images = provenance_images(cell, out_stem.parent / "example_crops")
     low, high = ci_of(record)
 
-    with figure_style():
+    # the geometry below is computed in inches; `theme` defaults savefig.bbox to "tight", which
+    # would re-crop it (and, before the text was wrapped, stretched the page to several metres)
+    with figure_style(**{"savefig.bbox": "standard"}):
         n_images = max(1, len(images))
-        fig = plt.figure(figsize=(11.0, 3.1 + 2.5 * n_images))
+        fig = plt.figure(figsize=(11.0, 2.6 + 2.5 * n_images))
+        has_effect = record.es is not None and None not in (low, high)
+        # the header is positioned in INCHES: the figure's height depends on how many crops there
+        # are, and a fractional y put the subtitle through the title on a short one
+        height_in = fig.get_size_inches()[1]
         gs = fig.add_gridspec(n_images + 1, 2, width_ratios=[1.35, 1.0],
-                              height_ratios=[*([1.0] * n_images), 0.62],
-                              left=0.035, right=0.975, top=0.90, bottom=0.05,
+                              height_ratios=[*([1.0] * n_images), 0.62 if has_effect else 0.22],
+                              left=0.035, right=0.975, top=1 - 0.95 / height_in, bottom=0.05,
                               hspace=0.28, wspace=0.10)
 
-        fig.suptitle(f"{study_label(record)} — {outcome.label}", fontsize=12.5, color=INK,
-                     x=0.035, ha="left", y=0.975)
-        fig.text(0.035, 0.935, subtitle or f"route: {record.route}", fontsize=8.6, color=MUTED,
-                 ha="left")
+        fig.text(0.035, 1 - 0.30 / height_in, f"{study_label(record)} — {outcome.label}",
+                 fontsize=12.5, color=INK, ha="left", va="center")
+        fig.text(0.035, 1 - 0.62 / height_in, subtitle or f"route: {record.route}",
+                 fontsize=8.6, color=MUTED, ha="left", va="center")
 
         for index in range(n_images):
             ax = fig.add_subplot(gs[index, 0])
@@ -274,25 +295,31 @@ def figure(cell: Cell, run: Any, out_stem: Path, *, subtitle: str = "",
 
         ax_text = fig.add_subplot(gs[0:n_images, 1])
         ax_text.axis("off")
+        # `theme` sets savefig.bbox="tight", so ONE unwrapped line (a not-convertible chain runs
+        # to ~900 characters) would stretch the saved figure to several metres. Wrap everything.
+        def wrapped(text: str, indent: str = "      ") -> list[str]:
+            return textwrap.wrap(text, width=62, subsequent_indent=indent) or [""]
+
         body: list[str] = ["what was read"]
         for verdict in sorted(cell.verdicts, key=lambda v: v.group or ""):
             name = "older (A)" if verdict.group == "A" else "younger (B)"
-            body.append(f"  {name}: {verdict.mean} {verdict.unit}"
-                        f"  {disp(verdict.dispersion_type)} {verdict.dispersion_value}"
-                        f"  n = {verdict.n}")
+            body.extend(wrapped(f"  {name}: {verdict.mean} {verdict.unit}"
+                                f"  {disp(verdict.dispersion_type)} {verdict.dispersion_value}"
+                                f"  n = {verdict.n}"))
         statistic = next((c for c in cell.candidates if c.stat_value is not None), None)
         if statistic is not None:
-            body.append(f"  test statistic: {statistic.stat_type} = {statistic.stat_value} "
-                        f"(df {statistic.df or f'{statistic.df1},{statistic.df2}'}), "
-                        f"{statistic.design}")
+            body.extend(wrapped(f"  test statistic: {statistic.stat_type} = "
+                                f"{statistic.stat_value} "
+                                f"(df {statistic.df or f'{statistic.df1},{statistic.df2}'}), "
+                                f"{statistic.design}"))
         body.append("")
         body.append("how it became an effect size")
         for step in (record.conversion_steps or [record.conversion_chain]):
             if step:
-                body.append(f"  → {step}")
+                body.extend(wrapped(f"  → {step}"))
         body.append("")
-        body.append(f"confidence: {record.confidence}"
-                    + (f"   flags: {', '.join(record.flags)}" if record.flags else ""))
+        body.extend(wrapped(f"confidence: {record.confidence}"
+                            + (f"   flags: {', '.join(record.flags)}" if record.flags else "")))
         ax_text.text(0, 1, "\n".join(body), va="top", ha="left", fontsize=8.2, color=INK,
                      family="monospace", linespacing=1.55, transform=ax_text.transAxes)
 

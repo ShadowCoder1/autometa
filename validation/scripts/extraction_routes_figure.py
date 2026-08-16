@@ -23,7 +23,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -67,6 +67,72 @@ def route_rows(run: Any, records: Sequence[Any]) -> list[dict[str, Any]]:
     return rows
 
 
+def attempted_routes(run: Any, records: Sequence[Any]) -> dict[str, dict[str, Any]]:
+    """Which routes the tool actually got a reading from — regardless of which one won.
+
+    `route_counts` answers "where did the number come from", which is blank when a cell was held
+    back: every such row is `not_convertible` and the figure says only that. This answers the
+    other half of the question the validation asks — *where did the tool look, and what did it
+    find there* — so a run that resolved nothing is still informative.
+    """
+    from canopy.report.methods_fig import route_group
+
+    total = len(records) or 1
+    out: dict[str, dict[str, Any]] = {}
+    for record in records:
+        buckets: set[str] = set()
+        for candidate in run.candidates_for(record.dataset_id, record.outcome_key):
+            if candidate.status != "found":
+                continue
+            if candidate.mean is None and candidate.stat_value is None \
+                    and candidate.reported_value is None:
+                continue
+            buckets.add(route_group(candidate.route))
+        for name in buckets:
+            entry = out.setdefault(name, {"n": 0, "pct": 0.0, "datasets": []})
+            entry["n"] += 1
+            entry["datasets"].append(f"{record.dataset_id}/{record.outcome_key}")
+    for entry in out.values():
+        entry["pct"] = 100.0 * entry["n"] / total
+    return dict(sorted(out.items(), key=lambda kv: -kv[1]["n"]))
+
+
+def attempted_figure(counts: Mapping[str, Any], n_datasets: int, out_stem: Path,
+                     formats: Sequence[str] = ("png", "svg")) -> dict[str, Path]:
+    """A companion bar chart: the share of datasets each route produced a reading for."""
+    import matplotlib.pyplot as plt
+    from canopy.report.methods_fig import ROUTE_TITLES
+    from canopy.report.theme import ACCENT, GRID, INK, MUTED, figure_style, save_figure
+
+    with figure_style():
+        names = list(counts) or ["(none)"]
+        fig, ax = plt.subplots(figsize=(8.2, 0.52 * len(names) + 1.9))
+        values = [counts[n]["pct"] if n in counts else 0.0 for n in names]
+        ax.barh(range(len(names)), values, height=0.58, color=ACCENT, zorder=2)
+        for index, name in enumerate(names):
+            entry = counts.get(name, {"n": 0, "pct": 0.0})
+            ax.text(entry["pct"] + 1.5, index, f"{entry['pct']:.0f}%  (n = {entry['n']})",
+                    fontsize=8, color=MUTED, ha="left", va="center")
+        ax.set_yticks(range(len(names)))
+        ax.set_yticklabels([ROUTE_TITLES.get(n, n) for n in names], fontsize=8.4)
+        ax.set_ylim(len(names) - 0.5, -0.6)
+        ax.set_xlim(0, 122)
+        ax.set_xlabel("share of the datasets this route produced a reading for", fontsize=8.4)
+        ax.tick_params(axis="y", length=0)
+        ax.grid(axis="x", color=GRID, lw=0.6)
+        ax.set_axisbelow(True)
+        for side in ("top", "right", "left"):
+            ax.spines[side].set_visible(False)
+        ax.set_title(f"Where the tool looked, and what it found there  "
+                     f"({n_datasets} dataset x outcome cells)", fontsize=10.5, color=INK,
+                     loc="left", pad=10)
+        fig.text(0.01, 0.012, "A cell can appear in several rows: the routes are alternatives, "
+                              "and route precedence decides which one is USED.",
+                 fontsize=7.2, color=MUTED)
+        fig.subplots_adjust(left=0.26, right=0.98, top=0.86, bottom=0.20)
+        return save_figure(fig, out_stem, formats=formats, bbox_inches="tight")
+
+
 def build(run_dir: str | Path, *, out_dir: str | Path = OUT_DIR, per_outcome: bool = True,
           max_examples: int = 3, formats: Sequence[str] = ("png", "svg")) -> dict[str, Any]:
     from canopy.report.methods_fig import methods_figure, route_counts, route_examples
@@ -107,7 +173,16 @@ def build(run_dir: str | Path, *, out_dir: str | Path = OUT_DIR, per_outcome: bo
             payload["outcomes"][outcome.key] = entry
             payload["files"].update({f"{outcome.key}_{k}": v for k, v in entry["files"].items()})
 
+    payload["attempted"] = attempted_routes(run, run.records)
+    files = attempted_figure(payload["attempted"], len(run.records),
+                             out / "extraction_routes_attempted", formats=formats)
+    payload["files"].update({f"attempted_{k}": str(v) for k, v in files.items()})
+
     rows = route_rows(run, run.records)
+    for row in rows:
+        row["routes_with_a_reading"] = ";".join(
+            sorted(n for n, e in payload["attempted"].items()
+                   if f"{row['dataset_id']}/{row['outcome_key']}" in e["datasets"]))
     payload["files"]["csv"] = str(write_csv(rows, out / "extraction_routes.csv"))
     payload["files"]["json"] = str(write_json(payload, out / "extraction_routes.json"))
     return payload
@@ -122,6 +197,9 @@ def report(payload: dict[str, Any]) -> str:
                      f"{examples} example crop(s)   {', '.join(entry['routes'][:3])}")
     if not counts:
         lines.append("  (no rows in this run)")
+    lines.append("  routes that produced a reading (regardless of which one was used):")
+    for name, entry in payload.get("attempted", {}).items():
+        lines.append(f"      {name:<16} {entry['n']:>3} cells  {entry['pct']:>5.1f}%")
     for key, entry in payload["outcomes"].items():
         mix = ", ".join(f"{n} {v['pct']:.0f}%" for n, v in entry["counts"].items())
         lines.append(f"  {key}: {entry['n_datasets']} datasets — {mix}")
