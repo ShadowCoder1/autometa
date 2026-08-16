@@ -574,3 +574,106 @@ def test_the_second_protocol_is_a_genuinely_different_review():
     assert toy.stats.profile == "metafor" != aging.stats.profile
     assert toy.stats.estimator == "hedges" and toy.stats.variance == "borenstein"
     assert toy.moderators and set(toy.moderators).isdisjoint(set(aging.moderators))
+
+
+# ============================================================================ task 16: calibration
+@pytest.fixture(scope="module")
+def drawn_corpus(tmp_path_factory) -> dict:
+    """Every case rendered once, and the digitiser's own CV core run over each PNG."""
+    from canopy.digitize.digitizer import _cv_core
+
+    out = tmp_path_factory.mktemp("corpus")
+    drawn = {}
+    for case in synthetic_figures.corpus():
+        synthetic_figures.draw(case, out)
+        core = _cv_core(Path(case.files["png"]), prefer_markers=case.kind != "bar")
+        drawn[case.name] = (case, core)
+    return drawn
+
+
+def test_the_whole_corpus_calibrates_with_no_failures(drawn_corpus):
+    """Acceptance item 16: not one case may end up without a y calibration, or with a wrong one.
+
+    What is asserted is CORRECTNESS, not completeness: tesseract legitimately misses a label now
+    and then, and a ladder of five true ticks out of seven calibrates the axis perfectly well.
+    A ladder holding a value the figure never printed does not — that is F1 (45/35/25/15 read as
+    4/3/2/1) and F8 (15/10/5/0 read as 5/0/5/0), and both are caught by the same line.
+    """
+    failed = [name for name, (_case, core) in drawn_corpus.items() if core.cal is None]
+    assert failed == [], f"cases with no calibration: {failed}"
+    for name, (case, core) in drawn_corpus.items():
+        got = sorted(v for _, v in core.cal.ticks)
+        truth = sorted(float(t) for t in case.ticks)
+        assert set(got) <= set(truth), f"{name}: a tick value the figure never printed: {got}"
+        assert len(got) == len(set(got)), f"{name}: the same tick value twice: {got}"
+        assert len(got) >= max(2, 0.6 * len(truth)), f"{name}: only {got} of {truth}"
+        # …and the mapping those ticks imply is the one the figure was drawn with
+        implied = (got[-1] - got[0]) / (truth[-1] - truth[0])
+        assert implied >= 0.5, f"{name}: the ladder covers only {implied:.0%} of the axis"
+
+
+def test_the_negative_range_case_keeps_its_minus_sign_end_to_end(drawn_corpus):
+    """Acceptance item 16, second half — a dropped minus is a sign error, not a rounding one."""
+    from canopy.digitize.calibrate import px_to_value
+
+    case, core = drawn_corpus["bars_negative_range"]
+    ticks = sorted(v for _, v in core.cal.ticks)
+    assert min(ticks) < 0, f"every recovered tick is positive on a -20..5 axis: {ticks}"
+    assert set(ticks) <= set(float(t) for t in case.ticks)
+    assert core.cal.a < 0, "on a y axis the value falls as the pixel row grows"
+    px = dict((p, v) for p, v in core.cal.ticks)
+    for pixel, value in px.items():
+        assert px_to_value(core.cal, pixel) == pytest.approx(value, abs=0.5)
+
+
+def test_a_log_axis_is_inferred_by_the_pipeline_not_handed_to_it(drawn_corpus):
+    """Acceptance item 17: `_cv_core` used to hard-code linear; the scale is now read off the ticks.
+
+    The corpus already had a log case, but both routes were told `scale="log"` before they fitted
+    anything — so what was tested was `fit_axis`, never the inference.
+    """
+    from canopy.digitize.calibrate import px_to_value
+    from canopy.digitize.digitizer import fit_best_scale
+
+    case, core = drawn_corpus["points_log_axis"]
+    assert case.log_y
+    assert core.scale_note == "log" and core.cal.scale == "log", (
+        f"the scale was not inferred: {core.scale_note}, ticks {core.cal.ticks}")
+    # the linear fit through the SAME ticks is rejected, not merely not chosen
+    again, note = fit_best_scale(core.cal.ticks, axis="y")
+    assert note == "log" and again.scale == "log"
+    top = max(core.cal.ticks, key=lambda t: t[1])
+    assert px_to_value(core.cal, top[0]) == pytest.approx(top[1], rel=0.02)
+    # every other case stays linear: the inference must not turn a straight axis into a curved one
+    assert {name for name, (_c, cr) in drawn_corpus.items() if cr.cal.scale == "log"} == \
+        {"points_log_axis"}
+
+
+def test_wide_two_digit_labels_at_a_small_font_keep_both_digits(drawn_corpus):
+    """Acceptance item 19: the band cut used to fall INSIDE a wide label (Cressman's 45 -> 4)."""
+    case, core = drawn_corpus["points_wide_two_digit_small_font"]
+    got = sorted(v for _, v in core.cal.ticks)
+    assert set(got) <= set(float(t) for t in case.ticks), f"a value never printed: {got}"
+    # a label cut to its first digit reads 1..9; the surviving ladder must reach the tens
+    assert max(got) >= 60.0, f"the two-digit labels were cut to one digit: {got}"
+    assert len(got) >= 6
+
+
+def test_the_band_edge_retry_is_a_repair_not_the_normal_path(drawn_corpus):
+    """The retry re-cuts the label band; it must not fire on every figure, and it is recorded."""
+    retried = {name for name, (_c, core) in drawn_corpus.items() if core.band_retried}
+    assert len(retried) < len(drawn_corpus) / 2, f"the retry fired on {sorted(retried)}"
+    # and wherever it did fire, the ladder it produced is still made of real tick values
+    for name in retried:
+        case, core = drawn_corpus[name]
+        assert set(v for _, v in core.cal.ticks) <= set(float(t) for t in case.ticks)
+
+
+def test_a_line_plot_with_tiny_markers_still_reaches_the_marker_detector(drawn_corpus):
+    """Acceptance item 20: `detect_bars` claimed a bar, so `detect_markers` never ran (miss 8)."""
+    from canopy.digitize.digitizer import _cv_core
+
+    case, core = drawn_corpus["line_tiny_markers"]
+    assert core.markers, "the line's own markers were not detected"
+    without = _cv_core(Path(case.files["png"]), prefer_markers=False)
+    assert without.bars and not without.markers, "this case no longer demonstrates the failure"

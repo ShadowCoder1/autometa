@@ -77,6 +77,11 @@ class Case:
     bar_width: float = 0.55
     log_y: bool = False
     noise: float = 0.0              # gaussian speckle added to the raster only
+    #: a second value axis on the right, in a different unit — the read-outs and the text layer
+    #: both see two ladders and nothing forces them to say which one they read (critique miss 1)
+    right_axis: tuple[float, float, str] | None = None
+    marker_size: float | None = None   # points; 1.5 pt at 200 dpi is a 3-4 px marker
+    line_width: float = 1.3            # points; a marker is only detectable if it is THICKER
     note: str = ""
     files: dict[str, str] = field(default_factory=dict)
 
@@ -153,6 +158,24 @@ def corpus() -> list[Case]:
              1.0, 100.0, [1, 3, 10, 30, 100], "SD", log_y=True,
              note="a log y axis — a linear fit through these ticks is wrong by an order of "
                   "magnitude, so `calibrate_from_scene`/`fit_axis` must pick the log scale"),
+        Case("points_wide_two_digit_small_font", "point",
+             _series([("young", 34.0, 4.4), ("older", 61.0, 6.8)]),
+             0.0, 90.0, [0, 10, 20, 30, 40, 50, 60, 70, 80, 90], "SD", fontsize=5.5, dpi=150,
+             note="two-digit labels at 5.5 pt: the band that separates tick labels from the axis "
+                  "title is only a few pixels wider than the gap between the two digits, which is "
+                  "how Cressman 2010's 45/35/25/15 became 4/3/2/1"),
+        Case("points_right_hand_axis", "point",
+             _series([("young", 12.0, 1.8), ("older", 19.5, 2.6)]),
+             0.0, 30.0, [0, 5, 10, 15, 20, 25, 30], "SD",
+             right_axis=(0.0, 100.0, "% of the 30 deg distortion"),
+             note="a second y axis on the right in a different unit: a reader that answers off "
+                  "the wrong ladder is wrong by a factor, not by a pixel"),
+        Case("line_tiny_markers", "line",
+             _series([("young", 9.0, 1.4), ("older", 16.5, 2.5)],
+                     colours=("#3b6fb0", "#c1662f")),
+             0.0, 25.0, [0, 5, 10, 15, 20, 25], "SD", marker_size=1.2, line_width=0.4,
+             note="3-4 px markers on a line plot: `detect_bars` reports them as narrow bars, and "
+                  "route B used to be skipped on exactly the figures it reads best"),
         Case("line_timeseries_endpoint", "line",
              _series([("young", 8.0, 1.2), ("older", 15.0, 2.3)], colours=("#3b6fb0", "#c1662f")),
              0.0, 25.0, [0, 5, 10, 15, 20, 25], "SD",
@@ -204,7 +227,13 @@ def draw(case: Case, out_dir: Path) -> Case:
     import numpy as np
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    with matplotlib.rc_context({"font.family": case.font, "font.size": case.fontsize,
+    # start from matplotlib's OWN defaults, not from whatever the process has set: this corpus is
+    # a ground truth, and `canopy.report.theme` (imported by anything that draws a forest plot)
+    # changes rcParams globally. Rendering the same case at two font sizes in two processes makes
+    # the tick-label OCR non-deterministic, which is exactly the thing being measured.
+    baseline = {k: v for k, v in matplotlib.rcParamsDefault.items() if k != "backend"}
+    with matplotlib.rc_context({**baseline,
+                                "font.family": case.font, "font.size": case.fontsize,
                                 "axes.linewidth": 1.0, "figure.facecolor": "white",
                                 "savefig.facecolor": "white", "svg.fonttype": "none"}):
         fig, ax = plt.subplots(figsize=(4.2, 3.2))
@@ -217,8 +246,8 @@ def draw(case: Case, out_dir: Path) -> Case:
         elif case.kind == "point":
             for item in case.series:
                 ax.errorbar(item.x, item.value, yerr=item.error, fmt="o", color=item.colour,
-                            markersize=7.5, ecolor="#222222", elinewidth=1.1, capsize=4.5,
-                            capthick=1.1)
+                            markersize=case.marker_size or 7.5, ecolor="#222222", elinewidth=1.1,
+                            capsize=4.5, capthick=1.1)
         else:                                       # a time series: the endpoint is the outcome
             trials = np.arange(0, 11)
             for item in case.series:
@@ -226,7 +255,8 @@ def draw(case: Case, out_dir: Path) -> Case:
                 curve = item.value + (start - item.value) * np.exp(-trials / 2.6)
                 curve[-1] = item.value              # the last point IS the truth, exactly
                 xs = item.x + trials * 0.1
-                ax.plot(xs, curve, "-o", color=item.colour, markersize=4.5, lw=1.3)
+                ax.plot(xs, curve, "-o", color=item.colour,
+                        markersize=case.marker_size or 4.5, lw=case.line_width)
                 ax.errorbar(xs[-1], item.value, yerr=item.error, fmt="none", ecolor="#222222",
                             elinewidth=1.1, capsize=4.5, capthick=1.1)
         if case.log_y:
@@ -241,7 +271,14 @@ def draw(case: Case, out_dir: Path) -> Case:
         ax.set_xticklabels([s.label for s in case.series])
         ax.set_ylabel("outcome (deg)")
         ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
+        if case.right_axis is None:
+            ax.spines["right"].set_visible(False)
+        else:
+            lo, hi, label = case.right_axis
+            twin = ax.twinx()
+            twin.set_ylim(lo, hi)
+            twin.set_ylabel(label)
+            twin.spines["top"].set_visible(False)
         fig.tight_layout()
 
         png = out_dir / f"{case.name}.png"
@@ -266,9 +303,10 @@ def draw(case: Case, out_dir: Path) -> Case:
 # ============================================================================ route B: raster CV
 def read_raster(case: Case) -> list[dict[str, Any]]:
     """Route B, end to end, with no model: axes → ticks → OCR → fit → marks → caps → values."""
-    from canopy.digitize.calibrate import fit_axis, pair_ticks, pixel_resolution, px_to_value
+    from canopy.digitize.calibrate import pair_ticks, pixel_resolution, px_to_value
     from canopy.digitize.cv import (detect_bars, detect_markers, find_axes, find_cap_ends,
                                     find_tick_marks, load_color, load_gray, ocr_tick_labels)
+    from canopy.digitize.digitizer import fit_best_scale
 
     png = Path(case.files["png"])
     gray, colour = load_gray(png), load_color(png)
@@ -285,10 +323,16 @@ def read_raster(case: Case) -> list[dict[str, Any]]:
     if len(pairs) < 2:
         return [{**base, "series": s.label, "status": "no_calibration",
                  "truth": s.value, "read": None, "error": None} for s in case.series]
-    cal = fit_axis(pairs, scale="log" if case.log_y else "linear", axis="y")
+    # the scale is INFERRED, exactly as `digitizer._cv_core` infers it — this used to be handed
+    # `scale="log" if case.log_y else "linear"`, which tested `fit_axis` and never the inference
+    cal, scale_note = fit_best_scale(pairs, axis="y")
+    if cal is None:
+        return [{**base, "series": s.label, "status": "no_calibration",
+                 "truth": s.value, "read": None, "error": None} for s in case.series]
     # a least-squares fit through mutually contradictory ticks still returns a calibration; its
     # residual is the only thing that says so, and nothing downstream looks at it
     base.update({"cal_rmse_px": cal.rmse, "cal_ticks": [v for _, v in cal.ticks],
+                 "cal_scale": cal.scale, "cal_scale_note": scale_note,
                  "ocr_texts": [l.text for l in labels],
                  "implausible_calibration": bool(cal.rmse > 2.0)})
 

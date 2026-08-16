@@ -1,0 +1,216 @@
+"""Task 16: the two real run records, replayed against the hardened code.
+
+These are not new measurements. They are the stage files the first live runs actually wrote
+(`runs/20260816-075831-…/papers/5039533c85ef` and
+`validation/out/run_cisneros_dev/papers/b511dbb76fa6`, trimmed of their tool-call logs), replayed
+through the functions that produced them so that the specific failures those runs exposed cannot
+come back:
+
+* **Cressman 2010 Fig. 3a** — tesseract read the tick labels 45/35/25/15 as 4/3/2/1 (the trailing
+  digit fell outside the label band) and fitted them to 0.2 px. Every pixel route then produced no
+  usable value and `value_outside_axis` fired, as an `error`, on a CORRECT read of 31.3.
+* **Bock 2005 Fig. 1** — the error bar is drawn on one side only; the cap walk stopped on the
+  marker's own lower edge and the two "arms" were averaged, halving an 11-unit SD to 6.
+
+The Bock record predates `ad17509` (the one-armed fix), so its stored route-C value is the bug.
+Nothing here asserts the stored candidate: the pixels are replayed and the answer recomputed.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from canopy.digitize.calibrate import AxisCalibration
+from canopy.digitize.cv import Axes
+from canopy.digitize.digitizer import (_Core, _choose_calibration, _values_from_pixels,
+                                       ensemble_stats, resolve_arms)
+from canopy.digitize.vlm import GroupReadOut, ReadOut
+from canopy.stats.effect_sizes import cohens_d
+
+RECORDS = Path(__file__).resolve().parent / "fixtures" / "runs"
+
+
+def _record(name: str) -> list[dict]:
+    return json.loads((RECORDS / name / "extract.json").read_text())["candidates"]
+
+
+def _cell(name: str, outcome: str, extractor: str, group: str, figure: str = "") -> dict:
+    for cand in _record(name):
+        if (cand["outcome_key"] == outcome and cand["extractor_id"] == extractor
+                and cand["group"] == group
+                and (not figure or cand["pixel_provenance"].get("figure_id") == figure)):
+            return cand
+    raise AssertionError(f"no {extractor} {group} for {outcome} in the {name} record")
+
+
+def _cal_from(node: dict) -> AxisCalibration:
+    return AxisCalibration(axis=node["axis"], scale=node["scale"], a=node["a"], b=node["b"],
+                           rmse=node["rmse"], ticks=[tuple(t) for t in node["ticks"]],
+                           dropped=[tuple(t) for t in node.get("dropped") or []])
+
+
+def _core_from(provenance: dict) -> _Core:
+    axes = Axes(**{**provenance["axes"],
+                   "plot_bbox": tuple(provenance["axes"]["plot_bbox"]),
+                   "y_axis_span": tuple(provenance["axes"]["y_axis_span"] or ()) or None,
+                   "x_axis_span": tuple(provenance["axes"]["x_axis_span"] or ()) or None})
+    return _Core(gray=None, colour=None, axes=axes, tick_rows=list(provenance["tick_rows"]),
+                 labels=[], cal=_cal_from(provenance["cal"]) if provenance.get("cal") else None,
+                 ocr_status=provenance["ocr_status"], bars=[], markers=[])
+
+
+def _readouts_from(*provenances: dict) -> list[ReadOut]:
+    """The path-D samples the run recorded, rebuilt as `ReadOut`s (means + the ladder they read).
+
+    One ensemble's `per_route` holds one group, so both groups' provenance is merged here — the
+    magnitude rule is about the whole figure, not about one series.
+    """
+    by_call: dict[tuple[str, str], ReadOut] = {}
+    for provenance in provenances:
+        for row in provenance["per_route"]:
+            if row["route"] != "D":
+                continue
+            key = (row["model"], row["variant"])
+            reading = by_call.setdefault(key, ReadOut(model=row["model"], variant=row["variant"]))
+            reading.tick_labels = list(row["extra"].get("tick_labels") or [])
+            reading.groups.append(GroupReadOut(group=row["group"], mean=row["mean"],
+                                               error_half_length=row["error"],
+                                               x_read=row["extra"].get("x_read", "")))
+    return list(by_call.values())
+
+
+# ------------------------------------------------------------------ Cressman 2010 (F1)
+@pytest.fixture(scope="module")
+def cressman_late() -> dict:
+    return _cell("cressman", "late_adaptation", "digitize:ensemble", "A")["pixel_provenance"]
+
+
+@pytest.fixture(scope="module")
+def cressman_readouts(cressman_late) -> list[ReadOut]:
+    other = _cell("cressman", "late_adaptation", "digitize:ensemble", "B")["pixel_provenance"]
+    return _readouts_from(cressman_late, other)
+
+
+def test_the_cressman_record_is_the_failure_it_is_kept_for(cressman_late):
+    """Guard the fixture itself: if this stops holding, the regression below tests nothing."""
+    assert [v for _, v in cressman_late["cal"]["ticks"]] == [4.0, 3.0, 2.0, 1.0]
+    assert cressman_late["cal"]["rmse"] < 0.25            # a perfect fit of wrong numbers
+    assert cressman_late["cal_note"] == "no model ticks to cross-check against"
+    ladders = [row["extra"]["tick_labels"] for row in cressman_late["per_route"]
+               if row["route"] == "D"]
+    assert [45.0, 40.0, 35.0, 30.0, 25.0, 20.0, 15.0, 10.0, 5.0, 0.0, -5.0] in ladders
+
+
+def test_cressman_the_read_outs_own_ladder_calibrates_the_axis(cressman_late, cressman_readouts):
+    """Acceptance item 1: the witness vote reaches the true 45..-5 ladder, at no extra cost."""
+    choice = _choose_calibration(_core_from(cressman_late), None, None, cressman_readouts)
+    assert choice.source == "readout_ticks"
+    assert choice.cal is not None
+    values = sorted(v for _, v in choice.cal.ticks)
+    assert values[-1] == 45.0 and values[0] == -5.0
+    assert values[-1] - values[0] == pytest.approx(50.0, abs=1.0)      # tick span, not axis_range
+    assert choice.cal.a == pytest.approx(-0.0691, rel=0.02)
+    assert "cv_ocr" in choice.witnesses and "refuted" in choice.witnesses["cv_ocr"]
+
+
+def test_cressman_the_magnitude_rule_names_both_numbers(cressman_late, cressman_readouts):
+    """Acceptance item 2: with only the stale ladder, the calibration is refuted, not the value."""
+    core = _core_from(cressman_late)
+    readouts = [ReadOut(model=r.model, variant=r.variant, groups=r.groups)   # ladders withheld
+                for r in cressman_readouts]
+    choice = _choose_calibration(core, None, None, readouts)
+    assert choice.status == "cal_refuted"
+    assert choice.usable_for_pixels is None                 # the pixel routes emit nothing
+    assert choice.refutation["tick_max"] == 4.0
+    assert choice.refutation["readout_max_abs_mean"] == 33.3
+
+
+def test_cressman_late_adaptation_still_implies_the_published_effect(cressman_late):
+    """The read-outs were right all along; nothing in the fix moves their number."""
+    import math
+
+    a = _cell("cressman", "late_adaptation", "digitize:ensemble", "A")
+    b = _cell("cressman", "late_adaptation", "digitize:ensemble", "B")
+    d = cohens_d(a["mean"], a["dispersion_value"] * math.sqrt(a["n"]), a["n"],
+                 b["mean"], b["dispersion_value"] * math.sqrt(b["n"]), b["n"])
+    assert d == pytest.approx(-0.224, abs=0.02)
+
+
+# ------------------------------------------------------------------ Bock 2005 (F3 / item 8-10)
+@pytest.fixture(scope="module")
+def bock_route_c() -> dict:
+    return _cell("bock", "late_adaptation", "digitize:vlm_coords:claude-opus-5", "A",
+                 figure="fig01")["pixel_provenance"]
+
+
+def test_the_bock_record_still_holds_the_pre_fix_value(bock_route_c):
+    """The stored candidate is the BUG (this record predates ad17509) — never assert it as truth."""
+    assert bock_route_c["route_sample"]["error"] == pytest.approx(5.998, abs=0.01)
+
+
+def test_bock_one_armed_whisker_replays_to_eleven_units(bock_route_c):
+    """Acceptance items 8 and 9, from the recorded pixels rather than the recorded answer."""
+    sample = bock_route_c["route_sample"]
+    cal = _cal_from(bock_route_c["cal"])
+    mean, error, side = _values_from_pixels(cal, sample["y_px"], sample["cap_top_px"],
+                                            sample["cap_bottom_px"])
+    assert mean == pytest.approx(31.67, abs=0.01)
+    assert (error, side) == (pytest.approx(11.00, abs=0.02), "up")
+    # …and the same answer straight out of `resolve_arms`, in data units
+    up, down = 42.671 - 31.668, 31.668 - 30.671
+    assert resolve_arms(up, down, floor=2.0 * abs(cal.a)) == (pytest.approx(11.00, abs=0.02), "up")
+    # within 10 % of what the two read-outs said (11.0 and 11.2)
+    assert abs(error - 11.1) <= 0.1 * 11.1
+
+
+def test_bock_route_c_no_longer_halves_the_dispersion_of_either_group():
+    """Both groups: the arm that is really the marker's own edge is dropped, not averaged in."""
+    for group, half in (("A", 11.00), ("B", 10.88)):
+        provenance = _cell("bock", "late_adaptation", "digitize:vlm_coords:claude-opus-5", group,
+                           figure="fig01")["pixel_provenance"]
+        sample = provenance["route_sample"]
+        _, error, side = _values_from_pixels(_cal_from(provenance["cal"]), sample["y_px"],
+                                             sample["cap_top_px"], sample["cap_bottom_px"])
+        assert error == pytest.approx(half, abs=0.05)
+        assert side in ("up", "down")
+        assert error > 1.7 * sample["error"] - 0.5          # the recorded value was ~half of this
+
+
+def test_bock_the_repaired_ensemble_moves_towards_the_published_effect():
+    """Acceptance item 10, with the residual gap named rather than asserted away.
+
+    The gold effect for Bock 2005 late adaptation is |d| = 1.676 (Cisneros' human read: older
+    31.51 ± 11.12, young 12.28 ± 11.82). Repairing route C's half-length moves the digitiser's
+    ensemble from |d| = 1.545 to |d| = 1.61; the remaining 0.07 is in the READ-OUTS' own numbers
+    (they put the young group's SD at 13-14.5 where the human read 11.82), not in route C, so it
+    is recorded here instead of being hidden behind a loose tolerance.
+    """
+    ensembles, routes = {}, {}
+    for group in ("A", "B"):
+        ensembles[group] = _cell("bock", "late_adaptation", "digitize:ensemble", group,
+                                 figure="fig01")
+        provenance = _cell("bock", "late_adaptation", "digitize:vlm_coords:claude-opus-5", group,
+                           figure="fig01")["pixel_provenance"]
+        sample = provenance["route_sample"]
+        routes[group] = _values_from_pixels(_cal_from(provenance["cal"]), sample["y_px"],
+                                            sample["cap_top_px"], sample["cap_bottom_px"])
+
+    repaired = {}
+    for group in ("A", "B"):
+        values = ensembles[group]["pixel_provenance"]["route_values"]
+        means = [v["mean"] for v in values.values() if "vlm_coords" not in ""] + [routes[group][0]]
+        errors = [v["error"] for k, v in values.items() if "vlm_coords" not in k]
+        errors.append(routes[group][1])
+        repaired[group] = (ensemble_stats([v["mean"] for k, v in values.items()
+                                           if "vlm_coords" not in k] + [routes[group][0]])[0],
+                           ensemble_stats(errors)[0])
+        assert means                                     # the per-route means are all present
+
+    d = cohens_d(repaired["A"][0], repaired["A"][1], 12, repaired["B"][0], repaired["B"][1], 12)
+    stored = cohens_d(ensembles["A"]["mean"], ensembles["A"]["dispersion_value"], 12,
+                      ensembles["B"]["mean"], ensembles["B"]["dispersion_value"], 12)
+    assert abs(d) > abs(stored)                          # the repair moves towards the gold
+    assert abs(d) == pytest.approx(1.61, abs=0.05)
+    assert abs(abs(d) - 1.676) < 0.08

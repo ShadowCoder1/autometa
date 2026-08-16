@@ -1,0 +1,5021 @@
+{
+ "candidates": [
+  {
+   "candidate_id": "b511dbb76fa6:d1:late_adaptation:A:digitize:readout:claude-opus-5:direct",
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "kind": "group_stats",
+   "group": "A",
+   "status": "found",
+   "source_kind": "figure_line",
+   "n": 12,
+   "n_quote": "\"Data were collected from twelve young (26.0\u00b15.0 years of age) and twelve older (69.5\u00b17.5 years of age) subjects.\"",
+   "mean": 32.2,
+   "dispersion_value": 11.0,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "unit": "deg",
+   "value_as_written": "",
+   "raw_value_semantics": "unknown",
+   "analysis_metric": "endpoint",
+   "error_bar_scope": "between_subject",
+   "whisker_definition": "unknown",
+   "points": [],
+   "stat_type": null,
+   "stat_value": null,
+   "df": null,
+   "df1": null,
+   "df2": null,
+   "tails": null,
+   "p_kind": null,
+   "p_value": null,
+   "design": "unknown",
+   "direction": "unknown",
+   "admissible": true,
+   "admissible_reason": "",
+   "reported_value": null,
+   "reported_scale": "unknown",
+   "standardizer": "unknown",
+   "reported_ci_low": null,
+   "reported_ci_high": null,
+   "positive_means": "unknown",
+   "page": 3,
+   "page_corrected": false,
+   "quote": "",
+   "locator": "Fig. 1, adaptation phase, final adaptation episode (episode 20 on x-axis 'pointing episode'): filled squares = old, filled triangles = young; y-axis 'angular error (deg)'",
+   "row_header": "",
+   "col_header": "",
+   "crop_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/ingest/figures/fig01.png",
+   "overlay_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/figures/fig01.overlay2.png",
+   "pixel_provenance": {
+    "figure_id": "fig01",
+    "figure_kind": "raster",
+    "crop_dpi": 500,
+    "sent_scale": 1.0,
+    "axes": {
+     "y_axis_x": 236.5,
+     "x_axis_y": 524.668565430701,
+     "y_axis_span": [
+      52.0,
+      842.0
+     ],
+     "x_axis_span": [
+      222.0,
+      1706.0
+     ],
+     "y_axis_width": 4.0,
+     "x_axis_width": 7.0,
+     "plot_bbox": [
+      236.5,
+      52.0,
+      1706.0,
+      842.0
+     ],
+     "confidence": 1.0
+    },
+    "tick_rows": [
+     54.772,
+     209.75,
+     368.228,
+     524.78,
+     684.016,
+     839.438
+    ],
+    "ocr_status": "ok",
+    "ocr_ticks": [
+     [
+      "60",
+      60.0,
+      62.0
+     ],
+     [
+      "40",
+      40.0,
+      219.0
+     ],
+     [
+      "20",
+      20.0,
+      379.0
+     ],
+     [
+      "0",
+      0.0,
+      534.0
+     ],
+     [
+      "-20",
+      -20.0,
+      694.0
+     ],
+     [
+      "-40",
+      -40.0,
+      849.0
+     ]
+    ],
+    "cal": {
+     "axis": "y",
+     "scale": "linear",
+     "a": -0.12720929867349226,
+     "b": 66.84102381551352,
+     "rmse": 0.9144708099690545,
+     "ticks": [
+      [
+       54.77215189873418,
+       60.0
+      ],
+      [
+       209.75,
+       40.0
+      ],
+      [
+       368.2278481012658,
+       20.0
+      ],
+      [
+       524.780487804878,
+       0.0
+      ],
+      [
+       684.016393442623,
+       -20.0
+      ],
+      [
+       839.4375,
+       -40.0
+      ]
+     ],
+     "dropped": []
+    },
+    "cal_source": "cv_ocr",
+    "cal_note": "OCR ticks corroborated by the model's tick read",
+    "pixel_resolution": 0.12720929867349226,
+    "bars": [
+     {
+      "x_center": 326.5,
+      "x0": 261.5,
+      "x1": 391.5,
+      "top_y": 524.8808474565717,
+      "base_y": 524.668565430701,
+      "colour": "#949494",
+      "narrow": false
+     },
+     {
+      "x_center": 487.0,
+      "x0": 455.5,
+      "x1": 518.5,
+      "top_y": 514.6267346143723,
+      "base_y": 524.668565430701,
+      "colour": "#bbbbbb",
+      "narrow": false
+     }
+    ],
+    "markers": [],
+    "narrow_bar": false,
+    "vector": {
+     "attempted": false,
+     "skipped": "figure kind 'raster'"
+    },
+    "vector_warnings": [],
+    "overlay_iterations": [],
+    "x_hint": "The end of the initial perturbation block, while the perturbation is still applied. Use the block average of overall performance when the paper reports one; otherwise the final point of the group time series during the perturbation.",
+    "prompt_version": "digitize/1",
+    "axis_range": 100.4953459520589,
+    "axis_range_source": "plot_bbox",
+    "late_window_rule": "paper_reported_block",
+    "late_window_rule_configured": "paper_reported_block",
+    "late_window_x_read": [
+     "20",
+     "episode 20"
+    ],
+    "late_window_x_agrees": false,
+    "readout_plan": [
+     {
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     }
+    ],
+    "route_sample": {
+     "route": "D",
+     "group": "A",
+     "model": "claude-opus-5",
+     "variant": "direct",
+     "sample": 0,
+     "mean": 32.2,
+     "error": 11.0,
+     "x_px": null,
+     "y_px": null,
+     "cap_top_px": null,
+     "cap_bottom_px": null,
+     "snap_conf": 0.75,
+     "sigma": null,
+     "label_read": "old (filled square), episode 20",
+     "status": "found",
+     "notes": "Square marker centre y\u2248273 px; only upward SD bar drawn (cap y\u2248188 px).",
+     "cal_source": "",
+     "cost_usd": 0.0,
+     "extra": {
+      "legend_says": "No printed legend; caption: triangles = young, squares = old; open symbols = no visual feedback; error bars = standard deviations. Error bars are drawn one-sided (upward for squares/old, downward for triangles/young).",
+      "x_read": "20",
+      "tick_labels": [
+       -40.0,
+       -20.0,
+       0.0,
+       20.0,
+       40.0,
+       60.0
+      ],
+      "unit": "deg",
+      "panel": "Fig. 1 (single panel)",
+      "same_prompt_resample": false
+     },
+     "dropped": false,
+     "drop_reason": "",
+     "extractor_id": "digitize:readout:claude-opus-5:direct",
+     "n_tool_calls": 9
+    },
+    "tool_calls": [],
+    "dropped": false
+   },
+   "sigma": null,
+   "grounded": null,
+   "grounding_similarity": null,
+   "route": "figure",
+   "model": "claude-opus-5",
+   "prompt_version": "digitize/1",
+   "llm_call_id": "04f2a6bc6ea7adf4188fc02f202298158b65387619fbc16f49fad444a86fc629",
+   "extractor_id": "digitize:readout:claude-opus-5:direct",
+   "notes": "Square marker centre y\u2248273 px; only upward SD bar drawn (cap y\u2248188 px)."
+  },
+  {
+   "candidate_id": "b511dbb76fa6:d1:late_adaptation:A:digitize:readout:claude-opus-5:ticks_first",
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "kind": "group_stats",
+   "group": "A",
+   "status": "found",
+   "source_kind": "figure_line",
+   "n": 12,
+   "n_quote": "\"Data were collected from twelve young (26.0\u00b15.0 years of age) and twelve older (69.5\u00b17.5 years of age) subjects.\"",
+   "mean": 31.8,
+   "dispersion_value": 11.2,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "unit": "deg",
+   "value_as_written": "",
+   "raw_value_semantics": "unknown",
+   "analysis_metric": "endpoint",
+   "error_bar_scope": "between_subject",
+   "whisker_definition": "unknown",
+   "points": [],
+   "stat_type": null,
+   "stat_value": null,
+   "df": null,
+   "df1": null,
+   "df2": null,
+   "tails": null,
+   "p_kind": null,
+   "p_value": null,
+   "design": "unknown",
+   "direction": "unknown",
+   "admissible": true,
+   "admissible_reason": "",
+   "reported_value": null,
+   "reported_scale": "unknown",
+   "standardizer": "unknown",
+   "reported_ci_low": null,
+   "reported_ci_high": null,
+   "positive_means": "unknown",
+   "page": 3,
+   "page_corrected": false,
+   "quote": "",
+   "locator": "Fig. 1, adaptation phase, final adaptation episode (episode 20 on x-axis 'pointing episode'): filled squares = old, filled triangles = young; y-axis 'angular error (deg)'",
+   "row_header": "",
+   "col_header": "",
+   "crop_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/ingest/figures/fig01.png",
+   "overlay_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/figures/fig01.overlay2.png",
+   "pixel_provenance": {
+    "figure_id": "fig01",
+    "figure_kind": "raster",
+    "crop_dpi": 500,
+    "sent_scale": 1.0,
+    "axes": {
+     "y_axis_x": 236.5,
+     "x_axis_y": 524.668565430701,
+     "y_axis_span": [
+      52.0,
+      842.0
+     ],
+     "x_axis_span": [
+      222.0,
+      1706.0
+     ],
+     "y_axis_width": 4.0,
+     "x_axis_width": 7.0,
+     "plot_bbox": [
+      236.5,
+      52.0,
+      1706.0,
+      842.0
+     ],
+     "confidence": 1.0
+    },
+    "tick_rows": [
+     54.772,
+     209.75,
+     368.228,
+     524.78,
+     684.016,
+     839.438
+    ],
+    "ocr_status": "ok",
+    "ocr_ticks": [
+     [
+      "60",
+      60.0,
+      62.0
+     ],
+     [
+      "40",
+      40.0,
+      219.0
+     ],
+     [
+      "20",
+      20.0,
+      379.0
+     ],
+     [
+      "0",
+      0.0,
+      534.0
+     ],
+     [
+      "-20",
+      -20.0,
+      694.0
+     ],
+     [
+      "-40",
+      -40.0,
+      849.0
+     ]
+    ],
+    "cal": {
+     "axis": "y",
+     "scale": "linear",
+     "a": -0.12720929867349226,
+     "b": 66.84102381551352,
+     "rmse": 0.9144708099690545,
+     "ticks": [
+      [
+       54.77215189873418,
+       60.0
+      ],
+      [
+       209.75,
+       40.0
+      ],
+      [
+       368.2278481012658,
+       20.0
+      ],
+      [
+       524.780487804878,
+       0.0
+      ],
+      [
+       684.016393442623,
+       -20.0
+      ],
+      [
+       839.4375,
+       -40.0
+      ]
+     ],
+     "dropped": []
+    },
+    "cal_source": "cv_ocr",
+    "cal_note": "OCR ticks corroborated by the model's tick read",
+    "pixel_resolution": 0.12720929867349226,
+    "bars": [
+     {
+      "x_center": 326.5,
+      "x0": 261.5,
+      "x1": 391.5,
+      "top_y": 524.8808474565717,
+      "base_y": 524.668565430701,
+      "colour": "#949494",
+      "narrow": false
+     },
+     {
+      "x_center": 487.0,
+      "x0": 455.5,
+      "x1": 518.5,
+      "top_y": 514.6267346143723,
+      "base_y": 524.668565430701,
+      "colour": "#bbbbbb",
+      "narrow": false
+     }
+    ],
+    "markers": [],
+    "narrow_bar": false,
+    "vector": {
+     "attempted": false,
+     "skipped": "figure kind 'raster'"
+    },
+    "vector_warnings": [],
+    "overlay_iterations": [],
+    "x_hint": "The end of the initial perturbation block, while the perturbation is still applied. Use the block average of overall performance when the paper reports one; otherwise the final point of the group time series during the perturbation.",
+    "prompt_version": "digitize/1",
+    "axis_range": 100.4953459520589,
+    "axis_range_source": "plot_bbox",
+    "late_window_rule": "paper_reported_block",
+    "late_window_rule_configured": "paper_reported_block",
+    "late_window_x_read": [
+     "20",
+     "episode 20"
+    ],
+    "late_window_x_agrees": false,
+    "readout_plan": [
+     {
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     }
+    ],
+    "route_sample": {
+     "route": "D",
+     "group": "A",
+     "model": "claude-opus-5",
+     "variant": "ticks_first",
+     "sample": 0,
+     "mean": 31.8,
+     "error": 11.2,
+     "x_px": null,
+     "y_px": null,
+     "cap_top_px": null,
+     "cap_bottom_px": null,
+     "snap_conf": 0.78,
+     "sigma": null,
+     "label_read": "old (filled squares), episode 20",
+     "status": "found",
+     "notes": "Marker centre y=275 px; only upward SD whisker drawn (cap y=187.5 px).",
+     "cal_source": "",
+     "cost_usd": 0.0,
+     "extra": {
+      "legend_says": "No boxed legend; caption defines symbols: triangles = young, squares = old; open symbols = no visual feedback; whiskers = standard deviations. At episode 20 both symbols are filled (perturbation with feedback still applied).",
+      "x_read": "20",
+      "tick_labels": [
+       -40.0,
+       -20.0,
+       0.0,
+       20.0,
+       40.0,
+       60.0
+      ],
+      "unit": "deg",
+      "panel": "Fig. 1 (single panel), adaptation phase, last adaptation episode (episode 20)",
+      "same_prompt_resample": false
+     },
+     "dropped": false,
+     "drop_reason": "",
+     "extractor_id": "digitize:readout:claude-opus-5:ticks_first",
+     "n_tool_calls": 7
+    },
+    "tool_calls": [],
+    "dropped": false
+   },
+   "sigma": null,
+   "grounded": null,
+   "grounding_similarity": null,
+   "route": "figure",
+   "model": "claude-opus-5",
+   "prompt_version": "digitize/1",
+   "llm_call_id": "941b4cb973084b3a2ea50fa6b839691a56ffd2b18d1bd9b098e2797414a97065",
+   "extractor_id": "digitize:readout:claude-opus-5:ticks_first",
+   "notes": "Marker centre y=275 px; only upward SD whisker drawn (cap y=187.5 px)."
+  },
+  {
+   "candidate_id": "b511dbb76fa6:d1:late_adaptation:A:digitize:readout:claude-sonnet-5:direct",
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "kind": "group_stats",
+   "group": "A",
+   "status": "found",
+   "source_kind": "figure_line",
+   "n": 12,
+   "n_quote": "\"Data were collected from twelve young (26.0\u00b15.0 years of age) and twelve older (69.5\u00b17.5 years of age) subjects.\"",
+   "mean": 32.8,
+   "dispersion_value": 16.0,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "unit": "deg",
+   "value_as_written": "",
+   "raw_value_semantics": "unknown",
+   "analysis_metric": "endpoint",
+   "error_bar_scope": "between_subject",
+   "whisker_definition": "unknown",
+   "points": [],
+   "stat_type": null,
+   "stat_value": null,
+   "df": null,
+   "df1": null,
+   "df2": null,
+   "tails": null,
+   "p_kind": null,
+   "p_value": null,
+   "design": "unknown",
+   "direction": "unknown",
+   "admissible": true,
+   "admissible_reason": "",
+   "reported_value": null,
+   "reported_scale": "unknown",
+   "standardizer": "unknown",
+   "reported_ci_low": null,
+   "reported_ci_high": null,
+   "positive_means": "unknown",
+   "page": 3,
+   "page_corrected": false,
+   "quote": "",
+   "locator": "Fig. 1, adaptation phase, final adaptation episode (episode 20 on x-axis 'pointing episode'): filled squares = old, filled triangles = young; y-axis 'angular error (deg)'",
+   "row_header": "",
+   "col_header": "",
+   "crop_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/ingest/figures/fig01.png",
+   "overlay_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/figures/fig01.overlay2.png",
+   "pixel_provenance": {
+    "figure_id": "fig01",
+    "figure_kind": "raster",
+    "crop_dpi": 500,
+    "sent_scale": 1.0,
+    "axes": {
+     "y_axis_x": 236.5,
+     "x_axis_y": 524.668565430701,
+     "y_axis_span": [
+      52.0,
+      842.0
+     ],
+     "x_axis_span": [
+      222.0,
+      1706.0
+     ],
+     "y_axis_width": 4.0,
+     "x_axis_width": 7.0,
+     "plot_bbox": [
+      236.5,
+      52.0,
+      1706.0,
+      842.0
+     ],
+     "confidence": 1.0
+    },
+    "tick_rows": [
+     54.772,
+     209.75,
+     368.228,
+     524.78,
+     684.016,
+     839.438
+    ],
+    "ocr_status": "ok",
+    "ocr_ticks": [
+     [
+      "60",
+      60.0,
+      62.0
+     ],
+     [
+      "40",
+      40.0,
+      219.0
+     ],
+     [
+      "20",
+      20.0,
+      379.0
+     ],
+     [
+      "0",
+      0.0,
+      534.0
+     ],
+     [
+      "-20",
+      -20.0,
+      694.0
+     ],
+     [
+      "-40",
+      -40.0,
+      849.0
+     ]
+    ],
+    "cal": {
+     "axis": "y",
+     "scale": "linear",
+     "a": -0.12720929867349226,
+     "b": 66.84102381551352,
+     "rmse": 0.9144708099690545,
+     "ticks": [
+      [
+       54.77215189873418,
+       60.0
+      ],
+      [
+       209.75,
+       40.0
+      ],
+      [
+       368.2278481012658,
+       20.0
+      ],
+      [
+       524.780487804878,
+       0.0
+      ],
+      [
+       684.016393442623,
+       -20.0
+      ],
+      [
+       839.4375,
+       -40.0
+      ]
+     ],
+     "dropped": []
+    },
+    "cal_source": "cv_ocr",
+    "cal_note": "OCR ticks corroborated by the model's tick read",
+    "pixel_resolution": 0.12720929867349226,
+    "bars": [
+     {
+      "x_center": 326.5,
+      "x0": 261.5,
+      "x1": 391.5,
+      "top_y": 524.8808474565717,
+      "base_y": 524.668565430701,
+      "colour": "#949494",
+      "narrow": false
+     },
+     {
+      "x_center": 487.0,
+      "x0": 455.5,
+      "x1": 518.5,
+      "top_y": 514.6267346143723,
+      "base_y": 524.668565430701,
+      "colour": "#bbbbbb",
+      "narrow": false
+     }
+    ],
+    "markers": [],
+    "narrow_bar": false,
+    "vector": {
+     "attempted": false,
+     "skipped": "figure kind 'raster'"
+    },
+    "vector_warnings": [],
+    "overlay_iterations": [],
+    "x_hint": "The end of the initial perturbation block, while the perturbation is still applied. Use the block average of overall performance when the paper reports one; otherwise the final point of the group time series during the perturbation.",
+    "prompt_version": "digitize/1",
+    "axis_range": 100.4953459520589,
+    "axis_range_source": "plot_bbox",
+    "late_window_rule": "paper_reported_block",
+    "late_window_rule_configured": "paper_reported_block",
+    "late_window_x_read": [
+     "20",
+     "episode 20"
+    ],
+    "late_window_x_agrees": false,
+    "readout_plan": [
+     {
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     }
+    ],
+    "route_sample": {
+     "route": "D",
+     "group": "A",
+     "model": "claude-sonnet-5",
+     "variant": "direct",
+     "sample": 0,
+     "mean": 32.8,
+     "error": 16.0,
+     "x_px": null,
+     "y_px": null,
+     "cap_top_px": null,
+     "cap_bottom_px": null,
+     "snap_conf": 0.55,
+     "sigma": null,
+     "label_read": "old (filled squares), episode 20",
+     "status": "found",
+     "notes": "Endpoint of the old subjects' curve at the end of the adaptation block (perturbation still applied). Lower whisker cap not clearly resolvable due to overlap with the connecting line; upper cap read at ~49 deg.",
+     "cal_source": "",
+     "cost_usd": 0.0,
+     "extra": {
+      "legend_says": "Filled squares = old subjects, filled triangles = young subjects; error bars = SD; open symbols indicate no visual feedback",
+      "x_read": "episode 20",
+      "tick_labels": [
+       -40.0,
+       -20.0,
+       0.0,
+       20.0,
+       40.0,
+       60.0
+      ],
+      "unit": "deg",
+      "panel": "Fig. 1 adaptation phase (episodes 6-20)",
+      "same_prompt_resample": false
+     },
+     "dropped": false,
+     "drop_reason": "",
+     "extractor_id": "digitize:readout:claude-sonnet-5:direct",
+     "n_tool_calls": 9
+    },
+    "tool_calls": [],
+    "dropped": false
+   },
+   "sigma": null,
+   "grounded": null,
+   "grounding_similarity": null,
+   "route": "figure",
+   "model": "claude-sonnet-5",
+   "prompt_version": "digitize/1",
+   "llm_call_id": "545daa27b8c4be9a50400c01b003ba31a433e79d69ec81ae1dd83b072ebd17fa",
+   "extractor_id": "digitize:readout:claude-sonnet-5:direct",
+   "notes": "Endpoint of the old subjects' curve at the end of the adaptation block (perturbation still applied). Lower whisker cap not clearly resolvable due to overlap with the connecting line; upper cap read at ~49 deg."
+  },
+  {
+   "candidate_id": "b511dbb76fa6:d1:late_adaptation:A:digitize:vlm_coords:claude-opus-5",
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "kind": "group_stats",
+   "group": "A",
+   "status": "found",
+   "source_kind": "figure_line",
+   "n": 12,
+   "n_quote": "\"Data were collected from twelve young (26.0\u00b15.0 years of age) and twelve older (69.5\u00b17.5 years of age) subjects.\"",
+   "mean": 31.667652732292915,
+   "dispersion_value": 5.997647772888687,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "unit": "deg",
+   "value_as_written": "",
+   "raw_value_semantics": "unknown",
+   "analysis_metric": "endpoint",
+   "error_bar_scope": "between_subject",
+   "whisker_definition": "unknown",
+   "points": [],
+   "stat_type": null,
+   "stat_value": null,
+   "df": null,
+   "df1": null,
+   "df2": null,
+   "tails": null,
+   "p_kind": null,
+   "p_value": null,
+   "design": "unknown",
+   "direction": "unknown",
+   "admissible": true,
+   "admissible_reason": "",
+   "reported_value": null,
+   "reported_scale": "unknown",
+   "standardizer": "unknown",
+   "reported_ci_low": null,
+   "reported_ci_high": null,
+   "positive_means": "unknown",
+   "page": 3,
+   "page_corrected": false,
+   "quote": "",
+   "locator": "Fig. 1, adaptation phase, final adaptation episode (episode 20 on x-axis 'pointing episode'): filled squares = old, filled triangles = young; y-axis 'angular error (deg)'",
+   "row_header": "",
+   "col_header": "",
+   "crop_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/ingest/figures/fig01.png",
+   "overlay_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/figures/fig01.overlay2.png",
+   "pixel_provenance": {
+    "figure_id": "fig01",
+    "figure_kind": "raster",
+    "crop_dpi": 500,
+    "sent_scale": 1.0,
+    "axes": {
+     "y_axis_x": 236.5,
+     "x_axis_y": 524.668565430701,
+     "y_axis_span": [
+      52.0,
+      842.0
+     ],
+     "x_axis_span": [
+      222.0,
+      1706.0
+     ],
+     "y_axis_width": 4.0,
+     "x_axis_width": 7.0,
+     "plot_bbox": [
+      236.5,
+      52.0,
+      1706.0,
+      842.0
+     ],
+     "confidence": 1.0
+    },
+    "tick_rows": [
+     54.772,
+     209.75,
+     368.228,
+     524.78,
+     684.016,
+     839.438
+    ],
+    "ocr_status": "ok",
+    "ocr_ticks": [
+     [
+      "60",
+      60.0,
+      62.0
+     ],
+     [
+      "40",
+      40.0,
+      219.0
+     ],
+     [
+      "20",
+      20.0,
+      379.0
+     ],
+     [
+      "0",
+      0.0,
+      534.0
+     ],
+     [
+      "-20",
+      -20.0,
+      694.0
+     ],
+     [
+      "-40",
+      -40.0,
+      849.0
+     ]
+    ],
+    "cal": {
+     "axis": "y",
+     "scale": "linear",
+     "a": -0.12720929867349226,
+     "b": 66.84102381551352,
+     "rmse": 0.9144708099690545,
+     "ticks": [
+      [
+       54.77215189873418,
+       60.0
+      ],
+      [
+       209.75,
+       40.0
+      ],
+      [
+       368.2278481012658,
+       20.0
+      ],
+      [
+       524.780487804878,
+       0.0
+      ],
+      [
+       684.016393442623,
+       -20.0
+      ],
+      [
+       839.4375,
+       -40.0
+      ]
+     ],
+     "dropped": []
+    },
+    "cal_source": "cv_ocr",
+    "cal_note": "OCR ticks corroborated by the model's tick read",
+    "pixel_resolution": 0.12720929867349226,
+    "bars": [
+     {
+      "x_center": 326.5,
+      "x0": 261.5,
+      "x1": 391.5,
+      "top_y": 524.8808474565717,
+      "base_y": 524.668565430701,
+      "colour": "#949494",
+      "narrow": false
+     },
+     {
+      "x_center": 487.0,
+      "x0": 455.5,
+      "x1": 518.5,
+      "top_y": 514.6267346143723,
+      "base_y": 524.668565430701,
+      "colour": "#bbbbbb",
+      "narrow": false
+     }
+    ],
+    "markers": [],
+    "narrow_bar": false,
+    "vector": {
+     "attempted": false,
+     "skipped": "figure kind 'raster'"
+    },
+    "vector_warnings": [],
+    "overlay_iterations": [],
+    "x_hint": "The end of the initial perturbation block, while the perturbation is still applied. Use the block average of overall performance when the paper reports one; otherwise the final point of the group time series during the perturbation.",
+    "prompt_version": "digitize/1",
+    "axis_range": 100.4953459520589,
+    "axis_range_source": "plot_bbox",
+    "late_window_rule": "paper_reported_block",
+    "late_window_rule_configured": "paper_reported_block",
+    "late_window_x_read": [
+     "20",
+     "episode 20"
+    ],
+    "late_window_x_agrees": false,
+    "readout_plan": [
+     {
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     }
+    ],
+    "route_sample": {
+     "route": "C",
+     "group": "A",
+     "model": "claude-opus-5",
+     "variant": "",
+     "sample": 0,
+     "mean": 31.667652732292915,
+     "error": 5.997647772888687,
+     "x_px": 1241.5,
+     "y_px": 276.5,
+     "cap_top_px": 190.0,
+     "cap_bottom_px": 284.2957446575165,
+     "snap_conf": 0.640625,
+     "sigma": 0.12720929867349226,
+     "label_read": "old = filled square series (upper curve), matched on square marker shape and filled black",
+     "status": "found",
+     "notes": "Marker centre from zoomed crop; upper SD cap at y~190; no lower arm drawn.",
+     "cal_source": "cv_ocr",
+     "cost_usd": 0.0,
+     "extra": {
+      "raw_y_px": 276.5,
+      "panel": "Fig. 1",
+      "unit": "deg",
+      "cap_source": {
+       "model": [
+        190.0,
+        null
+       ],
+       "cv": [
+        268.5,
+        284.2957446575165
+       ]
+      }
+     },
+     "dropped": false,
+     "drop_reason": "",
+     "extractor_id": "digitize:vlm_coords:claude-opus-5",
+     "n_tool_calls": 10
+    },
+    "tool_calls": [],
+    "dropped": false
+   },
+   "sigma": 0.12720929867349226,
+   "grounded": null,
+   "grounding_similarity": null,
+   "route": "figure",
+   "model": "claude-opus-5",
+   "prompt_version": "digitize/1",
+   "llm_call_id": "5c3704f43706bf2b5ce3498b0a5dd1d72ad1a9aeb7e428dbac1e8922c27e16ff",
+   "extractor_id": "digitize:vlm_coords:claude-opus-5",
+   "notes": "Marker centre from zoomed crop; upper SD cap at y~190; no lower arm drawn."
+  },
+  {
+   "candidate_id": "b511dbb76fa6:d1:late_adaptation:A:digitize:ensemble",
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "kind": "group_stats",
+   "group": "A",
+   "status": "ambiguous",
+   "source_kind": "figure_line",
+   "n": 12,
+   "n_quote": "\"Data were collected from twelve young (26.0\u00b15.0 years of age) and twelve older (69.5\u00b17.5 years of age) subjects.\"",
+   "mean": 32.0,
+   "dispersion_value": 11.1,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "unit": "deg",
+   "value_as_written": "",
+   "raw_value_semantics": "unknown",
+   "analysis_metric": "endpoint",
+   "error_bar_scope": "between_subject",
+   "whisker_definition": "unknown",
+   "points": [],
+   "stat_type": null,
+   "stat_value": null,
+   "df": null,
+   "df1": null,
+   "df2": null,
+   "tails": null,
+   "p_kind": null,
+   "p_value": null,
+   "design": "unknown",
+   "direction": "unknown",
+   "admissible": true,
+   "admissible_reason": "",
+   "reported_value": null,
+   "reported_scale": "unknown",
+   "standardizer": "unknown",
+   "reported_ci_low": null,
+   "reported_ci_high": null,
+   "positive_means": "unknown",
+   "page": 3,
+   "page_corrected": false,
+   "quote": "",
+   "locator": "Fig. 1, adaptation phase, final adaptation episode (episode 20 on x-axis 'pointing episode'): filled squares = old, filled triangles = young; y-axis 'angular error (deg)'",
+   "row_header": "",
+   "col_header": "",
+   "crop_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/ingest/figures/fig01.png",
+   "overlay_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/figures/fig01.overlay2.png",
+   "pixel_provenance": {
+    "figure_id": "fig01",
+    "figure_kind": "raster",
+    "crop_dpi": 500,
+    "sent_scale": 1.0,
+    "axes": {
+     "y_axis_x": 236.5,
+     "x_axis_y": 524.668565430701,
+     "y_axis_span": [
+      52.0,
+      842.0
+     ],
+     "x_axis_span": [
+      222.0,
+      1706.0
+     ],
+     "y_axis_width": 4.0,
+     "x_axis_width": 7.0,
+     "plot_bbox": [
+      236.5,
+      52.0,
+      1706.0,
+      842.0
+     ],
+     "confidence": 1.0
+    },
+    "tick_rows": [
+     54.772,
+     209.75,
+     368.228,
+     524.78,
+     684.016,
+     839.438
+    ],
+    "ocr_status": "ok",
+    "ocr_ticks": [
+     [
+      "60",
+      60.0,
+      62.0
+     ],
+     [
+      "40",
+      40.0,
+      219.0
+     ],
+     [
+      "20",
+      20.0,
+      379.0
+     ],
+     [
+      "0",
+      0.0,
+      534.0
+     ],
+     [
+      "-20",
+      -20.0,
+      694.0
+     ],
+     [
+      "-40",
+      -40.0,
+      849.0
+     ]
+    ],
+    "cal": {
+     "axis": "y",
+     "scale": "linear",
+     "a": -0.12720929867349226,
+     "b": 66.84102381551352,
+     "rmse": 0.9144708099690545,
+     "ticks": [
+      [
+       54.77215189873418,
+       60.0
+      ],
+      [
+       209.75,
+       40.0
+      ],
+      [
+       368.2278481012658,
+       20.0
+      ],
+      [
+       524.780487804878,
+       0.0
+      ],
+      [
+       684.016393442623,
+       -20.0
+      ],
+      [
+       839.4375,
+       -40.0
+      ]
+     ],
+     "dropped": []
+    },
+    "cal_source": "cv_ocr",
+    "cal_note": "OCR ticks corroborated by the model's tick read",
+    "pixel_resolution": 0.12720929867349226,
+    "bars": [
+     {
+      "x_center": 326.5,
+      "x0": 261.5,
+      "x1": 391.5,
+      "top_y": 524.8808474565717,
+      "base_y": 524.668565430701,
+      "colour": "#949494",
+      "narrow": false
+     },
+     {
+      "x_center": 487.0,
+      "x0": 455.5,
+      "x1": 518.5,
+      "top_y": 514.6267346143723,
+      "base_y": 524.668565430701,
+      "colour": "#bbbbbb",
+      "narrow": false
+     }
+    ],
+    "markers": [],
+    "narrow_bar": false,
+    "vector": {
+     "attempted": false,
+     "skipped": "figure kind 'raster'"
+    },
+    "vector_warnings": [],
+    "overlay_iterations": [],
+    "x_hint": "The end of the initial perturbation block, while the perturbation is still applied. Use the block average of overall performance when the paper reports one; otherwise the final point of the group time series during the perturbation.",
+    "prompt_version": "digitize/1",
+    "axis_range": 100.4953459520589,
+    "axis_range_source": "plot_bbox",
+    "late_window_rule": "paper_reported_block",
+    "late_window_rule_configured": "paper_reported_block",
+    "late_window_x_read": [
+     "20",
+     "episode 20"
+    ],
+    "late_window_x_agrees": false,
+    "readout_plan": [
+     {
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     }
+    ],
+    "legend_says": "No printed legend; caption: triangles = young, squares = old; open symbols = no visual feedback; error bars = standard deviations. Error bars are drawn one-sided (upward for squares/old, downward for triangles/young). No boxed legend; caption defines symbols: triangles = young, squares = old; open symbols = no visual feedback; whiskers = standard deviations. At episode 20 both symbols are filled (perturbation with feedback still applied). Filled squares = old subjects, filled triangles = young subjects; error bars = SD; open symbols indicate no visual feedback",
+    "legend_dispersion": "SD",
+    "mapper_dispersion": "SD",
+    "per_route": [
+     {
+      "route": "D",
+      "group": "A",
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "mean": 32.2,
+      "error": 11.0,
+      "x_px": null,
+      "y_px": null,
+      "cap_top_px": null,
+      "cap_bottom_px": null,
+      "snap_conf": 0.75,
+      "sigma": null,
+      "label_read": "old (filled square), episode 20",
+      "status": "found",
+      "cal_source": "",
+      "cost_usd": 0.0,
+      "extra": {
+       "legend_says": "No printed legend; caption: triangles = young, squares = old; open symbols = no visual feedback; error bars = standard deviations. Error bars are drawn one-sided (upward for squares/old, downward for triangles/young).",
+       "x_read": "20",
+       "tick_labels": [
+        -40.0,
+        -20.0,
+        0.0,
+        20.0,
+        40.0,
+        60.0
+       ],
+       "unit": "deg",
+       "panel": "Fig. 1 (single panel)",
+       "same_prompt_resample": false
+      },
+      "dropped": false,
+      "drop_reason": "",
+      "extractor_id": "digitize:readout:claude-opus-5:direct",
+      "n_tool_calls": 9
+     },
+     {
+      "route": "D",
+      "group": "A",
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "mean": 31.8,
+      "error": 11.2,
+      "x_px": null,
+      "y_px": null,
+      "cap_top_px": null,
+      "cap_bottom_px": null,
+      "snap_conf": 0.78,
+      "sigma": null,
+      "label_read": "old (filled squares), episode 20",
+      "status": "found",
+      "cal_source": "",
+      "cost_usd": 0.0,
+      "extra": {
+       "legend_says": "No boxed legend; caption defines symbols: triangles = young, squares = old; open symbols = no visual feedback; whiskers = standard deviations. At episode 20 both symbols are filled (perturbation with feedback still applied).",
+       "x_read": "20",
+       "tick_labels": [
+        -40.0,
+        -20.0,
+        0.0,
+        20.0,
+        40.0,
+        60.0
+       ],
+       "unit": "deg",
+       "panel": "Fig. 1 (single panel), adaptation phase, last adaptation episode (episode 20)",
+       "same_prompt_resample": false
+      },
+      "dropped": false,
+      "drop_reason": "",
+      "extractor_id": "digitize:readout:claude-opus-5:ticks_first",
+      "n_tool_calls": 7
+     },
+     {
+      "route": "D",
+      "group": "A",
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "mean": 32.8,
+      "error": 16.0,
+      "x_px": null,
+      "y_px": null,
+      "cap_top_px": null,
+      "cap_bottom_px": null,
+      "snap_conf": 0.55,
+      "sigma": null,
+      "label_read": "old (filled squares), episode 20",
+      "status": "found",
+      "cal_source": "",
+      "cost_usd": 0.0,
+      "extra": {
+       "legend_says": "Filled squares = old subjects, filled triangles = young subjects; error bars = SD; open symbols indicate no visual feedback",
+       "x_read": "episode 20",
+       "tick_labels": [
+        -40.0,
+        -20.0,
+        0.0,
+        20.0,
+        40.0,
+        60.0
+       ],
+       "unit": "deg",
+       "panel": "Fig. 1 adaptation phase (episodes 6-20)",
+       "same_prompt_resample": false
+      },
+      "dropped": false,
+      "drop_reason": "",
+      "extractor_id": "digitize:readout:claude-sonnet-5:direct",
+      "n_tool_calls": 9
+     },
+     {
+      "route": "C",
+      "group": "A",
+      "model": "claude-opus-5",
+      "variant": "",
+      "sample": 0,
+      "mean": 31.667652732292915,
+      "error": 5.997647772888687,
+      "x_px": 1241.5,
+      "y_px": 276.5,
+      "cap_top_px": 190.0,
+      "cap_bottom_px": 284.2957446575165,
+      "snap_conf": 0.640625,
+      "sigma": 0.12720929867349226,
+      "label_read": "old = filled square series (upper curve), matched on square marker shape and filled black",
+      "status": "found",
+      "cal_source": "cv_ocr",
+      "cost_usd": 0.0,
+      "extra": {
+       "raw_y_px": 276.5,
+       "panel": "Fig. 1",
+       "unit": "deg",
+       "cap_source": {
+        "model": [
+         190.0,
+         null
+        ],
+        "cv": [
+         268.5,
+         284.2957446575165
+        ]
+       }
+      },
+      "dropped": false,
+      "drop_reason": "",
+      "extractor_id": "digitize:vlm_coords:claude-opus-5",
+      "n_tool_calls": 10
+     }
+    ],
+    "route_values": {
+     "digitize:readout:claude-opus-5:direct": {
+      "mean": 32.2,
+      "error": 11.0
+     },
+     "digitize:readout:claude-opus-5:ticks_first": {
+      "mean": 31.8,
+      "error": 11.2
+     },
+     "digitize:readout:claude-sonnet-5:direct": {
+      "mean": 32.8,
+      "error": 16.0
+     },
+     "digitize:vlm_coords:claude-opus-5": {
+      "mean": 31.667652732292915,
+      "error": 5.997647772888687
+     }
+    },
+    "snap_confidences": [],
+    "n_routes": 4,
+    "mad_sigma": 0.39462902955126444,
+    "agreement": {
+     "mean_agrees": true,
+     "error_agrees": false,
+     "reasons": [
+      "error half-lengths span 10, over the 1.11 tolerance (max of 10% of 11.1 and half a pixel = 0.0636)"
+     ],
+     "mean_tolerance": 10.0,
+     "mean_spread": 1.1323472677070825,
+     "error_tolerance": 1.11,
+     "error_spread": 10.002352227111313,
+     "agrees": false
+    },
+    "zero_confidence_snaps": [],
+    "resampled_routes": [],
+    "tool_calls": [],
+    "needs_review": true,
+    "needs_review_reason": "error half-lengths span 10, over the 1.11 tolerance (max of 10% of 11.1 and half a pixel = 0.0636)",
+    "dropped_samples": []
+   },
+   "sigma": 0.39462902955126444,
+   "grounded": null,
+   "grounding_similarity": null,
+   "route": "figure",
+   "model": "claude-opus-5",
+   "prompt_version": "digitize/1",
+   "llm_call_id": "1c1479d45284bb5ed8c16af37ae67ec54f0ffe77cc88c7b6f3b3f24db74132d7",
+   "extractor_id": "digitize:ensemble",
+   "notes": "error half-lengths span 10, over the 1.11 tolerance (max of 10% of 11.1 and half a pixel = 0.0636)"
+  },
+  {
+   "candidate_id": "b511dbb76fa6:d1:late_adaptation:B:digitize:readout:claude-opus-5:direct",
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "kind": "group_stats",
+   "group": "B",
+   "status": "found",
+   "source_kind": "figure_line",
+   "n": 12,
+   "n_quote": "\"Data were collected from twelve young (26.0\u00b15.0 years of age) and twelve older (69.5\u00b17.5 years of age) subjects.\"",
+   "mean": 12.4,
+   "dispersion_value": 14.5,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "unit": "deg",
+   "value_as_written": "",
+   "raw_value_semantics": "unknown",
+   "analysis_metric": "endpoint",
+   "error_bar_scope": "between_subject",
+   "whisker_definition": "unknown",
+   "points": [],
+   "stat_type": null,
+   "stat_value": null,
+   "df": null,
+   "df1": null,
+   "df2": null,
+   "tails": null,
+   "p_kind": null,
+   "p_value": null,
+   "design": "unknown",
+   "direction": "unknown",
+   "admissible": true,
+   "admissible_reason": "",
+   "reported_value": null,
+   "reported_scale": "unknown",
+   "standardizer": "unknown",
+   "reported_ci_low": null,
+   "reported_ci_high": null,
+   "positive_means": "unknown",
+   "page": 3,
+   "page_corrected": false,
+   "quote": "",
+   "locator": "Fig. 1, adaptation phase, final adaptation episode (episode 20 on x-axis 'pointing episode'): filled squares = old, filled triangles = young; y-axis 'angular error (deg)'",
+   "row_header": "",
+   "col_header": "",
+   "crop_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/ingest/figures/fig01.png",
+   "overlay_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/figures/fig01.overlay2.png",
+   "pixel_provenance": {
+    "figure_id": "fig01",
+    "figure_kind": "raster",
+    "crop_dpi": 500,
+    "sent_scale": 1.0,
+    "axes": {
+     "y_axis_x": 236.5,
+     "x_axis_y": 524.668565430701,
+     "y_axis_span": [
+      52.0,
+      842.0
+     ],
+     "x_axis_span": [
+      222.0,
+      1706.0
+     ],
+     "y_axis_width": 4.0,
+     "x_axis_width": 7.0,
+     "plot_bbox": [
+      236.5,
+      52.0,
+      1706.0,
+      842.0
+     ],
+     "confidence": 1.0
+    },
+    "tick_rows": [
+     54.772,
+     209.75,
+     368.228,
+     524.78,
+     684.016,
+     839.438
+    ],
+    "ocr_status": "ok",
+    "ocr_ticks": [
+     [
+      "60",
+      60.0,
+      62.0
+     ],
+     [
+      "40",
+      40.0,
+      219.0
+     ],
+     [
+      "20",
+      20.0,
+      379.0
+     ],
+     [
+      "0",
+      0.0,
+      534.0
+     ],
+     [
+      "-20",
+      -20.0,
+      694.0
+     ],
+     [
+      "-40",
+      -40.0,
+      849.0
+     ]
+    ],
+    "cal": {
+     "axis": "y",
+     "scale": "linear",
+     "a": -0.12720929867349226,
+     "b": 66.84102381551352,
+     "rmse": 0.9144708099690545,
+     "ticks": [
+      [
+       54.77215189873418,
+       60.0
+      ],
+      [
+       209.75,
+       40.0
+      ],
+      [
+       368.2278481012658,
+       20.0
+      ],
+      [
+       524.780487804878,
+       0.0
+      ],
+      [
+       684.016393442623,
+       -20.0
+      ],
+      [
+       839.4375,
+       -40.0
+      ]
+     ],
+     "dropped": []
+    },
+    "cal_source": "cv_ocr",
+    "cal_note": "OCR ticks corroborated by the model's tick read",
+    "pixel_resolution": 0.12720929867349226,
+    "bars": [
+     {
+      "x_center": 326.5,
+      "x0": 261.5,
+      "x1": 391.5,
+      "top_y": 524.8808474565717,
+      "base_y": 524.668565430701,
+      "colour": "#949494",
+      "narrow": false
+     },
+     {
+      "x_center": 487.0,
+      "x0": 455.5,
+      "x1": 518.5,
+      "top_y": 514.6267346143723,
+      "base_y": 524.668565430701,
+      "colour": "#bbbbbb",
+      "narrow": false
+     }
+    ],
+    "markers": [],
+    "narrow_bar": false,
+    "vector": {
+     "attempted": false,
+     "skipped": "figure kind 'raster'"
+    },
+    "vector_warnings": [],
+    "overlay_iterations": [],
+    "x_hint": "The end of the initial perturbation block, while the perturbation is still applied. Use the block average of overall performance when the paper reports one; otherwise the final point of the group time series during the perturbation.",
+    "prompt_version": "digitize/1",
+    "axis_range": 100.4953459520589,
+    "axis_range_source": "plot_bbox",
+    "late_window_rule": "paper_reported_block",
+    "late_window_rule_configured": "paper_reported_block",
+    "late_window_x_read": [
+     "20",
+     "episode 20"
+    ],
+    "late_window_x_agrees": false,
+    "readout_plan": [
+     {
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     }
+    ],
+    "route_sample": {
+     "route": "D",
+     "group": "B",
+     "model": "claude-opus-5",
+     "variant": "direct",
+     "sample": 0,
+     "mean": 12.4,
+     "error": 14.5,
+     "x_px": null,
+     "y_px": null,
+     "cap_top_px": null,
+     "cap_bottom_px": null,
+     "snap_conf": 0.6,
+     "sigma": null,
+     "label_read": "young (filled triangle), episode 20",
+     "status": "found",
+     "notes": "Triangle marker centre y\u2248428 px (marker spans 417-439 px); only downward SD bar drawn, cap slightly below zero line at y\u2248541 px.",
+     "cal_source": "",
+     "cost_usd": 0.0,
+     "extra": {
+      "legend_says": "No printed legend; caption: triangles = young, squares = old; open symbols = no visual feedback; error bars = standard deviations. Error bars are drawn one-sided (upward for squares/old, downward for triangles/young).",
+      "x_read": "20",
+      "tick_labels": [
+       -40.0,
+       -20.0,
+       0.0,
+       20.0,
+       40.0,
+       60.0
+      ],
+      "unit": "deg",
+      "panel": "Fig. 1 (single panel)",
+      "same_prompt_resample": false
+     },
+     "dropped": false,
+     "drop_reason": "",
+     "extractor_id": "digitize:readout:claude-opus-5:direct",
+     "n_tool_calls": 9
+    },
+    "tool_calls": [],
+    "dropped": false
+   },
+   "sigma": null,
+   "grounded": null,
+   "grounding_similarity": null,
+   "route": "figure",
+   "model": "claude-opus-5",
+   "prompt_version": "digitize/1",
+   "llm_call_id": "04f2a6bc6ea7adf4188fc02f202298158b65387619fbc16f49fad444a86fc629",
+   "extractor_id": "digitize:readout:claude-opus-5:direct",
+   "notes": "Triangle marker centre y\u2248428 px (marker spans 417-439 px); only downward SD bar drawn, cap slightly below zero line at y\u2248541 px."
+  },
+  {
+   "candidate_id": "b511dbb76fa6:d1:late_adaptation:B:digitize:readout:claude-opus-5:ticks_first",
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "kind": "group_stats",
+   "group": "B",
+   "status": "found",
+   "source_kind": "figure_line",
+   "n": 12,
+   "n_quote": "\"Data were collected from twelve young (26.0\u00b15.0 years of age) and twelve older (69.5\u00b17.5 years of age) subjects.\"",
+   "mean": 11.8,
+   "dispersion_value": 14.1,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "unit": "deg",
+   "value_as_written": "",
+   "raw_value_semantics": "unknown",
+   "analysis_metric": "endpoint",
+   "error_bar_scope": "between_subject",
+   "whisker_definition": "unknown",
+   "points": [],
+   "stat_type": null,
+   "stat_value": null,
+   "df": null,
+   "df1": null,
+   "df2": null,
+   "tails": null,
+   "p_kind": null,
+   "p_value": null,
+   "design": "unknown",
+   "direction": "unknown",
+   "admissible": true,
+   "admissible_reason": "",
+   "reported_value": null,
+   "reported_scale": "unknown",
+   "standardizer": "unknown",
+   "reported_ci_low": null,
+   "reported_ci_high": null,
+   "positive_means": "unknown",
+   "page": 3,
+   "page_corrected": false,
+   "quote": "",
+   "locator": "Fig. 1, adaptation phase, final adaptation episode (episode 20 on x-axis 'pointing episode'): filled squares = old, filled triangles = young; y-axis 'angular error (deg)'",
+   "row_header": "",
+   "col_header": "",
+   "crop_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/ingest/figures/fig01.png",
+   "overlay_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/figures/fig01.overlay2.png",
+   "pixel_provenance": {
+    "figure_id": "fig01",
+    "figure_kind": "raster",
+    "crop_dpi": 500,
+    "sent_scale": 1.0,
+    "axes": {
+     "y_axis_x": 236.5,
+     "x_axis_y": 524.668565430701,
+     "y_axis_span": [
+      52.0,
+      842.0
+     ],
+     "x_axis_span": [
+      222.0,
+      1706.0
+     ],
+     "y_axis_width": 4.0,
+     "x_axis_width": 7.0,
+     "plot_bbox": [
+      236.5,
+      52.0,
+      1706.0,
+      842.0
+     ],
+     "confidence": 1.0
+    },
+    "tick_rows": [
+     54.772,
+     209.75,
+     368.228,
+     524.78,
+     684.016,
+     839.438
+    ],
+    "ocr_status": "ok",
+    "ocr_ticks": [
+     [
+      "60",
+      60.0,
+      62.0
+     ],
+     [
+      "40",
+      40.0,
+      219.0
+     ],
+     [
+      "20",
+      20.0,
+      379.0
+     ],
+     [
+      "0",
+      0.0,
+      534.0
+     ],
+     [
+      "-20",
+      -20.0,
+      694.0
+     ],
+     [
+      "-40",
+      -40.0,
+      849.0
+     ]
+    ],
+    "cal": {
+     "axis": "y",
+     "scale": "linear",
+     "a": -0.12720929867349226,
+     "b": 66.84102381551352,
+     "rmse": 0.9144708099690545,
+     "ticks": [
+      [
+       54.77215189873418,
+       60.0
+      ],
+      [
+       209.75,
+       40.0
+      ],
+      [
+       368.2278481012658,
+       20.0
+      ],
+      [
+       524.780487804878,
+       0.0
+      ],
+      [
+       684.016393442623,
+       -20.0
+      ],
+      [
+       839.4375,
+       -40.0
+      ]
+     ],
+     "dropped": []
+    },
+    "cal_source": "cv_ocr",
+    "cal_note": "OCR ticks corroborated by the model's tick read",
+    "pixel_resolution": 0.12720929867349226,
+    "bars": [
+     {
+      "x_center": 326.5,
+      "x0": 261.5,
+      "x1": 391.5,
+      "top_y": 524.8808474565717,
+      "base_y": 524.668565430701,
+      "colour": "#949494",
+      "narrow": false
+     },
+     {
+      "x_center": 487.0,
+      "x0": 455.5,
+      "x1": 518.5,
+      "top_y": 514.6267346143723,
+      "base_y": 524.668565430701,
+      "colour": "#bbbbbb",
+      "narrow": false
+     }
+    ],
+    "markers": [],
+    "narrow_bar": false,
+    "vector": {
+     "attempted": false,
+     "skipped": "figure kind 'raster'"
+    },
+    "vector_warnings": [],
+    "overlay_iterations": [],
+    "x_hint": "The end of the initial perturbation block, while the perturbation is still applied. Use the block average of overall performance when the paper reports one; otherwise the final point of the group time series during the perturbation.",
+    "prompt_version": "digitize/1",
+    "axis_range": 100.4953459520589,
+    "axis_range_source": "plot_bbox",
+    "late_window_rule": "paper_reported_block",
+    "late_window_rule_configured": "paper_reported_block",
+    "late_window_x_read": [
+     "20",
+     "episode 20"
+    ],
+    "late_window_x_agrees": false,
+    "readout_plan": [
+     {
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     }
+    ],
+    "route_sample": {
+     "route": "D",
+     "group": "B",
+     "model": "claude-opus-5",
+     "variant": "ticks_first",
+     "sample": 0,
+     "mean": 11.8,
+     "error": 14.1,
+     "x_px": null,
+     "y_px": null,
+     "cap_top_px": null,
+     "cap_bottom_px": null,
+     "snap_conf": 0.7,
+     "sigma": null,
+     "label_read": "young (filled triangles), episode 20",
+     "status": "found",
+     "notes": "Marker centre y=432 px; only downward SD whisker drawn, cap slightly below zero line (y\u2248543 px). Triangle marker overlaps the axis-tick region, so cap position is a little uncertain.",
+     "cal_source": "",
+     "cost_usd": 0.0,
+     "extra": {
+      "legend_says": "No boxed legend; caption defines symbols: triangles = young, squares = old; open symbols = no visual feedback; whiskers = standard deviations. At episode 20 both symbols are filled (perturbation with feedback still applied).",
+      "x_read": "20",
+      "tick_labels": [
+       -40.0,
+       -20.0,
+       0.0,
+       20.0,
+       40.0,
+       60.0
+      ],
+      "unit": "deg",
+      "panel": "Fig. 1 (single panel), adaptation phase, last adaptation episode (episode 20)",
+      "same_prompt_resample": false
+     },
+     "dropped": false,
+     "drop_reason": "",
+     "extractor_id": "digitize:readout:claude-opus-5:ticks_first",
+     "n_tool_calls": 7
+    },
+    "tool_calls": [],
+    "dropped": false
+   },
+   "sigma": null,
+   "grounded": null,
+   "grounding_similarity": null,
+   "route": "figure",
+   "model": "claude-opus-5",
+   "prompt_version": "digitize/1",
+   "llm_call_id": "941b4cb973084b3a2ea50fa6b839691a56ffd2b18d1bd9b098e2797414a97065",
+   "extractor_id": "digitize:readout:claude-opus-5:ticks_first",
+   "notes": "Marker centre y=432 px; only downward SD whisker drawn, cap slightly below zero line (y\u2248543 px). Triangle marker overlaps the axis-tick region, so cap position is a little uncertain."
+  },
+  {
+   "candidate_id": "b511dbb76fa6:d1:late_adaptation:B:digitize:readout:claude-sonnet-5:direct",
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "kind": "group_stats",
+   "group": "B",
+   "status": "found",
+   "source_kind": "figure_line",
+   "n": 12,
+   "n_quote": "\"Data were collected from twelve young (26.0\u00b15.0 years of age) and twelve older (69.5\u00b17.5 years of age) subjects.\"",
+   "mean": 13.4,
+   "dispersion_value": 13.0,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "unit": "deg",
+   "value_as_written": "",
+   "raw_value_semantics": "unknown",
+   "analysis_metric": "endpoint",
+   "error_bar_scope": "between_subject",
+   "whisker_definition": "unknown",
+   "points": [],
+   "stat_type": null,
+   "stat_value": null,
+   "df": null,
+   "df1": null,
+   "df2": null,
+   "tails": null,
+   "p_kind": null,
+   "p_value": null,
+   "design": "unknown",
+   "direction": "unknown",
+   "admissible": true,
+   "admissible_reason": "",
+   "reported_value": null,
+   "reported_scale": "unknown",
+   "standardizer": "unknown",
+   "reported_ci_low": null,
+   "reported_ci_high": null,
+   "positive_means": "unknown",
+   "page": 3,
+   "page_corrected": false,
+   "quote": "",
+   "locator": "Fig. 1, adaptation phase, final adaptation episode (episode 20 on x-axis 'pointing episode'): filled squares = old, filled triangles = young; y-axis 'angular error (deg)'",
+   "row_header": "",
+   "col_header": "",
+   "crop_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/ingest/figures/fig01.png",
+   "overlay_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/figures/fig01.overlay2.png",
+   "pixel_provenance": {
+    "figure_id": "fig01",
+    "figure_kind": "raster",
+    "crop_dpi": 500,
+    "sent_scale": 1.0,
+    "axes": {
+     "y_axis_x": 236.5,
+     "x_axis_y": 524.668565430701,
+     "y_axis_span": [
+      52.0,
+      842.0
+     ],
+     "x_axis_span": [
+      222.0,
+      1706.0
+     ],
+     "y_axis_width": 4.0,
+     "x_axis_width": 7.0,
+     "plot_bbox": [
+      236.5,
+      52.0,
+      1706.0,
+      842.0
+     ],
+     "confidence": 1.0
+    },
+    "tick_rows": [
+     54.772,
+     209.75,
+     368.228,
+     524.78,
+     684.016,
+     839.438
+    ],
+    "ocr_status": "ok",
+    "ocr_ticks": [
+     [
+      "60",
+      60.0,
+      62.0
+     ],
+     [
+      "40",
+      40.0,
+      219.0
+     ],
+     [
+      "20",
+      20.0,
+      379.0
+     ],
+     [
+      "0",
+      0.0,
+      534.0
+     ],
+     [
+      "-20",
+      -20.0,
+      694.0
+     ],
+     [
+      "-40",
+      -40.0,
+      849.0
+     ]
+    ],
+    "cal": {
+     "axis": "y",
+     "scale": "linear",
+     "a": -0.12720929867349226,
+     "b": 66.84102381551352,
+     "rmse": 0.9144708099690545,
+     "ticks": [
+      [
+       54.77215189873418,
+       60.0
+      ],
+      [
+       209.75,
+       40.0
+      ],
+      [
+       368.2278481012658,
+       20.0
+      ],
+      [
+       524.780487804878,
+       0.0
+      ],
+      [
+       684.016393442623,
+       -20.0
+      ],
+      [
+       839.4375,
+       -40.0
+      ]
+     ],
+     "dropped": []
+    },
+    "cal_source": "cv_ocr",
+    "cal_note": "OCR ticks corroborated by the model's tick read",
+    "pixel_resolution": 0.12720929867349226,
+    "bars": [
+     {
+      "x_center": 326.5,
+      "x0": 261.5,
+      "x1": 391.5,
+      "top_y": 524.8808474565717,
+      "base_y": 524.668565430701,
+      "colour": "#949494",
+      "narrow": false
+     },
+     {
+      "x_center": 487.0,
+      "x0": 455.5,
+      "x1": 518.5,
+      "top_y": 514.6267346143723,
+      "base_y": 524.668565430701,
+      "colour": "#bbbbbb",
+      "narrow": false
+     }
+    ],
+    "markers": [],
+    "narrow_bar": false,
+    "vector": {
+     "attempted": false,
+     "skipped": "figure kind 'raster'"
+    },
+    "vector_warnings": [],
+    "overlay_iterations": [],
+    "x_hint": "The end of the initial perturbation block, while the perturbation is still applied. Use the block average of overall performance when the paper reports one; otherwise the final point of the group time series during the perturbation.",
+    "prompt_version": "digitize/1",
+    "axis_range": 100.4953459520589,
+    "axis_range_source": "plot_bbox",
+    "late_window_rule": "paper_reported_block",
+    "late_window_rule_configured": "paper_reported_block",
+    "late_window_x_read": [
+     "20",
+     "episode 20"
+    ],
+    "late_window_x_agrees": false,
+    "readout_plan": [
+     {
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     }
+    ],
+    "route_sample": {
+     "route": "D",
+     "group": "B",
+     "model": "claude-sonnet-5",
+     "variant": "direct",
+     "sample": 0,
+     "mean": 13.4,
+     "error": 13.0,
+     "x_px": null,
+     "y_px": null,
+     "cap_top_px": null,
+     "cap_bottom_px": null,
+     "snap_conf": 0.55,
+     "sigma": null,
+     "label_read": "young (filled triangles), episode 20",
+     "status": "found",
+     "notes": "Endpoint of the young subjects' curve at end of adaptation block. Lower whisker appears to extend close to 0 deg; upper cap ~21 deg.",
+     "cal_source": "",
+     "cost_usd": 0.0,
+     "extra": {
+      "legend_says": "Filled squares = old subjects, filled triangles = young subjects; error bars = SD; open symbols indicate no visual feedback",
+      "x_read": "episode 20",
+      "tick_labels": [
+       -40.0,
+       -20.0,
+       0.0,
+       20.0,
+       40.0,
+       60.0
+      ],
+      "unit": "deg",
+      "panel": "Fig. 1 adaptation phase (episodes 6-20)",
+      "same_prompt_resample": false
+     },
+     "dropped": false,
+     "drop_reason": "",
+     "extractor_id": "digitize:readout:claude-sonnet-5:direct",
+     "n_tool_calls": 9
+    },
+    "tool_calls": [],
+    "dropped": false
+   },
+   "sigma": null,
+   "grounded": null,
+   "grounding_similarity": null,
+   "route": "figure",
+   "model": "claude-sonnet-5",
+   "prompt_version": "digitize/1",
+   "llm_call_id": "545daa27b8c4be9a50400c01b003ba31a433e79d69ec81ae1dd83b072ebd17fa",
+   "extractor_id": "digitize:readout:claude-sonnet-5:direct",
+   "notes": "Endpoint of the young subjects' curve at end of adaptation block. Lower whisker appears to extend close to 0 deg; upper cap ~21 deg."
+  },
+  {
+   "candidate_id": "b511dbb76fa6:d1:late_adaptation:B:digitize:vlm_coords:claude-opus-5",
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "kind": "group_stats",
+   "group": "B",
+   "status": "found",
+   "source_kind": "figure_line",
+   "n": 12,
+   "n_quote": "\"Data were collected from twelve young (26.0\u00b15.0 years of age) and twelve older (69.5\u00b17.5 years of age) subjects.\"",
+   "mean": 11.059746347187165,
+   "dispersion_value": 6.60437260091825,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "unit": "deg",
+   "value_as_written": "",
+   "raw_value_semantics": "unknown",
+   "analysis_metric": "endpoint",
+   "error_bar_scope": "between_subject",
+   "whisker_definition": "unknown",
+   "points": [],
+   "stat_type": null,
+   "stat_value": null,
+   "df": null,
+   "df1": null,
+   "df2": null,
+   "tails": null,
+   "p_kind": null,
+   "p_value": null,
+   "design": "unknown",
+   "direction": "unknown",
+   "admissible": true,
+   "admissible_reason": "",
+   "reported_value": null,
+   "reported_scale": "unknown",
+   "standardizer": "unknown",
+   "reported_ci_low": null,
+   "reported_ci_high": null,
+   "positive_means": "unknown",
+   "page": 3,
+   "page_corrected": false,
+   "quote": "",
+   "locator": "Fig. 1, adaptation phase, final adaptation episode (episode 20 on x-axis 'pointing episode'): filled squares = old, filled triangles = young; y-axis 'angular error (deg)'",
+   "row_header": "",
+   "col_header": "",
+   "crop_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/ingest/figures/fig01.png",
+   "overlay_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/figures/fig01.overlay2.png",
+   "pixel_provenance": {
+    "figure_id": "fig01",
+    "figure_kind": "raster",
+    "crop_dpi": 500,
+    "sent_scale": 1.0,
+    "axes": {
+     "y_axis_x": 236.5,
+     "x_axis_y": 524.668565430701,
+     "y_axis_span": [
+      52.0,
+      842.0
+     ],
+     "x_axis_span": [
+      222.0,
+      1706.0
+     ],
+     "y_axis_width": 4.0,
+     "x_axis_width": 7.0,
+     "plot_bbox": [
+      236.5,
+      52.0,
+      1706.0,
+      842.0
+     ],
+     "confidence": 1.0
+    },
+    "tick_rows": [
+     54.772,
+     209.75,
+     368.228,
+     524.78,
+     684.016,
+     839.438
+    ],
+    "ocr_status": "ok",
+    "ocr_ticks": [
+     [
+      "60",
+      60.0,
+      62.0
+     ],
+     [
+      "40",
+      40.0,
+      219.0
+     ],
+     [
+      "20",
+      20.0,
+      379.0
+     ],
+     [
+      "0",
+      0.0,
+      534.0
+     ],
+     [
+      "-20",
+      -20.0,
+      694.0
+     ],
+     [
+      "-40",
+      -40.0,
+      849.0
+     ]
+    ],
+    "cal": {
+     "axis": "y",
+     "scale": "linear",
+     "a": -0.12720929867349226,
+     "b": 66.84102381551352,
+     "rmse": 0.9144708099690545,
+     "ticks": [
+      [
+       54.77215189873418,
+       60.0
+      ],
+      [
+       209.75,
+       40.0
+      ],
+      [
+       368.2278481012658,
+       20.0
+      ],
+      [
+       524.780487804878,
+       0.0
+      ],
+      [
+       684.016393442623,
+       -20.0
+      ],
+      [
+       839.4375,
+       -40.0
+      ]
+     ],
+     "dropped": []
+    },
+    "cal_source": "cv_ocr",
+    "cal_note": "OCR ticks corroborated by the model's tick read",
+    "pixel_resolution": 0.12720929867349226,
+    "bars": [
+     {
+      "x_center": 326.5,
+      "x0": 261.5,
+      "x1": 391.5,
+      "top_y": 524.8808474565717,
+      "base_y": 524.668565430701,
+      "colour": "#949494",
+      "narrow": false
+     },
+     {
+      "x_center": 487.0,
+      "x0": 455.5,
+      "x1": 518.5,
+      "top_y": 514.6267346143723,
+      "base_y": 524.668565430701,
+      "colour": "#bbbbbb",
+      "narrow": false
+     }
+    ],
+    "markers": [],
+    "narrow_bar": false,
+    "vector": {
+     "attempted": false,
+     "skipped": "figure kind 'raster'"
+    },
+    "vector_warnings": [],
+    "overlay_iterations": [],
+    "x_hint": "The end of the initial perturbation block, while the perturbation is still applied. Use the block average of overall performance when the paper reports one; otherwise the final point of the group time series during the perturbation.",
+    "prompt_version": "digitize/1",
+    "axis_range": 100.4953459520589,
+    "axis_range_source": "plot_bbox",
+    "late_window_rule": "paper_reported_block",
+    "late_window_rule_configured": "paper_reported_block",
+    "late_window_x_read": [
+     "20",
+     "episode 20"
+    ],
+    "late_window_x_agrees": false,
+    "readout_plan": [
+     {
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     }
+    ],
+    "route_sample": {
+     "route": "C",
+     "group": "B",
+     "model": "claude-opus-5",
+     "variant": "",
+     "sample": 0,
+     "mean": 11.059746347187165,
+     "error": 6.60437260091825,
+     "x_px": 1243.0,
+     "y_px": 438.5,
+     "cap_top_px": 420.16525411605835,
+     "cap_bottom_px": 524.0,
+     "snap_conf": 0.4765625,
+     "sigma": 0.12720929867349226,
+     "label_read": "young = filled triangle series (lower curve), matched on triangle marker shape and filled black",
+     "status": "found",
+     "notes": "Triangle centroid ~y=434 (apex ~425, base ~440); lower SD arm runs down to the x-axis (~y=524) where it is obscured/clipped; no upper arm visible.",
+     "cal_source": "cv_ocr",
+     "cost_usd": 0.0,
+     "extra": {
+      "raw_y_px": 434.0,
+      "panel": "Fig. 1",
+      "unit": "deg",
+      "cap_source": {
+       "model": [
+        null,
+        524.0
+       ],
+       "cv": [
+        420.16525411605835,
+        441.1982167363167
+       ]
+      }
+     },
+     "dropped": true,
+     "drop_reason": "overlay verify: not_on_datum \u2014 Sits ~13 px (\u22481.7 deg) below the young triangle marker centre at episode 20, on the error-bar line just under the symbol.",
+     "extractor_id": "digitize:vlm_coords:claude-opus-5",
+     "n_tool_calls": 10
+    },
+    "tool_calls": [],
+    "dropped": true
+   },
+   "sigma": 0.12720929867349226,
+   "grounded": null,
+   "grounding_similarity": null,
+   "route": "figure",
+   "model": "claude-opus-5",
+   "prompt_version": "digitize/1",
+   "llm_call_id": "5c3704f43706bf2b5ce3498b0a5dd1d72ad1a9aeb7e428dbac1e8922c27e16ff",
+   "extractor_id": "digitize:vlm_coords:claude-opus-5",
+   "notes": "Triangle centroid ~y=434 (apex ~425, base ~440); lower SD arm runs down to the x-axis (~y=524) where it is obscured/clipped; no upper arm visible.; overlay verify: not_on_datum \u2014 Sits ~13 px (\u22481.7 deg) below the young triangle marker centre at episode 20, on the error-bar line just under the symbol."
+  },
+  {
+   "candidate_id": "b511dbb76fa6:d1:late_adaptation:B:digitize:ensemble",
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "kind": "group_stats",
+   "group": "B",
+   "status": "ambiguous",
+   "source_kind": "figure_line",
+   "n": 12,
+   "n_quote": "\"Data were collected from twelve young (26.0\u00b15.0 years of age) and twelve older (69.5\u00b17.5 years of age) subjects.\"",
+   "mean": 12.4,
+   "dispersion_value": 14.1,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "unit": "deg",
+   "value_as_written": "",
+   "raw_value_semantics": "unknown",
+   "analysis_metric": "endpoint",
+   "error_bar_scope": "between_subject",
+   "whisker_definition": "unknown",
+   "points": [],
+   "stat_type": null,
+   "stat_value": null,
+   "df": null,
+   "df1": null,
+   "df2": null,
+   "tails": null,
+   "p_kind": null,
+   "p_value": null,
+   "design": "unknown",
+   "direction": "unknown",
+   "admissible": true,
+   "admissible_reason": "",
+   "reported_value": null,
+   "reported_scale": "unknown",
+   "standardizer": "unknown",
+   "reported_ci_low": null,
+   "reported_ci_high": null,
+   "positive_means": "unknown",
+   "page": 3,
+   "page_corrected": false,
+   "quote": "",
+   "locator": "Fig. 1, adaptation phase, final adaptation episode (episode 20 on x-axis 'pointing episode'): filled squares = old, filled triangles = young; y-axis 'angular error (deg)'",
+   "row_header": "",
+   "col_header": "",
+   "crop_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/ingest/figures/fig01.png",
+   "overlay_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/figures/fig01.overlay2.png",
+   "pixel_provenance": {
+    "figure_id": "fig01",
+    "figure_kind": "raster",
+    "crop_dpi": 500,
+    "sent_scale": 1.0,
+    "axes": {
+     "y_axis_x": 236.5,
+     "x_axis_y": 524.668565430701,
+     "y_axis_span": [
+      52.0,
+      842.0
+     ],
+     "x_axis_span": [
+      222.0,
+      1706.0
+     ],
+     "y_axis_width": 4.0,
+     "x_axis_width": 7.0,
+     "plot_bbox": [
+      236.5,
+      52.0,
+      1706.0,
+      842.0
+     ],
+     "confidence": 1.0
+    },
+    "tick_rows": [
+     54.772,
+     209.75,
+     368.228,
+     524.78,
+     684.016,
+     839.438
+    ],
+    "ocr_status": "ok",
+    "ocr_ticks": [
+     [
+      "60",
+      60.0,
+      62.0
+     ],
+     [
+      "40",
+      40.0,
+      219.0
+     ],
+     [
+      "20",
+      20.0,
+      379.0
+     ],
+     [
+      "0",
+      0.0,
+      534.0
+     ],
+     [
+      "-20",
+      -20.0,
+      694.0
+     ],
+     [
+      "-40",
+      -40.0,
+      849.0
+     ]
+    ],
+    "cal": {
+     "axis": "y",
+     "scale": "linear",
+     "a": -0.12720929867349226,
+     "b": 66.84102381551352,
+     "rmse": 0.9144708099690545,
+     "ticks": [
+      [
+       54.77215189873418,
+       60.0
+      ],
+      [
+       209.75,
+       40.0
+      ],
+      [
+       368.2278481012658,
+       20.0
+      ],
+      [
+       524.780487804878,
+       0.0
+      ],
+      [
+       684.016393442623,
+       -20.0
+      ],
+      [
+       839.4375,
+       -40.0
+      ]
+     ],
+     "dropped": []
+    },
+    "cal_source": "cv_ocr",
+    "cal_note": "OCR ticks corroborated by the model's tick read",
+    "pixel_resolution": 0.12720929867349226,
+    "bars": [
+     {
+      "x_center": 326.5,
+      "x0": 261.5,
+      "x1": 391.5,
+      "top_y": 524.8808474565717,
+      "base_y": 524.668565430701,
+      "colour": "#949494",
+      "narrow": false
+     },
+     {
+      "x_center": 487.0,
+      "x0": 455.5,
+      "x1": 518.5,
+      "top_y": 514.6267346143723,
+      "base_y": 524.668565430701,
+      "colour": "#bbbbbb",
+      "narrow": false
+     }
+    ],
+    "markers": [],
+    "narrow_bar": false,
+    "vector": {
+     "attempted": false,
+     "skipped": "figure kind 'raster'"
+    },
+    "vector_warnings": [],
+    "overlay_iterations": [],
+    "x_hint": "The end of the initial perturbation block, while the perturbation is still applied. Use the block average of overall performance when the paper reports one; otherwise the final point of the group time series during the perturbation.",
+    "prompt_version": "digitize/1",
+    "axis_range": 100.4953459520589,
+    "axis_range_source": "plot_bbox",
+    "late_window_rule": "paper_reported_block",
+    "late_window_rule_configured": "paper_reported_block",
+    "late_window_x_read": [
+     "20",
+     "episode 20"
+    ],
+    "late_window_x_agrees": false,
+    "readout_plan": [
+     {
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     }
+    ],
+    "legend_says": "No printed legend; caption: triangles = young, squares = old; open symbols = no visual feedback; error bars = standard deviations. Error bars are drawn one-sided (upward for squares/old, downward for triangles/young). No boxed legend; caption defines symbols: triangles = young, squares = old; open symbols = no visual feedback; whiskers = standard deviations. At episode 20 both symbols are filled (perturbation with feedback still applied). Filled squares = old subjects, filled triangles = young subjects; error bars = SD; open symbols indicate no visual feedback",
+    "legend_dispersion": "SD",
+    "mapper_dispersion": "SD",
+    "per_route": [
+     {
+      "route": "D",
+      "group": "B",
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "mean": 12.4,
+      "error": 14.5,
+      "x_px": null,
+      "y_px": null,
+      "cap_top_px": null,
+      "cap_bottom_px": null,
+      "snap_conf": 0.6,
+      "sigma": null,
+      "label_read": "young (filled triangle), episode 20",
+      "status": "found",
+      "cal_source": "",
+      "cost_usd": 0.0,
+      "extra": {
+       "legend_says": "No printed legend; caption: triangles = young, squares = old; open symbols = no visual feedback; error bars = standard deviations. Error bars are drawn one-sided (upward for squares/old, downward for triangles/young).",
+       "x_read": "20",
+       "tick_labels": [
+        -40.0,
+        -20.0,
+        0.0,
+        20.0,
+        40.0,
+        60.0
+       ],
+       "unit": "deg",
+       "panel": "Fig. 1 (single panel)",
+       "same_prompt_resample": false
+      },
+      "dropped": false,
+      "drop_reason": "",
+      "extractor_id": "digitize:readout:claude-opus-5:direct",
+      "n_tool_calls": 9
+     },
+     {
+      "route": "D",
+      "group": "B",
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "mean": 11.8,
+      "error": 14.1,
+      "x_px": null,
+      "y_px": null,
+      "cap_top_px": null,
+      "cap_bottom_px": null,
+      "snap_conf": 0.7,
+      "sigma": null,
+      "label_read": "young (filled triangles), episode 20",
+      "status": "found",
+      "cal_source": "",
+      "cost_usd": 0.0,
+      "extra": {
+       "legend_says": "No boxed legend; caption defines symbols: triangles = young, squares = old; open symbols = no visual feedback; whiskers = standard deviations. At episode 20 both symbols are filled (perturbation with feedback still applied).",
+       "x_read": "20",
+       "tick_labels": [
+        -40.0,
+        -20.0,
+        0.0,
+        20.0,
+        40.0,
+        60.0
+       ],
+       "unit": "deg",
+       "panel": "Fig. 1 (single panel), adaptation phase, last adaptation episode (episode 20)",
+       "same_prompt_resample": false
+      },
+      "dropped": false,
+      "drop_reason": "",
+      "extractor_id": "digitize:readout:claude-opus-5:ticks_first",
+      "n_tool_calls": 7
+     },
+     {
+      "route": "D",
+      "group": "B",
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "mean": 13.4,
+      "error": 13.0,
+      "x_px": null,
+      "y_px": null,
+      "cap_top_px": null,
+      "cap_bottom_px": null,
+      "snap_conf": 0.55,
+      "sigma": null,
+      "label_read": "young (filled triangles), episode 20",
+      "status": "found",
+      "cal_source": "",
+      "cost_usd": 0.0,
+      "extra": {
+       "legend_says": "Filled squares = old subjects, filled triangles = young subjects; error bars = SD; open symbols indicate no visual feedback",
+       "x_read": "episode 20",
+       "tick_labels": [
+        -40.0,
+        -20.0,
+        0.0,
+        20.0,
+        40.0,
+        60.0
+       ],
+       "unit": "deg",
+       "panel": "Fig. 1 adaptation phase (episodes 6-20)",
+       "same_prompt_resample": false
+      },
+      "dropped": false,
+      "drop_reason": "",
+      "extractor_id": "digitize:readout:claude-sonnet-5:direct",
+      "n_tool_calls": 9
+     },
+     {
+      "route": "C",
+      "group": "B",
+      "model": "claude-opus-5",
+      "variant": "",
+      "sample": 0,
+      "mean": 11.059746347187165,
+      "error": 6.60437260091825,
+      "x_px": 1243.0,
+      "y_px": 438.5,
+      "cap_top_px": 420.16525411605835,
+      "cap_bottom_px": 524.0,
+      "snap_conf": 0.4765625,
+      "sigma": 0.12720929867349226,
+      "label_read": "young = filled triangle series (lower curve), matched on triangle marker shape and filled black",
+      "status": "found",
+      "cal_source": "cv_ocr",
+      "cost_usd": 0.0,
+      "extra": {
+       "raw_y_px": 434.0,
+       "panel": "Fig. 1",
+       "unit": "deg",
+       "cap_source": {
+        "model": [
+         null,
+         524.0
+        ],
+        "cv": [
+         420.16525411605835,
+         441.1982167363167
+        ]
+       }
+      },
+      "dropped": true,
+      "drop_reason": "overlay verify: not_on_datum \u2014 Sits ~13 px (\u22481.7 deg) below the young triangle marker centre at episode 20, on the error-bar line just under the symbol.",
+      "extractor_id": "digitize:vlm_coords:claude-opus-5",
+      "n_tool_calls": 10
+     }
+    ],
+    "route_values": {
+     "digitize:readout:claude-opus-5:direct": {
+      "mean": 12.4,
+      "error": 14.5
+     },
+     "digitize:readout:claude-opus-5:ticks_first": {
+      "mean": 11.8,
+      "error": 14.1
+     },
+     "digitize:readout:claude-sonnet-5:direct": {
+      "mean": 13.4,
+      "error": 13.0
+     }
+    },
+    "snap_confidences": [],
+    "n_routes": 3,
+    "mad_sigma": 0.8895599999999995,
+    "agreement": {
+     "mean_agrees": true,
+     "error_agrees": false,
+     "reasons": [
+      "error half-lengths span 1.5, over the 1.41 tolerance (max of 10% of 14.1 and half a pixel = 0.0636)"
+     ],
+     "mean_tolerance": 10.0,
+     "mean_spread": 1.5999999999999996,
+     "error_tolerance": 1.4100000000000001,
+     "error_spread": 1.5,
+     "agrees": false
+    },
+    "zero_confidence_snaps": [],
+    "resampled_routes": [],
+    "tool_calls": [],
+    "needs_review": true,
+    "needs_review_reason": "error half-lengths span 1.5, over the 1.41 tolerance (max of 10% of 14.1 and half a pixel = 0.0636)",
+    "dropped_samples": [
+     {
+      "route": "C",
+      "group": "B",
+      "model": "claude-opus-5",
+      "variant": "",
+      "sample": 0,
+      "mean": 11.059746347187165,
+      "error": 6.60437260091825,
+      "x_px": 1243.0,
+      "y_px": 438.5,
+      "cap_top_px": 420.16525411605835,
+      "cap_bottom_px": 524.0,
+      "snap_conf": 0.4765625,
+      "sigma": 0.12720929867349226,
+      "label_read": "young = filled triangle series (lower curve), matched on triangle marker shape and filled black",
+      "status": "found",
+      "cal_source": "cv_ocr",
+      "cost_usd": 0.0,
+      "extra": {
+       "raw_y_px": 434.0,
+       "panel": "Fig. 1",
+       "unit": "deg",
+       "cap_source": {
+        "model": [
+         null,
+         524.0
+        ],
+        "cv": [
+         420.16525411605835,
+         441.1982167363167
+        ]
+       }
+      },
+      "dropped": true,
+      "drop_reason": "overlay verify: not_on_datum \u2014 Sits ~13 px (\u22481.7 deg) below the young triangle marker centre at episode 20, on the error-bar line just under the symbol.",
+      "extractor_id": "digitize:vlm_coords:claude-opus-5",
+      "n_tool_calls": 10
+     }
+    ]
+   },
+   "sigma": 0.8895599999999995,
+   "grounded": null,
+   "grounding_similarity": null,
+   "route": "figure",
+   "model": "claude-opus-5",
+   "prompt_version": "digitize/1",
+   "llm_call_id": "1c1479d45284bb5ed8c16af37ae67ec54f0ffe77cc88c7b6f3b3f24db74132d7",
+   "extractor_id": "digitize:ensemble",
+   "notes": "error half-lengths span 1.5, over the 1.41 tolerance (max of 10% of 14.1 and half a pixel = 0.0636)"
+  },
+  {
+   "candidate_id": "b511dbb76fa6:d1:late_adaptation:A:digitize:readout:claude-opus-5:ticks_first",
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "kind": "group_stats",
+   "group": "A",
+   "status": "found",
+   "source_kind": "figure_line",
+   "n": 12,
+   "n_quote": "\"Data were collected from twelve young (26.0\u00b15.0 years of age) and twelve older (69.5\u00b17.5 years of age) subjects.\"",
+   "mean": 31.2,
+   "dispersion_value": 11.4,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "unit": "deg",
+   "value_as_written": "",
+   "raw_value_semantics": "unknown",
+   "analysis_metric": "endpoint",
+   "error_bar_scope": "between_subject",
+   "whisker_definition": "unknown",
+   "points": [],
+   "stat_type": null,
+   "stat_value": null,
+   "df": null,
+   "df1": null,
+   "df2": null,
+   "tails": null,
+   "p_kind": null,
+   "p_value": null,
+   "design": "unknown",
+   "direction": "unknown",
+   "admissible": true,
+   "admissible_reason": "",
+   "reported_value": null,
+   "reported_scale": "unknown",
+   "standardizer": "unknown",
+   "reported_ci_low": null,
+   "reported_ci_high": null,
+   "positive_means": "unknown",
+   "page": 3,
+   "page_corrected": false,
+   "quote": "",
+   "locator": "Fig. 1, whole adaptation phase (episodes 6-20), filled squares (old) vs filled triangles (young)",
+   "row_header": "",
+   "col_header": "",
+   "crop_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/ingest/figures/fig01.png",
+   "overlay_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/figures/fig01.overlay1.png",
+   "pixel_provenance": {
+    "figure_id": "fig01",
+    "figure_kind": "raster",
+    "crop_dpi": 500,
+    "sent_scale": 1.0,
+    "axes": {
+     "y_axis_x": 236.5,
+     "x_axis_y": 524.668565430701,
+     "y_axis_span": [
+      52.0,
+      842.0
+     ],
+     "x_axis_span": [
+      222.0,
+      1706.0
+     ],
+     "y_axis_width": 4.0,
+     "x_axis_width": 7.0,
+     "plot_bbox": [
+      236.5,
+      52.0,
+      1706.0,
+      842.0
+     ],
+     "confidence": 1.0
+    },
+    "tick_rows": [
+     54.772,
+     209.75,
+     368.228,
+     524.78,
+     684.016,
+     839.438
+    ],
+    "ocr_status": "ok",
+    "ocr_ticks": [
+     [
+      "60",
+      60.0,
+      62.0
+     ],
+     [
+      "40",
+      40.0,
+      219.0
+     ],
+     [
+      "20",
+      20.0,
+      379.0
+     ],
+     [
+      "0",
+      0.0,
+      534.0
+     ],
+     [
+      "-20",
+      -20.0,
+      694.0
+     ],
+     [
+      "-40",
+      -40.0,
+      849.0
+     ]
+    ],
+    "cal": {
+     "axis": "y",
+     "scale": "linear",
+     "a": -0.12720929867349226,
+     "b": 66.84102381551352,
+     "rmse": 0.9144708099690545,
+     "ticks": [
+      [
+       54.77215189873418,
+       60.0
+      ],
+      [
+       209.75,
+       40.0
+      ],
+      [
+       368.2278481012658,
+       20.0
+      ],
+      [
+       524.780487804878,
+       0.0
+      ],
+      [
+       684.016393442623,
+       -20.0
+      ],
+      [
+       839.4375,
+       -40.0
+      ]
+     ],
+     "dropped": []
+    },
+    "cal_source": "cv_ocr",
+    "cal_note": "OCR ticks corroborated by the model's tick read",
+    "pixel_resolution": 0.12720929867349226,
+    "bars": [
+     {
+      "x_center": 326.5,
+      "x0": 261.5,
+      "x1": 391.5,
+      "top_y": 524.8808474565717,
+      "base_y": 524.668565430701,
+      "colour": "#949494",
+      "narrow": false
+     },
+     {
+      "x_center": 487.0,
+      "x0": 455.5,
+      "x1": 518.5,
+      "top_y": 514.6267346143723,
+      "base_y": 524.668565430701,
+      "colour": "#bbbbbb",
+      "narrow": false
+     }
+    ],
+    "markers": [],
+    "narrow_bar": false,
+    "vector": {
+     "attempted": false,
+     "skipped": "figure kind 'raster'"
+    },
+    "vector_warnings": [],
+    "overlay_iterations": [],
+    "x_hint": "The end of the initial perturbation block, while the perturbation is still applied. Use the block average of overall performance when the paper reports one; otherwise the final point of the group time series during the perturbation.",
+    "prompt_version": "digitize/1",
+    "axis_range": 100.4953459520589,
+    "axis_range_source": "plot_bbox",
+    "late_window_rule": "paper_reported_block",
+    "late_window_rule_configured": "paper_reported_block",
+    "late_window_x_read": [
+     "episode 20 (end of perturbation block)",
+     "pointing episode 20 (last episode with rotated feedback)"
+    ],
+    "late_window_x_agrees": false,
+    "readout_plan": [
+     {
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     }
+    ],
+    "route_sample": {
+     "route": "D",
+     "group": "A",
+     "model": "claude-opus-5",
+     "variant": "ticks_first",
+     "sample": 0,
+     "mean": 31.2,
+     "error": 11.4,
+     "x_px": null,
+     "y_px": null,
+     "cap_top_px": null,
+     "cap_bottom_px": null,
+     "snap_conf": 0.8,
+     "sigma": null,
+     "label_read": "old (filled squares), episode 20",
+     "status": "found",
+     "notes": "Marker centre y\u2248274 px; only the upward SD whisker is drawn (cap y\u2248187 px = 42.6 deg).",
+     "cal_source": "",
+     "cost_usd": 0.0,
+     "extra": {
+      "legend_says": "No inset legend; caption identifies triangles = young, squares = old; open symbols = episodes without visual feedback; whiskers are standard deviations (drawn one-sided: upward for squares/old, downward for triangles/young)",
+      "x_read": "pointing episode 20 (last episode with rotated feedback)",
+      "tick_labels": [
+       -40.0,
+       -20.0,
+       0.0,
+       20.0,
+       40.0,
+       60.0
+      ],
+      "unit": "deg",
+      "panel": "Fig. 1 (single panel): mean angular pointing error vs pointing episode",
+      "same_prompt_resample": false
+     },
+     "dropped": false,
+     "drop_reason": "",
+     "extractor_id": "digitize:readout:claude-opus-5:ticks_first",
+     "n_tool_calls": 7
+    },
+    "tool_calls": [],
+    "dropped": false
+   },
+   "sigma": null,
+   "grounded": null,
+   "grounding_similarity": null,
+   "route": "figure",
+   "model": "claude-opus-5",
+   "prompt_version": "digitize/1",
+   "llm_call_id": "0f020371420a988b19573c634a969910ce38d26bcd9128a43310d69429b974b9",
+   "extractor_id": "digitize:readout:claude-opus-5:ticks_first",
+   "notes": "Marker centre y\u2248274 px; only the upward SD whisker is drawn (cap y\u2248187 px = 42.6 deg)."
+  },
+  {
+   "candidate_id": "b511dbb76fa6:d1:late_adaptation:A:digitize:readout:claude-sonnet-5:direct",
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "kind": "group_stats",
+   "group": "A",
+   "status": "found",
+   "source_kind": "figure_line",
+   "n": 12,
+   "n_quote": "\"Data were collected from twelve young (26.0\u00b15.0 years of age) and twelve older (69.5\u00b17.5 years of age) subjects.\"",
+   "mean": 32.0,
+   "dispersion_value": 11.0,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "unit": "deg",
+   "value_as_written": "",
+   "raw_value_semantics": "unknown",
+   "analysis_metric": "endpoint",
+   "error_bar_scope": "between_subject",
+   "whisker_definition": "unknown",
+   "points": [],
+   "stat_type": null,
+   "stat_value": null,
+   "df": null,
+   "df1": null,
+   "df2": null,
+   "tails": null,
+   "p_kind": null,
+   "p_value": null,
+   "design": "unknown",
+   "direction": "unknown",
+   "admissible": true,
+   "admissible_reason": "",
+   "reported_value": null,
+   "reported_scale": "unknown",
+   "standardizer": "unknown",
+   "reported_ci_low": null,
+   "reported_ci_high": null,
+   "positive_means": "unknown",
+   "page": 3,
+   "page_corrected": false,
+   "quote": "",
+   "locator": "Fig. 1, whole adaptation phase (episodes 6-20), filled squares (old) vs filled triangles (young)",
+   "row_header": "",
+   "col_header": "",
+   "crop_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/ingest/figures/fig01.png",
+   "overlay_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/figures/fig01.overlay1.png",
+   "pixel_provenance": {
+    "figure_id": "fig01",
+    "figure_kind": "raster",
+    "crop_dpi": 500,
+    "sent_scale": 1.0,
+    "axes": {
+     "y_axis_x": 236.5,
+     "x_axis_y": 524.668565430701,
+     "y_axis_span": [
+      52.0,
+      842.0
+     ],
+     "x_axis_span": [
+      222.0,
+      1706.0
+     ],
+     "y_axis_width": 4.0,
+     "x_axis_width": 7.0,
+     "plot_bbox": [
+      236.5,
+      52.0,
+      1706.0,
+      842.0
+     ],
+     "confidence": 1.0
+    },
+    "tick_rows": [
+     54.772,
+     209.75,
+     368.228,
+     524.78,
+     684.016,
+     839.438
+    ],
+    "ocr_status": "ok",
+    "ocr_ticks": [
+     [
+      "60",
+      60.0,
+      62.0
+     ],
+     [
+      "40",
+      40.0,
+      219.0
+     ],
+     [
+      "20",
+      20.0,
+      379.0
+     ],
+     [
+      "0",
+      0.0,
+      534.0
+     ],
+     [
+      "-20",
+      -20.0,
+      694.0
+     ],
+     [
+      "-40",
+      -40.0,
+      849.0
+     ]
+    ],
+    "cal": {
+     "axis": "y",
+     "scale": "linear",
+     "a": -0.12720929867349226,
+     "b": 66.84102381551352,
+     "rmse": 0.9144708099690545,
+     "ticks": [
+      [
+       54.77215189873418,
+       60.0
+      ],
+      [
+       209.75,
+       40.0
+      ],
+      [
+       368.2278481012658,
+       20.0
+      ],
+      [
+       524.780487804878,
+       0.0
+      ],
+      [
+       684.016393442623,
+       -20.0
+      ],
+      [
+       839.4375,
+       -40.0
+      ]
+     ],
+     "dropped": []
+    },
+    "cal_source": "cv_ocr",
+    "cal_note": "OCR ticks corroborated by the model's tick read",
+    "pixel_resolution": 0.12720929867349226,
+    "bars": [
+     {
+      "x_center": 326.5,
+      "x0": 261.5,
+      "x1": 391.5,
+      "top_y": 524.8808474565717,
+      "base_y": 524.668565430701,
+      "colour": "#949494",
+      "narrow": false
+     },
+     {
+      "x_center": 487.0,
+      "x0": 455.5,
+      "x1": 518.5,
+      "top_y": 514.6267346143723,
+      "base_y": 524.668565430701,
+      "colour": "#bbbbbb",
+      "narrow": false
+     }
+    ],
+    "markers": [],
+    "narrow_bar": false,
+    "vector": {
+     "attempted": false,
+     "skipped": "figure kind 'raster'"
+    },
+    "vector_warnings": [],
+    "overlay_iterations": [],
+    "x_hint": "The end of the initial perturbation block, while the perturbation is still applied. Use the block average of overall performance when the paper reports one; otherwise the final point of the group time series during the perturbation.",
+    "prompt_version": "digitize/1",
+    "axis_range": 100.4953459520589,
+    "axis_range_source": "plot_bbox",
+    "late_window_rule": "paper_reported_block",
+    "late_window_rule_configured": "paper_reported_block",
+    "late_window_x_read": [
+     "episode 20 (end of perturbation block)",
+     "pointing episode 20 (last episode with rotated feedback)"
+    ],
+    "late_window_x_agrees": false,
+    "readout_plan": [
+     {
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     }
+    ],
+    "route_sample": {
+     "route": "D",
+     "group": "A",
+     "model": "claude-sonnet-5",
+     "variant": "direct",
+     "sample": 0,
+     "mean": 32.0,
+     "error": 11.0,
+     "x_px": null,
+     "y_px": null,
+     "cap_top_px": null,
+     "cap_bottom_px": null,
+     "snap_conf": 0.55,
+     "sigma": null,
+     "label_read": "old (filled squares)",
+     "status": "found",
+     "notes": "Plateau value at episode 20; SD cap roughly 21-43 deg, half-length ~11 deg. Marker overlaps neighboring episode 19 point closely.",
+     "cal_source": "",
+     "cost_usd": 0.0,
+     "extra": {
+      "legend_says": "Filled squares = old subjects, filled triangles = young subjects; error bars are SD (per caption)",
+      "x_read": "episode 20 (end of perturbation block)",
+      "tick_labels": [
+       -40.0,
+       -20.0,
+       0.0,
+       20.0,
+       40.0,
+       60.0
+      ],
+      "unit": "deg",
+      "panel": "Fig. 1, whole adaptation phase (episodes 6-20)",
+      "same_prompt_resample": false
+     },
+     "dropped": false,
+     "drop_reason": "",
+     "extractor_id": "digitize:readout:claude-sonnet-5:direct",
+     "n_tool_calls": 9
+    },
+    "tool_calls": [],
+    "dropped": false
+   },
+   "sigma": null,
+   "grounded": null,
+   "grounding_similarity": null,
+   "route": "figure",
+   "model": "claude-sonnet-5",
+   "prompt_version": "digitize/1",
+   "llm_call_id": "43dca58ac0af94398b2c0d318dc7a65115118d685dace35254bf1d0deb35dbc5",
+   "extractor_id": "digitize:readout:claude-sonnet-5:direct",
+   "notes": "Plateau value at episode 20; SD cap roughly 21-43 deg, half-length ~11 deg. Marker overlaps neighboring episode 19 point closely."
+  },
+  {
+   "candidate_id": "b511dbb76fa6:d1:late_adaptation:A:digitize:vlm_coords:claude-opus-5",
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "kind": "group_stats",
+   "group": "A",
+   "status": "found",
+   "source_kind": "figure_line",
+   "n": 12,
+   "n_quote": "\"Data were collected from twelve young (26.0\u00b15.0 years of age) and twelve older (69.5\u00b17.5 years of age) subjects.\"",
+   "mean": 31.700268809989872,
+   "dispersion_value": 6.1238340761514785,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "unit": "deg",
+   "value_as_written": "",
+   "raw_value_semantics": "unknown",
+   "analysis_metric": "endpoint",
+   "error_bar_scope": "between_subject",
+   "whisker_definition": "unknown",
+   "points": [],
+   "stat_type": null,
+   "stat_value": null,
+   "df": null,
+   "df1": null,
+   "df2": null,
+   "tails": null,
+   "p_kind": null,
+   "p_value": null,
+   "design": "unknown",
+   "direction": "unknown",
+   "admissible": true,
+   "admissible_reason": "",
+   "reported_value": null,
+   "reported_scale": "unknown",
+   "standardizer": "unknown",
+   "reported_ci_low": null,
+   "reported_ci_high": null,
+   "positive_means": "unknown",
+   "page": 3,
+   "page_corrected": false,
+   "quote": "",
+   "locator": "Fig. 1, whole adaptation phase (episodes 6-20), filled squares (old) vs filled triangles (young)",
+   "row_header": "",
+   "col_header": "",
+   "crop_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/ingest/figures/fig01.png",
+   "overlay_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/figures/fig01.overlay1.png",
+   "pixel_provenance": {
+    "figure_id": "fig01",
+    "figure_kind": "raster",
+    "crop_dpi": 500,
+    "sent_scale": 1.0,
+    "axes": {
+     "y_axis_x": 236.5,
+     "x_axis_y": 524.668565430701,
+     "y_axis_span": [
+      52.0,
+      842.0
+     ],
+     "x_axis_span": [
+      222.0,
+      1706.0
+     ],
+     "y_axis_width": 4.0,
+     "x_axis_width": 7.0,
+     "plot_bbox": [
+      236.5,
+      52.0,
+      1706.0,
+      842.0
+     ],
+     "confidence": 1.0
+    },
+    "tick_rows": [
+     54.772,
+     209.75,
+     368.228,
+     524.78,
+     684.016,
+     839.438
+    ],
+    "ocr_status": "ok",
+    "ocr_ticks": [
+     [
+      "60",
+      60.0,
+      62.0
+     ],
+     [
+      "40",
+      40.0,
+      219.0
+     ],
+     [
+      "20",
+      20.0,
+      379.0
+     ],
+     [
+      "0",
+      0.0,
+      534.0
+     ],
+     [
+      "-20",
+      -20.0,
+      694.0
+     ],
+     [
+      "-40",
+      -40.0,
+      849.0
+     ]
+    ],
+    "cal": {
+     "axis": "y",
+     "scale": "linear",
+     "a": -0.12720929867349226,
+     "b": 66.84102381551352,
+     "rmse": 0.9144708099690545,
+     "ticks": [
+      [
+       54.77215189873418,
+       60.0
+      ],
+      [
+       209.75,
+       40.0
+      ],
+      [
+       368.2278481012658,
+       20.0
+      ],
+      [
+       524.780487804878,
+       0.0
+      ],
+      [
+       684.016393442623,
+       -20.0
+      ],
+      [
+       839.4375,
+       -40.0
+      ]
+     ],
+     "dropped": []
+    },
+    "cal_source": "cv_ocr",
+    "cal_note": "OCR ticks corroborated by the model's tick read",
+    "pixel_resolution": 0.12720929867349226,
+    "bars": [
+     {
+      "x_center": 326.5,
+      "x0": 261.5,
+      "x1": 391.5,
+      "top_y": 524.8808474565717,
+      "base_y": 524.668565430701,
+      "colour": "#949494",
+      "narrow": false
+     },
+     {
+      "x_center": 487.0,
+      "x0": 455.5,
+      "x1": 518.5,
+      "top_y": 514.6267346143723,
+      "base_y": 524.668565430701,
+      "colour": "#bbbbbb",
+      "narrow": false
+     }
+    ],
+    "markers": [],
+    "narrow_bar": false,
+    "vector": {
+     "attempted": false,
+     "skipped": "figure kind 'raster'"
+    },
+    "vector_warnings": [],
+    "overlay_iterations": [],
+    "x_hint": "The end of the initial perturbation block, while the perturbation is still applied. Use the block average of overall performance when the paper reports one; otherwise the final point of the group time series during the perturbation.",
+    "prompt_version": "digitize/1",
+    "axis_range": 100.4953459520589,
+    "axis_range_source": "plot_bbox",
+    "late_window_rule": "paper_reported_block",
+    "late_window_rule_configured": "paper_reported_block",
+    "late_window_x_read": [
+     "episode 20 (end of perturbation block)",
+     "pointing episode 20 (last episode with rotated feedback)"
+    ],
+    "late_window_x_agrees": false,
+    "readout_plan": [
+     {
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     }
+    ],
+    "route_sample": {
+     "route": "C",
+     "group": "A",
+     "model": "claude-opus-5",
+     "variant": "",
+     "sample": 0,
+     "mean": 31.700268809989872,
+     "error": 6.1238340761514785,
+     "x_px": 1247.0,
+     "y_px": 276.2436030381657,
+     "cap_top_px": 188.0,
+     "cap_bottom_px": 284.27966099977493,
+     "snap_conf": 0.15,
+     "sigma": 0.12720929867349226,
+     "label_read": "filled squares = old subjects (upper curve), final perturbation episode 20",
+     "status": "found",
+     "notes": "Marker centre from zoom; upward SD cap at y\u2248188; downward arm hidden behind marker/line.",
+     "cal_source": "cv_ocr",
+     "cost_usd": 0.180975,
+     "extra": {
+      "raw_y_px": 275.5,
+      "panel": "Fig. 1",
+      "unit": "deg",
+      "cap_source": {
+       "model": [
+        188.0,
+        null
+       ],
+       "cv": [
+        268.843703687191,
+        284.27966099977493
+       ]
+      }
+     },
+     "dropped": false,
+     "drop_reason": "",
+     "extractor_id": "digitize:vlm_coords:claude-opus-5",
+     "n_tool_calls": 9
+    },
+    "tool_calls": [],
+    "dropped": false
+   },
+   "sigma": 0.12720929867349226,
+   "grounded": null,
+   "grounding_similarity": null,
+   "route": "figure",
+   "model": "claude-opus-5",
+   "prompt_version": "digitize/1",
+   "llm_call_id": "d5ccd4b1ddbf7a5d867506d0456e4e0c039df2230cf500471a57b1b07920f9b9",
+   "extractor_id": "digitize:vlm_coords:claude-opus-5",
+   "notes": "Marker centre from zoom; upward SD cap at y\u2248188; downward arm hidden behind marker/line."
+  },
+  {
+   "candidate_id": "b511dbb76fa6:d1:late_adaptation:A:digitize:ensemble",
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "kind": "group_stats",
+   "group": "A",
+   "status": "ambiguous",
+   "source_kind": "figure_line",
+   "n": 12,
+   "n_quote": "\"Data were collected from twelve young (26.0\u00b15.0 years of age) and twelve older (69.5\u00b17.5 years of age) subjects.\"",
+   "mean": 31.700268809989872,
+   "dispersion_value": 11.0,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "unit": "deg",
+   "value_as_written": "",
+   "raw_value_semantics": "unknown",
+   "analysis_metric": "endpoint",
+   "error_bar_scope": "between_subject",
+   "whisker_definition": "unknown",
+   "points": [],
+   "stat_type": null,
+   "stat_value": null,
+   "df": null,
+   "df1": null,
+   "df2": null,
+   "tails": null,
+   "p_kind": null,
+   "p_value": null,
+   "design": "unknown",
+   "direction": "unknown",
+   "admissible": true,
+   "admissible_reason": "",
+   "reported_value": null,
+   "reported_scale": "unknown",
+   "standardizer": "unknown",
+   "reported_ci_low": null,
+   "reported_ci_high": null,
+   "positive_means": "unknown",
+   "page": 3,
+   "page_corrected": false,
+   "quote": "",
+   "locator": "Fig. 1, whole adaptation phase (episodes 6-20), filled squares (old) vs filled triangles (young)",
+   "row_header": "",
+   "col_header": "",
+   "crop_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/ingest/figures/fig01.png",
+   "overlay_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/figures/fig01.overlay1.png",
+   "pixel_provenance": {
+    "figure_id": "fig01",
+    "figure_kind": "raster",
+    "crop_dpi": 500,
+    "sent_scale": 1.0,
+    "axes": {
+     "y_axis_x": 236.5,
+     "x_axis_y": 524.668565430701,
+     "y_axis_span": [
+      52.0,
+      842.0
+     ],
+     "x_axis_span": [
+      222.0,
+      1706.0
+     ],
+     "y_axis_width": 4.0,
+     "x_axis_width": 7.0,
+     "plot_bbox": [
+      236.5,
+      52.0,
+      1706.0,
+      842.0
+     ],
+     "confidence": 1.0
+    },
+    "tick_rows": [
+     54.772,
+     209.75,
+     368.228,
+     524.78,
+     684.016,
+     839.438
+    ],
+    "ocr_status": "ok",
+    "ocr_ticks": [
+     [
+      "60",
+      60.0,
+      62.0
+     ],
+     [
+      "40",
+      40.0,
+      219.0
+     ],
+     [
+      "20",
+      20.0,
+      379.0
+     ],
+     [
+      "0",
+      0.0,
+      534.0
+     ],
+     [
+      "-20",
+      -20.0,
+      694.0
+     ],
+     [
+      "-40",
+      -40.0,
+      849.0
+     ]
+    ],
+    "cal": {
+     "axis": "y",
+     "scale": "linear",
+     "a": -0.12720929867349226,
+     "b": 66.84102381551352,
+     "rmse": 0.9144708099690545,
+     "ticks": [
+      [
+       54.77215189873418,
+       60.0
+      ],
+      [
+       209.75,
+       40.0
+      ],
+      [
+       368.2278481012658,
+       20.0
+      ],
+      [
+       524.780487804878,
+       0.0
+      ],
+      [
+       684.016393442623,
+       -20.0
+      ],
+      [
+       839.4375,
+       -40.0
+      ]
+     ],
+     "dropped": []
+    },
+    "cal_source": "cv_ocr",
+    "cal_note": "OCR ticks corroborated by the model's tick read",
+    "pixel_resolution": 0.12720929867349226,
+    "bars": [
+     {
+      "x_center": 326.5,
+      "x0": 261.5,
+      "x1": 391.5,
+      "top_y": 524.8808474565717,
+      "base_y": 524.668565430701,
+      "colour": "#949494",
+      "narrow": false
+     },
+     {
+      "x_center": 487.0,
+      "x0": 455.5,
+      "x1": 518.5,
+      "top_y": 514.6267346143723,
+      "base_y": 524.668565430701,
+      "colour": "#bbbbbb",
+      "narrow": false
+     }
+    ],
+    "markers": [],
+    "narrow_bar": false,
+    "vector": {
+     "attempted": false,
+     "skipped": "figure kind 'raster'"
+    },
+    "vector_warnings": [],
+    "overlay_iterations": [],
+    "x_hint": "The end of the initial perturbation block, while the perturbation is still applied. Use the block average of overall performance when the paper reports one; otherwise the final point of the group time series during the perturbation.",
+    "prompt_version": "digitize/1",
+    "axis_range": 100.4953459520589,
+    "axis_range_source": "plot_bbox",
+    "late_window_rule": "paper_reported_block",
+    "late_window_rule_configured": "paper_reported_block",
+    "late_window_x_read": [
+     "episode 20 (end of perturbation block)",
+     "pointing episode 20 (last episode with rotated feedback)"
+    ],
+    "late_window_x_agrees": false,
+    "readout_plan": [
+     {
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     }
+    ],
+    "legend_says": "Caption: filled triangles = young, filled squares = old; open symbols = episodes without visual feedback; bars are standard deviations. No in-figure legend. No inset legend; caption identifies triangles = young, squares = old; open symbols = episodes without visual feedback; whiskers are standard deviations (drawn one-sided: upward for squares/old, downward for triangles/young) Filled squares = old subjects, filled triangles = young subjects; error bars are SD (per caption)",
+    "legend_dispersion": "SD",
+    "mapper_dispersion": "SD",
+    "per_route": [
+     {
+      "route": "D",
+      "group": "A",
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "mean": 31.2,
+      "error": 11.4,
+      "x_px": null,
+      "y_px": null,
+      "cap_top_px": null,
+      "cap_bottom_px": null,
+      "snap_conf": 0.8,
+      "sigma": null,
+      "label_read": "old (filled squares), episode 20",
+      "status": "found",
+      "cal_source": "",
+      "cost_usd": 0.0,
+      "extra": {
+       "legend_says": "No inset legend; caption identifies triangles = young, squares = old; open symbols = episodes without visual feedback; whiskers are standard deviations (drawn one-sided: upward for squares/old, downward for triangles/young)",
+       "x_read": "pointing episode 20 (last episode with rotated feedback)",
+       "tick_labels": [
+        -40.0,
+        -20.0,
+        0.0,
+        20.0,
+        40.0,
+        60.0
+       ],
+       "unit": "deg",
+       "panel": "Fig. 1 (single panel): mean angular pointing error vs pointing episode",
+       "same_prompt_resample": false
+      },
+      "dropped": false,
+      "drop_reason": "",
+      "extractor_id": "digitize:readout:claude-opus-5:ticks_first",
+      "n_tool_calls": 7
+     },
+     {
+      "route": "D",
+      "group": "A",
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "mean": 32.0,
+      "error": 11.0,
+      "x_px": null,
+      "y_px": null,
+      "cap_top_px": null,
+      "cap_bottom_px": null,
+      "snap_conf": 0.55,
+      "sigma": null,
+      "label_read": "old (filled squares)",
+      "status": "found",
+      "cal_source": "",
+      "cost_usd": 0.0,
+      "extra": {
+       "legend_says": "Filled squares = old subjects, filled triangles = young subjects; error bars are SD (per caption)",
+       "x_read": "episode 20 (end of perturbation block)",
+       "tick_labels": [
+        -40.0,
+        -20.0,
+        0.0,
+        20.0,
+        40.0,
+        60.0
+       ],
+       "unit": "deg",
+       "panel": "Fig. 1, whole adaptation phase (episodes 6-20)",
+       "same_prompt_resample": false
+      },
+      "dropped": false,
+      "drop_reason": "",
+      "extractor_id": "digitize:readout:claude-sonnet-5:direct",
+      "n_tool_calls": 9
+     },
+     {
+      "route": "C",
+      "group": "A",
+      "model": "claude-opus-5",
+      "variant": "",
+      "sample": 0,
+      "mean": 31.700268809989872,
+      "error": 6.1238340761514785,
+      "x_px": 1247.0,
+      "y_px": 276.2436030381657,
+      "cap_top_px": 188.0,
+      "cap_bottom_px": 284.27966099977493,
+      "snap_conf": 0.15,
+      "sigma": 0.12720929867349226,
+      "label_read": "filled squares = old subjects (upper curve), final perturbation episode 20",
+      "status": "found",
+      "cal_source": "cv_ocr",
+      "cost_usd": 0.180975,
+      "extra": {
+       "raw_y_px": 275.5,
+       "panel": "Fig. 1",
+       "unit": "deg",
+       "cap_source": {
+        "model": [
+         188.0,
+         null
+        ],
+        "cv": [
+         268.843703687191,
+         284.27966099977493
+        ]
+       }
+      },
+      "dropped": false,
+      "drop_reason": "",
+      "extractor_id": "digitize:vlm_coords:claude-opus-5",
+      "n_tool_calls": 9
+     }
+    ],
+    "route_values": {
+     "digitize:readout:claude-opus-5:ticks_first": {
+      "mean": 31.2,
+      "error": 11.4
+     },
+     "digitize:readout:claude-sonnet-5:direct": {
+      "mean": 32.0,
+      "error": 11.0
+     },
+     "digitize:vlm_coords:claude-opus-5": {
+      "mean": 31.700268809989872,
+      "error": 6.1238340761514785
+     }
+    },
+    "snap_confidences": [],
+    "n_routes": 3,
+    "mad_sigma": 0.4443814623090158,
+    "agreement": {
+     "mean_agrees": true,
+     "error_agrees": false,
+     "reasons": [
+      "error half-lengths span 5.276, over the 1.1 tolerance (max of 10% of 11 and half a pixel = 0.0636)"
+     ],
+     "mean_tolerance": 10.0,
+     "mean_spread": 0.8000000000000007,
+     "error_tolerance": 1.1,
+     "error_spread": 5.276165923848522,
+     "agrees": false
+    },
+    "zero_confidence_snaps": [],
+    "resampled_routes": [],
+    "tool_calls": [],
+    "needs_review": true,
+    "needs_review_reason": "error half-lengths span 5.276, over the 1.1 tolerance (max of 10% of 11 and half a pixel = 0.0636)",
+    "dropped_samples": []
+   },
+   "sigma": 0.4443814623090158,
+   "grounded": null,
+   "grounding_similarity": null,
+   "route": "figure",
+   "model": "claude-opus-5",
+   "prompt_version": "digitize/1",
+   "llm_call_id": "9121181123ec9d7f020b89466dfd4994919c6a69725c3253b6b6c18508f979a8",
+   "extractor_id": "digitize:ensemble",
+   "notes": "error half-lengths span 5.276, over the 1.1 tolerance (max of 10% of 11 and half a pixel = 0.0636)"
+  },
+  {
+   "candidate_id": "b511dbb76fa6:d1:late_adaptation:B:digitize:readout:claude-opus-5:ticks_first",
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "kind": "group_stats",
+   "group": "B",
+   "status": "found",
+   "source_kind": "figure_line",
+   "n": 12,
+   "n_quote": "\"Data were collected from twelve young (26.0\u00b15.0 years of age) and twelve older (69.5\u00b17.5 years of age) subjects.\"",
+   "mean": 10.6,
+   "dispersion_value": 14.1,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "unit": "deg",
+   "value_as_written": "",
+   "raw_value_semantics": "unknown",
+   "analysis_metric": "endpoint",
+   "error_bar_scope": "between_subject",
+   "whisker_definition": "unknown",
+   "points": [],
+   "stat_type": null,
+   "stat_value": null,
+   "df": null,
+   "df1": null,
+   "df2": null,
+   "tails": null,
+   "p_kind": null,
+   "p_value": null,
+   "design": "unknown",
+   "direction": "unknown",
+   "admissible": true,
+   "admissible_reason": "",
+   "reported_value": null,
+   "reported_scale": "unknown",
+   "standardizer": "unknown",
+   "reported_ci_low": null,
+   "reported_ci_high": null,
+   "positive_means": "unknown",
+   "page": 3,
+   "page_corrected": false,
+   "quote": "",
+   "locator": "Fig. 1, whole adaptation phase (episodes 6-20), filled squares (old) vs filled triangles (young)",
+   "row_header": "",
+   "col_header": "",
+   "crop_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/ingest/figures/fig01.png",
+   "overlay_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/figures/fig01.overlay1.png",
+   "pixel_provenance": {
+    "figure_id": "fig01",
+    "figure_kind": "raster",
+    "crop_dpi": 500,
+    "sent_scale": 1.0,
+    "axes": {
+     "y_axis_x": 236.5,
+     "x_axis_y": 524.668565430701,
+     "y_axis_span": [
+      52.0,
+      842.0
+     ],
+     "x_axis_span": [
+      222.0,
+      1706.0
+     ],
+     "y_axis_width": 4.0,
+     "x_axis_width": 7.0,
+     "plot_bbox": [
+      236.5,
+      52.0,
+      1706.0,
+      842.0
+     ],
+     "confidence": 1.0
+    },
+    "tick_rows": [
+     54.772,
+     209.75,
+     368.228,
+     524.78,
+     684.016,
+     839.438
+    ],
+    "ocr_status": "ok",
+    "ocr_ticks": [
+     [
+      "60",
+      60.0,
+      62.0
+     ],
+     [
+      "40",
+      40.0,
+      219.0
+     ],
+     [
+      "20",
+      20.0,
+      379.0
+     ],
+     [
+      "0",
+      0.0,
+      534.0
+     ],
+     [
+      "-20",
+      -20.0,
+      694.0
+     ],
+     [
+      "-40",
+      -40.0,
+      849.0
+     ]
+    ],
+    "cal": {
+     "axis": "y",
+     "scale": "linear",
+     "a": -0.12720929867349226,
+     "b": 66.84102381551352,
+     "rmse": 0.9144708099690545,
+     "ticks": [
+      [
+       54.77215189873418,
+       60.0
+      ],
+      [
+       209.75,
+       40.0
+      ],
+      [
+       368.2278481012658,
+       20.0
+      ],
+      [
+       524.780487804878,
+       0.0
+      ],
+      [
+       684.016393442623,
+       -20.0
+      ],
+      [
+       839.4375,
+       -40.0
+      ]
+     ],
+     "dropped": []
+    },
+    "cal_source": "cv_ocr",
+    "cal_note": "OCR ticks corroborated by the model's tick read",
+    "pixel_resolution": 0.12720929867349226,
+    "bars": [
+     {
+      "x_center": 326.5,
+      "x0": 261.5,
+      "x1": 391.5,
+      "top_y": 524.8808474565717,
+      "base_y": 524.668565430701,
+      "colour": "#949494",
+      "narrow": false
+     },
+     {
+      "x_center": 487.0,
+      "x0": 455.5,
+      "x1": 518.5,
+      "top_y": 514.6267346143723,
+      "base_y": 524.668565430701,
+      "colour": "#bbbbbb",
+      "narrow": false
+     }
+    ],
+    "markers": [],
+    "narrow_bar": false,
+    "vector": {
+     "attempted": false,
+     "skipped": "figure kind 'raster'"
+    },
+    "vector_warnings": [],
+    "overlay_iterations": [],
+    "x_hint": "The end of the initial perturbation block, while the perturbation is still applied. Use the block average of overall performance when the paper reports one; otherwise the final point of the group time series during the perturbation.",
+    "prompt_version": "digitize/1",
+    "axis_range": 100.4953459520589,
+    "axis_range_source": "plot_bbox",
+    "late_window_rule": "paper_reported_block",
+    "late_window_rule_configured": "paper_reported_block",
+    "late_window_x_read": [
+     "episode 20 (end of perturbation block)",
+     "pointing episode 20 (last episode with rotated feedback)"
+    ],
+    "late_window_x_agrees": false,
+    "readout_plan": [
+     {
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     }
+    ],
+    "route_sample": {
+     "route": "D",
+     "group": "B",
+     "model": "claude-opus-5",
+     "variant": "ticks_first",
+     "sample": 0,
+     "mean": 10.6,
+     "error": 14.1,
+     "x_px": null,
+     "y_px": null,
+     "cap_top_px": null,
+     "cap_bottom_px": null,
+     "snap_conf": 0.68,
+     "sigma": null,
+     "label_read": "young (filled triangles), episode 20",
+     "status": "found",
+     "notes": "Triangle glyph spans y\u2248422\u2013440 px; centre taken at 431 px = 10.6 deg. Only the downward SD whisker is drawn, cap at y\u2248539 px = -3.5 deg (crosses the zero line).",
+     "cal_source": "",
+     "cost_usd": 0.0,
+     "extra": {
+      "legend_says": "No inset legend; caption identifies triangles = young, squares = old; open symbols = episodes without visual feedback; whiskers are standard deviations (drawn one-sided: upward for squares/old, downward for triangles/young)",
+      "x_read": "pointing episode 20 (last episode with rotated feedback)",
+      "tick_labels": [
+       -40.0,
+       -20.0,
+       0.0,
+       20.0,
+       40.0,
+       60.0
+      ],
+      "unit": "deg",
+      "panel": "Fig. 1 (single panel): mean angular pointing error vs pointing episode",
+      "same_prompt_resample": false
+     },
+     "dropped": false,
+     "drop_reason": "",
+     "extractor_id": "digitize:readout:claude-opus-5:ticks_first",
+     "n_tool_calls": 7
+    },
+    "tool_calls": [],
+    "dropped": false
+   },
+   "sigma": null,
+   "grounded": null,
+   "grounding_similarity": null,
+   "route": "figure",
+   "model": "claude-opus-5",
+   "prompt_version": "digitize/1",
+   "llm_call_id": "0f020371420a988b19573c634a969910ce38d26bcd9128a43310d69429b974b9",
+   "extractor_id": "digitize:readout:claude-opus-5:ticks_first",
+   "notes": "Triangle glyph spans y\u2248422\u2013440 px; centre taken at 431 px = 10.6 deg. Only the downward SD whisker is drawn, cap at y\u2248539 px = -3.5 deg (crosses the zero line)."
+  },
+  {
+   "candidate_id": "b511dbb76fa6:d1:late_adaptation:B:digitize:vlm_coords:claude-opus-5",
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "kind": "group_stats",
+   "group": "B",
+   "status": "found",
+   "source_kind": "figure_line",
+   "n": 12,
+   "n_quote": "\"Data were collected from twelve young (26.0\u00b15.0 years of age) and twelve older (69.5\u00b17.5 years of age) subjects.\"",
+   "mean": 11.664730104832032,
+   "dispersion_value": 6.233255635001118,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "unit": "deg",
+   "value_as_written": "",
+   "raw_value_semantics": "unknown",
+   "analysis_metric": "endpoint",
+   "error_bar_scope": "between_subject",
+   "whisker_definition": "unknown",
+   "points": [],
+   "stat_type": null,
+   "stat_value": null,
+   "df": null,
+   "df1": null,
+   "df2": null,
+   "tails": null,
+   "p_kind": null,
+   "p_value": null,
+   "design": "unknown",
+   "direction": "unknown",
+   "admissible": true,
+   "admissible_reason": "",
+   "reported_value": null,
+   "reported_scale": "unknown",
+   "standardizer": "unknown",
+   "reported_ci_low": null,
+   "reported_ci_high": null,
+   "positive_means": "unknown",
+   "page": 3,
+   "page_corrected": false,
+   "quote": "",
+   "locator": "Fig. 1, whole adaptation phase (episodes 6-20), filled squares (old) vs filled triangles (young)",
+   "row_header": "",
+   "col_header": "",
+   "crop_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/ingest/figures/fig01.png",
+   "overlay_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/figures/fig01.overlay1.png",
+   "pixel_provenance": {
+    "figure_id": "fig01",
+    "figure_kind": "raster",
+    "crop_dpi": 500,
+    "sent_scale": 1.0,
+    "axes": {
+     "y_axis_x": 236.5,
+     "x_axis_y": 524.668565430701,
+     "y_axis_span": [
+      52.0,
+      842.0
+     ],
+     "x_axis_span": [
+      222.0,
+      1706.0
+     ],
+     "y_axis_width": 4.0,
+     "x_axis_width": 7.0,
+     "plot_bbox": [
+      236.5,
+      52.0,
+      1706.0,
+      842.0
+     ],
+     "confidence": 1.0
+    },
+    "tick_rows": [
+     54.772,
+     209.75,
+     368.228,
+     524.78,
+     684.016,
+     839.438
+    ],
+    "ocr_status": "ok",
+    "ocr_ticks": [
+     [
+      "60",
+      60.0,
+      62.0
+     ],
+     [
+      "40",
+      40.0,
+      219.0
+     ],
+     [
+      "20",
+      20.0,
+      379.0
+     ],
+     [
+      "0",
+      0.0,
+      534.0
+     ],
+     [
+      "-20",
+      -20.0,
+      694.0
+     ],
+     [
+      "-40",
+      -40.0,
+      849.0
+     ]
+    ],
+    "cal": {
+     "axis": "y",
+     "scale": "linear",
+     "a": -0.12720929867349226,
+     "b": 66.84102381551352,
+     "rmse": 0.9144708099690545,
+     "ticks": [
+      [
+       54.77215189873418,
+       60.0
+      ],
+      [
+       209.75,
+       40.0
+      ],
+      [
+       368.2278481012658,
+       20.0
+      ],
+      [
+       524.780487804878,
+       0.0
+      ],
+      [
+       684.016393442623,
+       -20.0
+      ],
+      [
+       839.4375,
+       -40.0
+      ]
+     ],
+     "dropped": []
+    },
+    "cal_source": "cv_ocr",
+    "cal_note": "OCR ticks corroborated by the model's tick read",
+    "pixel_resolution": 0.12720929867349226,
+    "bars": [
+     {
+      "x_center": 326.5,
+      "x0": 261.5,
+      "x1": 391.5,
+      "top_y": 524.8808474565717,
+      "base_y": 524.668565430701,
+      "colour": "#949494",
+      "narrow": false
+     },
+     {
+      "x_center": 487.0,
+      "x0": 455.5,
+      "x1": 518.5,
+      "top_y": 514.6267346143723,
+      "base_y": 524.668565430701,
+      "colour": "#bbbbbb",
+      "narrow": false
+     }
+    ],
+    "markers": [],
+    "narrow_bar": false,
+    "vector": {
+     "attempted": false,
+     "skipped": "figure kind 'raster'"
+    },
+    "vector_warnings": [],
+    "overlay_iterations": [],
+    "x_hint": "The end of the initial perturbation block, while the perturbation is still applied. Use the block average of overall performance when the paper reports one; otherwise the final point of the group time series during the perturbation.",
+    "prompt_version": "digitize/1",
+    "axis_range": 100.4953459520589,
+    "axis_range_source": "plot_bbox",
+    "late_window_rule": "paper_reported_block",
+    "late_window_rule_configured": "paper_reported_block",
+    "late_window_x_read": [
+     "episode 20 (end of perturbation block)",
+     "pointing episode 20 (last episode with rotated feedback)"
+    ],
+    "late_window_x_agrees": false,
+    "readout_plan": [
+     {
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     }
+    ],
+    "route_sample": {
+     "route": "C",
+     "group": "B",
+     "model": "claude-opus-5",
+     "variant": "",
+     "sample": 0,
+     "mean": 11.664730104832032,
+     "error": 6.233255635001118,
+     "x_px": 1247.0,
+     "y_px": 433.74418604651163,
+     "cap_top_px": 426.0,
+     "cap_bottom_px": 524.0,
+     "snap_conf": 0.625,
+     "sigma": 0.12720929867349226,
+     "label_read": "filled triangles = young subjects (lower curve), final perturbation episode 20",
+     "status": "found",
+     "notes": "Triangle centre y\u2248433; downward SD cap reaches the x-axis region y\u2248524; upper arm not visible.",
+     "cal_source": "cv_ocr",
+     "cost_usd": 0.180975,
+     "extra": {
+      "raw_y_px": 433.0,
+      "panel": "Fig. 1",
+      "unit": "deg",
+      "cap_source": {
+       "model": [
+        null,
+        524.0
+       ],
+       "cv": [
+        426.0,
+        441.1972476840019
+       ]
+      }
+     },
+     "dropped": false,
+     "drop_reason": "",
+     "extractor_id": "digitize:vlm_coords:claude-opus-5",
+     "n_tool_calls": 9
+    },
+    "tool_calls": [],
+    "dropped": false
+   },
+   "sigma": 0.12720929867349226,
+   "grounded": null,
+   "grounding_similarity": null,
+   "route": "figure",
+   "model": "claude-opus-5",
+   "prompt_version": "digitize/1",
+   "llm_call_id": "d5ccd4b1ddbf7a5d867506d0456e4e0c039df2230cf500471a57b1b07920f9b9",
+   "extractor_id": "digitize:vlm_coords:claude-opus-5",
+   "notes": "Triangle centre y\u2248433; downward SD cap reaches the x-axis region y\u2248524; upper arm not visible."
+  },
+  {
+   "candidate_id": "b511dbb76fa6:d1:late_adaptation:B:digitize:ensemble",
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "kind": "group_stats",
+   "group": "B",
+   "status": "ambiguous",
+   "source_kind": "figure_line",
+   "n": 12,
+   "n_quote": "\"Data were collected from twelve young (26.0\u00b15.0 years of age) and twelve older (69.5\u00b17.5 years of age) subjects.\"",
+   "mean": 11.132365052416016,
+   "dispersion_value": 10.166627817500558,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "unit": "deg",
+   "value_as_written": "",
+   "raw_value_semantics": "unknown",
+   "analysis_metric": "endpoint",
+   "error_bar_scope": "between_subject",
+   "whisker_definition": "unknown",
+   "points": [],
+   "stat_type": null,
+   "stat_value": null,
+   "df": null,
+   "df1": null,
+   "df2": null,
+   "tails": null,
+   "p_kind": null,
+   "p_value": null,
+   "design": "unknown",
+   "direction": "unknown",
+   "admissible": true,
+   "admissible_reason": "",
+   "reported_value": null,
+   "reported_scale": "unknown",
+   "standardizer": "unknown",
+   "reported_ci_low": null,
+   "reported_ci_high": null,
+   "positive_means": "unknown",
+   "page": 3,
+   "page_corrected": false,
+   "quote": "",
+   "locator": "Fig. 1, whole adaptation phase (episodes 6-20), filled squares (old) vs filled triangles (young)",
+   "row_header": "",
+   "col_header": "",
+   "crop_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/ingest/figures/fig01.png",
+   "overlay_path": "validation/out/run_cisneros_dev/papers/b511dbb76fa6/figures/fig01.overlay1.png",
+   "pixel_provenance": {
+    "figure_id": "fig01",
+    "figure_kind": "raster",
+    "crop_dpi": 500,
+    "sent_scale": 1.0,
+    "axes": {
+     "y_axis_x": 236.5,
+     "x_axis_y": 524.668565430701,
+     "y_axis_span": [
+      52.0,
+      842.0
+     ],
+     "x_axis_span": [
+      222.0,
+      1706.0
+     ],
+     "y_axis_width": 4.0,
+     "x_axis_width": 7.0,
+     "plot_bbox": [
+      236.5,
+      52.0,
+      1706.0,
+      842.0
+     ],
+     "confidence": 1.0
+    },
+    "tick_rows": [
+     54.772,
+     209.75,
+     368.228,
+     524.78,
+     684.016,
+     839.438
+    ],
+    "ocr_status": "ok",
+    "ocr_ticks": [
+     [
+      "60",
+      60.0,
+      62.0
+     ],
+     [
+      "40",
+      40.0,
+      219.0
+     ],
+     [
+      "20",
+      20.0,
+      379.0
+     ],
+     [
+      "0",
+      0.0,
+      534.0
+     ],
+     [
+      "-20",
+      -20.0,
+      694.0
+     ],
+     [
+      "-40",
+      -40.0,
+      849.0
+     ]
+    ],
+    "cal": {
+     "axis": "y",
+     "scale": "linear",
+     "a": -0.12720929867349226,
+     "b": 66.84102381551352,
+     "rmse": 0.9144708099690545,
+     "ticks": [
+      [
+       54.77215189873418,
+       60.0
+      ],
+      [
+       209.75,
+       40.0
+      ],
+      [
+       368.2278481012658,
+       20.0
+      ],
+      [
+       524.780487804878,
+       0.0
+      ],
+      [
+       684.016393442623,
+       -20.0
+      ],
+      [
+       839.4375,
+       -40.0
+      ]
+     ],
+     "dropped": []
+    },
+    "cal_source": "cv_ocr",
+    "cal_note": "OCR ticks corroborated by the model's tick read",
+    "pixel_resolution": 0.12720929867349226,
+    "bars": [
+     {
+      "x_center": 326.5,
+      "x0": 261.5,
+      "x1": 391.5,
+      "top_y": 524.8808474565717,
+      "base_y": 524.668565430701,
+      "colour": "#949494",
+      "narrow": false
+     },
+     {
+      "x_center": 487.0,
+      "x0": 455.5,
+      "x1": 518.5,
+      "top_y": 514.6267346143723,
+      "base_y": 524.668565430701,
+      "colour": "#bbbbbb",
+      "narrow": false
+     }
+    ],
+    "markers": [],
+    "narrow_bar": false,
+    "vector": {
+     "attempted": false,
+     "skipped": "figure kind 'raster'"
+    },
+    "vector_warnings": [],
+    "overlay_iterations": [],
+    "x_hint": "The end of the initial perturbation block, while the perturbation is still applied. Use the block average of overall performance when the paper reports one; otherwise the final point of the group time series during the perturbation.",
+    "prompt_version": "digitize/1",
+    "axis_range": 100.4953459520589,
+    "axis_range_source": "plot_bbox",
+    "late_window_rule": "paper_reported_block",
+    "late_window_rule_configured": "paper_reported_block",
+    "late_window_x_read": [
+     "episode 20 (end of perturbation block)",
+     "pointing episode 20 (last episode with rotated feedback)"
+    ],
+    "late_window_x_agrees": false,
+    "readout_plan": [
+     {
+      "model": "claude-opus-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "resample": false
+     },
+     {
+      "model": "claude-sonnet-5",
+      "variant": "direct",
+      "sample": 0,
+      "resample": false
+     }
+    ],
+    "legend_says": "Caption: filled triangles = young, filled squares = old; open symbols = episodes without visual feedback; bars are standard deviations. No in-figure legend. No inset legend; caption identifies triangles = young, squares = old; open symbols = episodes without visual feedback; whiskers are standard deviations (drawn one-sided: upward for squares/old, downward for triangles/young) Filled squares = old subjects, filled triangles = young subjects; error bars are SD (per caption)",
+    "legend_dispersion": "SD",
+    "mapper_dispersion": "SD",
+    "per_route": [
+     {
+      "route": "D",
+      "group": "B",
+      "model": "claude-opus-5",
+      "variant": "ticks_first",
+      "sample": 0,
+      "mean": 10.6,
+      "error": 14.1,
+      "x_px": null,
+      "y_px": null,
+      "cap_top_px": null,
+      "cap_bottom_px": null,
+      "snap_conf": 0.68,
+      "sigma": null,
+      "label_read": "young (filled triangles), episode 20",
+      "status": "found",
+      "cal_source": "",
+      "cost_usd": 0.0,
+      "extra": {
+       "legend_says": "No inset legend; caption identifies triangles = young, squares = old; open symbols = episodes without visual feedback; whiskers are standard deviations (drawn one-sided: upward for squares/old, downward for triangles/young)",
+       "x_read": "pointing episode 20 (last episode with rotated feedback)",
+       "tick_labels": [
+        -40.0,
+        -20.0,
+        0.0,
+        20.0,
+        40.0,
+        60.0
+       ],
+       "unit": "deg",
+       "panel": "Fig. 1 (single panel): mean angular pointing error vs pointing episode",
+       "same_prompt_resample": false
+      },
+      "dropped": false,
+      "drop_reason": "",
+      "extractor_id": "digitize:readout:claude-opus-5:ticks_first",
+      "n_tool_calls": 7
+     },
+     {
+      "route": "C",
+      "group": "B",
+      "model": "claude-opus-5",
+      "variant": "",
+      "sample": 0,
+      "mean": 11.664730104832032,
+      "error": 6.233255635001118,
+      "x_px": 1247.0,
+      "y_px": 433.74418604651163,
+      "cap_top_px": 426.0,
+      "cap_bottom_px": 524.0,
+      "snap_conf": 0.625,
+      "sigma": 0.12720929867349226,
+      "label_read": "filled triangles = young subjects (lower curve), final perturbation episode 20",
+      "status": "found",
+      "cal_source": "cv_ocr",
+      "cost_usd": 0.180975,
+      "extra": {
+       "raw_y_px": 433.0,
+       "panel": "Fig. 1",
+       "unit": "deg",
+       "cap_source": {
+        "model": [
+         null,
+         524.0
+        ],
+        "cv": [
+         426.0,
+         441.1972476840019
+        ]
+       }
+      },
+      "dropped": false,
+      "drop_reason": "",
+      "extractor_id": "digitize:vlm_coords:claude-opus-5",
+      "n_tool_calls": 9
+     }
+    ],
+    "route_values": {
+     "digitize:readout:claude-opus-5:ticks_first": {
+      "mean": 10.6,
+      "error": 14.1
+     },
+     "digitize:vlm_coords:claude-opus-5": {
+      "mean": 11.664730104832032,
+      "error": 6.233255635001118
+     }
+    },
+    "snap_confidences": [],
+    "n_routes": 2,
+    "mad_sigma": 0.7892844267119852,
+    "agreement": {
+     "mean_agrees": true,
+     "error_agrees": false,
+     "reasons": [
+      "error half-lengths span 7.867, over the 1.017 tolerance (max of 10% of 10.17 and half a pixel = 0.0636)"
+     ],
+     "mean_tolerance": 10.0,
+     "mean_spread": 1.064730104832032,
+     "error_tolerance": 1.0166627817500558,
+     "error_spread": 7.8667443649988815,
+     "agrees": false
+    },
+    "zero_confidence_snaps": [],
+    "resampled_routes": [],
+    "tool_calls": [],
+    "needs_review": true,
+    "needs_review_reason": "error half-lengths span 7.867, over the 1.017 tolerance (max of 10% of 10.17 and half a pixel = 0.0636)",
+    "dropped_samples": []
+   },
+   "sigma": 0.7892844267119852,
+   "grounded": null,
+   "grounding_similarity": null,
+   "route": "figure",
+   "model": "claude-opus-5",
+   "prompt_version": "digitize/1",
+   "llm_call_id": "9121181123ec9d7f020b89466dfd4994919c6a69725c3253b6b6c18508f979a8",
+   "extractor_id": "digitize:ensemble",
+   "notes": "error half-lengths span 7.867, over the 1.017 tolerance (max of 10% of 10.17 and half a pixel = 0.0636)"
+  }
+ ]
+}

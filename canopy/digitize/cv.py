@@ -313,9 +313,15 @@ class OcrResult:
 
 
 class TickLabels(list):
-    """`list[TickLabel]` that also carries the OCR `status` of the run that produced it."""
+    """`list[TickLabel]` that also carries the OCR `status` of the run that produced it.
+
+    `band_retried` says the label band was re-cut with a doubled gap tolerance because a surviving
+    glyph started ON the band edge — see `_label_groups`. It is recorded in provenance so a
+    reviewer can tell a recovered ladder from one that never needed recovering.
+    """
 
     status: str = "ok"
+    band_retried: bool = False
 
 
 def run_tesseract(png: str | Path, psm: int = 11, lang: str = "eng", whitelist: str | None = None) -> OcrResult:
@@ -392,7 +398,9 @@ def ocr_tick_labels(img: ImageLike, axes: Axes, side: str = "left", upscale: int
     crop = gray[gy0:gy1, gx0:gx1]
     out = TickLabels()
     statuses: list[str] = []
-    for comps in _label_groups(crop, side, ticks, offset=(gx0, gy0)):
+    groups, band_retried = _label_groups(crop, side, ticks, offset=(gx0, gy0))
+    out.band_retried = band_retried
+    for comps in groups:
         bx0 = float(min(c[0] for c in comps) + gx0)
         by0 = float(min(c[1] for c in comps) + gy0)
         bx1 = float(max(c[0] + c[2] for c in comps) + gx0)
@@ -465,29 +473,59 @@ def _ocr_line(patch: np.ndarray, upscale: int, psm: int) -> tuple[str, float, st
 
 
 def _label_groups(crop: np.ndarray, side: str, ticks: list[float] | None,
-                  offset: tuple[int, int] = (0, 0)) -> list[list[tuple[int, int, int, int]]]:
-    """Group the gutter's ink into one list of glyph components per tick label (gutter coordinates)."""
+                  offset: tuple[int, int] = (0, 0)
+                  ) -> tuple[list[list[tuple[int, int, int, int]]], bool]:
+    """The gutter's ink as one glyph list per tick label -> `(groups, band_retried)`."""
     gx0, gy0 = offset
     ink = _dark(crop).astype(np.uint8)
     if not ink.any():
-        return []
+        return [], False
     n, _, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
     comps = [(int(stats[i, cv2.CC_STAT_LEFT]), int(stats[i, cv2.CC_STAT_TOP]), int(stats[i, cv2.CC_STAT_WIDTH]),
               int(stats[i, cv2.CC_STAT_HEIGHT])) for i in range(1, n) if stats[i, cv2.CC_STAT_AREA] >= 3]
     if not comps:
-        return []
+        return [], False
     med_h = float(np.median([c[3] for c in comps]))
     comps = [c for c in comps if c[3] <= max(2.5 * med_h, med_h + 4) and c[2] <= 0.9 * crop.shape[1]]
     if not comps:
-        return []
+        return [], False
     med_h = float(np.median([c[3] for c in comps]))
-    comps = _band_nearest_axis(comps, side, crop.shape, gap_tol=max(4.0, 0.6 * med_h))   # 0.35× cut INSIDE wide labels ("15,10,5,0" read as "5,0,5,0", a silent half-scale fit)
+    all_comps = comps
+    gap_tol = max(4.0, 0.6 * med_h)                 # 0.35× cut INSIDE wide labels ("15,10,5,0" read as "5,0,5,0", a silent half-scale fit)
+    comps, edge = _band_nearest_axis(all_comps, side, crop.shape, gap_tol=gap_tol)
+    retried = False
+    if comps and edge is not None and _starts_on_band_edge(comps, side, edge):
+        # a glyph that begins exactly where the band was cut is the outer digit of a wider label,
+        # or the last thing before a genuine gap — the two are told apart by re-cutting with twice
+        # the tolerance and keeping the wider band only when it brings MORE ink back without
+        # doubling the band's extent (which would be the axis title, not another digit).
+        wider, wider_edge = _band_nearest_axis(all_comps, side, crop.shape, gap_tol=2.0 * gap_tol)
+        if len(wider) > len(comps) and _band_extent(wider, side) <= 2.0 * max(
+                1.0, _band_extent(comps, side)):
+            comps, edge, retried = wider, wider_edge, True
     if not comps:
-        return []
+        return [], retried
     groups = _group_glyphs(comps, side, med_h)
     if not ticks:
-        return groups
-    return _assign_groups_to_ticks(groups, ticks, side, med_h, offset)
+        return groups, retried
+    return _assign_groups_to_ticks(groups, ticks, side, med_h, offset), retried
+
+
+def _starts_on_band_edge(comps: list[tuple[int, int, int, int]], side: str, edge: float,
+                         tol: float = 1.0) -> bool:
+    """Does any kept glyph begin within `tol` px of the band edge the walk stopped at?"""
+    if side == "left":
+        return any(c[0] <= edge + tol for c in comps)
+    return any(c[1] + c[3] >= edge - tol for c in comps)
+
+
+def _band_extent(comps: list[tuple[int, int, int, int]], side: str) -> float:
+    """How wide (side="left") or tall (side="bottom") the kept strip is, in pixels."""
+    if not comps:
+        return 0.0
+    if side == "left":
+        return float(max(c[0] + c[2] for c in comps) - min(c[0] for c in comps))
+    return float(max(c[1] + c[3] for c in comps) - min(c[1] for c in comps))
 
 
 def _group_glyphs(comps: list[tuple[int, int, int, int]], side: str,
@@ -546,12 +584,18 @@ def _assign_groups_to_ticks(groups: list[list[tuple[int, int, int, int]]], ticks
 
 
 def _band_nearest_axis(comps: list[tuple[int, int, int, int]], side: str, shape: tuple[int, ...],
-                       gap_tol: float) -> list[tuple[int, int, int, int]]:
-    """Keep only the strip of components closest to the axis.
+                       gap_tol: float) -> tuple[list[tuple[int, int, int, int]], float | None]:
+    """Keep only the strip of components closest to the axis -> `(kept, edge)`.
 
     Walking away from the axis, the first clear gap wider than `gap_tol` ends the tick labels: whatever lies
     beyond it is the axis title, a legend or another panel. Gaps between glyphs of one label are far smaller
     than the gap that separates the labels from the next thing along.
+
+    `edge` is the far coordinate of the strip that was kept — the column (side="left") or row
+    (side="bottom") where the walk stopped. A label whose outermost glyph *starts* on that edge may
+    have had a digit cut off by an INTERNAL gap (Cressman 2010 Fig. 3a: "45" cut to "5", giving a
+    ladder 4/3/2/1 that fits perfectly and is wrong by a factor of ten), which is why the caller
+    re-cuts the band with a doubled tolerance and checks whether more ink comes back.
     """
     length = shape[1] if side == "left" else shape[0]
     occupied = np.zeros(length + 1, dtype=bool)
@@ -575,10 +619,10 @@ def _band_nearest_axis(comps: list[tuple[int, int, int, int]], side: str, shape:
             if gap > gap_tol:
                 break
     if edge is None:
-        return comps
+        return comps, None
     if side == "left":
-        return [c for c in comps if c[0] + c[2] > edge - 1]
-    return [c for c in comps if c[1] < edge + 1]
+        return [c for c in comps if c[0] + c[2] > edge - 1], float(edge)
+    return [c for c in comps if c[1] < edge + 1], float(edge)
 
 
 # ----------------------------------------------------------------------------- sub-pixel snapping

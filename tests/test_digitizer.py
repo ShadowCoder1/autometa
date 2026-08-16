@@ -1104,3 +1104,170 @@ def test_agreed_means_survive_a_dispersion_disagreement(bar_figure, tmp_path):
     assert got.dispersion_value is not None
     assert got.dispersion_sigma is not None and got.dispersion_sigma > (got.sigma or 0)
     assert prov["n_routes_with_error"] >= 2
+
+
+# ------------------------------------------------------------------ task 16 (a): calibration truth
+def test_fit_best_scale_infers_a_log_axis_from_the_ticks_alone():
+    """Nothing in the raster path used to ask whether an axis is logarithmic (critique miss 2)."""
+    from canopy.digitize.digitizer import fit_best_scale
+
+    # a log ladder: 1, 3, 10, 30, 100 drawn at even pixel spacing
+    log_pairs = [(400.0, 1.0), (300.0, 3.16227766), (200.0, 10.0), (100.0, 31.6227766),
+                 (0.0, 100.0)]
+    from canopy.digitize.calibrate import px_to_value
+
+    cal, note = fit_best_scale(log_pairs)
+    assert note == "log" and cal.scale == "log"
+    assert px_to_value(cal, 200.0) == pytest.approx(10.0, rel=1e-6)
+
+    linear_pairs = [(400.0, 0.0), (300.0, 10.0), (200.0, 20.0), (100.0, 30.0), (0.0, 40.0)]
+    cal, note = fit_best_scale(linear_pairs)
+    assert note == "linear" and cal.scale == "linear"
+    assert px_to_value(cal, 200.0) == pytest.approx(20.0, abs=1e-9)
+
+
+def test_fit_best_scale_refuses_to_guess_when_two_ticks_fit_both_scales():
+    from canopy.digitize.digitizer import fit_best_scale
+
+    cal, note = fit_best_scale([(100.0, 10.0), (0.0, 100.0)])
+    # two ticks fit a line AND an exponential exactly; the honest prior is linear, said out loud
+    assert note == "linear" and cal.scale == "linear"
+
+
+def test_fit_best_scale_says_scale_ambiguous_when_neither_fit_wins():
+    from canopy.digitize.digitizer import fit_best_scale
+
+    # a ladder neither scale reproduces: 1, 2, 3.5, 5 is not a line and not a decade series
+    _, note = fit_best_scale([(300.0, 1.0), (200.0, 2.0), (100.0, 3.5), (0.0, 5.0)])
+    assert note == "scale_ambiguous"
+    # a clean doubling IS log, and is named as such
+    _, note = fit_best_scale([(300.0, 1.0), (200.0, 2.0), (100.0, 4.0), (0.0, 8.0)])
+    assert note == "log"
+
+
+def test_readout_tick_values_pair_with_the_detected_tick_rows():
+    """The read-outs already report the ladder; pairing it with the CV rows costs nothing."""
+    from canopy.digitize.digitizer import _ladder_from_values
+
+    rows = [268.4, 340.5, 412.6, 485.4, 557.5, 629.6, 702.4, 774.5, 846.6, 918.5, 991.5]
+    exact = _ladder_from_values([45, 40, 35, 30, 25, 20, 15, 10, 5, 0, -5], rows)
+    assert exact is not None and exact[0] == (268.4, 45.0) and exact[-1] == (991.5, -5.0)
+
+    strided = _ladder_from_values([-5, 5, 15, 25, 35, 45], rows)      # every second tick labelled
+    assert strided is not None and len(strided) == 6
+    assert strided[0] == (268.4, 45.0) and strided[-1] == (991.5, -5.0)
+
+    assert _ladder_from_values([1, 2, 3, 4], rows) is None            # 4 values, 11 rows: refuse
+    assert _ladder_from_values([45.0], rows) is None
+    assert _ladder_from_values([45, 35], []) is None
+
+
+def _cal(pairs, scale="linear"):
+    from canopy.digitize.calibrate import fit_axis
+    return fit_axis(list(pairs), scale=scale, axis="y")
+
+
+def _core_with(cal, rows=(), scale_note="linear"):
+    from canopy.digitize.cv import Axes
+    from canopy.digitize.digitizer import _Core
+
+    axes = Axes(y_axis_x=10.0, x_axis_y=None, y_axis_span=None, x_axis_span=None,
+                y_axis_width=1.0, x_axis_width=0.0, plot_bbox=(10.0, 0.0, 400.0, 300.0),
+                confidence=0.6)
+    return _Core(gray=None, colour=None, axes=axes, tick_rows=list(rows), labels=[], cal=cal,
+                 ocr_status="ok", bars=[], markers=[], scale_note=scale_note)
+
+
+def _readout(means, ticks, model="claude-opus-5", variant="direct"):
+    from canopy.digitize.vlm import GroupReadOut, ReadOut
+
+    return ReadOut(groups=[GroupReadOut(group=g, mean=m) for g, m in means.items()],
+                   tick_labels=list(ticks), model=model, variant=variant)
+
+
+def test_choose_calibration_confirms_a_mapping_two_witnesses_agree_on():
+    from canopy.digitize.digitizer import _choose_calibration
+
+    ladder = [(100.0, 40.0), (200.0, 30.0), (300.0, 20.0), (400.0, 10.0)]
+    core = _core_with(_cal(ladder), rows=[100.0, 200.0, 300.0, 400.0])
+    choice = _choose_calibration(core, None, None,
+                                 [_readout({"A": 25.0}, [40, 30, 20, 10])])
+    assert choice.status == "confirmed"
+    assert choice.source == "cv_ocr"
+    assert set(choice.agreeing) == {"cv_ocr", "readout_ticks"}
+
+
+def test_choose_calibration_is_a_single_witness_when_nothing_corroborates_it():
+    from canopy.digitize.digitizer import _choose_calibration
+
+    ladder = [(100.0, 40.0), (200.0, 30.0), (300.0, 20.0), (400.0, 10.0)]
+    core = _core_with(_cal(ladder), rows=[100.0, 200.0, 300.0, 400.0])
+    choice = _choose_calibration(core, None, None, [])
+    assert choice.status == "single_witness" and choice.source == "cv_ocr"
+    assert "only the cv_ocr ladder" in choice.why
+
+
+def test_an_ambiguous_scale_is_never_a_confirmed_calibration():
+    from canopy.digitize.digitizer import _choose_calibration
+
+    ladder = [(100.0, 40.0), (200.0, 30.0), (300.0, 20.0), (400.0, 10.0)]
+    core = _core_with(_cal(ladder), rows=[100.0, 200.0, 300.0, 400.0],
+                      scale_note="scale_ambiguous")
+    choice = _choose_calibration(core, None, None,
+                                 [_readout({"A": 25.0}, [40, 30, 20, 10])])
+    assert choice.status == "single_witness"
+    assert "linear or logarithmic" in choice.why
+
+
+def test_the_magnitude_rule_refutes_a_ladder_that_cannot_draw_the_read_values():
+    """Cressman 2010 Fig. 3a: OCR read 45/35/25/15 as 4/3/2/1 and fitted it to 0.2 px."""
+    from canopy.digitize.digitizer import _choose_calibration
+
+    stale = _cal([(268.0, 4.0), (412.0, 3.0), (557.0, 2.0), (702.0, 1.0)])
+    core = _core_with(stale, rows=[268.0, 412.0, 557.0, 702.0])
+    choice = _choose_calibration(core, None, None, [
+        _readout({"A": 31.3, "B": 33.3}, [], variant="direct"),
+        _readout({"A": 31.3, "B": 33.3}, [], variant="ticks_first")])
+    assert choice.status == "cal_refuted"
+    assert choice.usable_for_pixels is None
+    assert choice.refutation["tick_max"] == 4.0
+    assert choice.refutation["readout_max_abs_mean"] == 33.3
+    assert "33.3" in choice.why and "4" in choice.why
+
+
+def test_the_magnitude_rule_needs_two_agreeing_read_outs():
+    from canopy.digitize.digitizer import _choose_calibration
+
+    stale = _cal([(268.0, 4.0), (412.0, 3.0), (557.0, 2.0), (702.0, 1.0)])
+    core = _core_with(stale, rows=[268.0, 412.0, 557.0, 702.0])
+    # one read-out cannot refute anything: it may itself have read the wrong panel
+    lonely = _choose_calibration(core, None, None, [_readout({"A": 31.3}, [])])
+    assert lonely.status == "single_witness"
+    # two read-outs that disagree with EACH OTHER cannot either
+    noisy = _choose_calibration(core, None, None, [
+        _readout({"A": 31.3}, [], variant="direct"),
+        _readout({"A": 3.1}, [], variant="ticks_first")])
+    assert noisy.status == "single_witness"
+
+
+def test_a_correct_ladder_is_not_refuted_by_values_inside_it():
+    from canopy.digitize.digitizer import _choose_calibration
+
+    good = _cal([(54.8, 60.0), (209.8, 40.0), (368.2, 20.0), (524.8, 0.0), (684.0, -20.0)])
+    core = _core_with(good, rows=[54.8, 209.8, 368.2, 524.8, 684.0])
+    choice = _choose_calibration(core, None, None, [
+        _readout({"A": 32.2, "B": 12.4}, [], variant="direct"),
+        _readout({"A": 31.8, "B": 11.8}, [], variant="ticks_first")])
+    assert choice.status != "cal_refuted"
+
+
+def test_the_marker_floor_rejects_a_cap_inside_the_marker(bar_figure):
+    """Bock 2005 route C stopped on the square's own lower edge (acceptance item 9)."""
+    from canopy.digitize.digitizer import _values_from_pixels
+
+    cal = _cal([(54.77215189873418, 60.0), (209.75, 40.0), (368.2278481012658, 20.0),
+                (524.780487804878, 0.0), (684.016393442623, -20.0), (839.4375, -40.0)])
+    mean, error, side = _values_from_pixels(cal, 276.5, 190.0, 284.2957446575165, floor_px=7.5)
+    assert mean == pytest.approx(31.6677, abs=1e-3)
+    assert error == pytest.approx(11.00, abs=0.02)          # not 5.998
+    assert side == "up"

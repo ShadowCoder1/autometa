@@ -54,8 +54,44 @@ INFO_PENALTY, INFO_CAP = 0.01, 0.03
 MAD_SHARE, SIGMA_SHARE, SPREAD_PENALTY = 0.05, 0.10, 0.05
 FIGURE_CONFLICT_PENALTY = 0.05
 #: flags that cap a cell at `accept_with_note` however well it scores otherwise — each one is a
-#: specific way the value could belong to the OTHER group, which no amount of agreement rules out
-CAPPING_FLAGS: frozenset[str] = frozenset({"quote_row_only"})
+#: specific way the value could be the wrong number, which no amount of agreement rules out
+CAPPING_FLAGS: frozenset[str] = frozenset({
+    "quote_row_only",
+    #: one witness calibrated the axis: the value may be right and nothing corroborates the scale
+    "calibration_single_witness",
+    #: the read-outs agree on a value the ladder cannot draw — their number stands, the ladder does not
+    "calibration_refuted",
+    #: an average across a categorical axis, with a dispersion the code approximated
+    "collapsed_across_x",
+    #: extraction was re-opened on a source the verifier named
+    "reopened_on_better_source",
+})
+#: every cap is at or above `ACCEPT_WITH_NOTE`, so no COMBINATION of caps can push a cell that
+#: scored well enough on the evidence down into `needs_human` (controller ruling R2, task 16):
+#: only disagreement, a refutation, an unresolved direction or an `error` flag does that.
+_CAPS = (SINGLE_ROUTE_CAP, ADJUDICATED_CAP)
+assert all(cap >= ACCEPT_WITH_NOTE for cap in _CAPS), "a cap must never mean needs_human"
+
+#: `error`-severity codes that do NOT force a human on their own. `calibration_refuted` is an
+#: error against the CALIBRATION, not against the value: it is only ever raised when two or more
+#: read-outs agreed on a number the ladder cannot draw, so the number has two witnesses and the
+#: ladder has none. It caps the cell (above) instead of convicting it. When the read-outs did not
+#: agree the checks raise `calibration_disputed`, which is not on this list.
+NON_FORCING_ERRORS: frozenset[str] = frozenset({"calibration_refuted"})
+
+#: why each capping flag caps — a reviewer reads these lines, so each one names the actual doubt
+CAP_REASONS: dict[str, str] = {
+    "quote_row_only": ("the numbers may belong to the other group, which agreement cannot rule "
+                       "out"),
+    "calibration_single_witness": ("only one witness calibrated this figure's axis, so the scale "
+                                   "the value was read against is uncorroborated"),
+    "calibration_refuted": ("the readers agree on a value the tick ladder cannot draw, so the "
+                            "axis calibration was discarded and only the read-outs stand"),
+    "collapsed_across_x": ("this is an average across a categorical axis and its dispersion is an "
+                           "approximation, not the paper's own"),
+    "reopened_on_better_source": ("extraction was re-opened on a source the verifier named, so "
+                                  "the location itself was decided by a model"),
+}
 
 
 # ----------------------------------------------------------------------------- amendment F gate
@@ -263,7 +299,12 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
                        f"the value (-{SPREAD_PENALTY:.2f})")
 
     # --- consistency flags
-    errors = [f for f in flags if f.severity == "error"]
+    errors = [f for f in flags if f.severity == "error" and f.code not in NON_FORCING_ERRORS]
+    noted = sorted({f.code for f in flags
+                    if f.severity == "error" and f.code in NON_FORCING_ERRORS})
+    if noted:
+        reasons.append(f"{', '.join(noted)}: the calibration is wrong, not the value — the "
+                       f"reading stands, capped for review")
     warns = [f for f in flags if f.severity == "warn"]
     infos = [f for f in flags if f.severity == "info"]
     if errors:
@@ -296,8 +337,9 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
     capping = sorted({f.code for f in flags} & CAPPING_FLAGS)
     if capping:
         score = min(score, ADJUDICATED_CAP)
-        reasons.append(f"{', '.join(capping)} caps this cell: the numbers may belong to the other "
-                       f"group, which agreement cannot rule out")
+        reasons.append(f"{', '.join(capping)} caps this cell at {ADJUDICATED_CAP:.2f}: "
+                       + "; ".join(CAP_REASONS.get(code, "this reading is unconfirmed")
+                                   for code in capping))
 
     # --- amendment F: a purely digitised cell has to earn its automatic acceptance
     if routes and all(is_figure_route(r.route_key) for r in routes) and not settled:

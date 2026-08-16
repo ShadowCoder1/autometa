@@ -37,7 +37,8 @@ from .vlm import (READOUT_VARIANTS, CoordReadout, FigureView, PROMPT_VERSION, Re
                   TargetSpec, coords, overlay_verify, read_out, summarize_tool_calls)
 
 __all__ = ["digitize", "RouteSample", "ReadoutSpec", "DigitizeResult", "ensemble_stats",
-           "dual_tolerance", "resolve_arms", "ROUTE_LABELS"]
+           "dual_tolerance", "resolve_arms", "ROUTE_LABELS", "CalibrationChoice",
+           "CAL_PREFERENCE"]
 
 ROUTE_LABELS = {"A": "vector", "B": "raster_cv", "C": "vlm_coords", "D": "readout"}
 GROUPS = ("A", "B")
@@ -216,13 +217,82 @@ class _Core:
     ocr_status: str
     bars: list[Bar]
     markers: list[Marker]
+    scale_note: str = "linear"          # linear | log | scale_ambiguous | no_fit
+    band_retried: bool = False          # the OCR label band had to be re-cut (P4)
 
     @property
     def is_bar_chart(self) -> bool:
         return bool(self.bars)
 
 
-def _cv_core(crop_png: Path) -> _Core:
+#: a scale wins only when the loser's residual is at least twice its own; otherwise the ticks do
+#: not say which scale the axis is drawn on, and a log axis read as linear is wrong by an order of
+#: magnitude with a perfect-looking fit (critique §1 P1, miss 2)
+_SCALE_RMSE_RATIO = 0.5
+_MIN_TICKS_FOR_SCALE = 3        # two ticks fit BOTH scales exactly: they carry no scale evidence
+
+
+def fit_best_scale(pairs: Sequence[tuple[float, float]], axis: str = "y"
+                   ) -> tuple[AxisCalibration | None, str]:
+    """`(calibration, scale note)` — fit a linear AND a log axis and keep the better-supported one.
+
+    Nothing in the raster path used to infer the scale: `fit_axis` was called with the default
+    "linear" and a log-scaled figure was read an order of magnitude out, with a residual that
+    looked perfect. Both scales are fitted here; the winner keeps the fit only when the loser's
+    pixel residual is at least twice as large, otherwise the note is `scale_ambiguous` and the
+    caller treats the calibration as an unconfirmed single witness.
+    """
+    fits: dict[str, AxisCalibration] = {}
+    for scale in ("linear", "log"):
+        try:
+            fits[scale] = fit_axis(list(pairs), scale=scale, axis=axis)   # type: ignore[arg-type]
+        except ValueError:
+            continue
+    if "log" not in fits:
+        # a log axis cannot be fitted through a non-positive tick, and ONE mis-signed label is
+        # enough to hide a log axis behind a linear fit for good (tesseract reads "10" as "-10"
+        # about as often as it drops a minus). Ask the positive ticks on their own, and keep the
+        # log answer only if it wins on them decisively.
+        recovered = _log_without_nonpositive_ticks(pairs, axis)
+        if recovered is not None:
+            return recovered, "log"
+    if not fits:
+        return None, "no_fit"
+    if len(fits) == 1:
+        scale, cal = next(iter(fits.items()))
+        return cal, scale
+    if len(pairs) < _MIN_TICKS_FOR_SCALE:
+        return fits["linear"], "linear"       # too few ticks to tell; linear is the honest prior
+    win = min(fits, key=lambda sc: fits[sc].rmse)
+    lose = next(sc for sc in fits if sc != win)
+    rmse_win, rmse_lose = abs(fits[win].rmse), abs(fits[lose].rmse)
+    if rmse_lose <= 0.0:
+        return fits[win], "scale_ambiguous"
+    if rmse_win / rmse_lose < _SCALE_RMSE_RATIO:
+        return fits[win], win
+    return fits[win], "scale_ambiguous"
+
+
+def _log_without_nonpositive_ticks(pairs: Sequence[tuple[float, float]], axis: str
+                                   ) -> AxisCalibration | None:
+    """The log fit through the positive ticks, when the ticks it drops were the wrong ones."""
+    positive = [(p, v) for p, v in pairs if v > 0]
+    if len(positive) < _MIN_TICKS_FOR_SCALE or len(positive) == len(pairs):
+        return None
+    try:
+        as_log = fit_axis(positive, scale="log", axis=axis)                # type: ignore[arg-type]
+        as_linear = fit_axis(positive, scale="linear", axis=axis)          # type: ignore[arg-type]
+    except ValueError:
+        return None
+    if abs(as_linear.rmse) <= 0.0:
+        return None
+    if abs(as_log.rmse) / abs(as_linear.rmse) >= _SCALE_RMSE_RATIO:
+        return None
+    as_log.dropped = list(as_log.dropped) + [(p, v) for p, v in pairs if v <= 0]
+    return as_log
+
+
+def _cv_core(crop_png: Path, prefer_markers: bool = False) -> _Core:
     """The shared deterministic pass every pixel route reuses (axes, ticks, OCR, LS fit)."""
     gray = load_gray(crop_png)
     colour = load_color(crop_png)
@@ -232,23 +302,26 @@ def _cv_core(crop_png: Path) -> _Core:
     status = str(getattr(labels, "status", "missing"))
     pairs = pair_ticks(list(labels), rows, axis="y")
     cal: AxisCalibration | None = None
+    scale_note = "no_fit"
     if len(pairs) >= 2:
-        try:
-            cal = fit_axis(pairs, axis="y")
-        except ValueError:                                    # degenerate ticks
-            cal = None
+        cal, scale_note = fit_best_scale(pairs, axis="y")
     try:
         bars = detect_bars(colour, axes)
     except Exception:                                         # pragma: no cover - defensive
         bars = []
     markers: list[Marker] = []
-    if not bars:
+    # miss 8: a line plot whose points `detect_bars` reported as 4-px "bars" never reached
+    # `detect_markers`, so route B was silently absent from the figure it should read best. Run
+    # both detectors whenever the bars are all narrow or the mapper says this is a line/point plot.
+    if not bars or prefer_markers or all(b.narrow for b in bars):
         try:
             markers = detect_markers(colour, axes)
         except Exception:                                     # pragma: no cover - defensive
             markers = []
     return _Core(gray=gray, colour=colour, axes=axes, tick_rows=rows, labels=labels, cal=cal,
-                 ocr_status=status, bars=bars, markers=markers)
+                 ocr_status=status, bars=bars, markers=markers,
+                 scale_note=scale_note,
+                 band_retried=bool(getattr(labels, "band_retried", False)))
 
 
 def _axis_range(cal: AxisCalibration | None, core: "_Core") -> tuple[float, str]:
@@ -281,18 +354,69 @@ def _tick_stats(cal: AxisCalibration | None) -> tuple[float, float]:
     return values[-1] - values[0], (statistics.median(gaps) if gaps else 0.0)
 
 
-def _model_calibration(readout: CoordReadout) -> AxisCalibration | None:
+def _model_calibration(readout: CoordReadout) -> tuple[AxisCalibration | None, str]:
     pairs = [(t.y_px, t.value) for t in readout.ticks]
     seen: dict[float, float] = {}
     for px, value in pairs:
         seen.setdefault(round(px, 3), value)
     clean = [(px, value) for px, value in seen.items()]
     if len(clean) < 2:
+        return None, "no_fit"
+    return fit_best_scale(clean, axis="y")
+
+
+def _ladder_from_values(values: Sequence[float], rows: Sequence[float]
+                        ) -> list[tuple[float, float]] | None:
+    """Pair a read-out's tick VALUES with the tick rows the CV pass measured, or `None`.
+
+    The read-outs already report the ladder they read (`tick_labels`) and it costs nothing extra,
+    but a list of values is not a calibration: it needs pixels. `find_tick_marks` supplies those,
+    and the two are paired only when the counts line up exactly, or when the values are an evenly
+    strided subset of the rows (a figure that labels every second tick). Anything else is refused
+    rather than guessed — a mis-paired ladder is the failure this witness exists to catch.
+    """
+    vals = sorted({float(v) for v in values}, reverse=True)    # y: value falls as the row grows
+    lines = sorted(float(r) for r in rows)
+    if len(vals) < 2 or len(lines) < 2:
         return None
-    try:
-        return fit_axis(clean, axis="y")
-    except ValueError:
-        return None
+    if len(vals) == len(lines):
+        return list(zip(lines, vals))
+    if len(vals) < len(lines) and (len(lines) - 1) % (len(vals) - 1) == 0:
+        stride = (len(lines) - 1) // (len(vals) - 1)
+        picked = lines[::stride]
+        if len(picked) == len(vals):
+            return list(zip(picked, vals))
+    return None
+
+
+def _readout_calibration(readouts: Sequence[ReadOut], rows: Sequence[float]
+                         ) -> tuple[AxisCalibration | None, str]:
+    """The ladder the read-outs themselves reported, as a calibration — the free fourth witness."""
+    fits: list[AxisCalibration] = []
+    for reading in readouts:
+        pairs = _ladder_from_values(reading.tick_labels, rows)
+        if not pairs:
+            continue
+        cal, _scale = fit_best_scale(pairs, axis="y")
+        if cal is not None:
+            fits.append(cal)
+    if not fits:
+        return None, "no read-out tick ladder could be paired with the detected tick marks"
+    best, support = fits[0], 0
+    for cal in fits:
+        tol = _agreement_tolerance(cal)
+        agree = sum(1 for other in fits if _calibrations_agree(cal, other, tol))
+        if agree > support or (agree == support and len(cal.ticks) > len(best.ticks)):
+            best, support = cal, agree
+    return best, (f"{support} of {len(fits)} read-out tick ladder(s) agree "
+                  f"({len(best.ticks)} ticks)")
+
+
+def _agreement_tolerance(cal: AxisCalibration) -> float:
+    """max(2 % of this witness's span, half a tick) — the tolerance two mappings agree within."""
+    span, spacing = _tick_stats(cal)
+    tol = max(_MEAN_TOL_FRACTION * abs(span), 0.5 * abs(spacing))
+    return tol if tol > 0 else max(abs(span) * _MEAN_TOL_FRACTION, 1e-9)
 
 
 def _calibrations_agree(a: AxisCalibration, b: AxisCalibration, tol: float) -> bool:
@@ -306,24 +430,178 @@ def _calibrations_agree(a: AxisCalibration, b: AxisCalibration, tol: float) -> b
         return False
 
 
-def _choose_calibration(core: _Core, coord: CoordReadout | None
-                        ) -> tuple[AxisCalibration | None, str, str]:
-    """Prefer the OCR/tick fit, but only when the model's own ticks corroborate it."""
-    cal_model = _model_calibration(coord) if coord is not None else None
-    if core.cal is not None and cal_model is not None:
-        axis_range, spacing = _tick_stats(core.cal)
-        tol = max(_MEAN_TOL_FRACTION * abs(axis_range), 0.5 * abs(spacing))
-        if tol <= 0:
-            tol = abs(axis_range) * _MEAN_TOL_FRACTION or 1e-9
-        if _calibrations_agree(core.cal, cal_model, tol):
-            return core.cal, "cv_ocr", "OCR ticks corroborated by the model's tick read"
-        return cal_model, "vlm_ticks", ("OCR fit disagreed with the model's ticks; used the "
-                                        "model's tick coordinates")
+#: which witness's numbers are used when several agree — the OCR ladder is the most precise, the
+#: PDF's own text layer next, then the model's tick pixels, then the ladder the read-outs reported
+CAL_PREFERENCE = ("cv_ocr", "vector", "vlm_ticks", "readout_ticks")
+#: a read-out mean this far past the top tick means the ladder is not the one the values were
+#: drawn against (Cressman: ticks max 4.0, read-outs 31.3/33.3)
+_MAGNITUDE_SLACK = 0.2
+#: two read-out means are "the same number" for the magnitude test when they are this close —
+#: deliberately loose, because the question is a factor of ten, not the last digit
+_READOUT_AGREE_FRACTION = 0.05
+
+
+@dataclass
+class CalibrationChoice:
+    """Which y calibration won the witness vote, and how much corroboration it had.
+
+    `status` is the thing every downstream check keys on:
+
+    * `confirmed`      — at least two independent witnesses read the same MAPPING;
+    * `single_witness` — one witness only (or an unresolvable log/linear question): usable, but
+                         nothing may be auto-accepted on it;
+    * `cal_refuted`    — the read-outs agree on values the ladder cannot draw, so the ladder is
+                         wrong: the pixel routes get no calibration and the read-outs stand alone;
+    * `none`           — no calibration could be built at all.
+    """
+
+    cal: AxisCalibration | None = None
+    source: str = "none"
+    status: str = "none"
+    why: str = ""
+    witnesses: dict[str, Any] = field(default_factory=dict)
+    agreeing: list[str] = field(default_factory=list)
+    scale_note: str = ""
+    refutation: dict[str, Any] | None = None
+
+    @property
+    def confirmed(self) -> bool:
+        return self.status == "confirmed"
+
+    @property
+    def usable_for_pixels(self) -> AxisCalibration | None:
+        """The calibration the pixel routes may convert with — none once it has been refuted."""
+        return None if self.status == "cal_refuted" else self.cal
+
+
+def _readout_means(readouts: Sequence[ReadOut]) -> dict[str, list[float]]:
+    out: dict[str, list[float]] = {}
+    for reading in readouts:
+        for row in reading.groups:
+            if row.mean is not None and row.group in GROUPS:
+                out.setdefault(row.group, []).append(float(row.mean))
+    return out
+
+
+def _magnitude_refutes(cal: AxisCalibration, readouts: Sequence[ReadOut]
+                       ) -> dict[str, Any] | None:
+    """Do two agreeing read-outs report a value the ladder could not have drawn?
+
+    This is the load-bearing half of "two witnesses": two readers of the same truncated glyph
+    agree with each other and are both wrong, and no power-of-ten rule catches Cressman's 8.3x.
+    What does catch it is the values: a ladder whose top tick is 4 cannot carry a datum at 33.
+    """
+    values = sorted(v for _, v in cal.ticks)
+    if len(values) < 2:
+        return None
+    span = values[-1] - values[0]
+    tick_max = max(abs(v) for v in values)
+    by_group = _readout_means(readouts)
+    agreeing = [means for means in by_group.values()
+                if len(means) >= 2 and (max(means) - min(means))
+                <= _READOUT_AGREE_FRACTION * max(abs(m) for m in means)]
+    if not agreeing:
+        return None
+    biggest = max(abs(m) for means in agreeing for m in means)
+    limit = tick_max + _MAGNITUDE_SLACK * abs(span)
+    if biggest <= limit:
+        return None
+    return {"tick_max": tick_max, "tick_span": span, "limit": limit,
+            "readout_max_abs_mean": biggest,
+            "readout_means": {g: v for g, v in by_group.items()},
+            "why": (f"{len(agreeing)} group(s) of read-outs agree on a value of {biggest:.4g}, "
+                    f"which the tick ladder (max {tick_max:.4g}, span {span:.4g}) cannot draw")}
+
+
+def _choose_calibration(core: _Core, coord: CoordReadout | None,
+                        cal_vec: AxisCalibration | None = None,
+                        readouts: Sequence[ReadOut] = ()) -> CalibrationChoice:
+    """Vote four independent witnesses on ONE mapping, and say how corroborated the winner is.
+
+    The witnesses are the OCR tick ladder, the model's own tick pixels (path C), the PDF text
+    layer's ladder (route A, hoisted here so it can vote before the pixel routes convert anything)
+    and the ladder the read-outs reported paired with the CV tick rows. They are compared as
+    MAPPINGS, not as tick values: two readers of the same cut-off glyph agree on "4" and are both
+    an order of magnitude out, whereas a mapping comparison asks what value each witness puts at
+    the same pixel.
+    """
+    witnesses: dict[str, AxisCalibration] = {}
+    notes: dict[str, str] = {}
     if core.cal is not None:
-        return core.cal, "cv_ocr", "no model ticks to cross-check against"
+        witnesses["cv_ocr"] = core.cal
+        notes["cv_ocr"] = f"OCR ladder {[v for _, v in core.cal.ticks]}"
+    cal_model, model_scale = _model_calibration(coord) if coord is not None else (None, "")
     if cal_model is not None:
-        return cal_model, "vlm_ticks", "no usable OCR ticks"
-    return None, "none", "no y calibration could be built"
+        witnesses["vlm_ticks"] = cal_model
+        notes["vlm_ticks"] = f"the model's tick pixels ({len(cal_model.ticks)} ticks)"
+    if cal_vec is not None:
+        witnesses["vector"] = cal_vec
+        notes["vector"] = f"the PDF text layer ({len(cal_vec.ticks)} ticks)"
+    cal_read, read_note = _readout_calibration(readouts, core.tick_rows)
+    if cal_read is not None:
+        witnesses["readout_ticks"] = cal_read
+    notes["readout_ticks"] = read_note
+
+    record = {name: {"ticks": cal.ticks, "scale": cal.scale, "rmse_px": cal.rmse,
+                     "note": notes.get(name, "")}
+              for name, cal in witnesses.items()}
+    if not witnesses:
+        return CalibrationChoice(status="none", why="no y calibration could be built",
+                                 witnesses=record)
+
+    # --- the magnitude test runs FIRST, witness by witness: a ladder the agreed read-out values
+    # cannot be drawn on is not a candidate, and dropping it lets a surviving witness (Cressman's
+    # own read-out ladder, 45..-5) supply the axis instead of the cell losing its calibration
+    refutations = {name: _magnitude_refutes(cal, readouts) for name, cal in witnesses.items()}
+    refuted = {name: why for name, why in refutations.items() if why is not None}
+    for name, why in refuted.items():
+        record[name]["refuted"] = why
+    survivors = {name: cal for name, cal in witnesses.items() if name not in refuted}
+    if not survivors:
+        first = sorted(witnesses, key=_rank)[0]
+        return CalibrationChoice(cal=witnesses[first], source=first, status="cal_refuted",
+                                 why=refuted[first]["why"], witnesses=record,
+                                 refutation=refuted[first],
+                                 scale_note=core.scale_note if first == "cv_ocr" else "")
+    witnesses = survivors
+
+    best: list[str] = []
+    for name, cal in witnesses.items():
+        tol = _agreement_tolerance(cal)
+        cluster = sorted((other for other, cal_b in witnesses.items()
+                          if _calibrations_agree(cal, cal_b, tol)),
+                         key=lambda n: CAL_PREFERENCE.index(n) if n in CAL_PREFERENCE else 99)
+        if len(cluster) > len(best) or (len(cluster) == len(best) and best
+                                        and _rank(cluster[0]) < _rank(best[0])):
+            best = cluster
+    source = best[0]
+    cal = witnesses[source]
+    scale_note = core.scale_note if source == "cv_ocr" else (
+        model_scale if source == "vlm_ticks" else cal.scale)
+
+    choice = CalibrationChoice(cal=cal, source=source, witnesses=record, agreeing=list(best),
+                               scale_note=scale_note)
+    if len(best) >= 2:
+        choice.status = "confirmed"
+        choice.why = (f"{len(best)} independent witnesses agree on the mapping "
+                      f"({', '.join(best)}); the {source} ladder supplies the numbers")
+    else:
+        choice.status = "single_witness"
+        choice.why = (f"only the {source} ladder calibrates this axis; "
+                      f"{'; '.join(v for k, v in notes.items() if k != source and v) or 'no other witness produced one'}")
+    if scale_note == "scale_ambiguous":
+        choice.status = "single_witness"
+        choice.why = (choice.why + "; the ticks do not say whether this axis is linear or "
+                                   "logarithmic, so the mapping is unconfirmed")
+    if refuted:
+        choice.refutation = next(iter(refuted.values()))
+        choice.why = (f"{choice.why}; the {', '.join(sorted(refuted))} ladder was refused — "
+                      f"{choice.refutation['why']}")
+    return choice
+
+
+def _rank(name: str) -> int:
+    return CAL_PREFERENCE.index(name) if name in CAL_PREFERENCE else 99
 
 
 # ----------------------------------------------------------------------------- read-out plan
@@ -407,17 +685,31 @@ def _snap_point(core: _Core, x: float, y: float, width: float | None,
 
 
 def _values_from_pixels(cal: AxisCalibration, y: float, cap_top: float | None,
-                        cap_bottom: float | None) -> tuple[float, float | None, str | None]:
+                        cap_bottom: float | None, floor_px: float = 2.0
+                        ) -> tuple[float, float | None, str | None]:
     """`(mean, error half-length, one_sided)` for one datum, in data units.
 
-    The floor below which an "arm" is not an arm is two pixels' worth of data units: a cap that
-    close to the datum is the marker's own edge, not the end of a whisker.
+    The floor below which an "arm" is not an arm is two pixels' worth of data units — or half the
+    marker's own height when the marker is bigger than that. Bock 2005's route C walked down from
+    a 15-px square and stopped on the square's own lower edge, 7.8 px below its centre: a "cap"
+    that is inside the marker is the marker (critique acceptance item 9).
     """
     mean = px_to_value(cal, y)
     up = None if cap_top is None else abs(px_to_value(cal, cap_top) - mean)
     down = None if cap_bottom is None else abs(px_to_value(cal, cap_bottom) - mean)
-    error, one_sided = resolve_arms(up, down, floor=2.0 * abs(pixel_resolution(cal, y)))
+    error, one_sided = resolve_arms(
+        up, down, floor=max(2.0, float(floor_px)) * abs(pixel_resolution(cal, y)))
     return mean, error, one_sided
+
+
+def _marker_floor_px(core: _Core, x: float | None, y: float | None) -> float:
+    """Half the height of the marker a datum sits on — the shortest arm that is not its own edge."""
+    if x is None or y is None or not core.markers:
+        return 2.0
+    marker = min(core.markers, key=lambda m: (m.x - x) ** 2 + (m.y - y) ** 2)
+    if abs(marker.x - x) > max(3.0 * max(marker.size, 1.0), 24.0):
+        return 2.0
+    return max(2.0, 0.5 * float(marker.size))
 
 
 def _samples_from_coords(coord: CoordReadout, core: _Core, cal: AxisCalibration | None,
@@ -449,7 +741,8 @@ def _samples_from_coords(coord: CoordReadout, core: _Core, cal: AxisCalibration 
         sample.extra["cap_source"] = {"model": [top, bottom], "cv": [found_top, found_bottom]}
         if cal is not None:
             sample.mean, sample.error, sample.one_sided = _values_from_pixels(
-                cal, snapped, sample.cap_top_px, sample.cap_bottom_px)
+                cal, snapped, sample.cap_top_px, sample.cap_bottom_px,
+                floor_px=_marker_floor_px(core, x, snapped))
             sample.sigma = _pixel_sigma(cal, snapped)
         else:
             sample.notes = (sample.notes + " no y calibration; pixels only").strip()
@@ -535,7 +828,8 @@ def _samples_from_raster(coord: CoordReadout | None, core: _Core,
             top, bottom = find_cap_ends(core.gray, marker.x, marker.y, max_len_px=span)
         sample.cap_top_px, sample.cap_bottom_px = top, bottom
         sample.mean, sample.error, sample.one_sided = _values_from_pixels(
-            cal, sample.y_px, top, bottom)
+            cal, sample.y_px, top, bottom,
+            floor_px=_marker_floor_px(core, sample.x_px, sample.y_px))
         sample.sigma = _pixel_sigma(cal, sample.y_px)
         sample.snap_conf = 1.0
         out.append(sample)
@@ -569,25 +863,40 @@ def _vector_scale_trusted(cal_vec: AxisCalibration, core: _Core,
     return cal_vec.rmse < 0.5, f"vector fit rmse {cal_vec.rmse:.3g} px, no independent check"
 
 
-def _samples_from_vector(paper: PaperRecord, fig: FigureRegion, coord: CoordReadout | None,
-                         core: _Core, readouts: Sequence[ReadOut]
-                         ) -> tuple[list[RouteSample], dict[str, Any]]:
+def _vector_scene(paper: PaperRecord, fig: FigureRegion
+                  ) -> tuple[VectorScene | None, dict[str, Any]]:
+    """The figure's own geometry, built ONCE and early.
+
+    It used to be built inside route A, which runs after `_choose_calibration` — so the PDF's own
+    tick ladder, the one witness that is exact when it exists, could never vote on the calibration
+    the pixel routes had already used. Building it here lets it.
+    """
     info: dict[str, Any] = {"attempted": False}
-    if fig.kind not in ("vector", "mixed") or coord is None:
-        info["skipped"] = f"figure kind {fig.kind!r}" if coord is not None else "no VLM coordinates"
-        return [], info
+    if fig.kind not in ("vector", "mixed"):
+        info["skipped"] = f"figure kind {fig.kind!r}"
+        return None, info
     info["attempted"] = True
     try:
         scene: VectorScene = vector_candidates(paper, fig)
     except Exception as exc:                                  # pragma: no cover - defensive
         info["error"] = f"{type(exc).__name__}: {exc}"
-        return [], info
+        return None, info
     info["warnings"] = list(scene.warnings)
     info["n_tick_labels"] = len(scene.tick_labels)
     info["n_marks"] = len(scene.marks)
     if not scene.tick_labels:
         info["skipped"] = "no tick-label spans in the figure's text layer"
-        return [], info
+        return None, info
+    return scene, info
+
+
+def _samples_from_vector(scene: VectorScene | None, info: dict[str, Any],
+                         coord: CoordReadout | None, core: _Core, readouts: Sequence[ReadOut]
+                         ) -> list[RouteSample]:
+    if scene is None or coord is None:
+        if coord is None:
+            info.setdefault("skipped", "no VLM coordinates")
+        return []
     out: list[RouteSample] = []
     for group in GROUPS:
         row = coord.group(group)
@@ -619,7 +928,7 @@ def _samples_from_vector(paper: PaperRecord, fig: FigureRegion, coord: CoordRead
             cal_vec, snapped[1], sample.cap_top_px, sample.cap_bottom_px)
         sample.sigma = 0.0                                    # exact geometry
         out.append(sample)
-    return out, info
+    return out
 
 
 def _corroborate_vector_whiskers(samples: list[RouteSample], px_units: float) -> None:
@@ -791,7 +1100,7 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     key = f"digitize:{cell_key or f'{paper.sha256[:12]}/{fig.id}/{target.outcome_key}'}"
 
     # one deterministic CV pass, shared by the pixel routes AND by the view's `list_regions`
-    core = _cv_core(crop)
+    core = _cv_core(crop, prefer_markers=_wants_markers(target, source))
     view = FigureView(crop, work_dir=work, axes=core.axes, tick_rows=core.tick_rows,
                       tick_labels=core.labels, bars=core.bars, markers=core.markers)
 
@@ -814,15 +1123,27 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     # --- path C: VLM coordinates + CV snap
     primary = models[0] if models else "claude-opus-5"
     coord = coords(client, crop, text, target, primary, view=view, cell_key=f"{key}/C")
-    cal, cal_source, cal_why = _choose_calibration(core, coord)
-    samples.extend(_samples_from_coords(coord, core, cal, cal_source))
+    # route A's scene is built HERE, before anything converts a pixel, so the PDF's own tick
+    # ladder is one of the witnesses the calibration vote sees
+    scene, vec_info = _vector_scene(paper, fig)
+    cal_vec = calibrate_from_scene(scene, axis="y") if scene is not None else None
+    choice = _choose_calibration(core, coord, cal_vec, readouts)
+    cal, cal_source, cal_why = choice.cal, choice.source, choice.why
+    pixel_cal = choice.usable_for_pixels
+    samples.extend(_samples_from_coords(coord, core, pixel_cal, cal_source))
 
     # --- path B: raster CV, matched by the nearest VLM coordinate
-    samples.extend(_samples_from_raster(coord, core, cal, cal_source))
+    samples.extend(_samples_from_raster(coord, core, pixel_cal, cal_source))
 
-    _, tick_spacing = _tick_stats(cal)
-    axis_range, axis_range_source = _axis_range(cal, core)
-    px_units = abs(pixel_resolution(cal)) if cal is not None else 0.0
+    _, tick_spacing = _tick_stats(pixel_cal)
+    axis_range, axis_range_source = _axis_range(pixel_cal, core)
+    if pixel_cal is None and choice.status == "cal_refuted":
+        # the ladder is wrong, so nothing derived from it may set a tolerance; the read-outs'
+        # own magnitude is what is left, and it is recorded as such
+        magnitudes = [abs(m) for means in _readout_means(readouts).values() for m in means]
+        axis_range = 2.0 * max(magnitudes) if magnitudes else 0.0
+        axis_range_source = "readout_magnitude"
+    px_units = abs(pixel_resolution(pixel_cal)) if pixel_cal is not None else 0.0
 
     # --- path D again, but only if the routes so far do not agree about a mean
     bought, buy_reason = 0, "the routes agreed, so no further read-out was bought"
@@ -838,8 +1159,7 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
             buy_reason = f"the plan holds no read-out past the first {n_min}"
 
     # --- path A: vector-exact (after every read-out, so it sees every tick ladder)
-    vec_samples, vec_info = _samples_from_vector(paper, fig, coord, core, readouts)
-    samples.extend(vec_samples)
+    samples.extend(_samples_from_vector(scene, vec_info, coord, core, readouts))
     _corroborate_vector_whiskers(samples, px_units)
 
     # --- overlay verify: drop what the model says is misplaced, then recompute
@@ -884,8 +1204,7 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
             draw_overlay(crop, marks, out_png)
             overlay_path = str(out_png)
 
-    provenance = _base_provenance(fig, core, cal, cal_source, cal_why, coord, vec_info,
-                                  verify_log, target)
+    provenance = _base_provenance(fig, core, choice, coord, vec_info, verify_log, target)
     provenance["axis_range"] = axis_range
     provenance["axis_range_source"] = axis_range_source
     provenance["call_plan"] = {
@@ -932,18 +1251,30 @@ def _asset(paper: PaperRecord, rel: str) -> Path:
     return path if path.is_absolute() else Path(paper.out_dir) / rel
 
 
-def _base_provenance(fig: FigureRegion, core: _Core, cal: AxisCalibration | None, cal_source: str,
-                     cal_why: str, coord: CoordReadout, vec_info: dict[str, Any],
+def _base_provenance(fig: FigureRegion, core: _Core, choice: CalibrationChoice,
+                     coord: CoordReadout, vec_info: dict[str, Any],
                      verify_log: list[dict[str, Any]], target: TargetSpec) -> dict[str, Any]:
+    # a REFUTED ladder is never written as `cal`: `verify.figures` reads that key as the axis a
+    # value must lie inside, and handing it a ladder we have just disproved would convict a
+    # correct value of being off-axis (F1). It is kept beside it, named for what it is.
+    cal = choice.usable_for_pixels
     return {
         "figure_id": fig.id, "figure_kind": fig.kind, "crop_dpi": fig.crop_dpi,
         "sent_scale": coord.scale,
         "axes": core.axes.to_dict(),
         "tick_rows": [round(r, 3) for r in core.tick_rows],
         "ocr_status": core.ocr_status,
+        "ocr_band_retried": core.band_retried,
         "ocr_ticks": [(lb.text, lb.value, round(lb.center[1], 2)) for lb in core.labels],
         "cal": cal.to_dict() if cal is not None else None,
-        "cal_source": cal_source, "cal_note": cal_why,
+        "cal_source": choice.source, "cal_note": choice.why,
+        "cal_status": choice.status,
+        "cal_witnesses": choice.witnesses,
+        "cal_agreeing": list(choice.agreeing),
+        "cal_scale": choice.scale_note,
+        "cal_refuted_ladder": (choice.cal.to_dict()
+                               if choice.status == "cal_refuted" and choice.cal else None),
+        "cal_refutation": choice.refutation,
         "pixel_resolution": abs(pixel_resolution(cal)) if cal is not None else None,
         "bars": [b.to_dict() for b in core.bars],
         "markers": [m.to_dict() for m in core.markers[:24]],
@@ -954,6 +1285,14 @@ def _base_provenance(fig: FigureRegion, core: _Core, cal: AxisCalibration | None
         "x_hint": target.x_hint,
         "prompt_version": PROMPT_VERSION,
     }
+
+
+def _wants_markers(target: TargetSpec, source: Source | None) -> bool:
+    """Should `detect_markers` run even if `detect_bars` claimed to find bars? (miss 8)"""
+    if target.quantity in ("points", "box"):
+        return True
+    kind = source.kind if source is not None else None
+    return kind in (SourceKind.figure_line, SourceKind.figure_points)
 
 
 def _source_kind(core: _Core, target: TargetSpec, source: Source | None) -> SourceKind | None:

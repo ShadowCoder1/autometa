@@ -325,3 +325,48 @@ def test_resolve_cell_round_trips_through_json():
 
 def test_the_thresholds_are_ordered():
     assert 0.0 < ACCEPT_WITH_NOTE < AUTO_ACCEPT <= 1.0
+
+
+# ------------------------------------------------------------------ task 16: caps never compound
+def test_a_single_witness_calibration_caps_a_cell_but_never_sinks_it():
+    """R2: a cap means `accept_with_note`, whatever else is capping the same cell."""
+    from canopy.verify.confidence import ACCEPT_WITH_NOTE, CAPPING_FLAGS
+
+    result = vote([text_cand("a", 31.51), text_cand("b", 31.51, model=SONNET)])
+    flags = [CheckFlag(code="calibration_single_witness", severity="warn",
+                       message="only the OCR ladder calibrated this axis", candidate_ids=["a"])]
+    bucket, score, reasons = confidence(result, CONFIRMED, flags, None, orientation=ORIENTED)
+    assert bucket == "accept_with_note" and score <= 0.70
+    assert any("uncorroborated" in r for r in reasons)
+    assert "calibration_single_witness" in CAPPING_FLAGS
+    assert score >= ACCEPT_WITH_NOTE
+
+
+def test_every_cap_in_combination_still_means_accept_with_note():
+    """No pile-up of caps may add up to `needs_human`: only evidence does that."""
+    from canopy.verify.confidence import ACCEPT_WITH_NOTE, CAPPING_FLAGS
+
+    result = vote([text_cand("a", 31.51), text_cand("b", 31.51, model=SONNET)])
+    flags = [CheckFlag(code=code, severity="warn", message=code, candidate_ids=["a"])
+             for code in sorted(CAPPING_FLAGS)]
+    bucket, score, _ = confidence(result, CONFIRMED, flags, None, orientation=ORIENTED)
+    assert bucket == "accept_with_note", "caps composed downwards into needs_human"
+    assert score >= ACCEPT_WITH_NOTE
+
+
+def test_a_refuted_calibration_convicts_the_ladder_not_the_reading():
+    """`calibration_refuted` is an `error` in the queue, but it does not force a human."""
+    from canopy.verify.confidence import NON_FORCING_ERRORS
+
+    result = vote([text_cand("a", 31.3), text_cand("b", 31.3, model=SONNET)])
+    flags = [CheckFlag(code="calibration_refuted", severity="error",
+                       message="the ticks max at 4 and the readers agree on 33.3",
+                       candidate_ids=["a"])]
+    bucket, score, reasons = confidence(result, CONFIRMED, flags, None, orientation=ORIENTED)
+    assert "calibration_refuted" in NON_FORCING_ERRORS
+    assert bucket == "accept_with_note" and score <= 0.70
+    assert any("the calibration is wrong, not the value" in r for r in reasons)
+    # …whereas a calibration nobody could settle IS a human's problem
+    disputed = [CheckFlag(code="calibration_disputed", severity="error", message="x",
+                          candidate_ids=["a"])]
+    assert confidence(result, CONFIRMED, disputed, None, orientation=ORIENTED)[0] == "needs_human"
