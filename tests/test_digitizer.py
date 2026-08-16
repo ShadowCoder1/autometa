@@ -31,7 +31,8 @@ from canopy.ingest.pdf import Bbox, FigureRegion, PaperRecord, ingest_pdf
 from canopy.llm.client import LLMClient, MissingFixture
 from canopy.llm.providers import FakeProvider
 from canopy.llm.schemas import assert_no_derived_stats, assert_valid_output_schema
-from canopy.models import DatasetSpec, DispersionType, GroupSpec, Source, SourceKind
+from canopy.models import (DatasetSpec, DigitizeSettings, DispersionType, GroupSpec, Source,
+                          SourceKind)
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 REPLAY = FIXTURES / "llm"
@@ -201,10 +202,18 @@ def test_digitizer_schemas_are_valid_and_carry_no_derived_stats():
 
 
 def test_prompts_render_with_the_target_and_refuse_unfilled_placeholders():
-    text = render_prompt("digitize_readout", TARGET=TARGET.describe(), CAPTION="cap", VARIANT="")
+    """The target travels in the USER turn (task 15 §A2a), so the system prompt is variant-free."""
+    from canopy.digitize.vlm import load_prompt
+
+    text = render_prompt("digitize_task", TARGET=TARGET.describe(), CAPTION="cap",
+                         VARIANT="read the ticks first")
     assert "late_adaptation" in text and "block_closest_to_end" in text
+    assert "cap" in text and "read the ticks first" in text
     with pytest.raises(KeyError):
-        render_prompt("digitize_readout", TARGET="t")
+        render_prompt("digitize_task", TARGET="t")
+    # …and the two system prompts are the same bytes for every call on a figure
+    for name in ("digitize_readout", "digitize_coords"):
+        assert "{{" not in load_prompt(name), f"{name} still interpolates a per-call value"
 
 
 def test_readout_plan_is_two_model_families_and_two_variants():
@@ -728,7 +737,8 @@ def test_digitize_gives_every_sample_a_distinct_extractor_and_candidate_id(bar_f
     provider = _scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
                          _coord_payload(bar_figure, view.scale))
     out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
-                   out_dir=tmp_path, n_readouts=7, result=True)          # forces re-samples
+                   out_dir=tmp_path, n_readouts=7, result=True,         # forces re-samples
+                   settings=DigitizeSettings(readouts_min=7, readouts_max=7))
     ids = [c.candidate_id for c in out.candidates]
     assert len(set(ids)) == len(ids), "candidate ids collided"
     for group in ("A", "B"):
@@ -774,7 +784,8 @@ def test_digitize_is_ambiguous_not_absent_when_verification_drops_every_route(ba
         return _submit({"marks": verdicts, "notes": ""})
 
     out = digitize(_client(FakeProvider([respond])), paper, fig, TARGET, source=SOURCE,
-                   dataset=DATASET, out_dir=tmp_path, result=True)
+                   dataset=DATASET, out_dir=tmp_path, result=True,
+                   settings=DigitizeSettings(overlay_verify="always"))
     ensemble = {c.group: c for c in out.candidates if c.extractor_id == "digitize:ensemble"}
     for group in ("A", "B"):
         assert ensemble[group].status == "ambiguous", "a failed read is not 'not on these pages'"
@@ -892,3 +903,92 @@ def test_conftest_keeps_the_recording_env_only_for_live_and_replay(monkeypatch):
     monkeypatch.setenv("CANOPY_LIVE", "1")
     fixture_fn(_Request(None), monkeypatch)
     assert not live_enabled(), "an unmarked test must be forced offline"
+
+
+# ------------------------------------------------------------------ task 15: calls are bought
+def _n_readouts(out) -> int:
+    return len({(s.model, s.variant, s.sample) for s in out.samples if s.route == "D"})
+
+
+def test_digitize_stops_at_two_read_outs_when_the_routes_agree(bar_figure, tmp_path):
+    """The third vision pass is bought only when the first two disagree (task 15 §A3).
+
+    A read-out is the most expensive call in the pipeline; a third one that confirms two agreeing
+    reads changes neither the median nor the confidence gate.
+    """
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    provider = _scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                         _coord_payload(bar_figure, view.scale))
+    out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, result=True)
+    assert _n_readouts(out) == 2
+    plan = next(c for c in out.candidates
+                if c.extractor_id == "digitize:ensemble").pixel_provenance["call_plan"]
+    assert plan == {"readouts_min": 2, "readouts_max": 3, "readouts_run": 2,
+                    "extra_readouts_bought": 0,
+                    "extra_readout_reason": "the routes agreed, so no further read-out was bought",
+                    "overlay_verify": False,
+                    "overlay_verify_reason": "every route agreed and none was dropped",
+                    "list_regions_offered": plan["list_regions_offered"]}
+
+
+def test_digitize_buys_a_third_read_out_when_the_first_two_disagree(bar_figure, tmp_path):
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    good = _readout_payload(31.5, 11.0, 12.25, 11.75)
+    provider = _scripted(good, _coord_payload(bar_figure, view.scale),
+                         readout_by_call=[_readout_payload(45.0, 11.0, 12.25, 11.75), good, good])
+    out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, result=True)
+    assert _n_readouts(out) == 3
+    plan = next(c for c in out.candidates
+                if c.extractor_id == "digitize:ensemble").pixel_provenance["call_plan"]
+    assert plan["extra_readouts_bought"] == 1 and "means span" in plan["extra_readout_reason"]
+    # a disagreement is also what buys the overlay-verification call
+    assert plan["overlay_verify"] is True
+
+
+def test_digitize_still_draws_the_overlay_it_did_not_pay_to_verify(bar_figure, tmp_path):
+    """Drawing the marks is free and is what a reviewer opens; only the CALL is conditional."""
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    out = digitize(_client(_scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                                     _coord_payload(bar_figure, view.scale))),
+                   paper, fig, TARGET, source=SOURCE, dataset=DATASET, out_dir=tmp_path,
+                   result=True)
+    assert out.overlay_path and Path(out.overlay_path).exists()
+    assert not next(c for c in out.candidates
+                    if c.extractor_id == "digitize:ensemble").pixel_provenance["overlay_iterations"]
+
+
+def test_readout_tool_list_drops_list_regions_when_the_cv_pass_found_nothing(tmp_path):
+    """The tool list is part of the cached prefix, so it is decided once per figure."""
+    from PIL import Image
+
+    blank = tmp_path / "blank.png"
+    Image.new("RGB", (300, 200), "white").save(blank)
+    view = FigureView(blank, work_dir=tmp_path)
+    assert view.has_regions is False
+    assert "list_regions" not in {t["name"] for t in view.tools()}
+    assert "list_regions" not in view.handlers()
+
+
+def test_figure_view_sends_the_image_first_and_marks_it_cacheable(bar_figure, tmp_path):
+    """Block order IS the cache design: header, image (marked), then everything that varies."""
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"], work_dir=tmp_path)
+    provider = _scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                         _coord_payload(bar_figure, view.scale))
+    client = _client(provider)
+    systems = []
+    for variant in ("direct", "ticks_first"):
+        read_out(client, bar_figure["path"], "cap", TARGET, "claude-opus-5", variant, view=view)
+        request = provider.requests[-1]
+        systems.append(request.system)
+        content = request.messages[0]["content"]
+        assert [b["type"] for b in content] == ["text", "image", "text", "text"]
+        assert "cache_control" in content[1] and content[1]["cache_control"]["type"] == "ephemeral"
+        assert "cache_control" not in content[2] and "cache_control" not in content[3]
+        assert TARGET.outcome_key in content[2]["text"], "the target belongs after the image"
+    assert systems[0] == systems[1], "two variants must share one system prompt, or nothing caches"

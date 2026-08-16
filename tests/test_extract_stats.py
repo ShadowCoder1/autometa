@@ -378,3 +378,22 @@ def test_bock_two_group_t_test_is_transcribed_with_its_direction(client, paper, 
     assert cand.design == "independent_t", cand.notes
     assert cand.admissible is True and cand.admissible_reason == ""
     assert cand.route == "test_statistic" and cand.kind == "test_statistic"
+
+
+def test_no_statistic_source_means_no_call_at_all(paper, protocol, fake_dataset):
+    """`unknown` alone is not evidence that the paper prints a statistic (task 15 §A3).
+
+    The mapper has already read the paper and named where the numbers are. When none of those is
+    a test statistic or a reported effect size, this extractor has nothing to transcribe, and its
+    call is one of the more expensive ones in the pipeline.
+    """
+    provider = FakeProvider([{"statistics": [], "notes": ""}])
+    client = LLMClient(provider=provider, cache_dir=None)
+    only_unknown = [Source(kind=SourceKind.unknown, page=3, locator="a fitted parameter")]
+    assert extract_test_statistics(client, paper, protocol, fake_dataset, "late_adaptation",
+                                   only_unknown) == []
+    assert provider.requests == [], "no source of the right kind must mean no model call"
+
+    assert extract_test_statistics(client, paper, protocol, fake_dataset, "late_adaptation",
+                                   [*only_unknown, STAT_SOURCE])
+    assert len(provider.requests) == 1

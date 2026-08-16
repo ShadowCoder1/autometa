@@ -29,7 +29,7 @@ from typing import Any, Literal
 from PIL import Image
 
 from ..ingest.images import PreparedImage, prepare_for_claude
-from ..llm.client import LLMClient, ToolLoopResult
+from ..llm.client import EPHEMERAL, LLMClient, ToolLoopResult
 from ..llm.schemas import assert_no_derived_stats, assert_valid_output_schema
 from .calibrate import parse_number
 from .cv import (Axes, TickLabels, detect_bars, detect_markers, find_axes, find_tick_marks,
@@ -39,16 +39,18 @@ from .overlay import draw_overlay
 __all__ = ["PROMPT_VERSION", "TargetSpec", "FigureView", "GroupReadOut", "ReadOut", "TickCoord",
            "GroupCoords", "CoordReadout", "Mismatch", "OverlayVerdict", "read_out", "coords",
            "overlay_verify", "load_prompt", "render_prompt", "READOUT_SCHEMA", "COORDS_SCHEMA",
-           "OVERLAY_SCHEMA", "READOUT_VARIANTS", "MAX_ZOOM"]
+           "OVERLAY_SCHEMA", "READOUT_VARIANTS", "MAX_ZOOM", "MAX_READOUT_TOOL_CALLS"]
 
 #: bump when a prompt or a schema changes (fixtures are content-addressed, so they follow anyway)
-PROMPT_VERSION = "digitize/1"
+PROMPT_VERSION = "digitize/2"
 #: read-out variants; each is a `digitize_readout_<name>.md` delta appended to the base prompt.
 #: Order matters: `_readout_plan` fills a figure's samples from distinct (model, variant) pairs in
 #: this order, and only re-samples an already-used pair once every pair is spent.
 READOUT_VARIANTS: tuple[str, ...] = ("direct", "ticks_first", "zoom_first")
 MAX_ZOOM = 4.0                      # amendment F: a zoom tool never magnifies more than 4x
 MAX_TOOL_CALLS = 8                  # amendment F
+#: a read-out that has not answered in six tool calls is not going to (task 15 §A3)
+MAX_READOUT_TOOL_CALLS = 6
 MAX_TOKENS = 16000                  # enough for adaptive thinking + the submit call, no retry
 _MIN_CROP_PX = 8                    # a crop smaller than this is a mis-click, not a zoom
 
@@ -359,7 +361,8 @@ class FigureView:
 
     def __init__(self, crop_png: str | Path, work_dir: str | Path | None = None,
                  axes: Axes | None = None, tick_rows: list[float] | None = None,
-                 tick_labels: TickLabels | list | None = None):
+                 tick_labels: TickLabels | list | None = None,
+                 bars: list | None = None, markers: list | None = None):
         self.crop_png = Path(crop_png)
         self.work_dir = Path(work_dir) if work_dir is not None else self.crop_png.parent
         source = Image.open(self.crop_png).convert("RGB")
@@ -370,7 +373,10 @@ class FigureView:
         self._axes = axes
         self._tick_rows = tick_rows
         self._tick_labels = tick_labels
+        self._bars = bars
+        self._markers = markers
         self._regions_text: str | None = None
+        self._n_regions: int | None = None
         self._overlays = 0
 
     # -------------------------------------------------------------- frames
@@ -384,8 +390,10 @@ class FigureView:
     def crop_px(self, value: float | None) -> float | None:
         return None if value is None else value / self.scale
 
-    def image_block(self) -> dict[str, Any]:
-        return _pil_image_block(self.image)
+    def image_block(self, cache: bool = False) -> dict[str, Any]:
+        """The figure as a content block; `cache=True` marks it as the end of the cached prefix."""
+        block = _pil_image_block(self.image)
+        return {**block, "cache_control": dict(EPHEMERAL)} if cache else block
 
     def header(self) -> str:
         w, h = self.image.size
@@ -397,6 +405,16 @@ class FigureView:
         if self._regions_text is None:
             self._regions_text = self._build_regions()
         return self._regions_text
+
+    @property
+    def has_regions(self) -> bool:
+        """True when the CV pass found something worth asking about.
+
+        A `list_regions` tool that can only answer "nothing detected" is a tool call the model
+        pays for and learns nothing from, so it is not offered at all (task 15 §A3).
+        """
+        self.regions_text()
+        return bool(self._n_regions)
 
     def _build_regions(self) -> str:
         s = self.scale
@@ -415,6 +433,8 @@ class FigureView:
             lines.append(f"- x axis (horizontal line) at y = {axes.x_axis_y * s:.1f}")
         x0, y0, x1, y1 = axes.plot_bbox
         lines.append(f"- plotting area x {x0 * s:.0f}..{x1 * s:.0f}, y {y0 * s:.0f}..{y1 * s:.0f}")
+        # what was really DETECTED (a plot box is always guessed, so it does not count)
+        found = sum(1 for v in (axes.y_axis_x, axes.x_axis_y) if v is not None)
         rows = self._tick_rows
         if rows is None:
             rows = find_tick_marks(gray, axes).get("left", [])
@@ -431,29 +451,38 @@ class FigureView:
         status = getattr(labels, "status", "")
         if status and status != "ok":
             lines.append(f"- OCR status: {status} (labels above may be missing)")
-        try:
-            bars = detect_bars(colour, axes)
-        except Exception:                                     # pragma: no cover - defensive
-            bars = []
+        bars = self._bars
+        if bars is None:
+            try:
+                bars = detect_bars(colour, axes)
+            except Exception:                                 # pragma: no cover - defensive
+                bars = []
+        markers = self._markers
+        if markers is None and not bars:
+            try:
+                markers = detect_markers(colour, axes)
+            except Exception:                                 # pragma: no cover - defensive
+                markers = []
         for b in bars[:16]:
             flag = " (narrow: under 8 px, read-out unreliable)" if b.narrow else ""
             lines.append(f"- bar {b.colour} top at ({b.x_center * s:.1f}, {b.top_y * s:.1f}), "
                          f"x {b.x0 * s:.1f}..{b.x1 * s:.1f}{flag}")
-        if not bars:
-            try:
-                marks = detect_markers(colour, axes)
-            except Exception:                                 # pragma: no cover - defensive
-                marks = []
-            for m in marks[:24]:
-                lines.append(f"- marker {m.kind} {m.colour} at ({m.x * s:.1f}, {m.y * s:.1f})")
+        for m in (markers or [])[:24]:
+            lines.append(f"- marker {m.kind} {m.colour} at ({m.x * s:.1f}, {m.y * s:.1f})")
+        self._n_regions = found + len(rows or []) + len(read) + len(bars) + len(markers or [])
         if len(lines) == 2:
             lines.append("- (nothing else detected)")
         return "\n".join(lines)
 
     # -------------------------------------------------------------- tools
     def tools(self) -> list[dict[str, Any]]:
-        """The stable zoom-tool list (amendment F). The caller appends its own `submit` tool."""
-        return [
+        """The stable zoom-tool list (amendment F). The caller appends its own `submit` tool.
+
+        `list_regions` is offered only when the computer-vision pass actually found something:
+        the tool list is part of the cached prefix, so it is decided once per figure and is then
+        identical for every call on that figure.
+        """
+        tools = [
             {"name": "crop_image",
              "description": ("Zoom into a rectangle of the image you were sent. Coordinates are "
                              "absolute pixels of that image. Returns the cropped region as a new "
@@ -462,12 +491,6 @@ class FigureView:
                  "x0": {"type": "number"}, "y0": {"type": "number"},
                  "x1": {"type": "number"}, "y1": {"type": "number"},
                  "zoom": {"type": ["number", "null"]}})},
-            {"name": "list_regions",
-             "description": ("List the axis lines, tick marks, OCR'd tick labels and detected "
-                             "bars/markers a computer-vision pass found, in the coordinates of "
-                             "the image you were sent."),
-             "input_schema": {"type": "object", "additionalProperties": False,
-                              "required": [], "properties": {}}},
             {"name": "overlay_points",
              "description": ("Draw numbered marks at coordinates you supply onto the figure and "
                              "return the result, so you can check whether they land on the data "
@@ -476,11 +499,22 @@ class FigureView:
                  "x": {"type": "number"}, "y": {"type": "number"},
                  "label": {"type": "string"}})}})},
         ]
+        if self.has_regions:
+            tools.insert(1, {
+                "name": "list_regions",
+                "description": ("List the axis lines, tick marks, OCR'd tick labels and detected "
+                                "bars/markers a computer-vision pass found, in the coordinates of "
+                                "the image you were sent."),
+                "input_schema": {"type": "object", "additionalProperties": False,
+                                 "required": [], "properties": {}}})
+        return tools
 
     def handlers(self) -> dict[str, Any]:
-        return {"crop_image": self.handle_crop_image,
-                "list_regions": self.handle_list_regions,
-                "overlay_points": self.handle_overlay_points}
+        out = {"crop_image": self.handle_crop_image,
+               "overlay_points": self.handle_overlay_points}
+        if self.has_regions:
+            out["list_regions"] = self.handle_list_regions
+        return out
 
     def handle_list_regions(self, _: dict[str, Any]) -> str:
         return self.regions_text()
@@ -550,13 +584,26 @@ def _submit_tool(schema: dict[str, Any], description: str) -> dict[str, Any]:
 
 def _run(client: LLMClient, *, model: str, system: str, view: FigureView, ask: str,
          schema: dict[str, Any], submit_description: str, cell_key: str,
-         cache_key_extra: str) -> ToolLoopResult:
-    messages = [{"role": "user", "content": [_text_block(view.header()), view.image_block(),
-                                             _text_block(ask)]}]
+         cache_key_extra: str, task: str = "",
+         max_tool_calls: int = MAX_TOOL_CALLS) -> ToolLoopResult:
+    """One tool-use pass over `view`, with the figure image as a CACHED prefix.
+
+    Block order is what makes prompt caching work (task 15 §A, measured live): the blocks that do
+    not vary between two calls on the same figure come first — the size header, then the image,
+    which carries the `cache_control` marker — and everything that varies (the target, the
+    caption, this pass's extra instruction) comes after it. `system` must therefore be the same
+    text for every variant, or the prefix differs before the image is even reached and each call
+    writes its own cache entry instead of reading the previous one.
+    """
+    content: list[dict[str, Any]] = [_text_block(view.header()), view.image_block(cache=True)]
+    if task:
+        content.append(_text_block(task))
+    content.append(_text_block(ask))
+    messages = [{"role": "user", "content": content}]
     tools = view.tools() + [_submit_tool(schema, submit_description)]
     return client.tool_loop(model=model, system=system, messages=messages, tools=tools,
                             handlers=view.handlers(), final_tool="submit",
-                            max_tokens=MAX_TOKENS, max_tool_calls=MAX_TOOL_CALLS,
+                            max_tokens=MAX_TOKENS, max_tool_calls=max_tool_calls,
                             prompt_version=PROMPT_VERSION, cell_key=cell_key,
                             cache_key_extra=cache_key_extra)
 
@@ -576,14 +623,17 @@ def read_out(client: LLMClient, crop_png: str | Path, caption: str, target: Targ
     if sample < 0:
         raise ValueError(f"sample must be >= 0, got {sample}")
     view = view or FigureView(crop_png)
-    system = render_prompt("digitize_readout", TARGET=target.describe(),
-                           CAPTION=(caption or "").strip() or "(no caption found by ingestion)",
-                           VARIANT=load_prompt(f"digitize_readout_{variant}"))
-    result = _run(client, model=model, system=system, view=view,
+    # the system prompt is IDENTICAL for every variant: what differs (target, caption, the
+    # variant's own step 7) travels in the user turn, after the cached image block
+    system = load_prompt("digitize_readout")
+    task = render_prompt("digitize_task", TARGET=target.describe(),
+                         CAPTION=(caption or "").strip() or "(no caption found by ingestion)",
+                         VARIANT=load_prompt(f"digitize_readout_{variant}").strip())
+    result = _run(client, model=model, system=system, view=view, task=task,
                   ask="Work through the steps above, then call `submit`.",
                   schema=READOUT_SCHEMA,
                   submit_description="Report the values you read off the figure.",
-                  cell_key=cell_key,
+                  cell_key=cell_key, max_tool_calls=MAX_READOUT_TOOL_CALLS,
                   cache_key_extra=f"{PROMPT_VERSION}|readout|{variant}"
                                   + (f"|sample{sample}" if sample else ""))
     return _parse_readout(result, model=model, variant=variant, sample=sample)
@@ -624,11 +674,11 @@ def coords(client: LLMClient, crop_png: str | Path, caption: str, target: Target
            cell_key: str = "") -> CoordReadout:
     """Path C: ask for pixel coordinates, return them mapped into `crop_png` pixels."""
     view = view or FigureView(crop_png)
-    w, h = view.image.size
-    system = render_prompt("digitize_coords", TARGET=target.describe(),
-                           CAPTION=(caption or "").strip() or "(no caption found by ingestion)",
-                           WIDTH=str(w), HEIGHT=str(h))
-    result = _run(client, model=model, system=system, view=view,
+    system = load_prompt("digitize_coords")
+    task = render_prompt("digitize_task", TARGET=target.describe(),
+                         CAPTION=(caption or "").strip() or "(no caption found by ingestion)",
+                         VARIANT="Report coordinates only; another program converts them.")
+    result = _run(client, model=model, system=system, view=view, task=task,
                   ask="Zoom as needed, check yourself with `overlay_points`, then call `submit`.",
                   schema=COORDS_SCHEMA,
                   submit_description="Report the pixel coordinates you located.",

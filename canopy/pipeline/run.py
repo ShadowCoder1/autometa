@@ -45,6 +45,7 @@ from ..ingest.dedupe import PaperGroup, dedupe_pdfs
 from ..ingest.pdf import FigureRegion, PaperRecord, ingest_pdf
 from ..llm.client import LLMClient
 from ..llm.context import upload_pdf
+from ..llm.costs import cache_stats, cache_summary_line, cost_by_stage
 from ..llm.errors import BudgetExceeded
 from ..models import (Adjudication, Candidate, DatasetSpec, EffectSizeRecord, OrientationVerdict,
                       OutcomeSources, PaperStatus, Protocol, RunManifest, SourceKind, Source,
@@ -238,6 +239,8 @@ def _extract_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
         digitised = digitize(ctx.client, paper, figure, target, source=source, dataset=dataset,
                              out_dir=figures_dir, caption=figure.caption,
                              models=(ctx.models["primary"],),
+                             settings=ctx.protocol.digitize,
+                             n_readouts=ctx.protocol.digitize.readouts_max,
                              cell_key=f"{paper.sha256[:12]}/{dataset.dataset_id}/{key}/"
                                       f"{figure.id}")
         out.extend(digitised if isinstance(digitised, list) else digitised.candidates)
@@ -734,6 +737,8 @@ def run_pipeline(papers_dir: str | Path, protocol_path: str | Path, out_dir: str
     calls = client.calls()
     manifest.n_llm_calls = len(calls)
     manifest.cache_hits = sum(1 for c in calls if c.get("cached"))
+    manifest.cost_by_stage = cost_by_stage(calls)
+    manifest.cache = cache_stats(calls)
     manifest.cost_usd = round(client.total_cost(), 6)
     manifest.seconds = round(time.perf_counter() - started, 3)
     save_manifest(out, manifest)
@@ -745,6 +750,8 @@ def run_pipeline(papers_dir: str | Path, protocol_path: str | Path, out_dir: str
         emit(progress, "review", "", "done", cost_so_far=manifest.cost_usd,
              message=f"{summary['applied']} override(s) re-applied from {OVERRIDES_FILE}")
         manifest = load_manifest(out)
+    emit(progress, "cache", "", "done", cost_so_far=manifest.cost_usd,
+         message=cache_summary_line(manifest.cache))
     emit(progress, "run", "", "done", cost_so_far=manifest.cost_usd,
          message=f"{len(results)} paper(s), ${manifest.cost_usd:.2f}, "
                  f"{manifest.n_llm_calls} calls")

@@ -194,17 +194,24 @@ def evidence_text(votes: Any = None, verdicts: Iterable[VerifierVerdict] = (),
 
 
 # ----------------------------------------------------------------------------- context
-def whole_paper(client: LLMClient, paper: PaperRecord,
-                pdf_file_id: str | None = None) -> tuple[dict[str, Any], list[str] | None]:
+def whole_paper(client: LLMClient, paper: PaperRecord, pdf_file_id: str | None = None,
+                cache: bool = True) -> tuple[dict[str, Any], list[str] | None]:
     """The `document` block for a whole-paper call, plus the betas it needs.
 
     A verifier that only sees the page a value came from cannot answer "is there a better source
     anywhere in the paper?", so every agent in this module gets the whole PDF. When it goes by
     Files-API id, the paper's page count is registered so the budget reservation reflects the real
     size instead of the flat guess in `canopy.llm.costs`.
+
+    `cache=True` marks the document as the end of a cached prefix. Mark it only when a LATER call
+    with the SAME model and the SAME output schema will send the same prefix — a write costs 1.25x
+    the input price and a read 0.1x, so a marker nothing reads is a 25 % surcharge. Measured live
+    (task 15 §A): the response schema is part of the cached prefix, so two agents that share a
+    document but not a schema never share a cache entry. The agents that do re-read their prefix
+    are the ones called once per candidate or per measure — verifier, orientation, adjudicator.
     """
     if pdf_file_id:
         register_file_pages(pdf_file_id, paper.n_pages)
     block = client.pdf_block(pdf_path=None if pdf_file_id else paper.source_path,
-                             file_id=pdf_file_id, cache=True)
+                             file_id=pdf_file_id, cache=cache)
     return block, ([FILES_API_BETA] if pdf_file_id else None)

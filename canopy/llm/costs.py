@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 CACHE_WRITE_MULTIPLIER = 1.25     # 5-minute cache write costs 1.25x the input price
 CACHE_READ_MULTIPLIER = 0.1       # cache read costs 0.1x the input price
@@ -56,6 +56,88 @@ def estimate_cost(usage: Mapping[str, Any] | None, model: str) -> float:
             + out * p.output_per_mtok
             + cw * p.input_per_mtok * CACHE_WRITE_MULTIPLIER
             + cr * p.input_per_mtok * CACHE_READ_MULTIPLIER) / _MTOK
+
+
+# ----------------------------------------------------------------------------- run accounting
+#: `cell_key` prefix -> the pipeline stage that spent the money. A call whose prefix is not here
+#: is reported under `other` rather than being dropped or guessed at.
+STAGE_OF_PREFIX: dict[str, str] = {
+    "map": "map", "map-sources": "map", "map-crosscheck": "map", "map-adjudicate": "map",
+    "map-roster": "map",
+    "extract-text": "extract", "extract-stats": "extract", "digitize": "digitize",
+    "verify": "verify", "orientation": "verify", "adjudicate": "verify",
+}
+
+
+def stage_of(cell_key: str) -> str:
+    """Which stage a logged call belongs to, from its `cell_key` prefix."""
+    head = str(cell_key or "").split(":", 1)[0].strip()
+    return STAGE_OF_PREFIX.get(head, "other" if head else "unattributed")
+
+
+def _usage_totals(calls: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    total = {"calls": 0, "cost_usd": 0.0, "input_tokens": 0, "output_tokens": 0,
+             "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "cached_replies": 0}
+    for call in calls:
+        total["calls"] += 1
+        total["cost_usd"] += float(call.get("cost_usd") or 0.0)
+        for key in ("input_tokens", "output_tokens", "cache_creation_input_tokens",
+                    "cache_read_input_tokens"):
+            total[key] += int(call.get(key) or 0)
+        total["cached_replies"] += 1 if call.get("cached") else 0
+    total["cost_usd"] = round(total["cost_usd"], 6)
+    return total
+
+
+def cost_by_stage(calls: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Per-stage `{calls, cost_usd, tokens…}` from `LLMClient.calls()` (amendment B, task 15)."""
+    buckets: dict[str, list[Mapping[str, Any]]] = {}
+    for call in calls:
+        buckets.setdefault(stage_of(str(call.get("cell_key") or "")), []).append(call)
+    return {stage: _usage_totals(rows) for stage, rows in sorted(buckets.items())}
+
+
+def cache_stats(calls: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """How much of the input the API served from its prompt cache, and what that saved.
+
+    `cache_hit_ratio` is read tokens over ALL input-side tokens (fresh + written + read), so it
+    answers "what share of everything we sent did we get at a tenth of the price?". Calls the disk
+    cache replayed are excluded: they never reached the API, and counting them would flatter the
+    number the run is trying to measure.
+    """
+    live = [c for c in calls if not c.get("cached")]
+    total = _usage_totals(live)
+    seen = (total["input_tokens"] + total["cache_creation_input_tokens"]
+            + total["cache_read_input_tokens"])
+    read = total["cache_read_input_tokens"]
+    return {
+        "live_calls": total["calls"],
+        "input_tokens": total["input_tokens"],
+        "cache_creation_input_tokens": total["cache_creation_input_tokens"],
+        "cache_read_input_tokens": read,
+        "cache_hit_ratio": round(read / seen, 4) if seen else 0.0,
+        "saved_usd": round(sum(_saved(c) for c in live), 6),
+    }
+
+
+def _saved(call: Mapping[str, Any]) -> float:
+    """USD this call did NOT pay because its prefix was already cached."""
+    read = float(call.get("cache_read_input_tokens") or 0)
+    if not read:
+        return 0.0
+    try:
+        price = price_for(str(call.get("served_model") or call.get("model") or ""))
+    except UnknownModel:                              # pragma: no cover - defensive
+        return 0.0
+    return read * price.input_per_mtok * (1.0 - CACHE_READ_MULTIPLIER) / _MTOK
+
+
+def cache_summary_line(stats: Mapping[str, Any]) -> str:
+    """The one line `canopy run` prints about caching."""
+    return (f"prompt cache: {stats['cache_hit_ratio']:.0%} of input tokens read from cache "
+            f"({stats['cache_read_input_tokens']:,} read, "
+            f"{stats['cache_creation_input_tokens']:,} written, "
+            f"{stats['input_tokens']:,} fresh) — saved about ${stats['saved_usd']:.2f}")
 
 
 CHARS_PER_TOKEN = 3.5             # deliberately pessimistic (real text is ~4)

@@ -999,8 +999,13 @@ def map_study(client: LLMClient, paper: PaperRecord, protocol: Protocol, *,
               pdf_file_id: str | None = None) -> StudyMap:
     """Map one paper against one protocol: eligibility, datasets, group Ns and source locations."""
     sha12 = paper.sha256[:12]
+    # No `cache_control` here: the mapper's four calls each carry a DIFFERENT output schema, and
+    # the schema is part of the cached prefix (measured live, task 15 §A), so a marker would write
+    # a fresh cache entry per call at 1.25x the input price and never be read. The whole-paper
+    # agents that ARE called repeatedly with one schema (verifier, orientation, adjudicator) mark
+    # theirs — see `canopy.agents.verify_common.whole_paper`.
     document = client.pdf_block(pdf_path=None if pdf_file_id else paper.source_path,
-                                file_id=pdf_file_id, cache=True)
+                                file_id=pdf_file_id, cache=False)
     betas = [FILES_API_BETA] if pdf_file_id else None
     entries = roster_entries(paper)
     ids = roster_ids(paper)

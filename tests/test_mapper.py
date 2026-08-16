@@ -302,13 +302,19 @@ def test_the_source_pass_is_told_which_datasets_to_map(paper, protocol):
     assert "analysed n = 12" in prompt
 
 
-def test_whole_pdf_is_sent_once_as_a_cached_document_block(paper, protocol):
+def test_whole_pdf_is_sent_once_as_the_first_document_block(paper, protocol):
+    """One document, first, and NOT marked cacheable — see `tests/test_prompt_cache.py`.
+
+    Each mapper call carries a different output schema, and the schema is part of the cached
+    prefix (measured live, task 15 §A1), so a marker here would write a fresh entry per call at
+    1.25x the input price and never be read.
+    """
     _, provider = _mapped(paper, protocol, [_primary(), _sources(), _check()])
     for request in provider.requests:
         blocks = request.messages[0]["content"]
         documents = [b for b in blocks if b.get("type") == "document"]
-        assert len(documents) == 1
-        assert documents[0]["cache_control"] == {"type": "ephemeral"}
+        assert len(documents) == 1 and blocks[0] is documents[0]
+        assert "cache_control" not in documents[0]
         assert documents[0]["source"]["media_type"] == "application/pdf"
         assert not [b for b in blocks if b.get("type") == "image"]      # no page images
 

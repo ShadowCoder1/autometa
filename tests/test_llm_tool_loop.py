@@ -289,3 +289,60 @@ def test_kwargs_refuses_tools_and_a_structured_schema_together():
     AnthropicProvider()._kwargs(LLMRequest(model="claude-opus-5", messages=MSGS, tools=TOOLS))
     AnthropicProvider()._kwargs(LLMRequest(model="claude-opus-5", messages=MSGS,
                                            schema=SUBMIT_SCHEMA))
+
+
+# ------------------------------------------------------------------ task 15: prompt caching
+def _markers(content) -> list[int]:
+    """Indices of the blocks in one message's content that carry a `cache_control` marker."""
+    return [i for i, b in enumerate(content or []) if isinstance(b, dict) and "cache_control" in b]
+
+
+def test_tool_loop_marks_the_last_block_of_each_turns_tool_result():
+    """Turn N+1 can only read turn N's prefix if turn N's last block carries a marker.
+
+    The live smoke test (task 15 §A) measured this: with a marker only on the first user turn,
+    turn 2 read 3 156 tokens and paid full price for the 4 500 tokens the tool result added.
+    """
+    client, provider = _client([[_text("zoom"), _use("crop_image", {"x0": 0}, "t1")],
+                                [_text("again"), _use("crop_image", {"x0": 1}, "t2")],
+                                [_use("submit", {"answer": 3.0}, "t3")]])
+    client.tool_loop(model="claude-opus-5", messages=MSGS, tools=TOOLS,
+                     handlers={"crop_image": lambda i: "a crop"}, final_tool="submit")
+    second, third = provider.requests[1].messages, provider.requests[2].messages
+    # the tool_result the first turn appended is marked, so the second turn reads it back
+    assert _markers(second[-1]["content"]) == [len(second[-1]["content"]) - 1]
+    assert _markers(third[-1]["content"]) == [len(third[-1]["content"]) - 1]
+
+
+def test_tool_loop_keeps_at_most_four_cache_markers_per_request():
+    """The API allows four breakpoints; a long loop must move the marker, not accumulate them."""
+    turns = [[_text(f"zoom {i}"), _use("crop_image", {"x0": i}, f"t{i}")] for i in range(6)]
+    client, provider = _client([*turns, [_use("submit", {"answer": 1.0}, "tf")]])
+    first = [{"role": "user", "content": [{"type": "text", "text": "read the chart",
+                                           "cache_control": {"type": "ephemeral"}}]}]
+    client.tool_loop(model="claude-opus-5", messages=first, tools=TOOLS,
+                     handlers={"crop_image": lambda i: "a crop"}, final_tool="submit",
+                     max_tool_calls=8)
+    for request in provider.requests:
+        total = sum(len(_markers(m.get("content"))) for m in request.messages
+                    if isinstance(m.get("content"), list))
+        assert total <= 4, f"{total} cache_control markers in one request"
+    # the caller's own marker on the invariant first block survives every turn
+    assert _markers(provider.requests[-1].messages[0]["content"]) == [0]
+
+
+def test_tool_loop_marker_does_not_change_the_cache_key(tmp_path: Path):
+    """`cache_key` drops `cache_control`, so marking the growing prefix cannot invalidate a fixture."""
+    payloads = [[_text("zoom"), _use("crop_image", {"x0": 0}, "t1")],
+                [_use("submit", {"answer": 7.0}, "t2")]]
+    client = LLMClient(provider=FakeProvider(payloads), cache_dir=tmp_path)
+    client.tool_loop(model="claude-opus-5", messages=MSGS, tools=TOOLS,
+                     handlers={"crop_image": lambda i: "a crop"}, final_tool="submit")
+    keys = {p.stem for p in tmp_path.glob("*.json")}
+    provider2 = FakeProvider(payloads)
+    replay = LLMClient(provider=provider2, cache_dir=tmp_path)
+    out = replay.tool_loop(model="claude-opus-5", messages=MSGS, tools=TOOLS,
+                           handlers={"crop_image": lambda i: "a crop"}, final_tool="submit")
+    assert out.parsed == {"answer": 7.0}
+    assert provider2.requests == [], "a replayed loop must make no provider call"
+    assert {p.stem for p in tmp_path.glob("*.json")} == keys

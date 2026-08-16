@@ -122,6 +122,24 @@ class StatsSettings(CanopyModel):
     ci_level: float = 0.95
 
 
+class DigitizeSettings(CanopyModel):
+    """How hard the figure digitizer works — the knob that decides most of a run's cost.
+
+    A figure is read by `readouts_min` vision passes; the further passes up to `readouts_max` are
+    bought only when those disagree about a mean, because a third vote that confirms two agreeing
+    ones changes nothing and a figure read-out is the most expensive call in the pipeline
+    (task 15 §A3: the read-outs were ~60 % of the first live run's spend).
+    """
+
+    readouts_min: int = 2
+    readouts_max: int = 3
+    #: when to spend the overlay-verification call: on every figure, only when the routes disagree
+    #: or one was already dropped, or never
+    overlay_verify: Literal["always", "on_disagreement", "never"] = "on_disagreement"
+    #: zoom/inspect tool calls one read-out may make before it must answer
+    max_tool_calls: int = 6
+
+
 class Protocol(CanopyModel):
     title: str
     research_question: str = ""
@@ -132,6 +150,7 @@ class Protocol(CanopyModel):
     dataset_rules: list[str] = Field(default_factory=list)
     moderators: list[str] = Field(default_factory=list)
     stats: StatsSettings = Field(default_factory=StatsSettings)
+    digitize: DigitizeSettings = Field(default_factory=DigitizeSettings)
     notes: str = ""
 
     def outcome(self, key: str) -> OutcomeDef:
@@ -573,7 +592,10 @@ class RunManifest(CanopyModel):
     models: dict[str, str] = Field(default_factory=dict)
     prompt_versions: dict[str, str] = Field(default_factory=dict)
     cost_usd: float = 0.0
-    cache_hits: int = 0
+    cache_hits: int = 0                        # replies the on-disk cache served (no API call)
+    #: what each stage spent, and how much of the input the API's prompt cache served
+    cost_by_stage: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    cache: dict[str, Any] = Field(default_factory=dict)
     n_llm_calls: int = 0
     seconds: float = 0.0
     warnings: list[str] = Field(default_factory=list)

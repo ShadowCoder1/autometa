@@ -61,6 +61,39 @@ def pdf_block(pdf_path: str | Path | None, file_id: str | None = None,
     return block
 
 
+#: the API allows four `cache_control` breakpoints per request; a long tool loop moves the
+#: marker forward instead of accumulating one per turn (task 15 §A2b)
+MAX_CACHE_MARKERS = 4
+
+
+def mark_cacheable(content: list[Any]) -> list[Any]:
+    """Copy of `content` with a `cache_control` marker on its LAST block.
+
+    A cache READ needs the prefix to be byte-identical up to a breakpoint, and a breakpoint only
+    exists where a marker is. Marking the last block of a turn is therefore what lets the NEXT
+    turn read everything said so far instead of paying for it again (measured live: a tool-loop
+    turn read 3 156 cached tokens and paid full price for the 4 500 the previous tool result had
+    added, because only the caller's first block was marked).
+    """
+    blocks = list(content or [])
+    for index in range(len(blocks) - 1, -1, -1):
+        block = blocks[index]
+        if isinstance(block, dict):
+            blocks[index] = {**block, "cache_control": dict(EPHEMERAL)}
+            break
+    return blocks
+
+
+def _unmark(content: list[Any]) -> list[Any]:
+    return [{k: v for k, v in b.items() if k != "cache_control"} if isinstance(b, dict) else b
+            for b in content or []]
+
+
+def _count_markers(messages: list[Any]) -> int:
+    return sum(1 for m in messages if isinstance(m, dict) and isinstance(m.get("content"), list)
+               for b in m["content"] if isinstance(b, dict) and "cache_control" in b)
+
+
 def _summarize_tool_output(content: list[dict] | str, limit: int = 400) -> str:
     """One readable line per tool result for the audit trail (image bytes are hashed, not stored)."""
     if isinstance(content, str):
@@ -282,6 +315,7 @@ class LLMClient:
             raise ValueError(f"final_tool {final_tool!r} is not in the tool list "
                              f"{[t.get('name') for t in tools]}")
         convo: list[Any] = list(messages)
+        rolling: list[int] = []                              # message indices carrying a marker
         logged: list[dict[str, Any]] = []
         call_ids: list[str] = []
         models: list[str] = []
@@ -341,8 +375,16 @@ class LLMClient:
                 logged.append({"turn": turns, "name": name, "input": payload,
                                "output": _summarize_tool_output(content),
                                "image_hashes": image_hashes(content), "is_error": is_error})
+            # amendment B / task 15 §A2b: the last block of this turn's tool_result carries the
+            # marker, so turn N+1 reads everything up to here. Older rolling markers are removed
+            # once four would be in flight — the caller's own marker (the figure image, the
+            # document) is on the FIRST message and is never touched.
             convo = convo + [{"role": "assistant", "content": blocks},
-                             {"role": "user", "content": results}]
+                             {"role": "user", "content": mark_cacheable(results)}]
+            rolling.append(len(convo) - 1)
+            while len(rolling) > 1 and _count_markers(convo) > MAX_CACHE_MARKERS:
+                oldest = rolling.pop(0)
+                convo[oldest] = {**convo[oldest], "content": _unmark(convo[oldest]["content"])}
 
     @staticmethod
     def _run_tool(name: str, payload: dict[str, Any],

@@ -21,6 +21,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import api_key, load_env
+from .llm.costs import cache_summary_line
 from .protocol import available_profiles
 
 app = typer.Typer(add_completion=False, no_args_is_help=True,
@@ -176,6 +177,13 @@ def run(
     console.print(table)
     console.print(f"[bold]${manifest.cost_usd:.2f}[/bold] over {manifest.n_llm_calls} calls "
                   f"({manifest.cache_hits} served from cache) in {manifest.seconds:.0f}s")
+    if manifest.cache:
+        console.print(f"[dim]{cache_summary_line(manifest.cache)}[/dim]")
+    if manifest.cost_by_stage:
+        spent = " · ".join(f"{stage} ${row['cost_usd']:.2f}/{row['calls']}c"
+                           for stage, row in sorted(manifest.cost_by_stage.items(),
+                                                    key=lambda kv: -kv[1]["cost_usd"]))
+        console.print(f"[dim]by stage: {spent}[/dim]")
     if manifest.human_review_queue:
         console.print(f"[yellow]{len(manifest.human_review_queue)} cell(s) need a human[/yellow] "
                       f"— see human_review_queue.csv")

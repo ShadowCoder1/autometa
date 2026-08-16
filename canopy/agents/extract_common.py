@@ -17,6 +17,7 @@ import re
 from typing import Any, Iterable, Sequence
 
 from ..ingest.pdf import PaperRecord
+from ..llm.client import EPHEMERAL
 from ..llm.context import page_blocks, text_block
 from ..models import DatasetSpec, GroupSpec, Protocol, Source, SourceKind
 from ..verify.grounding import ground_candidate, normalize
@@ -158,12 +159,18 @@ def table_text(paper: PaperRecord, table_ids: Sequence[str]) -> str:
 
 
 def context_blocks(paper: PaperRecord, pages: Sequence[int], *, image_pages: Sequence[int] = (),
-                   table_ids: Sequence[str] = ()) -> list[dict[str, Any]]:
+                   table_ids: Sequence[str] = (), cache: bool = True) -> list[dict[str, Any]]:
     """Page text (+ the page image only where one is needed), then the table cells.
 
     Amendment E: a text source is read from text alone — a page raster costs tokens, adds nothing
     to a sentence that is already in the text layer, and invites the model to read a figure it was
     not asked to read. Pages carrying a table the extractor must look at do get their image.
+
+    The blocks are the INVARIANT part of an extractor call — the same pages, in the same order,
+    whatever question is asked of them — so the last one carries the `cache_control` marker and
+    the variable prompt goes after it (amendment B; task 15 §A2a). Two calls share the entry only
+    when the model AND the output schema match too, which is why the two text variants (Opus and
+    Sonnet) still pay separately: they are meant to be independent readers.
     """
     blocks: list[dict[str, Any]] = []
     for number in pages:
@@ -172,6 +179,8 @@ def context_blocks(paper: PaperRecord, pages: Sequence[int], *, image_pages: Seq
     cells = table_text(paper, table_ids)
     if cells:
         blocks.append(text_block(cells))
+    if cache and blocks:
+        blocks[-1] = {**blocks[-1], "cache_control": dict(EPHEMERAL)}
     return blocks
 
 

@@ -27,12 +27,20 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Offline, a `live` test is DESELECTED rather than skipped.
+
+    The offline suite is meant to run with zero skips, so that a skip always means something is
+    wrong — an unrecorded fixture, a missing dependency — instead of "this one needs a credit
+    card". Deselection says the same thing without spending the signal: `pytest` reports
+    "N deselected", and `CANOPY_LIVE=1` collects them again.
+    """
     if os.environ.get("CANOPY_LIVE", "") not in ("", "0", "false", "False"):
         return
-    skip_live = pytest.mark.skip(reason="live test: set CANOPY_LIVE=1 to run")
-    for item in items:
-        if item.get_closest_marker("live"):
-            item.add_marker(skip_live)
+    live = [item for item in items if item.get_closest_marker("live")]
+    if not live:
+        return
+    config.hook.pytest_deselected(items=live)
+    items[:] = [item for item in items if item not in live]
 
 
 @pytest.fixture(autouse=True)

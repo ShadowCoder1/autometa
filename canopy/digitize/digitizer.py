@@ -23,9 +23,11 @@ from typing import Any, Iterable, Sequence
 
 from ..ingest.pdf import FigureRegion, PaperRecord
 from ..llm.client import LLMClient
-from ..models import Candidate, DatasetSpec, DispersionType, Source, SourceKind
+from ..models import (Candidate, DatasetSpec, DigitizeSettings, DispersionType, Source,
+                      SourceKind)
 from .calibrate import AxisCalibration, fit_axis, pair_ticks, pixel_resolution, \
     px_to_value, value_to_px
+from .overlay import draw_overlay
 from .cv import (Axes, Bar, Marker, MIN_BAR_WIDTH_PX, detect_bars, detect_markers, find_axes,
                  find_cap_ends, find_tick_marks, load_color, load_gray, ocr_tick_labels,
                  snap_horizontal_edge, snap_window_for)
@@ -654,38 +656,111 @@ def _legend_dispersion(text: str) -> DispersionType | None:
     return None
 
 
+# ----------------------------------------------------------------------------- buying calls
+def _means_by_group(samples: Sequence[RouteSample]) -> dict[str, list[float]]:
+    out: dict[str, list[float]] = {}
+    for s in samples:
+        if s.usable and s.mean is not None:
+            out.setdefault(s.group, []).append(float(s.mean))
+    return out
+
+
+def _needs_another_readout(samples: Sequence[RouteSample], *, axis_range: float,
+                           tick_spacing: float, px_units: float) -> tuple[bool, str]:
+    """Is one more vision read-out worth its price? (task 15 §A3)
+
+    Yes when a group has fewer than two usable routes — a single route cannot be checked by
+    anything — or when the routes that did read it disagree about the MEAN beyond amendment F's
+    tolerance. A third pass that only confirms two agreeing reads buys nothing: the ensemble is
+    already a median of routes that agree, and the confidence gate looks at the means.
+    """
+    means = _means_by_group(samples)
+    if not means:
+        return True, "no route has produced a value yet"
+    for group in GROUPS:
+        mine = means.get(group)
+        if mine is None:
+            continue                      # a group that is genuinely not plotted is not a reason
+        if len(mine) < 2:
+            return True, f"group {group} has only {len(mine)} usable route"
+        agreement = dual_tolerance(mine, [], axis_range=axis_range, tick_spacing=tick_spacing,
+                                   px_units=px_units)
+        if not agreement["mean_agrees"]:
+            return True, f"group {group}: {'; '.join(agreement['reasons'])}"
+    return False, "the routes agreed, so no further read-out was bought"
+
+
+def _overlay_wanted(verify: bool, policy: str, samples: Sequence[RouteSample], *,
+                    axis_range: float, tick_spacing: float, px_units: float) -> tuple[bool, str]:
+    """Whether to spend the overlay-verification call, and why (task 15 §A3).
+
+    It exists to catch a mark that landed on the wrong datum, and a mark on the wrong datum shows
+    up as routes that disagree. When every route agrees and none was dropped there is nothing for
+    it to find, so under `on_disagreement` it is not bought.
+    """
+    if not verify or policy == "never":
+        return False, "overlay verification is switched off"
+    if policy == "always":
+        return True, "overlay verification runs on every figure"
+    if any(s.dropped for s in samples):
+        return True, "a route sample was already dropped"
+    if any(s.route != "D" and s.snap_conf == 0.0 for s in samples):
+        return True, "a pixel route snapped with zero confidence"
+    needed, reason = _needs_another_readout(samples, axis_range=axis_range,
+                                            tick_spacing=tick_spacing, px_units=px_units)
+    if needed:
+        return True, reason
+    return False, "every route agreed and none was dropped"
+
+
 # ----------------------------------------------------------------------------- entry point
 def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: TargetSpec, *,
              models: Sequence[str] = ("claude-opus-5",), n_readouts: int = 3,
              want_uncertainty: bool = True, source: Source | None = None,
              dataset: DatasetSpec | None = None, out_dir: str | Path | None = None,
              caption: str | None = None, cell_key: str = "",
-             verify: bool = True, result: bool = False) -> list[Candidate] | DigitizeResult:
+             verify: bool = True, result: bool = False,
+             settings: DigitizeSettings | None = None) -> list[Candidate] | DigitizeResult:
     """Read `fig` for `target` with every available route and return the `Candidate`s.
 
     Returns one `Candidate` per (group, route sample) plus one ensemble `Candidate` per group.
     Pass `result=True` to get the full `DigitizeResult` (samples, calibration, provenance) instead.
+
+    Calls are bought, not spent by default (task 15 §A3): `settings.readouts_min` read-outs run
+    first, the pixel routes are resolved, and a further read-out is asked for only when the routes
+    disagree about a mean. The overlay-verification call is spent under the same rule.
     """
+    cfg = settings or DigitizeSettings(readouts_min=min(2, n_readouts), readouts_max=n_readouts)
+    n_max = max(0, min(int(cfg.readouts_max), n_readouts))
+    n_min = max(0, min(int(cfg.readouts_min), n_max))
     crop = _asset(paper, fig.crop_png)
     work = Path(out_dir) if out_dir is not None else crop.parent
     work.mkdir(parents=True, exist_ok=True)
     text = caption if caption is not None else (fig.caption or "")
-    key = cell_key or f"{paper.sha256[:12]}/{fig.id}/{target.outcome_key}"
+    # the `digitize:` prefix is what `canopy.llm.costs.stage_of` attributes to the
+    # digitiser when the run reports where its money went
+    key = f"digitize:{cell_key or f'{paper.sha256[:12]}/{fig.id}/{target.outcome_key}'}"
 
-    view = FigureView(crop, work_dir=work)
+    # one deterministic CV pass, shared by the pixel routes AND by the view's `list_regions`
     core = _cv_core(crop)
+    view = FigureView(crop, work_dir=work, axes=core.axes, tick_rows=core.tick_rows,
+                      tick_labels=core.labels, bars=core.bars, markers=core.markers)
 
-    # --- path D: read-outs (several model x variant samples)
     readouts: list[ReadOut] = []
     samples: list[RouteSample] = []
-    plan = _readout_plan(models, n_readouts)
-    for spec in plan:
+    plan = _readout_plan(models, n_max)
+
+    def read(spec: ReadoutSpec) -> None:
         suffix = f"/{spec.sample}" if spec.resample else ""
         reading = read_out(client, crop, text, target, spec.model, spec.variant,
                            sample=spec.sample, view=view,
                            cell_key=f"{key}/D/{spec.variant}{suffix}")
         readouts.append(reading)
         samples.extend(_samples_from_readout(reading))
+
+    # --- path D: the first `readouts_min` read-outs
+    for spec in plan[:n_min]:
+        read(spec)
 
     # --- path C: VLM coordinates + CV snap
     primary = models[0] if models else "claude-opus-5"
@@ -696,20 +771,36 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     # --- path B: raster CV, matched by the nearest VLM coordinate
     samples.extend(_samples_from_raster(coord, core, cal, cal_source))
 
-    # --- path A: vector-exact
-    vec_samples, vec_info = _samples_from_vector(paper, fig, coord, core, readouts)
-    samples.extend(vec_samples)
-
     _, tick_spacing = _tick_stats(cal)
     axis_range, axis_range_source = _axis_range(cal, core)
     px_units = abs(pixel_resolution(cal)) if cal is not None else 0.0
+
+    # --- path D again, but only if the routes so far do not agree about a mean
+    bought, buy_reason = 0, "the routes agreed, so no further read-out was bought"
+    for spec in plan[n_min:]:
+        needed, buy_reason = _needs_another_readout(samples, axis_range=axis_range,
+                                                    tick_spacing=tick_spacing, px_units=px_units)
+        if not needed:
+            break
+        read(spec)
+        bought += 1
+    else:
+        if len(plan) <= n_min:
+            buy_reason = f"the plan holds no read-out past the first {n_min}"
+
+    # --- path A: vector-exact (after every read-out, so it sees every tick ladder)
+    vec_samples, vec_info = _samples_from_vector(paper, fig, coord, core, readouts)
+    samples.extend(vec_samples)
     _corroborate_vector_whiskers(samples, px_units)
 
     # --- overlay verify: drop what the model says is misplaced, then recompute
     labels = {"A": target.group_a_label or "group A", "B": target.group_b_label or "group B"}
     overlay_path = ""
     verify_log: list[dict[str, Any]] = []
-    if verify:
+    do_verify, verify_reason = _overlay_wanted(
+        verify, cfg.overlay_verify, samples, axis_range=axis_range, tick_spacing=tick_spacing,
+        px_units=px_units)
+    if do_verify:
         for iteration in range(1, MAX_OVERLAY_ITERATIONS + 1):
             marks, owners = _overlay_marks(samples, cal, core, labels)
             if not marks:
@@ -735,11 +826,24 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
             verify_log[-1]["dropped_samples"] = dropped
             if not dropped or not any(s.usable for s in samples):
                 break
+    else:
+        # the model is not asked, but the picture is still drawn: it costs nothing, and it is what
+        # a reviewer opens to see where the routes landed
+        marks, _ = _overlay_marks(samples, cal, core, labels)
+        if marks:
+            out_png = work / f"{fig.id}.overlay1.png"
+            draw_overlay(crop, marks, out_png)
+            overlay_path = str(out_png)
 
     provenance = _base_provenance(fig, core, cal, cal_source, cal_why, coord, vec_info,
                                   verify_log, target)
     provenance["axis_range"] = axis_range
     provenance["axis_range_source"] = axis_range_source
+    provenance["call_plan"] = {
+        "readouts_min": n_min, "readouts_max": n_max, "readouts_run": len(readouts),
+        "extra_readouts_bought": bought, "extra_readout_reason": buy_reason,
+        "overlay_verify": bool(do_verify), "overlay_verify_reason": verify_reason,
+        "list_regions_offered": view.has_regions}
     provenance.update(_late_window_provenance(target, samples, plan))
     candidates = _build_candidates(samples, target=target, fig=fig, paper=paper, source=source,
                                    dataset=dataset, core=core, cal=cal, crop=crop,

@@ -257,6 +257,13 @@ def extract_test_statistics(client: LLMClient, paper: PaperRecord, protocol: Pro
     usable = usable_sources(sources, STAT_SOURCE_KINDS, paper)
     if not usable:
         return []
+    # `unknown` is a number of an unlisted kind, and it comes along for the ride when a real
+    # statistic source exists. On its own it is not evidence that the paper prints one, and this
+    # call is not cheap: the mapper looked, and if it found no test statistic and no reported
+    # effect size there is nothing here to transcribe (task 15 §A3).
+    if not any(s.kind in (SourceKind.test_statistic, SourceKind.reported_effect_size)
+               for s in usable):
+        return []
     extractor_id = f"stats:{model}"
     pages = pages_of(usable)
 
