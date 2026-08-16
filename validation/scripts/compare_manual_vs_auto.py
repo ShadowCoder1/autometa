@@ -148,8 +148,12 @@ def discrepancy_rows(pairs: Sequence[Pair], run: Any) -> list[dict[str, Any]]:
         auto_low, auto_high = ci_of(auto) if auto is not None else (None, None)
         quote = page = ""
         if auto is not None:
-            chosen = [c for c in run.candidates_for(auto.dataset_id, auto.outcome_key)
-                      if c.quote]
+            pool = [c for c in run.candidates_for(auto.dataset_id, auto.outcome_key) if c.quote]
+            # the quote an adjudicator needs is the one the VERDICT accepted, not whichever
+            # candidate happens to come first
+            accepted = {i for v in run.verdicts_for(auto.dataset_id, auto.outcome_key)
+                        for i in v.candidate_ids}
+            chosen = [c for c in pool if c.candidate_id in accepted] or pool
             if chosen:
                 quote, page = chosen[0].quote[:220], chosen[0].page
         rows.append({
