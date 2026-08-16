@@ -1,0 +1,54 @@
+{
+  "A_vector": {
+    "n_series": 30,
+    "n_read": 30,
+    "read_rate": 1.0,
+    "mae_pct_of_axis_range": 1.8595974081774234e-06,
+    "median_pct_of_axis_range": 1.4493439811265791e-06,
+    "max_pct_of_axis_range": 5.0978259480416455e-06,
+    "within_2pct_of_range": 1.0,
+    "error_bar_mae_pct_of_range": 1.0784464813752757e-06,
+    "n_error_bars_read": 16,
+    "sigma_coverage_95": null,
+    "n_sigma_checked": 0,
+    "failures": [],
+    "cases_with_implausible_calibration": [],
+    "cases_where_cv_core_would_pick_bars_on_a_point_chart": []
+  },
+  "B_raster_cv": {
+    "n_series": 30,
+    "n_read": 28,
+    "read_rate": 0.9333333333333333,
+    "mae_pct_of_axis_range": 3.166391358074357,
+    "median_pct_of_axis_range": 0.08727007629325989,
+    "max_pct_of_axis_range": 53.31417624521071,
+    "within_2pct_of_range": 0.9285714285714286,
+    "error_bar_mae_pct_of_range": 10.92208311748187,
+    "n_error_bars_read": 28,
+    "sigma_coverage_95": 0.9285714285714286,
+    "n_sigma_checked": 28,
+    "failures": [
+      "mark_count_mismatch:1_detected_2_plotted"
+    ],
+    "cases_with_implausible_calibration": [
+      "bars_negative_range",
+      "bars_se_sparse_ticks"
+    ],
+    "cases_where_cv_core_would_pick_bars_on_a_point_chart": [
+      "line_timeseries_endpoint",
+      "points_high_dpi",
+      "points_low_dpi",
+      "points_sd",
+      "points_serif_font",
+      "points_small_font"
+    ]
+  },
+  "_note": "routes C (VLM coordinates) and D (VLM read-out) are NOT measured here \u2014 they need a model.  Run them on this corpus once credit allows; see validation/README.md.",
+  "n_cases": 12,
+  "corpus_dir": "/Users/sritejpadmanabhan/projects/canopy/validation/synthetic/corpus",
+  "files": {
+    "csv": "/Users/sritejpadmanabhan/projects/canopy/validation/synthetic/accuracy.csv",
+    "png": "/Users/sritejpadmanabhan/projects/canopy/validation/synthetic/accuracy.png",
+    "svg": "/Users/sritejpadmanabhan/projects/canopy/validation/synthetic/accuracy.svg"
+  }
+}
