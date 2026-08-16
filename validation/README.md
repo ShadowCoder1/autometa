@@ -222,21 +222,54 @@ credit. Expect roughly $8–25 for the two papers at the costs measured below.
 
 ---
 
+## What the first live run found
+
+Three dev papers, 2026-08-16, on the real corpus. Everything below is in `out/`.
+
+| | |
+|---|---|
+| **Anguera 2010** | correctly **excluded** at the mapping stage — it tested only young adults, and the mapper quoted the sentence that says so |
+| **Bock 2005** | 2 cells, **both `needs_human`** |
+| **Wolpe 2020** | 2 cells, **both `needs_human`** |
+| pooled | **k = 0** for both outcomes; 4 rows held for review |
+| the join | still matched all three cells to their gold rows — Bock late `−1.676`, Bock aftereffect `−0.5369`, Wolpe late `−0.374` |
+
+So the honest headline is: **the tool found the right studies and the right cells, and then refused
+to put a number in any of them.** That is the design working — but it means the backward-validation
+scatter has no points yet, and the auto forest has no rows.
+
+**Why, for Bock 2005 late adaptation** — the most useful thing this run produced. Four digitiser
+routes read the group means off Fig. 1 as **31.2 – 32.8 deg** (older) and **10.6 – 13.4 deg**
+(younger): agreement to within 3 %, implying d ≈ −1.5 against the human's −1.676. Every ensemble
+then came back `ambiguous` because the **error-bar half-lengths** disagreed by 5 – 10 deg against a
+~1.1 deg tolerance — because Bock draws only *one arm* of each SD whisker (upward for the old
+group, downward for the young). Amendment F's dual tolerance is applied to the whole cell, so a
+disagreement about the dispersion discards the means as well. One-armed error bars are common in
+the literature precisely because they declutter overlapping series.
+
+**And the test statistics:** all seven of Bock's F values were correctly ruled **inadmissible** —
+mixed main effects tested against a different error term, and interaction terms — which is
+amendment C's convertibility gate doing exactly its job. `example_test_statistic.py` shows it.
+
+---
+
 ## What it costs
 
 Measured on this corpus, live, on 2026-08-16 — not an estimate:
 
 | | |
 |---|---|
-| 3 papers (1 excluded at the mapping stage, 2 extracted) | **$8.55**, 109 model calls |
+| the whole 3-paper run | **$26.25**, 353 unique model calls, ~50 min wall clock |
+| Bock 2005 (5 pages, 2 figures, 50 candidates) | **$10.20** |
+| Wolpe 2020 (11 pages, 4 figures, 79 candidates) | **$14.94** |
+| Anguera 2010 (excluded at mapping) | $0.50 |
 | mapping one paper | $0.27 – $1.81 |
-| extracting one paper | **> $4** — both eligible papers hit a $4/paper cap mid-extraction |
-| input tokens over those 109 calls | **1 099 996**, of which **0 were cache reads** |
+| input tokens over the first 109 calls | **1 099 996**, of which **0 were cache reads** |
 
 Two things follow.
 
-1. **Budget ≈ $5–12 per paper**, not the $2–5 first estimated. A 19-paper run is therefore a
-   $60–150 job, not a $15–40 one. Set `--max-usd-per-paper` accordingly: a paper that hits its cap
+1. **Budget $10–15 per paper**, not the $2–5 first estimated. A 19-paper run is therefore a
+   $150–250 job, not a $15–40 one. Set `--max-usd-per-paper` accordingly: a paper that hits its cap
    ends as `error` and contributes **nothing**, so a cap that is too low buys you the cost without
    the result.
 2. **Prompt caching is not paying off.** Zero cache reads across a whole run means every reader

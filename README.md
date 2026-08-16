@@ -257,10 +257,12 @@ Measured on real papers (2026-08-16), not estimated:
 | | |
 |---|---|
 | mapping one paper | $0.27 – $1.81 |
-| extracting one paper (figures + text + statistics) | **$4 or more** |
-| a 3-paper run (1 excluded at mapping) | **$8.55**, 109 model calls |
+| Bock 2005 — 5 pages, 2 figures, 50 candidates | **$10.20** |
+| Wolpe 2020 — 11 pages, 4 figures, 79 candidates | **$14.94** |
+| a paper excluded at the mapping stage | $0.50 |
+| the whole 3-paper run | **$26.25**, 353 model calls, ~50 min |
 
-Budget **$5–12 per paper** and set `--max-usd-per-paper` to match: a paper that hits its cap ends
+Budget **$10–15 per paper** and set `--max-usd-per-paper` to match: a paper that hits its cap ends
 as `error` and contributes nothing, so a cap that is too low buys the cost without the result.
 Figure-heavy papers are the expensive ones — the digitiser runs four routes and several tool loops
 per plotted value.

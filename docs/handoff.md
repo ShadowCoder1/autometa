@@ -41,8 +41,8 @@ Every live call made while building this, from the task reports in
 | 8 + 9 | verification and stats — nothing live (account out of credit) | $0.00 |
 | 10 + 11 | orchestrator and report — nothing live | $0.00 |
 | 12 | web UI — nothing live, none needed | $0.00 |
-| 13 + 14 | the Cisneros validation probe run (3 papers, 109 calls) | **$8.55** |
-| | **total** | **≈ $11.05** |
+| 13 + 14 | the Cisneros validation run (3 papers, 353 calls, two invocations) | **$26.25** |
+| | **total** | **≈ $28.75** |
 
 ---
 
@@ -103,8 +103,9 @@ them over more of the corpus.
 .venv/bin/python validation/scripts/example_test_statistic.py  --run validation/out/run_cisneros_dev
 ```
 
-10 papers at the measured $5–12 each ≈ **$50–120**. `--resume` and the disk cache mean a stop is
-never wasted: re-run the same command and it continues.
+The three papers already in that directory are done and will replay free; the **seven remaining
+dev papers** at the measured $10–15 each ≈ **$70–105**. `--resume` and the disk cache mean a stop
+is never wasted: re-run the same command and it continues.
 
 ### 3b · The held-out split — once, at the tag
 
@@ -119,7 +120,7 @@ git tag validation-heldout-v1
 # …then the same five analysis scripts, with --run validation/out/run_cisneros_heldout
 ```
 
-9 papers ≈ **$45–110**.
+9 papers ≈ **$90–135**.
 
 ### 3c · Adjudicate the discrepancies
 
@@ -216,6 +217,18 @@ happen — each was found, understood and deliberately left.
 
 ### Digitiser
 
+7a. **A one-armed error bar discards the whole cell.** This is the most consequential finding of
+    the first live run. Bock 2005 Fig. 1 draws only one arm of each SD whisker (upward for the old
+    group, downward for the young). The four digitiser routes read the **means** to within 3 % of
+    each other — 31.2–32.8 deg (old) and 10.6–13.4 deg (young), implying d ≈ −1.5 against the
+    human's −1.676 — and every ensemble still came back `ambiguous`, because the error-bar
+    half-lengths spanned 5–10 deg against a ~1.1 deg tolerance. Amendment F's dual tolerance is
+    applied per cell, so a disagreement about the *dispersion* throws away agreed *means* as well.
+    One-armed error bars are common in the literature precisely because they declutter overlapping
+    series. The fix is to separate the two verdicts: accept a mean the routes agree on, and mark
+    the dispersion `needs_human` (or fall back to the widest arm with a flag), rather than
+    discarding the row. `canopy/digitize/digitizer.py::dual_tolerance` and `_ensemble_status`.
+
 7. **`ocr_tick_labels` can return only the last glyph of a tick label.** On two of twelve synthetic
    figures it read `15, 10, 5, 0` as `5, 0, 5, 0` and `−20 … 5` as `5, 0, 5, 0, 5, 0` — dropping a
    leading digit and the minus sign. `fit_axis` then returned a calibration with an **rmse of
@@ -240,6 +253,12 @@ happen — each was found, understood and deliberately left.
     `_verify_cell` and a real cost increase.
 
 ### Extraction
+
+11a. **Not one of Bock 2005's seven F statistics was admissible**, and correctly so — they are
+     mixed main effects tested against a different error term, plus interaction terms. This is
+     amendment C's convertibility gate working, but it is worth knowing that on this literature
+     the test-statistic route will rarely rescue a paper: repeated-measures designs are the norm,
+     and their F values do not convert to a between-groups d.
 
 12. **The CI-level `%` heuristic can false-refute a literal 95 % outcome value** (a paper whose
     outcome *is* a percentage near 95).
