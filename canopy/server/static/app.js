@@ -352,11 +352,48 @@
     return form;
   }
 
+  // The create request carries every PDF, so it can take minutes on a large folder. `fetch` gives
+  // no upload progress, and a button that greys out for three minutes with nothing else on screen
+  // reads as a hang — so this one request goes through XHR and reports what it is doing.
+  function postRun(form) {
+    return new Promise(function (resolve, reject) {
+      var request = new XMLHttpRequest();
+      request.open("POST", "/api/runs");
+      request.upload.addEventListener("progress", function (event) {
+        if (!event.lengthComputable) { return; }
+        uploadProgress(Math.round((event.loaded / event.total) * 100));
+      });
+      request.upload.addEventListener("load", function () {
+        uploadProgress(100, "Reading the PDFs…");   // the server is probing them now
+      });
+      request.addEventListener("load", function () {
+        var data = null;
+        try { data = JSON.parse(request.responseText || "null"); } catch (err) { data = null; }
+        if (request.status >= 200 && request.status < 300) { resolve(data); return; }
+        var detail = (data && data.detail) ? data.detail : request.status + " " + request.statusText;
+        reject(new Error(typeof detail === "string" ? detail : JSON.stringify(detail)));
+      });
+      request.addEventListener("error", function () { reject(new Error("the upload failed")); });
+      request.addEventListener("abort", function () { reject(new Error("the upload was cancelled")); });
+      request.send(form);
+    });
+  }
+
+  function uploadProgress(percent, message) {
+    var note = $("upload-progress");
+    if (!note) { return; }
+    show(note, percent !== null);
+    if (percent === null) { return; }
+    note.textContent = message || ("Uploading " + state.files.length + " files… " + percent + "%");
+  }
+
   function createRun(start) {
     var problem = $("form-error");
     show(problem, false);
     if (!state.files.length) { problem.textContent = "Choose a folder of PDFs first."; show(problem, true); return Promise.reject(new Error("no files")); }
-    return api("/api/runs", { method: "POST", body: buildForm(start) }).then(function (body) {
+    uploadProgress(0);
+    return postRun(buildForm(start)).then(function (body) {
+      uploadProgress(null);
       state.runId = body.run_id;
       state.token = body.token;
       state.started = !!start;
@@ -364,6 +401,7 @@
       show($("cost-meter"), true);
       return body;
     }).catch(function (error) {
+      uploadProgress(null);
       problem.textContent = error.message;
       show(problem, true);
       throw error;
@@ -559,6 +597,11 @@
   }
 
   $("cancel-btn").addEventListener("click", function () {
+    if (!state.runId) {          // the create request is still uploading: there is nothing to cancel
+      toast("The papers are still uploading — the run has not been created yet. "
+            + "Reload the page to abandon it.");
+      return;
+    }
     api("/api/runs/" + state.runId + "/cancel", { method: "POST" })
       .then(function (body) { toast("Run " + body.status + " — what finished is kept."); })
       .catch(function (error) { toast(error.message); });

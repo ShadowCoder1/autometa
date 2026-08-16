@@ -416,10 +416,13 @@ def create_app(runs_dir: str | Path = "runs", *,
                 except UploadRejected as exc:
                     raise HTTPException(status_code=exc.status_code, detail=str(exc))
                 remaining -= size
+                first_time = str(path) not in saved      # `<sha256>.pdf`: the same paper twice
                 saved.setdefault(str(path), name)
-                probe = probe_pdf(path, timeout=app.state.probe_timeout)
-                if not probe.get("ok"):
-                    raise HTTPException(status_code=400, detail=f"{name}: {probe['error']}")
+                if first_time:                           # probing a duplicate buys nothing, and a
+                    # folder of 79 files is often a dozen papers — each probe is a child process
+                    probe = probe_pdf(path, timeout=app.state.probe_timeout)
+                    if not probe.get("ok"):
+                        raise HTTPException(status_code=400, detail=f"{name}: {probe['error']}")
             (job.run_dir / "uploads" / "filenames.json").write_text(
                 json.dumps(saved, ensure_ascii=False, indent=1), encoding="utf-8")
         except BaseException:
