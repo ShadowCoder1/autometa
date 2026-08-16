@@ -29,6 +29,7 @@ from typing import Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from validation.scripts._common import banner  # noqa: E402
 from validation.scripts._example import Cell, build_parser, run_example  # noqa: E402
 
 HINT = ("    .venv/bin/python validation/scripts/run_cisneros.py --split dev "
@@ -38,18 +39,36 @@ HINT = ("    .venv/bin/python validation/scripts/run_cisneros.py --split dev "
         "--papers tests/fixtures/pdfs --out validation/out/run_bock_replay")
 
 
-def wants(cell: Cell) -> bool:
-    """A cell whose winning route was the figure."""
-    if cell.record.route != "figure":
-        return False
+def has_figure_reading(cell: Cell) -> bool:
     return any(c.route == "figure" and c.mean is not None for c in cell.candidates)
+
+
+def wants(cell: Cell) -> bool:
+    """First choice: the figure route actually won the cell."""
+    return cell.record.route == "figure" and has_figure_reading(cell)
+
+
+def wants_fallback(cell: Cell) -> bool:
+    """Fallback: the digitiser read the figure, but the cell was held back anyway."""
+    return has_figure_reading(cell)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser(__doc__)
     args = parser.parse_args(argv)
-    return run_example(args, wants=wants, stem="example_figure_only",
+
+    code = run_example(args, wants=wants, stem="example_figure_only",
                        subtitle="route: figure — four digitiser routes vote, the ensemble wins",
+                       missing_hint=HINT)
+    if code == 0:
+        return 0
+
+    print(banner("no cell was RESOLVED from a figure — falling back to one that was HELD BACK"))
+    print("  A digitised cell that did not survive verification is worth looking at, not hiding:\n"
+          "  the routes' samples, the ensemble's tolerance test and the verifier's objection are\n"
+          "  exactly what a human needs in order to decide the cell. That is what follows.")
+    return run_example(args, wants=wants_fallback, stem="example_figure_only",
+                       subtitle="route: figure — read by the digitiser, then HELD for a human",
                        missing_hint=HINT)
 
 
