@@ -353,7 +353,7 @@ def test_prisma_counts_add_up(tmp_path):
 
     counts = {"files": 12, "duplicates_removed": 2, "unique_papers": 10,
               "papers_excluded": 3, "eligible_papers": 7, "datasets": 11,
-              "datasets_excluded": 2, "included_datasets": 9, "included_papers": 6,
+              "datasets_excluded": 2, "included_datasets": 9, "included_papers": 6, "papers_with_no_rows": 1,
               "exclusion_reasons": {"not_eligible": 2, "no_usable_data": 1}}
     out = prisma_flow(counts, tmp_path / "prisma")
     payload = json.loads(out["json"].read_text())
@@ -362,6 +362,28 @@ def test_prisma_counts_add_up(tmp_path):
     assert payload["datasets"] - payload["datasets_excluded"] == payload["included_datasets"]
     assert payload["consistent"] is True
     assert out["png"].exists() and out["png"].stat().st_size > 0
+
+
+def test_a_paper_that_was_eligible_and_left_no_row_breaks_the_chain_by_name(tmp_path):
+    """Three runs printed `consistent: true` beside `eligible_papers: 3, included_papers: 2`.
+
+    Every link of the chain was an identity of how the counts were built, so a missing paper
+    could not make it false. `included_papers` is counted from the effect-size records and
+    `eligible_papers` from the manifest; the link between them is the one that can fail.
+    """
+    from canopy.report.tables import prisma_flow
+
+    counts = {"files": 3, "duplicates_removed": 0, "unique_papers": 3, "papers_excluded": 0,
+              "eligible_papers": 3, "papers_with_no_rows": 0, "included_papers": 2,
+              "datasets": 4, "datasets_excluded": 1, "included_datasets": 3,
+              "exclusion_reasons": {}}
+    payload = json.loads(prisma_flow(counts, tmp_path / "prisma")["json"].read_text())
+    assert payload["consistent"] is False
+    assert any("eligible_papers (3)" in problem and "included_papers (2)" in problem
+               for problem in payload["problems"]), payload["problems"]
+    counts["papers_with_no_rows"] = 1                     # …and named, it adds up again
+    payload = json.loads(prisma_flow(counts, tmp_path / "prisma2")["json"].read_text())
+    assert payload["consistent"] is True
 
 
 def test_prisma_flow_reports_an_inconsistent_chain_instead_of_hiding_it(tmp_path):

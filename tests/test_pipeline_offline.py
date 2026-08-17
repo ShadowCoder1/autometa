@@ -562,6 +562,47 @@ def test_a_mapper_objection_reaches_the_run_instead_of_dying_where_it_was_made(
     assert any("does not contain" in w for w in mapped), mapped
 
 
+def test_a_paper_whose_every_dataset_resolves_to_nothing_is_still_accounted_for(
+        tmp_path, papers_dir, fake_specs):
+    """The success path is a way of leaving with nothing too.
+
+    `b270022` closed the `datasets == []` door. Next to it: a paper mapped with datasets whose
+    outcome keys are all outside the protocol resolves every one of them to nothing, finishes
+    `resolved` with all five stages done, and appeared in no table at all — while the methods
+    text said "0 were excluded" and PRISMA said `consistent: true`.
+    """
+    from canopy.pipeline.run import run_pipeline
+
+    router = fake_router(fake_specs)
+
+    def foreign_outcomes(request: LLMRequest) -> Any:
+        payload = router(request)
+        if isinstance(payload, dict) and "datasets" in payload:
+            datasets = []
+            for d in payload["datasets"]:
+                d = dict(d)
+                if "outcomes" in d:
+                    d["outcomes"] = [{**o, "outcome_key": "not_in_this_protocol"}
+                                     for o in d["outcomes"]]
+                datasets.append(d)
+            payload = {**payload, "datasets": datasets}
+        return payload
+
+    client = LLMClient(provider=FakeProvider([foreign_outcomes]), allow_live=True, cache_dir=None)
+    out = tmp_path / "run"
+    manifest = run_pipeline(papers_dir, PROTOCOL, out, client=client, concurrency=1)
+    paper = manifest.papers[0]
+    rows = list(csv.DictReader((out / "exclusions.csv").open(newline="", encoding="utf-8")))
+    mine = [r for r in rows if r["paper_id"] == paper.paper_id and not r["dataset_id"]]
+    assert mine, [(r["reason"], r["dataset_id"]) for r in rows]
+    prisma = json.loads((out / "prisma.json").read_text())
+    assert prisma["consistent"] is True, prisma["problems"]
+    assert prisma["included_papers"] == 0
+    assert prisma["eligible_papers"] - prisma["papers_with_no_rows"] == prisma["included_papers"]
+    methods = (out / "methods.md").read_text(encoding="utf-8")
+    assert "yielded no usable row" in methods
+
+
 def test_the_methods_paragraph_reports_the_spend_the_manifest_recorded(tmp_path, papers_dir,
                                                                        fake_client):
     """Every run so far wrote "0 model calls were made at a cost of $0.00" into its methods text.
@@ -785,6 +826,12 @@ def test_target_spec_is_built_from_the_mapper_and_the_protocol():
     assert target.late_window_sd == protocol.stats.late_window_sd
     assert "perturbation" in target.x_hint          # the protocol's own measurement window
     assert "filled circles" in target.notes
+    # the protocol's other names for each group travel too: whether a two-bar chart yields a
+    # number at all turns on matching its x categories to the groups, and a paper labels its
+    # bars in its own words ("Elderly", "Young adults") — see `digitizer._names_group`
+    assert set(target.group_a_synonyms) == set(protocol.group_a.synonyms)
+    assert set(target.group_b_synonyms) == set(protocol.group_b.synonyms)
+    assert "elderly" in {n.lower() for n in target.group_a_synonyms}
 
 
 # ============================================================================ CLI

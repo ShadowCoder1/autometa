@@ -779,6 +779,17 @@ def test_malformed_options_are_a_readable_422_not_a_500(api, options, wrong):
     assert wrong in response.json()["detail"]
 
 
+def test_a_protocol_with_a_repeated_key_is_a_422_that_names_the_key(api):
+    """The path F11 came in on: a form-built protocol with two `digitize:` blocks silently lost
+    the first one. The CLI refuses it; the server has to as well, and readably."""
+    body = PROTOCOL.read_text() + "\ndigitize:\n  readouts_min: 2\ndigitize:\n  readouts_max: 3\n"
+    files = [("files", (PDFS[0].name, PDFS[0].read_bytes(), "application/pdf")),
+             ("protocol", ("protocol.yaml", body.encode(), "text/yaml"))]
+    response = api.post("/api/runs", files=files, data={"options": "{}"})
+    assert response.status_code == 422, response.text
+    assert "duplicate key 'digitize'" in response.json()["detail"]
+
+
 def test_options_that_are_not_even_json_are_refused(api):
     files = [("files", (PDFS[0].name, PDFS[0].read_bytes(), "application/pdf")),
              ("protocol", ("protocol.yaml", PROTOCOL.read_bytes(), "text/yaml"))]

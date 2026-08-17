@@ -780,9 +780,14 @@ def _run_paper(ctx: RunContext, group: PaperGroup) -> PaperResult:
         status.status = "resolved"
         emit(ctx.progress, "resolve", label, "done", cost_so_far=ctx.client.total_cost(),
              message=f"{len(result.records)} effect sizes")
+        # the success path is a way of leaving with nothing too: every stage done, every dataset
+        # resolved to no row (an outcome key outside the protocol, say). Say so.
+        _gone(result, group, status, "no_usable_data:no_rows_resolved",
+              "every stage finished and no dataset resolved to an effect size")
     except RunCancelled:
         status.status = "cancelled"
         status.error = "cancelled by the reviewer"
+        _gone(result, group, status, "cancelled", status.error)
         emit(ctx.progress, "paper", label, "cancelled", cost_so_far=ctx.client.total_cost(),
              message="stopped before the next stage; --resume will carry on from here")
     except PaperBudgetExceeded as exc:
@@ -1058,8 +1063,9 @@ def _gone(result: PaperResult, group: Any, status: PaperStatus, reason: str,
     no way to learn it had been dropped or what it cost. A paper that kept some rows is not
     excluded, so this stays silent for the partial case that `d9fe6fe` protects.
     """
-    if result.records:
-        return
+    if result.records or any(e.get("stage") == "map" and not e.get("dataset_id")
+                             for e in result.exclusions):
+        return                                # it has rows, or the map stage already said why
     result.exclusions.append({
         "paper_id": getattr(group, "sha256", ""), "filename": status.filename, "stage": "run",
         "reason": reason, "quote": "", "decider": "code", "detail": detail})
@@ -1087,6 +1093,11 @@ def _prisma_counts(results: Sequence[PaperResult], paths: Sequence[Path], n_dupl
     eligible = [r for r in results if r.status.eligible]
     datasets = sum(len(r.study.datasets) for r in results if r.study is not None)
     included = [r for r in records if r.route != "not_convertible"]
+    included_paper_ids = {r.paper_id for r in included}
+    # an eligible paper that produced no row is a paper the review lost, whatever the reason —
+    # excluded out loud at the map stage, budget, error, or every dataset resolving to nothing.
+    # Counting `eligible is False` alone printed "0 were excluded" beside a paper that vanished.
+    no_rows = [r for r in eligible if r.status.paper_id not in included_paper_ids]
     unique = max(0, len(paths) - n_duplicates)
     reasons: dict[str, int] = {}
     for entry in exclusions:
@@ -1099,10 +1110,11 @@ def _prisma_counts(results: Sequence[PaperResult], paths: Sequence[Path], n_dupl
         "not_processed": max(0, unique - len(results)),
         "papers_excluded": len(results) - len(eligible),
         "eligible_papers": len(eligible),
+        "papers_with_no_rows": len(no_rows),
         "datasets": datasets,
         "datasets_excluded": max(0, datasets - len({r.dataset_id for r in included})),
         "included_datasets": len({r.dataset_id for r in included}),
-        "included_papers": len({r.paper_id for r in included}),
+        "included_papers": len(included_paper_ids),
         "exclusion_reasons": reasons,
     }
 

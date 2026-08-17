@@ -170,7 +170,13 @@ def methods_paragraph(manifest: RunManifest, protocol: Protocol,
     results = results or {}
     papers = manifest.papers
     eligible = [p for p in papers if p.eligible]
-    excluded = [p for p in papers if p.eligible is False]
+    excluded = [p for p in papers if not p.eligible]       # `None` (never mapped) is not eligible
+    # a paper is "contributing" when at least one of its rows — pooled or held — exists; an
+    # eligible paper with none is a paper the review lost, and saying "0 were excluded" beside it
+    # is what `runs/proof/methods.md` did while a whole paper was missing from every table
+    with_rows = {r.paper_id for payload in results.values()
+                 for r in [*(payload.get("rows") or []), *(payload.get("needs_human_rows") or [])]}
+    lost = [p for p in eligible if p.paper_id not in with_rows]
     models = ", ".join(f"{role}: {name}" for role, name in sorted(manifest.models.items())) or "—"
 
     lines = [
@@ -183,8 +189,11 @@ def methods_paragraph(manifest: RunManifest, protocol: Protocol,
         f"{manifest.created_at}. Models: {models}.",
         "",
         f"{len(papers)} unique papers entered the pipeline; {len(eligible)} were judged eligible "
-        f"against the protocol's criteria and {len(excluded)} were excluded (see "
-        f"`exclusions.csv` for the reason and the quote behind each decision). "
+        f"against the protocol's criteria and {len(excluded)} were excluded"
+        + (f"; a further {len(lost)} eligible paper{'s' if len(lost) != 1 else ''} yielded no "
+           f"usable row and contribute{'s' if len(lost) == 1 else ''} nothing to the pooled "
+           f"estimate" if lost else "")
+        + f" (see `exclusions.csv` for the reason and the quote behind each decision). "
         f"{manifest.n_llm_calls} model calls were made at a cost of "
         f"${manifest.cost_usd:.2f}.",
         "",

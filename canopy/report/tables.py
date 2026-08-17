@@ -62,6 +62,12 @@ SENSITIVITY_ANALYSES: tuple[str, ...] = (
 PRISMA_CHAIN: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("files", ("duplicates_removed",), "unique_papers"),
     ("unique_papers", ("not_processed", "papers_excluded"), "eligible_papers"),
+    #: the one link that is not an identity of how the counts are built: `included_papers` is
+    #: counted from the effect-size records, `eligible_papers` from the manifest, and
+    #: `papers_with_no_rows` from their difference — so a paper that was eligible and left no
+    #: row anywhere shows up here as a removal with a name, instead of "consistent: true" beside
+    #: `eligible_papers: 3, included_papers: 2` (which is what three runs printed).
+    ("eligible_papers", ("papers_with_no_rows",), "included_papers"),
     ("datasets", ("datasets_excluded",), "included_datasets"),
 )
 
@@ -651,12 +657,14 @@ def prisma_flow(counts: Mapping[str, Any], out_stem: str | Path,
     steps = [("Files found", data.get("files")),
              ("Unique papers", data.get("unique_papers")),
              ("Eligible papers", data.get("eligible_papers")),
+             ("Papers contributing rows", data.get("included_papers")),
              ("Datasets found", data.get("datasets")),
              ("Datasets included", data.get("included_datasets"))]
     asides = [("Duplicates removed", data.get("duplicates_removed"), 0),
               ("Not processed (--max-papers)", data.get("not_processed") or None, 1),
               ("Papers excluded", data.get("papers_excluded"), 1),
-              ("Datasets excluded", data.get("datasets_excluded"), 3)]
+              ("Eligible, no usable row", data.get("papers_with_no_rows") or None, 2),
+              ("Datasets excluded", data.get("datasets_excluded"), 4)]
     reasons = data.get("exclusion_reasons") or {}
 
     with figure_style():
