@@ -81,6 +81,7 @@ CHECK_SEVERITY: dict[str, str] = {
     "sign_not_confirmed": "warn",
     "group_label_swapped": "error",
     "unit_mismatch": "warn",
+    "unit_other_expression": "info",
     "metric_mixed": "warn",
     "metric_mixed_across_outcomes": "info",
     "unit_incoherent": "warn",
@@ -531,13 +532,36 @@ def _check_se_against_sd(found: Sequence[Candidate], out: list[CheckFlag]) -> No
 
 def _check_units(found: Sequence[Candidate], outcome: OutcomeSources | None,
                  out: list[CheckFlag]) -> None:
-    units = {_norm_unit(c.unit): c for c in found if _norm_unit(c.unit)}
-    mapped = _norm_unit(outcome.units) if outcome is not None else ""
+    from .units import unit_key
+
+    units = {unit_key(c.unit): c for c in found if unit_key(c.unit)}
+    mapped = unit_key(outcome.units) if outcome is not None else ""
     if len(units) > 1:
-        _flag(out, "unit_mismatch",
-              f"the readers disagree about the unit of this outcome: "
-              f"{sorted(c.unit for c in units.values())}",
-              *sorted(c.candidate_id for c in units.values()))
+        # "another expression" only when EVERY group that was read in another unit was also read
+        # in the recorded one — the same bars off both axes. A group read only in mm beside a
+        # group read only in deg is a disagreement, whatever the map says.
+        by_group: dict[str | None, set[str]] = {}
+        for c in found:
+            if unit_key(c.unit):
+                by_group.setdefault(c.group, set()).add(unit_key(c.unit))
+        same_bars = mapped and mapped in units and all(
+            mapped in keys for keys in by_group.values() if keys - {mapped})
+        if same_bars:
+            # the map says which unit this outcome is in, and readings in it exist; the others
+            # are the same bars read off another axis (Cressman's Fig. 3b: degrees on the left,
+            # percent of the perturbation on the right) — another expression of the quantity,
+            # which the vote sets aside. That is a note for the record, not a disagreement.
+            others = sorted(c.unit for k, c in units.items() if k != mapped)
+            _flag(out, "unit_other_expression",
+                  f"some readings are in {others} where the outcome is recorded in "
+                  f"{outcome.units!r}; the vote keeps the recorded unit and sets the others "
+                  f"aside as another expression of the same quantity",
+                  *sorted(c.candidate_id for k, c in units.items() if k != mapped))
+        else:
+            _flag(out, "unit_mismatch",
+                  f"the readers disagree about the unit of this outcome: "
+                  f"{sorted(c.unit for c in units.values())}",
+                  *sorted(c.candidate_id for c in units.values()))
     elif units and mapped and mapped not in units:
         only = next(iter(units.values()))
         _flag(out, "unit_mismatch",

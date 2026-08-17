@@ -710,3 +710,15 @@ def test_every_calibration_state_is_decided_about_rather_than_falling_through():
     from canopy.verify.figures import CAL_STATUSES
 
     assert set(AXIS_TESTABLE) == set(CAL_STATUSES) | {"unknown"}
+
+
+def test_the_same_group_read_in_the_recorded_unit_and_another_is_an_expression_not_a_dispute():
+    """Cressman's Fig. 3b: the same bars off the degrees axis and the percent axis beside it."""
+    flags = run_checks(make_dataset(), "late_adaptation",
+                       [cand("A", unit="deg"), cand("A", unit="% of the 30° distortion",
+                                                    candidate_id="A-pct", mean=58.0),
+                        cand("B", unit="deg"), cand("B", unit="%", candidate_id="B-pct",
+                                                    mean=61.0)])
+    assert "unit_mismatch" not in codes(flags)
+    flag = next(f for f in flags if f.code == "unit_other_expression")
+    assert flag.severity == "info" and "%" in flag.message
