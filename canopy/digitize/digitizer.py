@@ -836,19 +836,23 @@ def _same_points(row_a: Any, row_b: Any) -> bool:
     return key(row_a) == key(row_b)
 
 
-def _row_at_own_category(row: Any, label: str) -> Any:
-    """The group's row with `mean`/`error_half_length` filled in from its OWN x category.
+def _row_at_own_category(row: Any, names: Sequence[str]) -> Any:
+    """The group's row with `mean`/`error_half_length` taken from its OWN x category.
 
-    On a group chart the reader may put the number in `points` (it was asked for points) rather
-    than in `mean`. That single point IS the group's value; nothing is averaged.
+    The point at this group's own category outranks whatever is in `mean`, and that ordering is
+    the whole fix. `llm/prompts/digitize_readout.md` tells a reader on a categorical axis to
+    "leave `mean` as your reading of the series as a whole" — which on a chart whose categories
+    ARE the two groups is a number spanning both bars. Honouring it gave both arms the same mean
+    and a Cohen's d of exactly 0.0, pooled, with every route agreeing because they were the same
+    number. `mean` is used only when no category can be matched to this group.
     """
     from dataclasses import replace as _replace
 
-    if row.mean is not None or not row.points:
+    if not row.points:
         return row
-    mine = [p for p in row.points if _labels_are_the_same(p.x_label, label)]
+    mine = [p for p in row.points if _names_group(p.x_label, names)]
     chosen = mine[0] if len(mine) == 1 else (row.points[0] if len(row.points) == 1 else None)
-    if chosen is None:
+    if chosen is None or chosen.mean is None:
         return row
     return _replace(row, mean=chosen.mean,
                     error_half_length=(row.error_half_length if row.error_half_length is not None
@@ -926,7 +930,9 @@ def _samples_from_readout(reading: ReadOut, collapse: bool = False,
             # the x categories ARE the groups, so this figure is an ordinary group chart and the
             # single category belonging to this group is its value. Nothing is averaged.
             label = (target.group_a_label if group == "A" else target.group_b_label) if target else ""
-            resolved = _row_at_own_category(row, label)
+            synonyms = (getattr(target, f"group_{group.lower()}_synonyms", ()) if target else ())
+            names = tuple(n for n in (label, *synonyms) if str(n or "").strip())
+            resolved = _row_at_own_category(row, names)
             if resolved.mean is None and row.points:
                 # the axis is the groups, but none of the categories this reader named can be
                 # matched to THIS group — so we cannot say which of them is its value, and
@@ -2075,12 +2081,14 @@ def _refuse_identical_collapse(candidates: Sequence[Candidate]) -> None:
     a, b = ensembles.get("A"), ensembles.get("B")
     if a is None or b is None or a.mean is None or b.mean is None:
         return
-    if not (a.pixel_provenance.get("collapsed_across_x")
-            and b.pixel_provenance.get("collapsed_across_x")):
-        return
     if a.mean != b.mean or a.dispersion_value != b.dispersion_value:
         return
-    reason = ("both groups came back as the same average across the categorical x axis "
+    # No `collapsed_across_x` gate: it does not matter HOW the two arms came to be the same
+    # number. Gating on it left the groups branch — where `collapse_here` is False — with no net
+    # at all, which is exactly where a reader's series-wide `mean` lands on both arms.
+    how = ("the same average across the categorical x axis"
+           if a.pixel_provenance.get("collapsed_across_x") else "the very same number")
+    reason = (f"both groups came back as {how} "
               f"(mean {a.mean}, spread {a.dispersion_value}) — that is one series reported twice, "
               "and the effect size between them would be exactly zero by construction")
     for cand in (a, b):

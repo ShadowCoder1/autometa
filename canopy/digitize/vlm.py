@@ -722,6 +722,28 @@ def read_out(client: LLMClient, crop_png: str | Path, caption: str, target: Targ
     return _parse_readout(result, model=model, variant=variant, sample=sample)
 
 
+def _one_row_per_group(rows: list[GroupReadOut]) -> tuple[list[GroupReadOut], set[str], list[str]]:
+    """One reading answers once per group. `(kept, groups_seen, groups_answered_twice)`.
+
+    A turn may hold several `submit` blocks and `LLMClient.tool_loop` merges them, so a model
+    that answers twice about the same group arrives here as two rows. Every quorum downstream
+    counts rows (`_readout_means`), so leaving both would let ONE reader be its own second
+    witness — enough to outvote a correct axis ladder. The first row carrying a value wins; a
+    second answer about the same group is a self-contradiction, not corroboration.
+    """
+    kept: dict[str, GroupReadOut] = {}
+    twice: list[str] = []
+    for row in rows:
+        current = kept.get(row.group)
+        if current is None:
+            kept[row.group] = row
+            continue
+        twice.append(row.group)
+        if current.mean is None and row.mean is not None:
+            kept[row.group] = row
+    return list(kept.values()), set(kept), sorted(set(twice))
+
+
 def _parse_readout(result: ToolLoopResult, model: str, variant: str,
                    sample: int = 0) -> ReadOut:
     data = result.parsed or {}
@@ -745,6 +767,8 @@ def _parse_readout(result: ToolLoopResult, model: str, variant: str,
             confidence=float(_number(row.get("confidence")) or 0.0),
             notes=str(row.get("notes") or "")))
     ticks = [float(t) for t in (data.get("tick_labels") or []) if _number(t) is not None]
+    groups, seen, twice = _one_row_per_group(groups)
+
     return ReadOut(
         status=str(data.get("status") or "found"), groups=groups,
         legend_says=str(data.get("legend_says") or ""), tick_labels=ticks,
@@ -753,7 +777,12 @@ def _parse_readout(result: ToolLoopResult, model: str, variant: str,
         axis_read=str(data.get("axis_read") or ""),
         axis_direction_note=str(data.get("axis_direction_note") or ""),
         confidence=float(_number(data.get("confidence")) or 0.0),
-        notes=str(data.get("notes") or ""), model=model, variant=variant, sample=sample,
+        notes="; ".join(x for x in (
+            str(data.get("notes") or ""),
+            (f"this reader answered more than once about group(s) {', '.join(twice)}; the first "
+             f"answer carrying a value was kept — one reader is one witness" if twice else "")
+        ) if x),
+        model=model, variant=variant, sample=sample,
         call_ids=list(result.call_ids), tool_calls=list(result.tool_calls),
         cost_usd=result.cost_usd, turns=result.turns)
 

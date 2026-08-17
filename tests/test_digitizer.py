@@ -2358,3 +2358,77 @@ def test_a_group_is_recognised_by_every_name_the_protocol_gave_it():
     # a real condition still names no group, so the collapse path is untouched
     for word in ("Trial block 3", "45 deg target", "Session 2", ""):
         assert not _names_group(word, older) and not _names_group(word, younger), word
+
+
+def test_a_series_wide_mean_never_becomes_both_groups_value(bar_figure, tmp_path):
+    """The blocker the final pre-run review found, and the exact shape the prompt asks for.
+
+    `llm/prompts/digitize_readout.md` tells a reader on a categorical axis to "leave `mean` as
+    your reading of the series as a whole". On a chart whose categories ARE the two groups that
+    is one number spanning both bars, so honouring it gave both arms the same mean, a Cohen's d
+    of exactly 0.0, and every route agreeing because they were all the same number. The point at
+    the group's own category outranks `mean`.
+    """
+    from canopy.digitize.digitizer import CATEGORICAL_GROUPS
+
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    payload = _readout_payload(21.9, 11.0, 21.9, 11.0)          # the series-wide average, twice
+    for row, own, value in zip(payload["groups"], ("old", "young"), (31.5, 12.25)):
+        row["points"] = [{"x_label": own, "mean": value, "error_half_length": 11.0},
+                         {"x_label": "other", "mean": 0.0, "error_half_length": 0.0}]
+        row["x_read"] = f"the {own} bar"
+    provider = _scripted(payload, _coord_payload(bar_figure, view.scale))
+    out = digitize(_client(provider), paper, fig, replace(TARGET, collapse_across_x=True),
+                   source=CATEGORICAL_SOURCE, dataset=DATASET, out_dir=tmp_path, result=True)
+    ens = _ensembles(out)
+    assert ens["A"].pixel_provenance["categorical_x_role"] == CATEGORICAL_GROUPS
+    assert ens["A"].mean != ens["B"].mean, "the series-wide mean became both groups' value"
+    assert ens["A"].mean == pytest.approx(31.5, abs=0.6)
+    assert ens["B"].mean == pytest.approx(12.25, abs=0.6)
+
+
+def test_two_arms_that_are_the_same_number_keep_no_value_however_they_got_there(bar_figure,
+                                                                                tmp_path):
+    """The last net. It used to be gated on `collapsed_across_x`, which the groups branch never
+    sets — so the one path that could produce identical arms had no net under it at all."""
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    payload = _readout_payload(21.9, 11.0, 21.9, 11.0)
+    for row in payload["groups"]:                               # no points to disambiguate with
+        row["points"] = []
+    provider = _scripted(payload, _coord_payload(bar_figure, view.scale))
+    out = digitize(_client(provider), paper, fig, replace(TARGET, collapse_across_x=True),
+                   source=CATEGORICAL_SOURCE, dataset=DATASET, out_dir=tmp_path, result=True)
+    ens = _ensembles(out)
+    assert ens["A"].mean is None and ens["B"].mean is None
+    assert ens["A"].pixel_provenance.get("identical_collapse_refused") is True
+    assert "reported twice" in ens["A"].notes
+
+
+def test_one_reader_answering_twice_about_a_group_is_still_one_witness():
+    """A turn may hold several `submit` blocks and the client merges them, so a model that answers
+    twice about one group arrives as two rows. Every quorum downstream counts rows, so leaving
+    both would let one reader be its own second witness — enough to outvote a correct axis ladder.
+    """
+    from canopy.digitize.vlm import _parse_readout
+    from canopy.llm.client import ToolLoopResult
+
+    parsed = {"status": "found", "unit": "deg", "notes": "",
+              "groups": [{"group": "A", "mean": 31.5, "error_half_length": 11.0},
+                         {"group": "B", "mean": 12.25, "error_half_length": 11.75},
+                         {"group": "A", "mean": 4.1, "error_half_length": 1.0}]}
+    reading = _parse_readout(ToolLoopResult(parsed=parsed, turns=1, submits=2),
+                             model="claude-opus-5", variant="direct")
+    assert [g.group for g in reading.groups] == ["A", "B"]
+    assert reading.group("A").mean == 31.5          # the first answer carrying a value wins
+    assert "answered more than once about group(s) A" in reading.notes
+
+
+def test_a_group_answered_once_with_no_value_is_replaced_by_the_answer_that_has_one():
+    from canopy.digitize.vlm import _parse_readout
+    from canopy.llm.client import ToolLoopResult
+
+    parsed = {"groups": [{"group": "A", "mean": None}, {"group": "A", "mean": 31.5}]}
+    reading = _parse_readout(ToolLoopResult(parsed=parsed, turns=1), model="m", variant="direct")
+    assert len(reading.groups) == 1 and reading.group("A").mean == 31.5
