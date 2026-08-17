@@ -139,6 +139,8 @@ def target_for_source(source: Source, dataset: DatasetSpec, outcome_sources: Out
         error_bar_type_hint=getattr(source.error_bar_type, "value", str(source.error_bar_type)),
         unit_hint=outcome_sources.units or outcome.units_hint,
         late_window_sd=settings.late_window_sd,
+        collapse_across_x=(source.x_axis_kind == "categorical"
+                           and protocol.digitize.collapse_across_categorical_x),
         notes="; ".join(part for part in (source.quote, source.values_in_text, source.notes)
                         if part)[:400])
 
@@ -534,6 +536,20 @@ def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: li
     return verdicts
 
 
+#: on the ROW, so a sensitivity analysis can pool with and without the rows whose dispersion the
+#: code built rather than the paper stated (task 16 P6: the critique's amendment to the statistic)
+DISPERSION_APPROXIMATED = "dispersion_approximated"
+
+
+def _approximation_flags(cell: Sequence[Candidate]) -> list[str]:
+    """Row flags for anything in this cell whose dispersion is an approximation, not a reading."""
+    kinds = {str((c.pixel_provenance or {}).get("dispersion_approximation") or "")
+             for c in cell if c.extractor_id == ENSEMBLE}
+    named = sorted(k for k in kinds if k)
+    return [DISPERSION_APPROXIMATED, *[f"{DISPERSION_APPROXIMATED}:{k}" for k in named]] \
+        if named else []
+
+
 def sample_key(dataset: DatasetSpec, paper_id: str) -> str:
     """Which PARTICIPANT sample this dataset came from — or `""` when none can be claimed.
 
@@ -607,7 +623,8 @@ def _resolve(ctx: RunContext, paper: PaperRecord, study: StudyMap,
                 verdict_a, verdict_b, test_statistic=_statistic_values(cell),
                 reported=_reported_values(cell))
             values.flags = sorted(set(values.flags)
-                                  | set(multi_group_flags(dataset, ctx.settings.multi_group_policy)))
+                                  | set(multi_group_flags(dataset, ctx.settings.multi_group_policy))
+                                  | set(_approximation_flags(cell)))
             prepared.append((dataset, key, values))
 
     # rows in one paper that share a control arm are not independent (Cochrane 16.5.4)

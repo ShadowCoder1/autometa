@@ -86,6 +86,8 @@ CHECK_SEVERITY: dict[str, str] = {
     "duplicate_across_outcomes": "warn",
     "figure_n_mismatch": "warn",
     "reopened_on_better_source": "warn",
+    "collapsed_across_x": "warn",
+    "categorical_x_unsupported": "warn",
     "points_undercount": "warn",
     # --- can it be used at all
     "orientation_unknown": "warn",
@@ -170,6 +172,9 @@ def _check_one(cand: Candidate, dataset: DatasetSpec, outcome: OutcomeSources | 
               f"the group label this extractor echoed belongs to the other group ({cand.notes})",
               cid)
 
+    # …before the `found` gate: a cell that REFUSED to read a categorical axis has no value, and
+    # the whole point of the refusal is that it says why rather than going quiet (task 16 P6)
+    _check_categorical_x(cand, out)
     if cand.kind in ("test_statistic", "reported_d"):
         _check_statistic(cand, dataset, out)
         return
@@ -310,6 +315,25 @@ def _check_series_identity(cand: Candidate, out: list[CheckFlag]) -> None:
               f"the readers of this figure answered off different value axes; the ensemble kept "
               f"{provenance.get('axis_kept')!r} and dropped "
               f"{', '.join(provenance.get('axis_dropped_samples') or [])}",
+              cand.candidate_id)
+
+
+def _check_categorical_x(cand: Candidate, out: list[CheckFlag]) -> None:
+    """A value averaged across a categorical x axis, or the refusal to invent one (task 16 P6)."""
+    provenance = cand.pixel_provenance or {}
+    if provenance.get("categorical_x_unsupported"):
+        _flag(out, "categorical_x_unsupported",
+              str(provenance.get("needs_review_reason")
+                  or "this figure's x axis is categorical and the collapse mode is off"),
+              cand.candidate_id)
+        return
+    if provenance.get("collapsed_across_x"):
+        _flag(out, "collapsed_across_x",
+              f"this value is the average of {provenance.get('n_points')} points across a "
+              f"categorical x axis, and its spread is "
+              f"{provenance.get('dispersion_approximation') or 'approximated'} — the SD of one "
+              f"point, not of a participant's mean across them, so it overstates the denominator "
+              f"unless the between-point variance is fully shared",
               cand.candidate_id)
 
 

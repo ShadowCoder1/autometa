@@ -16,6 +16,7 @@ Two kinds of test here:
 from __future__ import annotations
 
 import json
+import statistics
 from dataclasses import replace
 from pathlib import Path
 
@@ -1409,3 +1410,124 @@ def test_the_legend_supplies_the_dispersion_type_the_mapper_could_not(bar_figure
     assert ensemble.dispersion_type is DispersionType.SD
     assert ensemble.pixel_provenance["dispersion_type_from"] == "legend"
     assert ensemble.status == "found", "the legend agreeing with itself is not a conflict"
+
+
+# ------------------------------------------------------------------ task 16 (g): categorical x
+def _categorical_payload(a_points, b_points, unit="deg"):
+    """A read-out that reports EVERY point of each series, as a categorical axis needs."""
+    def series(group, label, points):
+        return {"group": group, "label_read": label,
+                "mean": statistics.fmean([m for m, _ in points]),
+                "error_half_length": None, "error_upper": None, "error_lower": None,
+                "error_sides": "both", "x_read": "all eight target directions",
+                "points": [{"x_label": f"{i * 45}deg", "mean": m, "error_half_length": e}
+                           for i, (m, e) in enumerate(points)],
+                "confidence": 0.8, "notes": ""}
+
+    return {"status": "found", "panel": "Fig 2a", "unit": unit,
+            "axis_read": "left y-axis, adaptation (deg)", "axis_direction_note": "",
+            "legend_says": "error bars are SE", "tick_labels": [0, 10, 20, 30, 40],
+            "pixel_resolution_estimate": 0.1, "confidence": 0.8, "notes": "",
+            "groups": [series("A", "young: filled circles", a_points),
+                       series("B", "older: open circles", b_points)]}
+
+
+CATEGORICAL_SOURCE = SOURCE.model_copy(update={"x_axis_kind": "categorical",
+                                               "kind": SourceKind.figure_points,
+                                               "error_bar_type": DispersionType.SE})
+
+
+def test_a_categorical_x_axis_with_the_mode_OFF_is_never_a_wrong_number(bar_figure, tmp_path):
+    """Acceptance item 15: `not_convertible`, with the reason, and without spending a penny."""
+    from canopy.digitize.digitizer import CATEGORICAL_UNSUPPORTED
+
+    paper, fig = _paper_for(bar_figure)
+    provider = FakeProvider([])                       # any model call at all would raise
+    out = digitize(_client(provider), paper, fig, TARGET, source=CATEGORICAL_SOURCE,
+                   dataset=DATASET, out_dir=tmp_path, result=True)
+    assert out.cost_usd == 0.0 and out.samples == []
+    assert {c.group for c in out.candidates} == {"A", "B"}
+    for cand in out.candidates:
+        assert cand.mean is None and cand.dispersion_value is None
+        assert cand.status == "ambiguous"
+        assert cand.pixel_provenance[CATEGORICAL_UNSUPPORTED] is True
+        assert "average across it" in cand.notes
+
+
+def test_a_categorical_x_axis_with_the_mode_ON_reads_every_point_and_averages_them(bar_figure,
+                                                                                   tmp_path):
+    """Acceptance item 13: eight points per series, averaged in CODE, dispersion named as built."""
+    from canopy.digitize.digitizer import MEAN_OF_POINT_SD
+
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    a = [(12.0, 2.0), (14.0, 2.4), (11.0, 1.8), (13.0, 2.2),
+         (12.5, 2.1), (13.5, 2.3), (11.5, 1.9), (14.5, 2.5)]
+    b = [(20.0, 3.0), (22.0, 3.4), (19.0, 2.8), (21.0, 3.2),
+         (20.5, 3.1), (21.5, 3.3), (19.5, 2.9), (22.5, 3.5)]
+    provider = _scripted(_categorical_payload(a, b), _coord_payload(bar_figure, view.scale))
+    target = replace(TARGET, collapse_across_x=True)
+    out = digitize(_client(provider), paper, fig, target, source=CATEGORICAL_SOURCE,
+                   dataset=DATASET, out_dir=tmp_path, result=True)
+
+    ensembles = {c.group: c for c in out.candidates if c.extractor_id == "digitize:ensemble"}
+    assert ensembles["A"].mean == pytest.approx(statistics.fmean([m for m, _ in a]), abs=1e-9)
+    assert ensembles["A"].dispersion_value == pytest.approx(
+        statistics.fmean([e for _, e in a]), abs=1e-9)
+    for group in ("A", "B"):
+        provenance = ensembles[group].pixel_provenance
+        assert provenance["collapsed_across_x"] is True
+        assert provenance["n_points"] == 8
+        assert provenance["dispersion_approximation"] == MEAN_OF_POINT_SD
+    # the pixel routes read ONE point, so they are not a vote on the average across the axis
+    dropped = [s for s in out.samples if s.route in ("B", "C") and s.dropped]
+    assert dropped and all("average across the categorical" in s.drop_reason for s in dropped)
+
+
+def test_the_collapsed_row_is_flagged_capped_and_can_be_excluded_by_the_pooler():
+    """Acceptance item 13's tail: the statistic is an approximation and the row says so."""
+    from canopy.pipeline.run import DISPERSION_APPROXIMATED, _approximation_flags
+    from canopy.verify.checks import codes, run_checks
+    from canopy.verify.confidence import CAPPING_FLAGS
+    from canopy.models import (Candidate, DatasetSpec as DS, GroupSpec as GS,
+                               OutcomeSources)
+
+    dataset = DS(dataset_id="d1", cluster_id="p", group_a=GS(label="young", n=20),
+                 group_b=GS(label="older", n=20),
+                 outcomes=[OutcomeSources(outcome_key="late_adaptation", units="deg")])
+    collapsed = Candidate(
+        candidate_id="c1", paper_id="p", dataset_id="d1", outcome_key="late_adaptation",
+        kind="group_stats", group="A", status="found", source_kind=SourceKind.figure_points,
+        n=20, mean=12.75, dispersion_value=2.15, dispersion_type=DispersionType.SE, unit="deg",
+        route="figure", extractor_id="digitize:ensemble",
+        pixel_provenance={"collapsed_across_x": True, "n_points": 8,
+                          "dispersion_approximation": "mean_of_point_sd"})
+    flags = run_checks(dataset, "late_adaptation", [collapsed])
+    assert "collapsed_across_x" in codes(flags)
+    assert "collapsed_across_x" in CAPPING_FLAGS
+    assert "overstates the denominator" in next(
+        f for f in flags if f.code == "collapsed_across_x").message
+    row_flags = _approximation_flags([collapsed])
+    assert DISPERSION_APPROXIMATED in row_flags
+    assert f"{DISPERSION_APPROXIMATED}:mean_of_point_sd" in row_flags
+
+
+def test_the_sign_of_two_panels_of_one_paper_is_read_off_the_figure_not_assumed(bar_figure,
+                                                                                tmp_path):
+    """Acceptance item 14: Heuer 2a and 2b have OPPOSITE signs on the same paper."""
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    aftereffect_a = [(-4.0, 1.0), (-3.0, 0.9), (-5.0, 1.1), (-3.5, 1.0),
+                     (-4.5, 1.05), (-3.2, 0.95), (-4.8, 1.15), (-3.8, 1.0)]
+    aftereffect_b = [(-2.0, 0.8), (-1.5, 0.7), (-2.5, 0.9), (-1.8, 0.75),
+                     (-2.2, 0.85), (-1.6, 0.72), (-2.4, 0.88), (-1.9, 0.78)]
+    provider = _scripted(_categorical_payload(aftereffect_a, aftereffect_b),
+                         _coord_payload(bar_figure, view.scale))
+    target = replace(TARGET, collapse_across_x=True, outcome_key="aftereffect")
+    out = digitize(_client(provider), paper, fig, target, source=CATEGORICAL_SOURCE,
+                   dataset=DATASET, out_dir=tmp_path, result=True)
+    ensembles = {c.group: c for c in out.candidates if c.extractor_id == "digitize:ensemble"}
+    assert ensembles["A"].mean < 0 and ensembles["B"].mean < 0, "the sign was not preserved"
+    assert ensembles["A"].mean == pytest.approx(
+        statistics.fmean([m for m, _ in aftereffect_a]), abs=1e-9)
+    assert ensembles["A"].dispersion_value > 0, "a half-length is a magnitude"

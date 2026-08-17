@@ -36,7 +36,8 @@ from .cv import (Axes, TickLabels, detect_bars, detect_markers, find_axes, find_
                  load_color, load_gray, ocr_tick_labels)
 from .overlay import draw_overlay
 
-__all__ = ["PROMPT_VERSION", "TargetSpec", "FigureView", "GroupReadOut", "ReadOut", "TickCoord",
+__all__ = ["PROMPT_VERSION", "TargetSpec", "FigureView", "GroupReadOut", "PointRead",
+           "ReadOut", "TickCoord",
            "GroupCoords", "CoordReadout", "Mismatch", "OverlayVerdict", "read_out", "coords",
            "overlay_verify", "load_prompt", "render_prompt", "READOUT_SCHEMA", "COORDS_SCHEMA",
            "OVERLAY_SCHEMA", "READOUT_VARIANTS", "MAX_ZOOM", "MAX_READOUT_TOOL_CALLS"]
@@ -96,6 +97,9 @@ class TargetSpec:
     error_bar_type_hint: str = "UNKNOWN"    # Source.error_bar_type (SD/SE/CI95/...)
     unit_hint: str = ""
     late_window_sd: LateWindowRule = "paper_reported_block"
+    #: the x axis is categorical (target directions, conditions) and the outcome is the average
+    #: ACROSS it, so every point of each series is read and the code averages them (task 16 P6)
+    collapse_across_x: bool = False
     notes: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -109,7 +113,8 @@ class TargetSpec:
             ("group A", self.group_a_label),
             ("group B", self.group_b_label),
             ("series / legend hint", self.series_hint),
-            ("x position to read", self.x_hint),
+            ("x position to read", "every point on the x axis (the outcome is their average)"
+                                   if self.collapse_across_x else self.x_hint),
             ("quantity", self.quantity),
             ("error bars are said to be", self.error_bar_type_hint),
             ("expected unit", self.unit_hint),
@@ -157,6 +162,13 @@ READOUT_SCHEMA = _obj({
         "error_sides": {"type": "string",
                         "enum": ["both", "up", "down", "none", "unknown"]},
         "x_read": {"type": "string"},
+        #: every point of this series, when the target asks for the average ACROSS a categorical
+        #: x axis (Heuer & Hegele Fig 2a: eight target directions, and the outcome is their mean)
+        "points": {"type": "array", "items": _obj({
+            "x_label": {"type": "string"},
+            "mean": _NUM,
+            "error_half_length": _NUM,
+        })},
         "confidence": {"type": "number"},
         "notes": {"type": "string"},
     })},
@@ -203,6 +215,18 @@ for _name, _schema in (("READOUT_SCHEMA", READOUT_SCHEMA), ("COORDS_SCHEMA", COO
 
 # ----------------------------------------------------------------------------- results
 @dataclass
+class PointRead:
+    """One point of a series, when the whole series is read across a categorical x axis."""
+
+    x_label: str = ""
+    mean: float | None = None
+    error_half_length: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return dict(self.__dict__)
+
+
+@dataclass
 class GroupReadOut:
     group: str = "unknown"
     label_read: str = ""
@@ -212,11 +236,14 @@ class GroupReadOut:
     error_lower: float | None = None
     error_sides: str = "unknown"                # both | up | down | none (one-armed bars are common)
     x_read: str = ""
+    points: list["PointRead"] = field(default_factory=list)
     confidence: float = 0.0
     notes: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return dict(self.__dict__)
+        d = dict(self.__dict__)
+        d["points"] = [p.to_dict() for p in self.points]
+        return d
 
 
 @dataclass
@@ -667,6 +694,10 @@ def _parse_readout(result: ToolLoopResult, model: str, variant: str,
             error_lower=_number(row.get("error_lower")),
             error_sides=str(row.get("error_sides") or "unknown"),
             x_read=str(row.get("x_read") or ""),
+            points=[PointRead(x_label=str(pt.get("x_label") or ""),
+                              mean=_number(pt.get("mean")),
+                              error_half_length=_number(pt.get("error_half_length")))
+                    for pt in (row.get("points") or []) if isinstance(pt, dict)],
             confidence=float(_number(row.get("confidence")) or 0.0),
             notes=str(row.get("notes") or "")))
     ticks = [float(t) for t in (data.get("tick_labels") or []) if _number(t) is not None]

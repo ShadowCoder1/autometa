@@ -75,6 +75,11 @@ unknown. Locations can differ within one outcome — record what each one shows.
 ### Error bars
 For every source that has a dispersion (figure error bars, table ±, text ±):
 
+* `x_axis_kind` (figures only; use `unknown` for text and tables): what the x axis IS.
+  `time` for trials, blocks, episodes, sessions — anything where "the last one" is a meaningful
+  instruction. `categorical` for target directions, conditions, hands, groups — a set with no
+  order, where the quantity the review wants is the average ACROSS the axis and reading one point
+  is a different number, not a less precise one. `other` for a continuous covariate (age, speed).
 * `error_bar_type`: SD, SE, CI95, CI90, IQR, RANGE, NONE, or UNKNOWN.
 * `error_bar_evidence`: the verbatim words that told you — from the caption, the axis legend, or
   the Methods. If the paper never says what the bars are, `error_bar_type` is `UNKNOWN` and the

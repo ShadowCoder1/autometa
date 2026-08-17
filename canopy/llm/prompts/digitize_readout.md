@@ -22,6 +22,12 @@ unless the figure itself carries it.
    the title says error magnitude". Leave it empty when the ticks are signed and unambiguous.
 3. Locate the x position the target names. For a time series or a blocked design this is a
    specific point or block, not the whole curve.
+   **When the target asks for "every point on the x axis"** the x axis is categorical (target
+   directions, conditions, hands) and the quantity wanted is the average across it. Then read
+   EVERY plotted point of each series into that group's `points` list — one entry per x position,
+   with its own value and its own error-bar half-length — and leave `mean`/`error_half_length` as
+   your reading of the series as a whole. Do not average the points yourself: the code does that,
+   and it needs the points to say how many there were.
 4. For each group, read the plotted central value and the error bar. Report the error bar as a
    HALF-length (datum to cap) in data units, and, when you can see them, also the absolute values
    of the upper and lower cap.

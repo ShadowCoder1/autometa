@@ -648,11 +648,52 @@ def _readout_plan(models: Sequence[str], n_readouts: int) -> list[ReadoutSpec]:
 
 
 # ----------------------------------------------------------------------------- route D
-def _samples_from_readout(reading: ReadOut) -> list[RouteSample]:
+#: how a dispersion that the CODE built rather than the paper stated is named on the row. The SD
+#: of one target direction is not the SD of a subject's mean across eight of them: unless the
+#: between-direction variance is fully shared it OVERSTATES the denominator and shrinks |d|. The
+#: row says so, is capped, and the pooler can exclude it in a sensitivity analysis.
+MEAN_OF_POINT_SD = "mean_of_point_sd"
+
+
+def _collapse_points(row: Any) -> tuple[float | None, float | None, int]:
+    """`(mean of the points, mean of their half-lengths, how many)` for a categorical x axis."""
+    means = [p.mean for p in row.points if p.mean is not None]
+    errors = [abs(p.error_half_length) for p in row.points if p.error_half_length is not None]
+    if len(means) < 2:
+        return None, None, len(means)
+    return (statistics.fmean(means),
+            statistics.fmean(errors) if errors else None,
+            len(means))
+
+
+def _samples_from_readout(reading: ReadOut, collapse: bool = False) -> list[RouteSample]:
     out: list[RouteSample] = []
     for group in GROUPS:
         row = reading.group(group)
         if row is None:
+            continue
+        if collapse:
+            mean, error, n_points = _collapse_points(row)
+            sample = RouteSample(
+                route="D", group=group, model=reading.model, variant=reading.variant,
+                sample=reading.sample, mean=mean, error=error,
+                label_read=row.label_read, status=reading.status if mean is not None else
+                "ambiguous", notes=row.notes, snap_conf=row.confidence,
+                call_ids=list(reading.call_ids), tool_calls=list(reading.tool_calls),
+                cost_usd=reading.cost_usd / max(1, len(reading.groups)),
+                extra={"legend_says": reading.legend_says, "x_read": row.x_read,
+                       "tick_labels": list(reading.tick_labels), "unit": reading.unit,
+                       "panel": reading.panel, "axis_read": reading.axis_read,
+                       "axis_direction_note": reading.axis_direction_note,
+                       "collapsed_across_x": mean is not None, "n_points": n_points,
+                       "points": [p.to_dict() for p in row.points],
+                       "dispersion_approximation": MEAN_OF_POINT_SD if error is not None else "",
+                       "same_prompt_resample": reading.sample > 0})
+            if mean is None:
+                sample.notes = (sample.notes + "; the reader gave fewer than two points, so the "
+                                              "average across the categorical axis could not be "
+                                              "formed").strip("; ")
+            out.append(sample)
             continue
         error, one_sided = row.error_half_length, None
         if row.mean is not None:
@@ -1260,6 +1301,12 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     crop = _asset(paper, fig.crop_png)
     work = Path(out_dir) if out_dir is not None else crop.parent
     work.mkdir(parents=True, exist_ok=True)
+    # P6's OFF path, decided BEFORE any model call. A figure whose x axis is a set of conditions
+    # carries the outcome as the average across that axis; reading one point of it is a different
+    # number, not a less precise one, so the cell says it cannot be converted rather than
+    # returning something wrong (Heuer & Hegele Fig 2a, acceptance item 15).
+    if source is not None and source.x_axis_kind == "categorical" and not target.collapse_across_x:
+        return _categorical_unsupported(fig, target, paper, source, dataset, crop, result)
     text = caption if caption is not None else (fig.caption or "")
     # the `digitize:` prefix is what `canopy.llm.costs.stage_of` attributes to the
     # digitiser when the run reports where its money went
@@ -1280,7 +1327,7 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
                            sample=spec.sample, view=view,
                            cell_key=f"{key}/D/{spec.variant}{suffix}")
         readouts.append(reading)
-        samples.extend(_samples_from_readout(reading))
+        samples.extend(_samples_from_readout(reading, collapse=target.collapse_across_x))
 
     # --- path D: the first `readouts_min` read-outs
     for spec in plan[:n_min]:
@@ -1296,10 +1343,17 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     choice = _choose_calibration(core, coord, cal_vec, readouts)
     cal, cal_source, cal_why = choice.cal, choice.source, choice.why
     pixel_cal = choice.usable_for_pixels
-    samples.extend(_samples_from_coords(coord, core, pixel_cal, cal_source))
-
+    pixel_samples = _samples_from_coords(coord, core, pixel_cal, cal_source)
     # --- path B: raster CV, matched by the nearest VLM coordinate
-    samples.extend(_samples_from_raster(coord, core, pixel_cal, cal_source))
+    pixel_samples += _samples_from_raster(coord, core, pixel_cal, cal_source)
+    if target.collapse_across_x:
+        # a pixel route resolves ONE datum; the quantity here is the mean of every datum on the
+        # axis, so its answer is a different number and must not enter the ensemble
+        for pixel in pixel_samples:
+            pixel.dropped = True
+            pixel.drop_reason = ("this route reads one point, and the outcome is the average "
+                                 "across the categorical x axis")
+    samples.extend(pixel_samples)
 
     _, tick_spacing = _tick_stats(pixel_cal)
     axis_range, axis_range_source = _axis_range(pixel_cal, core)
@@ -1393,6 +1447,13 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     # the families that actually answered — `vote.route_key` reads ONE model per candidate and the
     # ensemble has to pick one, so without this the vote cannot tell two families from two prompts
     provenance["model_families"] = model_families(samples)
+    collapsed = [s for s in samples if s.extra.get("collapsed_across_x")]
+    provenance["collapse_across_x"] = bool(target.collapse_across_x)
+    provenance["x_axis_kind"] = source.x_axis_kind if source is not None else "unknown"
+    if collapsed:
+        provenance["collapsed_across_x"] = True
+        provenance["n_points"] = min(int(s.extra.get("n_points") or 0) for s in collapsed)
+        provenance["dispersion_approximation"] = MEAN_OF_POINT_SD
     provenance["readout_families"] = sorted({r.model for r in readouts})
     provenance.update(_late_window_provenance(target, samples, plan,
                                               x_tick_px=_x_tick_spacing(core)))
@@ -1423,6 +1484,34 @@ def _x_pixels(samples: Sequence[RouteSample]) -> list[float]:
         match = _X_PX_RE.search(str(s.extra.get("x_read", "")))
         if match:
             out.append(float(match.group(1)))
+    return out
+
+
+CATEGORICAL_UNSUPPORTED = "categorical_x_unsupported"
+
+
+def _categorical_unsupported(fig: FigureRegion, target: TargetSpec, paper: PaperRecord,
+                             source: Source, dataset: DatasetSpec | None, crop: Path,
+                             result: bool) -> list[Candidate] | DigitizeResult:
+    """One ensemble candidate per group saying, with no number in it, why there is no number."""
+    reason = (f"the x axis of {source.locator or fig.id} is categorical, and this outcome is the "
+              f"average across it; reading one point would be a different quantity. Turn on "
+              f"`collapse_across_categorical_x` to read every point instead")
+    provenance = {"figure_id": fig.id, "figure_kind": fig.kind, "crop_dpi": fig.crop_dpi,
+                  "x_axis_kind": source.x_axis_kind, "collapse_across_x": False,
+                  CATEGORICAL_UNSUPPORTED: True, "needs_review": True,
+                  "needs_review_reason": reason, "prompt_version": PROMPT_VERSION}
+    out = [_candidate(None, None, group=group, sample=None, target=target, fig=fig, paper=paper,
+                      dataset=dataset, source=source, kind=source.kind,
+                      mapper_type=source.error_bar_type, unit=target.unit_hint,
+                      page=source.page or fig.page,
+                      locator=source.locator or fig.label or fig.id, crop=crop, overlay_path="",
+                      extractor_id="digitize:ensemble", sigma=None, status="ambiguous",
+                      notes=reason, provenance=provenance, call_id="", model="")
+           for group in GROUPS]
+    if result:
+        return DigitizeResult(candidates=out, samples=[], calibration=None, overlay_path="",
+                              cost_usd=0.0, provenance=provenance)
     return out
 
 
@@ -1643,9 +1732,14 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
                 f"{len(errors)} route(s) that found a whisker is used and its own uncertainty is "
                 f"widened to {dispersion_sigma:.4g}"
                 + (f" (whisker drawn on one side only: {'/'.join(sides)})" if sides else ""))
+        mine_collapsed = [s for s in mine if s.extra.get("collapsed_across_x")]
         provenance = {
             **base,
             "model_families": model_families(mine),
+            "collapsed_across_x": bool(mine_collapsed),
+            "n_points": (min(int(s.extra.get("n_points") or 0) for s in mine_collapsed)
+                         if mine_collapsed else None),
+            "dispersion_approximation": MEAN_OF_POINT_SD if mine_collapsed else "",
             "legend_says": legend_text,
             "legend_dispersion": legend_type.value if legend_type else None,
             "mapper_dispersion": mapper_type.value if mapper_type else None,

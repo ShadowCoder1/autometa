@@ -52,6 +52,9 @@ class DispersionType(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
+#: `categorical` — the x axis is a set of conditions/targets/directions with no order that makes
+#: "the last one" meaningful; `time` — trials, blocks, episodes; `other` — a continuous covariate.
+XAxisKind = Literal["categorical", "time", "other", "unknown"]
 GroupKey = Literal["A", "B"]
 CandidateKind = Literal["group_stats", "test_statistic", "reported_d"]
 CandidateStatus = Literal["found", "not_on_these_pages", "ambiguous"]
@@ -138,6 +141,11 @@ class DigitizeSettings(CanopyModel):
     overlay_verify: Literal["always", "on_disagreement", "never"] = "on_disagreement"
     #: zoom/inspect tool calls one read-out may make before it must answer
     max_tool_calls: int = 6
+    #: read EVERY point of a series whose x axis the mapper called `categorical` and average them
+    #: in code (task 16 P6). Off by default: the dispersion it produces is an approximation the
+    #: paper never stated, so a review turns it on deliberately or gets `not_convertible` instead
+    #: of a number read at one arbitrary point of the axis.
+    collapse_across_categorical_x: bool = False
 
 
 class Protocol(CanopyModel):
@@ -195,6 +203,10 @@ class Source(CanopyModel):
     figure_id: str | None = None                # ingestion FigureRegion.id
     table_id: str | None = None
     error_bar_type: DispersionType = DispersionType.UNKNOWN
+    #: what the x axis of a figure source IS. A `categorical` x (target directions, conditions,
+    #: hands) means the outcome is an average ACROSS the axis, not a value at one point on it —
+    #: reading one point there is a wrong number, not an imprecise one (task 16 P6).
+    x_axis_kind: XAxisKind = "unknown"
     error_bar_scope: ErrorBarScope = "unknown"
     error_bar_evidence: str = ""
     analysis_metric: AnalysisMetric = "unknown"

@@ -43,7 +43,7 @@ from ..llm.errors import LLMError
 from ..llm.context import FILES_API_BETA, figure_blocks, text_block
 from ..models import (AnalysisMetric, Citation, DatasetSpec, DispersionType, ErrorBarScope,
                       ExposureOrder, GroupSpec, OutcomeSources, Protocol, RosterDecision, Source,
-                      SourceKind, StudyMap)
+                      SourceKind, StudyMap, XAxisKind)
 from . import load_prompt, render_prompt
 
 __all__ = ["map_study", "protocol_text", "roster_text", "roster_entries", "dataset_text",
@@ -97,7 +97,7 @@ _SOURCE_SCHEMA: dict[str, Any] = {
     "type": "object", "additionalProperties": False,
     "required": ["kind", "page", "locator", "quote", "figure_id", "table_id", "error_bar_type",
                  "error_bar_scope", "error_bar_evidence", "analysis_metric", "values_in_text",
-                 "notes"],
+                 "x_axis_kind", "notes"],
     "properties": {
         "kind": _enum([k.value for k in SourceKind]),
         "page": {"type": "integer"},
@@ -106,6 +106,7 @@ _SOURCE_SCHEMA: dict[str, Any] = {
         "figure_id": {"type": "string"},                 # roster id, "" when not a figure
         "table_id": {"type": "string"},
         "error_bar_type": _enum([d.value for d in DispersionType]),
+        "x_axis_kind": _enum(get_args(XAxisKind)),
         "error_bar_scope": _enum(get_args(ErrorBarScope)),
         "error_bar_evidence": {"type": "string"},
         "analysis_metric": _enum(get_args(AnalysisMetric)),
