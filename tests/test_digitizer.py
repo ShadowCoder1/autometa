@@ -2182,6 +2182,50 @@ def test_two_series_read_onto_each_others_rows_are_caught():
     assert _series_identity(right_way, core)["transposed"] is False
 
 
+def test_a_marker_the_pixel_pass_could_not_classify_never_asserts_a_transposition():
+    """A check that cannot resolve its input must not turn that into a positive finding.
+
+    `_descriptors_match` is vacuously true when one side states nothing, and the detector states
+    nothing for a marker it classified as a shapeless blob. So one of the two crossings that make
+    up "each group's marker is where the other's should be" was a match against nothing — and
+    `transposed` is the one finding here that flips the SIGN of an effect size. Both crossings now
+    have to be a real agreement between descriptors that each state something.
+    """
+    from canopy.digitize.cv import Marker
+    from canopy.digitize.digitizer import _series_identity
+
+    core = _core_with(None)
+    core.markers = [Marker(x=100.0, y=50.0, colour="#000000", kind="square", size=6.0),
+                    Marker(x=100.0, y=250.0, colour="#777777", kind="blob", size=6.0)]
+    rows = [RouteSample(route="C", group="A", model="m", mean=40.0, x_px=100.0, y_px=50.0,
+                        label_read="Young: open white squares"),
+            RouteSample(route="C", group="B", model="m", mean=10.0, x_px=100.0, y_px=250.0,
+                        label_read="Elderly: filled black squares")]
+    info = _series_identity(rows, core)
+    assert info["transposed"] is False
+    assert info["detected_resolved"] == {"A": True, "B": False}
+    assert "could not resolve a marker" in " ".join(info["notes"])
+
+
+def test_a_marker_found_halfway_across_the_panel_is_not_evidence_about_this_datum():
+    """`_nearest_marker` returns the nearest marker in the WHOLE figure, so a datum where nothing
+    was detected borrows some other series' marker and the swap test reads it as this one's."""
+    from canopy.digitize.cv import Marker
+    from canopy.digitize.digitizer import _series_identity
+
+    core = _core_with(None)
+    core.markers = [Marker(x=100.0, y=50.0, colour="#ffffff", kind="open", size=6.0),
+                    Marker(x=100.0, y=250.0, colour="#000000", kind="square", size=6.0)]
+    far = [RouteSample(route="C", group="A", model="m", mean=40.0, x_px=900.0, y_px=60.0,
+                       label_read="Young: filled black squares"),
+           RouteSample(route="C", group="B", model="m", mean=10.0, x_px=100.0, y_px=250.0,
+                       label_read="Elderly: open white circles")]
+    info = _series_identity(far, core)
+    assert info["transposed"] is False
+    assert info["detected_resolved"]["A"] is False
+    assert info["detected_distance_px"]["A"] > 24.0
+
+
 def test_a_described_marker_the_pixel_pass_cannot_find_is_actionable_not_prose():
     """These notes were written and nothing ever read them — the branch was dead."""
     from canopy.digitize.cv import Marker

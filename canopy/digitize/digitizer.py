@@ -1542,16 +1542,41 @@ def _detected_descriptor(marker: Marker) -> tuple[str, str]:
 
 
 def _descriptors_match(described: tuple[str, str], detected: tuple[str, str]) -> bool:
-    """Do a reader's words and a detected marker agree on everything BOTH of them state?"""
+    """Do a reader's words and a detected marker agree on everything BOTH of them state?
+
+    Vacuously true when either side states nothing — which is the right answer to "does this
+    contradict?" and the wrong one to "does this corroborate?". Use `_descriptors_corroborate`
+    for the second question.
+    """
     return all(not a or not b or a == b for a, b in zip(described, detected))
 
 
-def _nearest_marker(core: _Core, x: float | None, y: float | None) -> Marker | None:
+def _descriptors_corroborate(described: tuple[str, str], detected: tuple[str, str]) -> bool:
+    """Do they agree on at least one thing they BOTH state? Silence corroborates nothing."""
+    return (_descriptors_match(described, detected)
+            and any(a and b for a, b in zip(described, detected)))
+
+
+#: how far a detected marker may be from the point a route measured and still be the marker that
+#: route was looking at — three of its own widths, or 24 px for a marker too small to scale by
+_MARKER_NEAR_PX = 24.0
+
+
+def _nearest_marker(core: _Core, x: float | None, y: float | None
+                    ) -> tuple[Marker | None, float]:
+    """`(marker, distance)` — the detected marker closest to a measured point, and how far it is.
+
+    The distance is returned because "the nearest marker in the whole panel" is not the same
+    claim as "the marker at this datum", and a check that cannot resolve its input must not turn
+    that into a positive finding about the input.
+    """
     if y is None or not core.markers:
-        return None
+        return None, float("inf")
     if x is None:
-        return min(core.markers, key=lambda m: abs(m.y - y))
-    return min(core.markers, key=lambda m: (m.x - x) ** 2 + (m.y - y) ** 2)
+        marker = min(core.markers, key=lambda m: abs(m.y - y))
+        return marker, abs(marker.y - y)
+    marker = min(core.markers, key=lambda m: (m.x - x) ** 2 + (m.y - y) ** 2)
+    return marker, ((marker.x - x) ** 2 + (marker.y - y) ** 2) ** 0.5
 
 
 def _series_identity(samples: Sequence[RouteSample], core: _Core) -> dict[str, Any]:
@@ -1588,29 +1613,55 @@ def _series_identity(samples: Sequence[RouteSample], core: _Core) -> dict[str, A
             f"both groups were described as the same marker ({' '.join(w for w in described['A'] if w)}) "
             f"— one of the two series is being read for both groups")
 
-    # what the pixel pass actually found where each group's value was measured
+    # what the pixel pass actually found where each group's value was measured, and how sure it
+    # is: a marker it could not classify, or one it found halfway across the panel, is not
+    # evidence about this datum either way
     detected: dict[str, tuple[str, str]] = {}
+    resolved: dict[str, bool] = {}
+    distances: dict[str, float] = {}
     for group in GROUPS:
         pixel = next((s for s in samples if s.group == group and s.y_px is not None), None)
-        marker = _nearest_marker(core, pixel.x_px if pixel else None,
-                                 pixel.y_px if pixel else None)
-        if marker is not None:
-            detected[group] = _detected_descriptor(marker)
+        marker, distance = _nearest_marker(core, pixel.x_px if pixel else None,
+                                           pixel.y_px if pixel else None)
+        if marker is None:
+            resolved[group] = False
+            continue
+        descriptor = _detected_descriptor(marker)
+        near = distance <= max(3.0 * max(float(marker.size), 1.0), _MARKER_NEAR_PX)
+        detected[group] = descriptor
+        distances[group] = round(float(distance), 2)
+        resolved[group] = bool(near and any(descriptor))
     if detected:
         info["detected"] = {g: list(v) for g, v in detected.items()}
+    info["detected_resolved"] = dict(resolved)
+    info["detected_distance_px"] = distances
     kinds = {str(m.kind) for m in core.markers}
     if kinds:
         info["detected_marker_kinds"] = sorted(kinds)
 
+    # `transposed` is the one positive finding here that flips the sign of an effect size, so it
+    # is the one that must never be asserted on silence. `_descriptors_match` is vacuously true
+    # when the detector resolved nothing, and with it the swap used to be "corroborated" at a
+    # point where nothing had been measured at all. Both crossings now have to be a real
+    # agreement between two descriptors that each state something, at a marker actually found on
+    # that datum, and both self-comparisons have to fail. General rule: a check that cannot
+    # resolve its input reports that it could not, never a positive finding about the input.
     if (len(described) == 2 and len(detected) == 2 and described["A"] != described["B"]
             and any(described["A"]) and any(described["B"])
-            and _descriptors_match(described["A"], detected["B"])
-            and _descriptors_match(described["B"], detected["A"])
-            and not _descriptors_match(described["A"], detected["A"])):
+            and all(resolved.get(g) for g in GROUPS)
+            and _descriptors_corroborate(described["A"], detected["B"])
+            and _descriptors_corroborate(described["B"], detected["A"])
+            and not _descriptors_match(described["A"], detected["A"])
+            and not _descriptors_match(described["B"], detected["B"])):
         info["transposed"] = True
         info["notes"].append(
             "each group's described marker is the one found where the OTHER group's value was "
             "measured — the two series are transposed, which flips the sign of the effect")
+    elif len(described) == 2 and not all(resolved.get(g) for g in GROUPS):
+        unresolved = [g for g in GROUPS if not resolved.get(g)]
+        info["notes"].append(
+            f"the pixel pass could not resolve a marker on group {', '.join(unresolved)}'s "
+            f"datum, so nothing here can say whether the two series are the right way round")
 
     if kinds:
         for group, (fill, shape) in described.items():
