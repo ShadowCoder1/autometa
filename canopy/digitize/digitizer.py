@@ -2174,10 +2174,15 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
                 for idx in owners[v.number - 1]:
                     if samples[idx].dropped:
                         continue
-                    if v.verdict == "wrong_x" and borrowed.get(idx, False):
-                        # the mark's x was borrowed from another sample of the group; a verdict
-                        # about that x says nothing about a reader that never claimed it. It is
-                        # recorded, and the reader stands until judged at its own x
+                    if borrowed.get(idx, False):
+                        # The mark's x was borrowed from another sample of the group. Whatever the
+                        # verdict is called, a mark that is not on the datum at a position the
+                        # reader never claimed says nothing about which coordinate is wrong — the
+                        # y the reader read, or the x it never gave. Cressman's Fig. 3a: the
+                        # coordinate route landed 90 px right of block 33, on the next panel's
+                        # axis label; the verifier said `not_on_datum` (its reasons all about x),
+                        # and three readers who had said "Block 33" and 31.1/31.0/31.4 were
+                        # dropped for it. The verdict is recorded; the value is judged by the vote.
                         samples[idx].extra["overlay_disputed"] = (
                             f"{v.verdict} at a borrowed x — {v.reason}")
                         continue

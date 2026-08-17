@@ -655,17 +655,22 @@ def test_a_reader_with_no_x_of_its_own_borrows_one_but_is_not_convicted_on_it(ba
             return _submit(readout)
         if "locate features" in system:
             return _submit(wrong_x)
-        verdicts = [{"number": int(l.partition(". ")[0].strip()), "verdict": "wrong_x",
-                     "reason": "wrong block"} for l in system.splitlines()
-                    if l.partition(". ")[0].strip().isdigit()]
+        # the verifier calls it `not_on_datum` though every reason is about x — Cressman's
+        # Fig. 3a in `runs/rerun-fixed`: "~90 px right of block 33, height matches the square"
+        verdicts = [{"number": int(l.partition(". ")[0].strip()), "verdict": "not_on_datum",
+                     "reason": "90 px right of the last block; the height matches the square"}
+                    for l in system.splitlines() if l.partition(". ")[0].strip().isdigit()]
         return _submit({"marks": verdicts, "notes": ""})
 
     out = digitize(_client(FakeProvider([respond])), paper, fig, TARGET, source=SOURCE,
                    dataset=DATASET, out_dir=tmp_path, result=True,
                    settings=DigitizeSettings(overlay_verify="always"))
     readers = [s for s in out.samples if s.route == "D"]
-    assert readers and not any(s.dropped for s in readers)
+    assert readers and not any(s.dropped for s in readers), \
+        "a reader was convicted at a position it never claimed"
     assert all("borrowed x" in str(s.extra.get("overlay_disputed", "")) for s in readers)
+    coords = [s for s in out.samples if s.route == "C"]
+    assert coords and all(s.dropped for s in coords)        # the sample that WAS at that x
 
 
 def test_digitize_flags_narrow_bars(tmp_path):
