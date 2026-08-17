@@ -629,12 +629,21 @@ def _outcome_key_ok(key: str, dataset_id: str, outcome_keys: set[str], flags: li
 
 def _merge_outcome(existing: OutcomeSources, raw: dict[str, Any], sources: list[Source],
                    dataset_id: str, flags: list[str]) -> None:
-    """One outcome reported twice: keep both source lists, keep every field, flag real conflicts."""
-    existing.sources += sources
+    """One outcome reported twice: keep both source lists, keep every field, flag real conflicts.
+
+    A second report that names a DIFFERENT measure or unit is not a second look at this outcome —
+    it is a different quantity wearing the same key, and its source locations must not join this
+    outcome's list. They used to: the sources were concatenated before the conflict was even
+    looked for, so an extractor pointed at this outcome could read either panel. Heuer & Hegele
+    2008's late adaptation came back as the practice-block initial direction error rather than the
+    adaptive shift that way. The reading is kept, the intruding locations are not, and the reason
+    travels out as a flag.
+    """
     fields = {"measure_name": raw.get("measure_name") or "",
               "units": raw.get("units") or "",
               "operationalization": raw.get("operationalization") or "",
               "higher_is_better_evidence": raw.get("higher_is_better_evidence") or ""}
+    conflicts: list[str] = []
     for name, value in fields.items():
         current = getattr(existing, name)
         if not value or value == current:
@@ -642,8 +651,18 @@ def _merge_outcome(existing: OutcomeSources, raw: dict[str, Any], sources: list[
         if not current:
             setattr(existing, name, value)
             continue
+        conflicts.append(f"{name} ({current!r} vs {value!r})")
         flags.append(f"dataset {dataset_id} {existing.outcome_key}: reported twice with different "
                      f"{name} ({current!r} vs {value!r}) — needs human")
+    #: `higher_is_better_evidence` is prose ABOUT the measure, not the measure — two agents wording
+    #: the same direction differently is not two quantities.
+    quantity = [c for c in conflicts if not c.startswith("higher_is_better_evidence")]
+    if quantity:
+        flags.append(f"dataset {dataset_id} {existing.outcome_key}: "
+                     f"{len(sources)} source location(s) were NOT added to this outcome because "
+                     f"they describe a different quantity ({'; '.join(quantity)}) — needs human")
+    else:
+        existing.sources += sources
     direction = _HIGHER_IS_BETTER.get(raw.get("higher_is_better") or "")
     if direction is None:
         return

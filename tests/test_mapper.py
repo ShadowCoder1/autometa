@@ -848,3 +848,24 @@ def test_an_ineligible_paper_is_not_asked_again(paper, protocol):
     _, provider = _mapped(paper, protocol,
                           [_primary(datasets=[], eligible=False), _check(eligible=False)])
     assert len(provider.requests) == 2
+
+
+def test_a_second_report_of_a_different_quantity_does_not_lend_this_outcome_its_pages(paper,
+                                                                                      protocol):
+    """Heuer & Hegele 2008 came back as the practice-block error, not the adaptive shift.
+
+    The two reports were merged before the conflict was looked for, so both panels' locations sat
+    under one outcome key and an extractor pointed at that outcome could read either. A source
+    that measures a different quantity is not a source for this outcome.
+    """
+    first = _outcome(sources=(FIG_SOURCE,))
+    second = dict(_outcome(sources=(dict(FIG_SOURCE, page=4, figure_id="fig02",
+                                         locator="Fig 2, practice blocks"),)),
+                  measure_name="initial direction error", units="deg")
+    study, _ = _mapped(paper, protocol,
+                       [_primary(), _sources(outcomes=[first, second]), _check()])
+    outcome = study.datasets[0].outcomes[0]
+    assert [s.locator for s in outcome.sources] == ["Fig 1 adaptation episodes"]
+    assert outcome.measure_name == "pointing error"        # the first reading is kept intact
+    assert any("were NOT added to this outcome" in f for f in study.needs_human), study.needs_human
+    assert any("different quantity" in f for f in study.needs_human)

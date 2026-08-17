@@ -787,17 +787,20 @@ def _run_paper(ctx: RunContext, group: PaperGroup) -> PaperResult:
         status.status = "error"
         status.error = str(exc)
         status.warnings.append(str(exc))
+        _gone(result, group, status, "budget_exhausted", str(exc))
         emit(ctx.progress, "paper", label, "budget", cost_so_far=ctx.client.total_cost(),
              message=str(exc))
     except BudgetExceeded as exc:
         status.status = "error"
         status.error = f"run budget exhausted: {exc}"
+        _gone(result, group, status, "budget_exhausted", status.error)
         emit(ctx.progress, "paper", label, "budget", cost_so_far=ctx.client.total_cost(),
              message=status.error)
     except Exception as exc:                               # one paper's failure is not the run's
         status.status = "error"
         status.error = f"{type(exc).__name__}: {exc}"
         status.warnings.append(traceback.format_exc(limit=4))
+        _gone(result, group, status, "error", status.error)
         emit(ctx.progress, "paper", label, "error", cost_so_far=ctx.client.total_cost(),
              message=status.error)
     finally:
@@ -1042,6 +1045,22 @@ def _write_outputs(ctx: RunContext, manifest: RunManifest, results: Sequence[Pap
                                             "provenance_json": outputs.get("provenance.json")})
     outputs.update({f"report.{k}": v for k, v in report.items()})
     return outputs
+
+
+def _gone(result: PaperResult, group: Any, status: PaperStatus, reason: str,
+          detail: str) -> None:
+    """A paper that died and left no row still has to appear in the exclusions table.
+
+    Run 1's third paper failed after mapping, having spent $14.37, and showed up in no output at
+    all — not as a row, not as a held row, not as an exclusion — so a reader counting papers had
+    no way to learn it had been dropped or what it cost. A paper that kept some rows is not
+    excluded, so this stays silent for the partial case that `d9fe6fe` protects.
+    """
+    if result.records:
+        return
+    result.exclusions.append({
+        "paper_id": getattr(group, "sha256", ""), "filename": status.filename, "stage": "run",
+        "reason": reason, "quote": "", "decider": "code", "detail": detail})
 
 
 def _account(manifest: RunManifest, client: LLMClient) -> None:

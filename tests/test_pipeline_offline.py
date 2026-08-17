@@ -505,6 +505,11 @@ def test_a_paper_that_blows_its_own_budget_does_not_stop_the_run(tmp_path, paper
     assert manifest.papers[0].status == "error"
     assert "allowance" in manifest.papers[0].error
     assert (tmp_path / "run" / "manifest.json").exists()   # the run still finished and wrote out
+    # …and it says so in the exclusions table. Run 1's third paper died after mapping having spent
+    # $14.37 and appeared in no output at all, so nobody counting papers could learn it was gone.
+    rows = list(csv.DictReader(
+        (tmp_path / "run" / "exclusions.csv").open(newline="", encoding="utf-8")))
+    assert [r for r in rows if r["reason"] == "budget_exhausted"], [r["reason"] for r in rows]
 
 
 def test_an_ineligible_paper_is_excluded_with_its_reason(tmp_path, papers_dir, fake_specs):
