@@ -1070,27 +1070,72 @@ def _route_tag(s: RouteSample) -> str:
 
 
 # ----------------------------------------------------------------------------- which axis?
-def _axis_similar(a: str, b: str) -> bool:
-    """Do two free-text axis descriptions name the same ladder?"""
-    from difflib import SequenceMatcher
-
-    left, right = _axis_norm(a), _axis_norm(b)
-    if not left or not right:
-        return True                      # a reader that did not say cannot be said to disagree
-    if left == right:
-        return True
-    sides = {word for word in ("left", "right", "top", "bottom")}
-    a_side = sides & set(left.split())
-    b_side = sides & set(right.split())
-    if a_side and b_side and a_side != b_side:
-        return False                     # "left y-axis" and "right y-axis" are never the same axis
-    return SequenceMatcher(None, left, right).ratio() >= 0.6
+_AXIS_SIDES = ("left", "right", "top", "bottom")
+_AXIS_ORIENT = {"y": "y", "vertical": "y", "x": "x", "horizontal": "x"}
+#: the printed axis title, which readers quote — everything else they write ("linear", the tick
+#: ladder, pixel positions) is commentary and varies wildly in length between models
+_QUOTED = __import__("re").compile(r"[\"'\u2018\u2019\u201c\u201d]([^\"'\u2018\u2019\u201c\u201d]{3,})"
+                                   r"[\"'\u2018\u2019\u201c\u201d]")
 
 
 def _axis_norm(text: str) -> str:
     import re
 
     return re.sub(r"[^a-z0-9 ]+", " ", (text or "").lower()).strip()
+
+
+@dataclass(frozen=True)
+class _AxisFeatures:
+    """What a free-text axis description positively STATES. Empty means "did not say"."""
+
+    side: str = ""
+    orientation: str = ""
+    title: str = ""
+
+
+def _axis_features(text: str) -> _AxisFeatures:
+    words = _axis_norm(text).split()
+    side = next((w for w in words if w in _AXIS_SIDES), "")
+    orientation = ""
+    for word in words:
+        if word in _AXIS_ORIENT:
+            orientation = _AXIS_ORIENT[word]
+            break
+        if word.endswith("axis") and len(word) > 4:          # "yaxis" after normalisation
+            orientation = _AXIS_ORIENT.get(word[0], "")
+            if orientation:
+                break
+    quoted = _QUOTED.search(text or "")
+    return _AxisFeatures(side=side, orientation=orientation,
+                         title=_axis_norm(quoted.group(1)) if quoted else "")
+
+
+def _axis_similar(a: str, b: str) -> bool:
+    """Do two free-text axis descriptions name the same ladder?
+
+    They are treated as the SAME unless something they BOTH state positively disagrees. That
+    default is the whole point. The first cut compared the raw strings with `SequenceMatcher` and
+    called anything under 0.6 a different axis — but one model writes `left y-axis, "RMSE (mm)"`
+    and another writes the same axis as `Left y-axis, printed title "RMSE (mm)". Linear. Tick
+    ladder: 0 (y=899.5 px), 20 (y=654.9), …`, which scores nowhere near 0.6. On the live re-run
+    that evicted a correct reader from six of Cressman's eight cells and left two of them with no
+    usable route at all, so the paper produced `not_convertible` where the old code produced the
+    right answer.
+
+    A false pool costs nothing here — two readers who really are on different axes disagree about
+    the VALUE, and the ensemble's own tolerance catches that. A false split destroys a reading.
+    """
+    from difflib import SequenceMatcher
+
+    left, right = _axis_features(a), _axis_features(b)
+    if left.side and right.side and left.side != right.side:
+        return False                     # "left y-axis" and "right y-axis" are never one axis
+    if left.orientation and right.orientation and left.orientation != right.orientation:
+        return False                     # a value read off x is not a value read off y
+    if left.title and right.title:
+        # both quoted a printed title: compare THOSE, not the commentary around them
+        return SequenceMatcher(None, left.title, right.title).ratio() >= 0.6
+    return True
 
 
 def _reconcile_axes(samples: list[RouteSample], target: TargetSpec) -> dict[str, Any]:
@@ -1127,11 +1172,23 @@ def _reconcile_axes(samples: list[RouteSample], target: TargetSpec) -> dict[str,
         return (len(cluster), 1 if hint and hint.split()[0] in text else 0)
 
     keep = max(clusters, key=rank)
+    # …and never to the point of leaving a group with nothing. A conflict says two readers are on
+    # two ladders; it does not say the minority reader is worthless, and evicting the only reading
+    # a group has turns a disagreement into a missing row (which is what happened on the live
+    # re-run: two Cressman cells lost every route and the paper came out `not_convertible`).
+    survivors = {group: sum(1 for s in samples
+                            if s.group == group and s.usable and s in keep)
+                 for group in GROUPS}
     dropped: list[str] = []
     for cluster in clusters:
         if cluster is keep:
             continue
         for sample in cluster:
+            if survivors.get(sample.group, 0) < 1:
+                sample.notes = (sample.notes + f"; read off {str(sample.extra['axis_read'])!r}, "
+                                f"which no other reader named — kept because group "
+                                f"{sample.group} has no other reading").strip("; ")
+                continue
             sample.dropped = True
             sample.drop_reason = (
                 f"read off {str(sample.extra['axis_read'])!r}, while the ensemble is on "

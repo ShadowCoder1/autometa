@@ -609,3 +609,15 @@ def test_a_dispersion_taken_from_the_legend_is_flagged_and_caps():
     mapped.pixel_provenance = {**mapped.pixel_provenance, "dispersion_type_from": "mapper"}
     assert "dispersion_type_from_legend" not in codes(
         run_checks(dataset, "late_adaptation", [mapped]))
+
+
+def test_an_axis_conflict_caps_the_cell_it_survives():
+    """A value off the wrong ladder is wrong by a factor; keeping the majority does not prove it."""
+    from canopy.verify.confidence import CAPPING_FLAGS
+
+    assert "axis_conflict" in CAPPING_FLAGS
+    dataset = make_dataset()
+    split = _figure_cand(cal_status="confirmed")
+    split.pixel_provenance = {**split.pixel_provenance, "axis_agreement": "conflict",
+                              "axis_kept": "left y-axis (deg)", "axis_dropped_samples": ["r1"]}
+    assert "axis_conflict" in codes(run_checks(dataset, "late_adaptation", [split]))

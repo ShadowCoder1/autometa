@@ -71,6 +71,9 @@ CAPPING_FLAGS: frozenset[str] = frozenset({
     "series_marker_mismatch",
     #: the error-bar type came from the figure's legend because the map never determined one
     "dispersion_type_from_legend",
+    #: the readers answered off different value axes and one cluster was kept — a value off the
+    #: wrong ladder is wrong by a factor, and keeping the majority does not prove it was right
+    "axis_conflict",
 })
 #: every cap is at or above `ACCEPT_WITH_NOTE`, so no COMBINATION of caps can push a cell that
 #: scored well enough on the evidence down into `needs_human` (controller ruling R2, task 16):
@@ -124,6 +127,8 @@ CAP_REASONS: dict[str, str] = {
                                "found where this value was measured"),
     "dispersion_type_from_legend": ("the error-bar type was read off the figure's legend, not "
                                     "determined by the map, so nothing independent confirms it"),
+    "axis_conflict": ("the readers answered off different value axes and only one of them was "
+                      "pooled, so which ladder this number is on rests on a majority"),
 }
 
 

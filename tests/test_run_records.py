@@ -385,3 +385,125 @@ def test_cressman_fig3b_names_two_value_axes_and_only_one_of_them_is_pooled():
     assert info["axis_agreement"] == "conflict"
     assert samples[2].dropped is True and not samples[0].dropped
     assert [s.mean for s in samples if not s.dropped] == [17.5, 17.4]
+
+
+# ------------------------------------------------------------------ the hardened re-run (F11)
+#: The live re-run of the hardened pipeline. The digitiser did BETTER than the first run here —
+#: `cal_status: confirmed`, two witnesses agreeing on the mapping, both model families answering,
+#: means of 31.3/33.4 — and the paper still came out `not_convertible`, because `_reconcile_axes`
+#: compared two readers' free-text axis descriptions with a string-similarity ratio and called one
+#: verbose and one terse description of the SAME axis a conflict. It evicted the Sonnet read-out
+#: from six of the eight cells and left two of them with no usable route at all.
+RERUN = "cressman_rerun"
+
+
+def _rerun_samples() -> list:
+    """The re-run's own per-route samples, with ONLY the axis eviction undone.
+
+    The overlay-verification drops are a real judgement about a mark and are kept; what is replayed
+    is the axis rule, which is the thing that was wrong.
+    """
+    from canopy.digitize.digitizer import RouteSample
+
+    samples = []
+    for cand in _record(RERUN):
+        if cand["extractor_id"] != "digitize:ensemble" or cand["mean"] is None:
+            continue
+        for row in cand["pixel_provenance"]["per_route"]:
+            sample = RouteSample(route=row["route"], group=row["group"], model=row["model"],
+                                 variant=row["variant"], mean=row["mean"], error=row["error"],
+                                 snap_conf=row["snap_conf"], label_read=row["label_read"],
+                                 extra=row["extra"])
+            if row["dropped"] and "read off" not in (row["drop_reason"] or ""):
+                sample.dropped, sample.drop_reason = True, row["drop_reason"]
+            samples.append(sample)
+    return samples
+
+
+def test_the_rerun_record_is_the_regression_it_is_kept_for():
+    """Guard the fixture: the digitiser succeeded and the row was lost anyway."""
+    ensembles = [c for c in _record(RERUN) if c["extractor_id"] == "digitize:ensemble"]
+    assert len(ensembles) == 4
+    assert all(c["pixel_provenance"]["cal_status"] == "confirmed" for c in ensembles)
+    assert all(c["pixel_provenance"]["axis_agreement"] == "conflict" for c in ensembles)
+    # …every one of them evicted the same reader, and two lost every route they had
+    assert {tuple(c["pixel_provenance"]["axis_dropped_samples"]) for c in ensembles} == {
+        ("digitize:readout:claude-sonnet-5:direct",)}
+    assert sum(1 for c in ensembles if c["mean"] is None) == 2
+    assert all(c["status"] == "ambiguous" for c in ensembles), \
+        "an `ambiguous` ensemble never reaches the resolved values — that is how the row was lost"
+
+
+def test_two_wordings_of_one_axis_are_one_axis():
+    """The fix, on the strings the models actually wrote."""
+    from canopy.digitize.digitizer import _axis_similar
+
+    terse = 'left y-axis, "Mean Hand Deviation Angles at Peak Velocity (deg)"'
+    verbose = ("left y-axis, 'Mean Hand Deviation Angles at Peak Velocity (deg)', linear, "
+               "ticks 45, 35, 25, 15, 5 above the axis line")
+    panelled = ('Left y-axis of panel a, "Mean Hand Deviation Angles at Peak Velocity (deg)", '
+                'ticks 45, 35, 25, 15')
+    assert _axis_similar(terse, verbose) and _axis_similar(terse, panelled)
+    # Bock's d2, which raised `axis_conflict` on three descriptions of one RMSE axis
+    assert _axis_similar('left y-axis, "RMSE (mm)"',
+                         'Left y-axis, printed title "RMSE (mm)". Linear. Tick ladder: 0 (y=899.5)')
+    # …and the case the rule exists for still splits
+    assert not _axis_similar("left y-axis 'Aftereffects at Peak Velocity (deg)'",
+                             "right y-axis 'Aftereffects at Peak Velocity (%)'")
+    assert not _axis_similar("y-axis, 'adaptive shift (deg)'",
+                             "x-axis, '% Visuomotor Adaptation' (bottom axis)")
+
+
+def test_the_rerun_cell_resolves_to_the_published_effect_through_the_figure_route():
+    """The regression test the re-run earned: this cell must produce a number again.
+
+    The old code got d = -0.230 on this paper. The hardened digitiser reads it slightly differently
+    (31.15 / 33.20 against 31.3 / 33.3), so the replay lands at -0.2115 — the assertion is on the
+    effect being recovered at all and on its agreeing with the published value, not on reproducing
+    a particular route's arithmetic to the last digit.
+    """
+    import math
+
+    from canopy.digitize.digitizer import (_drop_zero_confidence, _reconcile_axes, ensemble_stats)
+    from canopy.digitize.vlm import TargetSpec
+
+    samples = _rerun_samples()
+    info = _reconcile_axes(samples, TargetSpec(outcome_key="late_adaptation", unit_hint="deg"))
+    assert info["axis_agreement"] == "agreed", "the false conflict is back"
+
+    resolved = {}
+    for group in ("A", "B"):
+        live = [s for s in samples if s.group == group and s.usable]
+        assert len(live) >= 2, f"group {group} lost its readings again"
+        assert len({s.model for s in live if s.model}) >= 2, \
+            f"group {group} is down to one model family"
+        live, _notes = _drop_zero_confidence(live)
+        resolved[group] = (ensemble_stats([s.mean for s in live])[0],
+                           ensemble_stats([s.error for s in live if s.error is not None])[0])
+
+    n_a, n_b = 9, 10
+    d = cohens_d(resolved["A"][0], resolved["A"][1] * math.sqrt(n_a), n_a,
+                 resolved["B"][0], resolved["B"][1] * math.sqrt(n_b), n_b)
+    assert d == pytest.approx(-0.230, abs=0.02), f"the figure route resolved to d = {d}"
+    assert resolved["A"][0] == pytest.approx(31.15, abs=0.5)
+    assert resolved["B"][0] == pytest.approx(33.20, abs=0.5)
+
+
+def test_an_evicted_reader_is_kept_when_it_is_the_only_one_a_group_has():
+    """Two of the re-run's cells lost EVERY route: a conflict must not empty a group."""
+    from canopy.digitize.digitizer import RouteSample, _reconcile_axes
+    from canopy.digitize.vlm import TargetSpec
+
+    left = "left y-axis 'angle (deg)'"
+    right = "right y-axis 'percent (%)'"
+    samples = [
+        RouteSample(route="D", group="A", model="opus", mean=31.0, extra={"axis_read": left}),
+        RouteSample(route="D", group="A", model="sonnet", mean=31.2, extra={"axis_read": left}),
+        # group B was read by the minority reader ONLY — evicting it leaves the group empty
+        RouteSample(route="D", group="B", model="haiku", mean=58.0, extra={"axis_read": right}),
+    ]
+    info = _reconcile_axes(samples, TargetSpec(outcome_key="x", unit_hint="deg"))
+    assert info["axis_agreement"] == "conflict"
+    assert samples[2].dropped is False
+    assert "no other reading" in samples[2].notes
+    assert info["axis_dropped_samples"] == []
