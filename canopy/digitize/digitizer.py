@@ -1686,44 +1686,44 @@ _SYMMETRIC_DISPERSIONS = (DispersionType.SD, DispersionType.SE, DispersionType.C
                           DispersionType.CI90)
 
 
-def _dispersion_topology_vote(with_error: Sequence[RouteSample], kind: DispersionType
-                              ) -> tuple[list[RouteSample], str]:
-    """The routes that may vote on the half-length when they disagree about the WHISKER'S SHAPE.
+def _dispersion_topology_conflict(with_error: Sequence[RouteSample], kind: DispersionType) -> str:
+    """The note for routes that disagree about the WHISKER'S SHAPE, or "" when they do not.
 
-    Two routes can agree that a bar exists and still be measuring different objects: one reports
+    Two routes can agree that a bar exists and still be describing different objects: one reports
     a whisker drawn on one side only and hands back the arm it saw, the other reports two arms and
-    hands back their mean. Medianing those is medianing a measurement with a half-measurement, and
-    it produces a number no route reported.
+    hands back their mean. That is a disagreement about the FIGURE, not only about a number, and
+    the median of the two is a value neither route reported.
 
-    When they conflict, the one-armed reads are the evidence, and the reason is an asymmetry in
-    what can go wrong rather than a preference for any route or model:
+    **It is recorded and reviewed, not arbitrated.** I tried arbitrating it — taking the one-armed
+    reads, on the argument that a one-armed read is the half-length whether the bar has one arm
+    (it measured the only one) or two (the arms of `mean ± half-length` are equal), whereas a
+    two-armed read is right only in the second case. The argument is sound about what the readings
+    MEAN and says nothing about how accurately each cap was located, which is what the error is
+    made of. Measured over the six scorable cells of the two completed runs it lost: mean |d| error
+    0.0570 -> 0.0637, helping one cell by 0.014 and hurting two by 0.056 between them. On the worst
+    of them the two-armed reader had the cap right to 0.02 deg of the pixels and the one-armed
+    reader was 2.1 deg out, while its TOPOLOGY claim was the more faithful of the two. Topology is
+    not a proxy for accuracy.
 
-    * if the whisker really is one-armed, the two-armed read's "other arm" is whatever its cap
-      walk stopped on — the marker's own edge, the bar, a neighbouring series' mark — so its
-      half-length is contaminated by a non-measurement;
-    * if the whisker really is two-armed, the one-armed read measured one arm of a bar whose arms
-      are equal by construction, and so has the half-length right anyway.
+    So the ensemble still medians every route that found a whisker, and the conflict is surfaced:
+    it sets the cell for review, and `_needs_another_readout` — which now sees the dispersion —
+    buys a further reading while budget remains. Asking for more evidence is the honest response to
+    two readers describing different pictures; picking one of them by rule is not.
 
-    A one-armed read is therefore correct under both hypotheses and a two-armed read under only
-    one. `runs/proof` shows the cost of not doing this: on Cressman 2010 Fig. 3b one route read a
-    one-armed 1.8 (noting the upper cap was hidden — and the pixels agree: the open square's only
-    cap is 1.7-2.0 below it) while the other read a two-armed 3.0, and the median 2.4 was
-    published with an empty flags column.
-
-    Returns `(routes that vote, why)`; `why` is empty when there was nothing to settle.
+    Not raised for an IQR or a min-max whisker, whose arms genuinely differ, so "one-armed" is not
+    a claim about the same quantity there.
     """
     if kind not in _SYMMETRIC_DISPERSIONS:
-        return list(with_error), ""
+        return ""
     one_armed = [s for s in with_error if s.one_sided]
     two_armed = [s for s in with_error if not s.one_sided]
     if not one_armed or not two_armed:
-        return list(with_error), ""
+        return ""
     sides = "/".join(sorted({s.one_sided for s in one_armed if s.one_sided}))
-    return one_armed, (
-        f"{len(one_armed)} route(s) read this whisker as drawn on one side only ({sides}) and "
-        f"{len(two_armed)} read two arms; a one-armed read is the half-length whichever is true, "
-        f"a two-armed read only if two arms are really drawn, so the half-length comes from the "
-        f"{len(one_armed)} one-armed read(s)")
+    return (f"{len(one_armed)} route(s) read this whisker as drawn on one side only ({sides}) and "
+            f"{len(two_armed)} read two arms — they disagree about the shape of the bar, not only "
+            f"about its length, so the half-length they were medianed into is a value neither of "
+            f"them reported")
 
 
 # ----------------------------------------------------------------------------- legend check
@@ -2309,14 +2309,10 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
         means = [s.mean for s in live]
         # a route that found no whisker does not get a vote on the whisker's length
         with_error = [s for s in live if s.error is not None]
-        all_errors = [s.error for s in with_error]
-        voting, topology_note = _dispersion_topology_vote(with_error, mapper_type)
-        errors = [s.error for s in voting]
+        errors = all_errors = [s.error for s in with_error]
+        topology_note = _dispersion_topology_conflict(with_error, mapper_type)
         mean, mad_sigma = ensemble_stats(means)
         error, error_mad = ensemble_stats(errors) if errors else (None, 0.0)
-        # the agreement verdict is computed over EVERY route that found a whisker, not over the
-        # subset that supplied the number: segregating the vote settles which reading to use, it
-        # does not make the disagreement go away, and the record has to keep showing it
         agreement = dual_tolerance(means, all_errors, axis_range=axis_range,
                                    tick_spacing=tick_spacing, px_units=px_units)
         floor = px_units
@@ -2390,7 +2386,7 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             "snap_confidences": {s.extractor_id: s.snap_conf for s in mine
                                  if s.snap_conf is not None},
             "n_routes": len(live), "n_routes_with_error": len(with_error),
-            "n_routes_voting_on_error": len(voting),
+            "dispersion_topology_conflict": bool(topology_note),
             "dispersion_topology_note": topology_note,
             "dispersion_route_errors": {s.extractor_id: {"error": s.error,
                                                          "one_sided": s.one_sided}
@@ -2404,9 +2400,10 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             "resampled_routes": [s.extractor_id for s in live if s.sample > 0],
             "tool_calls": _aggregate_tool_calls(mine),
             "cal_missing": no_calibration,
-            "needs_review": status == "ambiguous" or dispersion_only or no_calibration,
+            "needs_review": (status == "ambiguous" or dispersion_only or no_calibration
+                             or bool(topology_note)),
             "needs_review_kind": ("mean" if status == "ambiguous"
-                                  else ("dispersion" if dispersion_only
+                                  else ("dispersion" if dispersion_only or topology_note
                                         else ("calibration" if no_calibration else None))),
             "needs_review_reason": "; ".join(reasons),
             "dropped_samples": [s.to_dict() for s in mine if s.dropped],

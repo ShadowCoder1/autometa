@@ -1592,46 +1592,48 @@ def test_a_disputed_dispersion_also_buys_the_overlay_check():
 
 
 # ------------------------------------------------------------------ F5: the dispersion combiner
-def test_a_one_armed_read_outvotes_a_two_armed_one_on_the_half_length(bar_figure):
-    """F5: the ensemble was measurably less accurate than its best member, and always on the
-    spread. Routes that disagree about the whisker's TOPOLOGY are not measuring the same object.
+def test_routes_that_disagree_about_the_whiskers_shape_are_medianed_but_reviewed(bar_figure):
+    """F5, and the rule I tried and rejected.
 
-    A one-armed read is the half-length whether the bar is one-armed (it measured the only arm)
-    or two-armed (the arms of `mean ± half-length` are equal). A two-armed read is the half-length
-    only in the second case: in the first, its "other arm" is whatever its cap walk stopped on.
-    So when the two conflict the one-armed reads carry the evidence — and this is about the
-    reading, not about which model or route produced it.
+    A one-armed and a two-armed read of one bar are not measurements of the same object, so
+    medianing them yields a number neither reported. The tempting arbitration is to take the
+    one-armed read — it is the half-length whether the bar has one arm (it measured the only one)
+    or two (the arms of `mean ± half-length` are equal), where a two-armed read is right only in
+    the second case. That argument is about what the readings MEAN and is silent about how
+    accurately each cap was located, which is what the error is made of. Measured over the six
+    scorable cells of the two completed runs, arbitrating cost accuracy: mean |d| error
+    0.0570 -> 0.0637. So the conflict is recorded and sent for review, and the stop rule (which
+    now sees the dispersion) buys another reading instead.
     """
     one_armed = _d_sample(31.2, 1.8, one_sided="down")
     two_armed = _d_sample(31.0, 3.0, model="claude-sonnet-5")
-    base = {"cal_status": "confirmed", "figure_id": "fig03"}
-    ens = _ensemble_of(bar_figure, [one_armed, two_armed], base)
-    assert ens.dispersion_value == pytest.approx(1.8)
-    assert ens.pixel_provenance["n_routes_with_error"] == 2
-    assert ens.pixel_provenance["n_routes_voting_on_error"] == 1
-    assert "one side only" in ens.pixel_provenance["dispersion_topology_note"]
-    # the disagreement is settled, not erased: the record still shows both reads and the
-    # dispersion keeps an uncertainty that spans them
-    assert ens.pixel_provenance["error_agreement"] is False
-    assert ens.dispersion_sigma >= 0.5 * (3.0 - 1.8)
-    assert sorted(r["error"] for r in
-                  ens.pixel_provenance["dispersion_route_errors"].values()) == [1.8, 3.0]
+    ens = _ensemble_of(bar_figure, [one_armed, two_armed],
+                       {"cal_status": "confirmed", "figure_id": "fig03"})
+    assert ens.dispersion_value == pytest.approx(2.4)          # the median of both, as before
+    assert ens.pixel_provenance["dispersion_topology_conflict"] is True
+    assert "disagree about the shape of the bar" in ens.pixel_provenance["dispersion_topology_note"]
+    assert ens.pixel_provenance["needs_review"] is True
+    assert ens.pixel_provenance["needs_review_kind"] == "dispersion"
+    # the per-route half-lengths and topologies are on the record, so a reviewer can see the split
+    assert ens.pixel_provenance["dispersion_route_errors"] == {
+        one_armed.extractor_id: {"error": 1.8, "one_sided": "down"},
+        two_armed.extractor_id: {"error": 3.0, "one_sided": None}}
 
 
-def test_routes_that_agree_about_the_topology_are_all_still_medianed(bar_figure):
-    """The segregation only fires on a conflict; two one-armed reads are two votes as before."""
+def test_routes_that_agree_about_the_topology_raise_nothing(bar_figure):
+    """The conflict flag fires on a conflict, not on every figure with a one-armed whisker."""
     both_one_armed = [_d_sample(31.2, 1.8, one_sided="down"),
-                      _d_sample(31.0, 2.2, one_sided="down", model="claude-sonnet-5")]
-    base = {"cal_status": "confirmed", "figure_id": "fig03"}
-    ens = _ensemble_of(bar_figure, both_one_armed, base)
-    assert ens.dispersion_value == pytest.approx(2.0)
-    assert ens.pixel_provenance["n_routes_voting_on_error"] == 2
+                      _d_sample(31.0, 2.0, one_sided="down", model="claude-sonnet-5")]
+    ens = _ensemble_of(bar_figure, both_one_armed,
+                       {"cal_status": "confirmed", "figure_id": "fig03"})
+    assert ens.dispersion_value == pytest.approx(1.9)
+    assert ens.pixel_provenance["dispersion_topology_conflict"] is False
     assert ens.pixel_provenance["dispersion_topology_note"] == ""
 
 
 def test_an_asymmetric_whisker_kind_is_left_alone(bar_figure):
-    """An IQR box has genuinely unequal arms, so one arm is not a half-length and the argument
-    for preferring a one-armed read does not hold. Nothing is segregated there."""
+    """An IQR box has genuinely unequal arms, so "one-armed" is not a claim about the same
+    quantity and there is no conflict to raise."""
     from canopy.models import DispersionType
 
     mixed = [_d_sample(31.2, 1.8, one_sided="down"),
@@ -1639,8 +1641,8 @@ def test_an_asymmetric_whisker_kind_is_left_alone(bar_figure):
     iqr_source = SOURCE.model_copy(update={"error_bar_type": DispersionType.IQR})
     ens = _ensemble_of(bar_figure, mixed, {"cal_status": "confirmed", "figure_id": "fig03"},
                        source=iqr_source)
-    assert ens.dispersion_value == pytest.approx(2.4)          # the plain median of both
-    assert ens.pixel_provenance["dispersion_topology_note"] == ""
+    assert ens.dispersion_value == pytest.approx(2.4)
+    assert ens.pixel_provenance["dispersion_topology_conflict"] is False
 
 
 def test_the_marker_floor_rejects_a_cap_inside_the_marker(bar_figure):
