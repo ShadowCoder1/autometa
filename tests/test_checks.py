@@ -672,3 +672,41 @@ def test_an_axis_conflict_withholds_the_cell_it_survives():
     split.pixel_provenance = {**split.pixel_provenance, "axis_agreement": "conflict",
                               "axis_kept": "left y-axis (deg)", "axis_dropped_samples": ["r1"]}
     assert "axis_conflict" in codes(run_checks(dataset, "late_adaptation", [split]))
+
+
+def test_no_calibration_at_all_is_flagged_at_least_as_loudly_as_one_witness():
+    """Zero witnesses to the scale cannot be quieter than one.
+
+    `cal_status="none"` means no y calibration could be built for the figure at all — the
+    read-out routes need no ladder to produce a number, so such a cell reached the score with
+    nothing said about its axis, while a cell whose axis ONE witness had established was flagged
+    and capped. Absence of a check is a finding and has to be reported as one.
+    """
+    from canopy.verify.confidence import CALIBRATION_PENALTY, CAPPING_FLAGS
+
+    dataset = make_dataset()
+    missing = _figure_cand(cal_status="none", ticks=None)
+    found = codes(run_checks(dataset, "late_adaptation", [missing]))
+    assert "calibration_missing" in found
+    flag = next(f for f in run_checks(dataset, "late_adaptation", [missing])
+                if f.code == "calibration_missing")
+    assert flag.severity == "warn"
+    assert "calibration_missing" in CAPPING_FLAGS
+    assert (CALIBRATION_PENALTY["calibration_missing"]
+            >= CALIBRATION_PENALTY["calibration_single_witness"])
+    # …and a figure whose axis two witnesses confirmed says nothing of the kind
+    assert "calibration_missing" not in codes(
+        run_checks(dataset, "late_adaptation", [_figure_cand(cal_status="confirmed")]))
+
+
+def test_every_calibration_state_is_decided_about_rather_than_falling_through():
+    """The axis test listed the states that pass, so a state nobody listed was silently skipped.
+
+    That is how "we could not establish the scale" ended up checked less than "we established it
+    with one witness". The map is total, and a state added to `CAL_STATUSES` without a decision
+    here fails at import rather than quietly disabling a check.
+    """
+    from canopy.verify.checks import AXIS_TESTABLE
+    from canopy.verify.figures import CAL_STATUSES
+
+    assert set(AXIS_TESTABLE) == set(CAL_STATUSES) | {"unknown"}

@@ -72,6 +72,9 @@ CAPPING_FLAGS: frozenset[str] = frozenset({
     "collapsed_across_x",
     #: extraction was re-opened on a source the verifier named, so a model chose the location
     "reopened_on_better_source",
+    #: no ladder for the value axis could be built at all: the numbers rest on the readers' own
+    #: sense of the scale, and nothing contradicts them either
+    "calibration_missing",
     #: the error-bar type came from the figure's legend because the map never determined one
     "dispersion_type_from_legend",
     #: the reader's words about this series and the markers the pixel pass found do not line up.
@@ -133,6 +136,11 @@ assert all(cap >= ACCEPT_WITH_NOTE for cap in _CAPS), "a cap must never mean nee
 CALIBRATION_PENALTY: dict[str, float] = {
     "calibration_single_witness": 0.08,
     "calibration_refuted": 0.16,
+    #: no ladder was built at all. It shares the bottom rung with a ladder the readers disproved,
+    #: and for the same reason: in both, no calibration is left standing and the value rests on
+    #: the read-outs alone. "We could not establish the scale" must never cost less than "we
+    #: established it with one witness".
+    "calibration_missing": 0.16,
 }
 
 #: `error`-severity codes that do NOT force a human on their own. `calibration_refuted` is an
@@ -152,6 +160,9 @@ CAP_REASONS: dict[str, str] = {
                                    "the value was read against is uncorroborated"),
     "calibration_refuted": ("the readers agree on a value the tick ladder cannot draw, so the "
                             "axis calibration was discarded and only the read-outs stand"),
+    "calibration_missing": ("no calibration of this figure's value axis could be built at all, "
+                            "so the scale these numbers were read against rests entirely on the "
+                            "readers and nothing checked it"),
     "collapsed_across_x": ("this is an average across a categorical axis and its dispersion is an "
                            "approximation, not the paper's own"),
     "reopened_on_better_source": ("extraction was re-opened on a source the verifier named, so "

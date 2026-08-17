@@ -25,12 +25,13 @@ from typing import Any, Iterable, Sequence
 from ..models import (Candidate, CheckFlag, DatasetSpec, DispersionType, GroupSpec,
                       OrientationVerdict, OutcomeSources, Source)
 from ..stats.effect_sizes import cohens_d
-from .figures import (FIGURE_KINDS, axis_limits, calibration_status, is_figure,
+from .figures import (CAL_STATUSES, FIGURE_KINDS, axis_limits, calibration_status, is_figure,
                       routes_agree)
 from .grounding import ROW_ONLY, SIGN_NOTE, is_short_quote
 
 __all__ = ["run_checks", "sign_check", "codes", "CHECK_SEVERITY", "GROUP_LABEL_MISMATCH_NOTE",
-           "ROW_ONLY_MARKER", "SIGN_NOTE_MARKER", "SEVERITY_RANK", "MIN_N", "MAX_PLAUSIBLE_D"]
+           "ROW_ONLY_MARKER", "SIGN_NOTE_MARKER", "SEVERITY_RANK", "MIN_N", "MAX_PLAUSIBLE_D",
+           "AXIS_TESTABLE"]
 
 #: the marker `canopy.agents.extract_common.group_label_check` writes into a candidate's notes when
 #: the label the extractor echoed belongs to the *other* group (tests/test_checks.py pins it).
@@ -67,6 +68,7 @@ CHECK_SEVERITY: dict[str, str] = {
     "calibration_single_witness": "warn",
     "calibration_refuted": "error",
     "calibration_disputed": "error",
+    "calibration_missing": "warn",
     "mean_missing": "warn",
     "dispersion_unknown": "warn",
     "dispersion_missing": "warn",
@@ -243,15 +245,14 @@ def _check_one(cand: Candidate, dataset: DatasetSpec, outcome: OutcomeSources | 
     # correct read of 31.3 was sent to a human by a ladder that had been misread as 1..4 (F1).
     _check_calibration(cand, out)
     _check_series_identity(cand, out)
-    # …on a calibration that is worth testing against. `confirmed` and a pre-task-16 record (which
-    # carries no status) always are. A `single_witness` ladder is too, but ONLY while the routes
-    # that read the figure agree with each other: two readers agreeing on a value the frame cannot
-    # draw is evidence about the reading, and dropping that check outright — as the first cut did —
-    # left a ladder misread the other way with nothing at all to stop it. A REFUTED ladder is not
-    # tested, and cannot be: `digitize` writes no `cal` for it, so there are no limits to test.
+    # …on a calibration that is worth testing against — see `AXIS_TESTABLE`. A `single_witness`
+    # ladder is tested, but ONLY while the routes that read the figure agree with each other: two
+    # readers agreeing on a value the frame cannot draw is evidence about the reading, and
+    # dropping that check outright — as the first cut did — left a ladder misread the other way
+    # with nothing at all to stop it.
     status = calibration_status(cand.pixel_provenance)
-    testable = status in ("confirmed", "unknown") or (
-        status == "single_witness" and routes_agree(cand.pixel_provenance) is not False)
+    testable = AXIS_TESTABLE[status] and (
+        status != "single_witness" or routes_agree(cand.pixel_provenance) is not False)
     if cand.mean is not None and testable:
         limits = axis_limits(cand.pixel_provenance)
         if limits is not None:
@@ -268,6 +269,28 @@ def _check_one(cand: Candidate, dataset: DatasetSpec, outcome: OutcomeSources | 
         _flag(out, "dispersion_type_conflict",
               f"the extractor read {kind.value} at {where}, but the map determined "
               f"{mapped.value} there", cid)
+
+
+#: Can a `value_outside_axis` test be made against a figure in this calibration state? Written as
+#: a TOTAL map rather than a list of the passing cases, because the list-of-passing-cases form
+#: silently skipped any state nobody had thought about — which is how `none` ("we could not
+#: establish the scale at all") ended up checked LESS than `single_witness` ("we established it
+#: with one witness"). A state added to `CAL_STATUSES` without a decision here fails at import.
+AXIS_TESTABLE: dict[str, bool] = {
+    #: two or more witnesses agree on the mapping — a value outside THAT frame is a real error
+    "confirmed": True,
+    #: a record from before the ladder was scored: the `cal` it carries is all there is to test
+    "unknown": True,
+    #: one witness built it; tested only while the routes that read the figure agree (below)
+    "single_witness": True,
+    #: `digitize` writes no `cal` for a ladder the readers disproved, so there are no limits
+    "cal_refuted": False,
+    #: no ladder was built at all, so likewise there is nothing to test the value against — which
+    #: is exactly why `_check_calibration` has to say so out loud instead
+    "none": False,
+}
+assert set(AXIS_TESTABLE) == set(CAL_STATUSES) | {"unknown"}, \
+    "every calibration state must be decided about, not fall through to 'not tested'"
 
 
 def _check_calibration(cand: Candidate, out: list[CheckFlag]) -> None:
@@ -305,6 +328,15 @@ def _check_calibration(cand: Candidate, out: list[CheckFlag]) -> None:
             _flag(out, "calibration_single_witness",
                   f"only one witness calibrated the axis of {where}, so the scale this value was "
                   f"read against is uncorroborated ({note})", cid)
+    elif status == "none":
+        # zero witnesses cannot be quieter than one. The read-out routes need no ladder to produce
+        # a number, so this cell reached the score with nothing said about its axis at all, while
+        # a cell whose axis ONE witness had established was flagged and capped. Absence of a check
+        # is a finding: `AXIS_TESTABLE` records that `value_outside_axis` cannot run here either.
+        _flag(out, "calibration_missing",
+              f"no calibration of the value axis of {where} could be built at all, so nothing "
+              f"independent checked that this number lies on the axis it was read from, and the "
+              f"scale rests entirely on the readers ({note})", cid)
 
 
 def _descriptor(value: Any) -> tuple[str, str]:
