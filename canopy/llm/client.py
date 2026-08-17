@@ -9,6 +9,7 @@ import base64
 import json
 import threading
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -160,6 +161,34 @@ class LLMCall:
         return dict(self.__dict__)
 
 
+def _merge_submits(uses: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """One answer out of however many `final_tool` blocks a single turn contained.
+
+    A model asked for several things at once sometimes answers in several `submit` calls in the
+    same turn — one per group, typically. Keeping only the first threw the rest away without a
+    word: in `runs/proof`, four of six such turns lost a whole group's reading, which looked
+    downstream like a reader that had abstained — and an abstaining reader was still counted as a
+    corroborating model family, which is the bit the confidence score turns on.
+
+    Lists concatenate, because a list is how a schema says "several of these" — EXCEPT when the
+    two lists are equal, which means the field is a header the model repeated rather than a
+    payload it split (`tick_labels` is the same ladder in every block; `groups` is not). Scalars
+    and mappings keep the first non-empty value for the same reason. Nothing is dropped in
+    silence: the count travels on `ToolLoopResult.submits` and in the tool log.
+    """
+    merged: dict[str, Any] = {}
+    for use in uses:
+        payload = use.get("input")
+        if not isinstance(payload, Mapping):
+            continue
+        for key, value in payload.items():
+            if key not in merged or merged[key] in (None, "", [], {}):
+                merged[key] = list(value) if isinstance(value, list) else value
+            elif isinstance(merged[key], list) and isinstance(value, list) and merged[key] != value:
+                merged[key] = merged[key] + value
+    return merged
+
+
 @dataclass
 class ToolLoopResult:
     """One completed tool-use loop (see `LLMClient.tool_loop`)."""
@@ -170,10 +199,13 @@ class ToolLoopResult:
     call_ids: list[str] = field(default_factory=list)
     cost_usd: float = 0.0
     models: list[str] = field(default_factory=list)
+    #: how many `final_tool` blocks the answering turn held; >1 means they were merged
+    submits: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         return dict(parsed=self.parsed, turns=self.turns, tool_calls=list(self.tool_calls),
-                    call_ids=list(self.call_ids), cost_usd=self.cost_usd, models=list(self.models))
+                    call_ids=list(self.call_ids), cost_usd=self.cost_usd, models=list(self.models),
+                    submits=self.submits)
 
 
 # ----------------------------------------------------------------------------- client
@@ -354,14 +386,15 @@ class LLMClient:
                      f"best answer; use `unknown`/null fields where you are not sure."}]}]
                 continue
 
-            final = next((u for u in uses if u.get("name") == final_tool), None)
-            if final is not None:
-                parsed = final.get("input")
-                parsed = dict(parsed) if isinstance(parsed, dict) else {}
+            finals = [u for u in uses if u.get("name") == final_tool]
+            if finals:
+                parsed = _merge_submits(finals)
                 logged.append({"turn": turns, "name": final_tool, "input": parsed,
-                               "output": "", "image_hashes": [], "is_error": False})
+                               "output": "", "image_hashes": [], "is_error": False,
+                               "submits": len(finals)})
                 return ToolLoopResult(parsed=parsed, turns=turns, tool_calls=logged,
-                                      call_ids=call_ids, cost_usd=cost, models=models)
+                                      call_ids=call_ids, cost_usd=cost, models=models,
+                                      submits=len(finals))
 
             results: list[dict[str, Any]] = []
             for use in uses:

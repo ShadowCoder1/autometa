@@ -1304,6 +1304,32 @@ def test_the_family_rule_buys_a_second_family_and_records_which_ones_answered(ba
                                                                          "claude-sonnet"]
 
 
+def test_a_reader_that_produced_no_value_is_not_counted_as_an_agreeing_family(bar_figure,
+                                                                                tmp_path):
+    """`runs/proof`: Bock group A was credited with a sonnet reader whose `mean` was null.
+
+    The confidence score pays +0.25 for "two independent model families read it and agreed", and
+    that bonus is the only term that lifts a figure cell over the acceptance line. Counting a
+    reader that abstained makes the deciding bit a lie — group A was released and group B, on the
+    same figure of the same paper, was withheld, purely on that phantom vote. A vote may only
+    credit readers that cast a ballot.
+    """
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    provider = _scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                         _coord_payload(bar_figure, view.scale),
+                         readout_by_call=[_readout_payload(31.5, 11.0, 12.25, 11.75),
+                                          _readout_payload(None, None, None, None,
+                                                           status="ambiguous")])
+    out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, result=True,
+                   settings=DigitizeSettings(readouts_min=1, readouts_max=2))
+    assert out.provenance["call_plan"]["readouts_run"] == 2      # the second family WAS bought…
+    assert out.provenance["model_families"] == ["claude-opus"]   # …and it answered with nothing
+    ensemble = next(c for c in out.candidates if c.extractor_id == "digitize:ensemble")
+    assert ensemble.pixel_provenance["model_families"] == ["claude-opus"]
+
+
 # ------------------------------------------------------------------ task 16 (e): the misses
 def _readout_sample(group, model, axis_read="", label_read="", mean=10.0, x_read=""):
     return RouteSample(route="D", group=group, model=model, variant="direct", mean=mean,

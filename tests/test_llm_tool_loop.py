@@ -346,3 +346,31 @@ def test_tool_loop_marker_does_not_change_the_cache_key(tmp_path: Path):
     assert out.parsed == {"answer": 7.0}
     assert provider2.requests == [], "a replayed loop must make no provider call"
     assert {p.stem for p in tmp_path.glob("*.json")} == keys
+
+
+# ------------------------------------------------------------------ several submits in one turn
+def test_two_submit_blocks_in_one_turn_are_merged_not_silently_halved():
+    """`runs/proof`: four of six multi-submit turns lost a whole group's reading.
+
+    The loop took the first `submit` and returned. Downstream that looked like a reader which had
+    abstained — and an abstaining reader was still counted as a corroborating model family, which
+    is the single bit the confidence score turns on. A list is how a schema says "several of
+    these", so the blocks are merged rather than raced.
+    """
+    client, _ = _client([[_use("submit", {"unit": "deg", "tick_labels": ["0", "10"],
+                                          "groups": [{"group": "A", "mean": 31.1}]}, "t1"),
+                          _use("submit", {"unit": "deg", "tick_labels": ["0", "10"],
+                                          "groups": [{"group": "B", "mean": 32.9}]}, "t2")]])
+    out = client.tool_loop(model="claude-opus-5", system="", messages=MSGS, tools=TOOLS,
+                           handlers={}, final_tool="submit")
+    assert [g["group"] for g in out.parsed["groups"]] == ["A", "B"]
+    assert out.parsed["tick_labels"] == ["0", "10"]     # a repeated header is not doubled
+    assert out.submits == 2                             # and the merge is on the record
+    assert out.tool_calls[-1]["submits"] == 2
+
+
+def test_one_submit_is_unchanged_and_reports_a_single_block():
+    client, _ = _client([[_use("submit", {"answer": 42})]])
+    out = client.tool_loop(model="claude-opus-5", system="", messages=MSGS, tools=TOOLS,
+                           handlers={}, final_tool="submit")
+    assert out.parsed == {"answer": 42} and out.submits == 1

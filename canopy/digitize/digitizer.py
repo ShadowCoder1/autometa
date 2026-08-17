@@ -1583,8 +1583,10 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
         "overlay_verify": bool(do_verify), "overlay_verify_reason": verify_reason,
         "list_regions_offered": view.has_regions}
     # the families that actually answered — `vote.route_key` reads ONE model per candidate and the
-    # ensemble has to pick one, so without this the vote cannot tell two families from two prompts
-    provenance["model_families"] = model_families(samples)
+    # ensemble has to pick one, so without this the vote cannot tell two families from two prompts.
+    # "Answered" means produced a value: a reader that returned no mean corroborates nothing, and
+    # counting it here credited an abstention as agreement (`runs/proof`, Bock group A).
+    provenance["model_families"] = model_families([s for s in samples if s.usable])
     collapsed = [s for s in samples if s.extra.get("collapsed_across_x")]
     provenance["collapse_across_x"] = bool(target.collapse_across_x)
     provenance["x_axis_kind"] = source.x_axis_kind if source is not None else "unknown"
@@ -1873,7 +1875,13 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
         mine_collapsed = [s for s in mine if s.extra.get("collapsed_across_x")]
         provenance = {
             **base,
-            "model_families": model_families(mine),
+            # `live`, never `mine`: a vote may only credit readers that cast a ballot. The
+            # confidence score pays +0.25 for "two independent model families read it and
+            # agreed", and `mine` includes readers whose `mean` is None — in `runs/proof`,
+            # Bock group A was credited with a sonnet reader that produced no value, and
+            # that phantom family is the whole reason group A was released while group B,
+            # on the same figure, was withheld.
+            "model_families": model_families(live),
             "collapsed_across_x": bool(mine_collapsed),
             "n_points": (min(int(s.extra.get("n_points") or 0) for s in mine_collapsed)
                          if mine_collapsed else None),
@@ -1911,7 +1919,7 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             # NOT `live[0].model`: `vote.route_key` would then stamp the ensemble with one family
             # and the vote could never see that two families agreed inside it. The families are
             # recorded explicitly in provenance, where `confidence` reads them.
-            model=("" if len(model_families(mine)) > 1 else (live[0].model or "")),
+            model=("" if len(model_families(live)) > 1 else (live[0].model or "")),
             dispersion_sigma=dispersion_sigma))
     return out
 
