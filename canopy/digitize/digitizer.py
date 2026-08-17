@@ -738,6 +738,11 @@ def _labels_are_the_same(a: Any, b: Any) -> bool:
     return len(short) >= _MIN_LABEL_CHARS and short in long
 
 
+def _names_group(category: Any, names: Sequence[str]) -> bool:
+    """Does a plotted x category name this group, in any of the words the protocol gave for it?"""
+    return any(_labels_are_the_same(category, name) for name in names if str(name or "").strip())
+
+
 def _categorical_role(target: TargetSpec | None, readings: Sequence[Any]
                       ) -> tuple[str, str]:
     """`(role, why)` — are this figure's x categories the CONDITIONS or the GROUPS themselves?
@@ -765,14 +770,20 @@ def _categorical_role(target: TargetSpec | None, readings: Sequence[Any]
     if target is not None and target.categorical_x in (CATEGORICAL_GROUPS,
                                                        CATEGORICAL_CONDITIONS):
         return target.categorical_x, f"the caller stated the x categories are {target.categorical_x}"
+    # a group's NAMES, not its one label: a paper labels its bars in its own words, and
+    # "Old adults" is not a substring of "Older adults". The protocol already wrote down the
+    # vocabulary of the review; without it this test fails to resolve and the cell yields nothing.
     labels = {"A": getattr(target, "group_a_label", "") if target else "",
               "B": getattr(target, "group_b_label", "") if target else ""}
-    if not any(labels.values()):
+    vocab = {g: tuple(n for n in (labels[g], *getattr(target, f"group_{g.lower()}_synonyms", ()))
+                      if str(n or "").strip())
+             for g in GROUPS}
+    if not any(vocab.values()):
         return CATEGORICAL_UNRESOLVED, "the protocol gave no group labels to match categories to"
 
     # matching categories onto groups is only possible when both groups are named; a single
     # label matching a single category says nothing about what the axis IS
-    both_labelled = all(labels.values())
+    both_labelled = all(vocab.values())
     conditions_seen: list[str] = []
     for reading in readings:
         rows = {g: reading.group(g) for g in GROUPS}
@@ -780,8 +791,8 @@ def _categorical_role(target: TargetSpec | None, readings: Sequence[Any]
             if row is None:
                 continue
             categories = [p.x_label for p in row.points if str(p.x_label or "").strip()]
-            hits = {g: [c for c in categories if _labels_are_the_same(c, labels[g])]
-                    for g in GROUPS if labels[g]}
+            hits = {g: [c for c in categories if _names_group(c, vocab[g])]
+                    for g in GROUPS if vocab[g]}
             if both_labelled and all(hits.get(g) for g in GROUPS):
                 named = ", ".join(sorted({c for cs in hits.values() for c in cs}))
                 return CATEGORICAL_GROUPS, (
@@ -790,19 +801,19 @@ def _categorical_role(target: TargetSpec | None, readings: Sequence[Any]
                     f"average over")
             if both_labelled and len(categories) == 1 and hits.get(group):
                 other = [g for g in GROUPS if g != group][0]
-                if not _labels_are_the_same(categories[0], labels.get(other, "")):
+                if not _names_group(categories[0], vocab.get(other, ())):
                     return CATEGORICAL_GROUPS, (
                         f"group {group}'s only x category is {categories[0]!r}, its own group "
                         f"label — the axis puts one point per group")
-            if len(categories) >= 2 and not any(hits.get(g) for g in GROUPS if labels[g]):
+            if len(categories) >= 2 and not any(hits.get(g) for g in GROUPS if vocab[g]):
                 conditions_seen.append(
                     f"group {group} spans {len(categories)} categories "
                     f"({', '.join(map(str, categories[:4]))}), none of them a group label")
         reads = {g: str(getattr(rows[g], "x_read", "") or "") for g in GROUPS if rows[g]}
         if both_labelled and len(reads) == 2 and all(reads.values()):
-            own = all(_labels_are_the_same(reads[g], labels[g]) for g in GROUPS if labels[g])
-            cross = any(_labels_are_the_same(reads[g], labels[o])
-                        for g, o in (("A", "B"), ("B", "A")) if labels[o])
+            own = all(_names_group(reads[g], vocab[g]) for g in GROUPS if vocab[g])
+            cross = any(_names_group(reads[g], vocab[o])
+                        for g, o in (("A", "B"), ("B", "A")) if vocab[o])
             if own and not cross:
                 return CATEGORICAL_GROUPS, (
                     f"each group was read at its own category on the x axis "

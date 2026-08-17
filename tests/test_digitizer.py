@@ -2337,3 +2337,24 @@ def test_the_two_heuer_panels_come_out_with_opposite_signs(bar_figure, tmp_path)
     assert ens_b["A"].mean < 0 and ens_b["B"].mean < 0
     assert ens_b["A"].dispersion_value > 0, "a half-length is a magnitude, whatever the mean's sign"
     assert ens_a["A"].mean > 0
+
+
+def test_a_group_is_recognised_by_every_name_the_protocol_gave_it():
+    """A paper labels its bars in its own words. "Old adults" is not a substring of "Older
+    adults", and the categories-are-the-groups test that decides whether a two-bar chart yields a
+    number at all was matching on the single label only — so a plausible axis label left the role
+    unresolved and the cell produced nothing. The protocol already writes the vocabulary down.
+    """
+    from canopy.digitize.digitizer import _names_group
+
+    older = ("Older adults", "elderly", "aged", "old", "seniors", "older group")
+    younger = ("Younger adults", "young adults", "youths", "younger group")
+    for word in ("Elderly", "Old adults", "seniors", "older group", "Older adults"):
+        assert _names_group(word, older), word
+        assert not _names_group(word, younger), word
+    for word in ("Young adults", "youths", "Younger adults"):
+        assert _names_group(word, younger), word
+        assert not _names_group(word, older), word
+    # a real condition still names no group, so the collapse path is untouched
+    for word in ("Trial block 3", "45 deg target", "Session 2", ""):
+        assert not _names_group(word, older) and not _names_group(word, younger), word

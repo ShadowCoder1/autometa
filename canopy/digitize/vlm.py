@@ -120,6 +120,13 @@ class TargetSpec:
     #: gives both arms the same mean. Left `unknown` by every caller today, in which case the
     #: digitiser resolves it from the categories the readers name (`_categorical_role`).
     categorical_x: CategoricalX = "unknown"
+    #: the protocol's own other names for each group ("elderly", "aged", "young adults", …). A
+    #: paper labels its bars in its own words, and `Old adults` is not a substring of
+    #: `Older adults`; without this vocabulary the categories-are-the-groups test fails to resolve
+    #: and the cell yields no number at all. The protocol already carries these — nothing here is
+    #: study-specific, it is whatever vocabulary the review wrote down.
+    group_a_synonyms: tuple[str, ...] = ()
+    group_b_synonyms: tuple[str, ...] = ()
     notes: str = ""
 
     def to_dict(self) -> dict[str, Any]:

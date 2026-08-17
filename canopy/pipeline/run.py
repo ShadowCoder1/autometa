@@ -133,6 +133,8 @@ def target_for_source(source: Source, dataset: DatasetSpec, outcome_sources: Out
         outcome_key=outcome_sources.outcome_key,
         group_a_label=dataset.group_a.label or protocol.group_a.label,
         group_b_label=dataset.group_b.label or protocol.group_b.label,
+        group_a_synonyms=tuple(protocol.group_a.synonyms or ()),
+        group_b_synonyms=tuple(protocol.group_b.synonyms or ()),
         series_hint=outcome_sources.measure_name or outcome.label,
         x_hint=(outcome.measurement_window or "").strip(),
         panel_hint=source.locator,
