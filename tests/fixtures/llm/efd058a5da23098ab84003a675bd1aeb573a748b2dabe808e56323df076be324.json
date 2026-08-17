@@ -1,0 +1,324 @@
+{
+ "key": "efd058a5da23098ab84003a675bd1aeb573a748b2dabe808e56323df076be324",
+ "model": "claude-opus-5",
+ "served_model": "claude-opus-5",
+ "stop_reason": "end_turn",
+ "usage": {
+  "input_tokens": 23511,
+  "output_tokens": 5897,
+  "cache_creation_input_tokens": 0,
+  "cache_read_input_tokens": 0
+ },
+ "text": "{\"datasets\":[{\"dataset_index\":1,\"outcomes\":[{\"outcome_key\":\"late_adaptation\",\"measure_name\":\"Median initial direction error of pointing responses (angular error)\",\"units\":\"deg\",\"higher_is_better\":\"lower_is_better\",\"higher_is_better_evidence\":\"Their errors increased abruptly at the onset of the adaptation phase, and then gradually dropped again. Most importantly, adaptive improvement was more pronounced for young than for old subjects.\",\"operationalization\":\"Angular error (median initial direction of each response per episode, i.e. between movement onset and peak velocity) during the last of the 15 pointing episodes with +60° rotated visual feedback (adaptation phase, episodes 6–20 in Fig. 1); the paper reports no block average, only the per-episode group means plotted in Fig. 1 plus exponential fits of the adaptation time course.\",\"analysis_metric\":\"endpoint\",\"sources\":[{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, adaptation phase, last adaptation episode (episode 20): filled triangles = young, filled squares = old\",\"quote\":\"Fig. 1 Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback. Open symbols indicate episodes where visual feedback was absent. Also shown are the standard deviations\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"between_subject\",\"error_bar_evidence\":\"Also shown are the standard deviations\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"value\",\"notes\":\"Only source that plots the group means for the end of the adaptation phase; values must be read off the y axis (angular error, deg). Adaptation phase spans pointing episodes 6–20 (filled symbols).\"},{\"kind\":\"unknown\",\"page\":3,\"locator\":\"Results, adaptation-phase paragraph, exponential fits of adaptation time course\",\"quote\":\"An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects.\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"x_axis_kind\":\"unknown\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"young: y=9.92+53.51×exp(−x/5.89); old: y=29.51+29.91×exp(−x/5.13)\",\"role\":\"value\",\"notes\":\"Fitted-model parameters for the adaptation phase; the asymptote terms (9.92 deg young, 29.51 deg old) describe late adaptation but are fit parameters, not directly reported means. No dispersion given.\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, ANOVA for the adaptation phase (between-factor Age, within-factor Episode)\",\"quote\":\"significant effects were yielded for Age (F(1,22)=7.58, P<0.05), Episode (F(14,308)=41.14, P<0.001), and their interaction (F(14,308)=3.44, P<0.001).\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"x_axis_kind\":\"unknown\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"Age F(1,22)=7.58, P<0.05; Episode F(14,308)=41.14, P<0.001; Age×Episode F(14,308)=3.44, P<0.001\",\"role\":\"context\",\"notes\":\"Group comparison test across the whole adaptation phase; no group means printed.\"},{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, baseline episodes 1–5 (episodes without and with veridical feedback), triangles = young, squares = old\",\"quote\":\"Both age groups pointed quite accurately during the two baseline phases without and with visual feedback.\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"between_subject\",\"error_bar_evidence\":\"Also shown are the standard deviations\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"baseline\",\"notes\":\"Pre-rotation baseline pointing errors (three no-feedback episodes on day 1 and two veridical-feedback episodes on day 2) plotted to the left of the adaptation phase.\"},{\"kind\":\"text_mean_sd\",\"page\":4,\"locator\":\"Results, pooled-seniors correlation analysis paragraph\",\"quote\":\"The magnitude of adaptation in this sample was 0.49±0.21, and the normalized trail-making score was 1.78±0.55.\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"x_axis_kind\":\"unknown\",\"error_bar_scope\":\"between_subject\",\"error_bar_evidence\":\"seniors aged 64.0±4.5 years\",\"analysis_metric\":\"percent_of_perturbation\",\"values_in_text\":\"adaptation magnitude 0.49±0.21 (54 seniors)\",\"role\":\"context\",\"notes\":\"Adaptation magnitude A=(I−F)/I computed for a pooled sample of 54 seniors combining the present seniors with two unpublished experiments; no corresponding young-group value is printed, so this is not the dataset's group value.\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, refresh-phase ANOVAs (episodes 26–28 and comparison of episodes 20 vs 26)\",\"quote\":\"ANOVA yielded significant effects of Age (F(1,22)=13.42, P<0.01) and Episode (F(2,44)=6.18, P<0.01), but no significant interaction.\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"x_axis_kind\":\"unknown\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"Age F(1,22)=13.42, P<0.01; Episode F(2,44)=6.18, P<0.01; second ANOVA: Age F(1,22)=13.78, P<0.01; Episode F(1,22)=7.79, P<0.05\",\"role\":\"context\",\"notes\":\"Refresh phase = a second exposure to the rotation after a five-minute break (episodes 26–28 in Fig. 1), i.e. not the initial perturbation block; listed only for orientation.\"}]},{\"outcome_key\":\"aftereffect\",\"measure_name\":\"Median initial direction error of pointing responses (angular error) without visual feedback\",\"units\":\"deg\",\"higher_is_better\":\"unknown\",\"higher_is_better_evidence\":\"when visual feedback was removed after adaptation, the resulting after-effect was similar in both age groups, and gradually declined with practice\",\"operationalization\":\"Angular pointing error during the five after-effect episodes of pointing without visual feedback that immediately followed the 15 rotated-feedback adaptation episodes (episodes 21–25 in Fig. 1, open symbols); the first of these episodes is the first available after-effect measure. No block-average numbers are printed in the text.\",\"analysis_metric\":\"endpoint\",\"sources\":[{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, after-effect phase, first no-feedback episode (episode 21) and episodes 21–25: open triangles = young, open squares = old\",\"quote\":\"Open symbols indicate episodes where visual feedback was absent. Also shown are the standard deviations\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"between_subject\",\"error_bar_evidence\":\"Also shown are the standard deviations\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"value\",\"notes\":\"Only location plotting after-effect group means (negative angular errors, opposite in sign to the rotation); values must be read off the y axis.\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, ANOVA for the after-effect phase\",\"quote\":\"ANOVA yielded significant effects for Episode (F(4,88)=66.84, P<0.001) and the interaction (F(4,88)=3.95, P<0.01)\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"x_axis_kind\":\"unknown\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"Episode F(4,88)=66.84, P<0.001; interaction F(4,88)=3.95, P<0.01\",\"role\":\"context\",\"notes\":\"No main effect of Age reported (only Episode and Age×Episode); no group means printed.\"},{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, baseline no-feedback pointing episodes 1–3 (open symbols before the rotation), triangles = young, squares = old\",\"quote\":\"Next came three baseline episodes of pointing without visual feedback\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"between_subject\",\"error_bar_evidence\":\"Also shown are the standard deviations\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"baseline\",\"notes\":\"No-feedback baseline plotted at the start of Fig. 1; comparable feedback condition to the after-effect episodes.\"}]}]},{\"dataset_index\":2,\"outcomes\":[{\"outcome_key\":\"late_adaptation\",\"measure_name\":\"Root mean square error between target and cursor during tracking (RMSE)\",\"units\":\"mm\",\"higher_is_better\":\"lower_is_better\",\"higher_is_better_evidence\":\"Clearly, tracking errors were higher during visual rotation; this increase was substantial in control subjects, and was followed by a gradual improvement, particularly for young participants.\",\"operationalization\":\"Tracking RMSE per 50-s episode (excluding the initial 0.5 s of each episode) during the rotated-feedback tracking episodes of the control subjects, who received no prior pointing adaptation; late adaptation = the final rotated tracking episode of the control series in Fig. 2 (thin lines, episodes from 11 onward). Methods state control subjects performed \\\"five tracking episodes with +60° rotated feedback on the second day\\\".\",\"analysis_metric\":\"endpoint\",\"sources\":[{\"kind\":\"figure_line\",\"page\":4,\"locator\":\"Fig. 2, rotated-feedback portion (episodes 11 onward), thin lines: thin triangles = young control, thin squares = old control; last plotted rotated episode\",\"quote\":\"Fig. 2 Mean tracking errors of young (triangles) and old (squares) subjects before and during exposure to rotated visual feedback. Bold lines represent experimental subjects which adapted to the rotation in a pointing task before being transferred to tracking; thin lines represent control subjects not pre-adapted with pointing\",\"figure_id\":\"fig02\",\"table_id\":\"\",\"error_bar_type\":\"UNKNOWN\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"value\",\"notes\":\"Control-group RMSE values exist only in this figure; the caption does not state what the plotted error bars represent. Note the possible mismatch between Methods (\\\"five tracking episodes with +60° rotated feedback\\\") and the x axis of Fig. 2, which extends to episode 20.\"},{\"kind\":\"figure_line\",\"page\":4,\"locator\":\"Fig. 2, first rotated-feedback tracking episode (episode 11), thin lines (young and old control subjects)\",\"quote\":\"we were interested in the transfer of adaptation from pointing to tracking, as revealed by the first tracking episode under rotated feedback\",\"figure_id\":\"fig02\",\"table_id\":\"\",\"error_bar_type\":\"UNKNOWN\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"value\",\"notes\":\"Initial exposure point of the control series; relevant if the review uses the first rotated episode rather than the last.\"},{\"kind\":\"figure_line\",\"page\":4,\"locator\":\"Fig. 2, baseline veridical-feedback tracking episodes 1–10, thin lines (young and old control subjects)\",\"quote\":\"Those subjects only executed ten tracking episodes with veridical feedback on the first day and five tracking episodes with +60° rotated feedback on the second day.\",\"figure_id\":\"fig02\",\"table_id\":\"\",\"error_bar_type\":\"UNKNOWN\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"baseline\",\"notes\":\"Pre-rotation tracking baseline (mean RMSE of episodes 6–10 is the baseline used by the authors for the above-baseline error).\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, ANOVA on above-baseline tracking error (factors Age and Procedure)\",\"quote\":\"submitted the outcome to an ANOVA with the between-factors Age (young, old) and Procedure (experimental, control). Only the effect of Procedure was significant (F(1,43)=144,09, P<0.001).\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"x_axis_kind\":\"unknown\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"change_from_baseline\",\"values_in_text\":\"Procedure F(1,43)=144,09, P<0.001\",\"role\":\"context\",\"notes\":\"Above-baseline error defined as RMSE in episode 11 minus mean RMSE in episodes 6–10; no group means printed, and no Age effect statistic is reported numerically.\"}]}]}],\"notes\":\"Page numbers are PDF sheet positions (article printed pages 259–263 correspond to sheets 1–5). The paper prints almost no numeric values for the two outcomes: all pointing-error and tracking-RMSE group means live only in Fig. 1 (sheet 3) and Fig. 2 (sheet 4). Fig. 1 error bars are explicitly standard deviations (caption); Fig. 2's caption says nothing about its error bars, so their type is UNKNOWN. The only text numbers bearing on adaptation magnitude are the exponential-fit parameters (sheet 3) and the pooled 54-senior adaptation magnitude 0.49±0.21 (sheet 4), the latter from a supplemented sample with no matching young value. No aftereffect phase exists for the control tracking sample (dataset 2), so no aftereffect outcome is listed there. Trail-making, reaction-time and questionnaire results are not protocol outcomes and were not mapped.\"}",
+ "content": [
+  {
+   "signature": "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",
+   "thinking": "",
+   "type": "thinking"
+  },
+  {
+   "citations": null,
+   "text": "{\"datasets\":[{\"dataset_index\":1,\"outcomes\":[{\"outcome_key\":\"late_adaptation\",\"measure_name\":\"Median initial direction error of pointing responses (angular error)\",\"units\":\"deg\",\"higher_is_better\":\"lower_is_better\",\"higher_is_better_evidence\":\"Their errors increased abruptly at the onset of the adaptation phase, and then gradually dropped again. Most importantly, adaptive improvement was more pronounced for young than for old subjects.\",\"operationalization\":\"Angular error (median initial direction of each response per episode, i.e. between movement onset and peak velocity) during the last of the 15 pointing episodes with +60° rotated visual feedback (adaptation phase, episodes 6–20 in Fig. 1); the paper reports no block average, only the per-episode group means plotted in Fig. 1 plus exponential fits of the adaptation time course.\",\"analysis_metric\":\"endpoint\",\"sources\":[{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, adaptation phase, last adaptation episode (episode 20): filled triangles = young, filled squares = old\",\"quote\":\"Fig. 1 Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback. Open symbols indicate episodes where visual feedback was absent. Also shown are the standard deviations\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"between_subject\",\"error_bar_evidence\":\"Also shown are the standard deviations\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"value\",\"notes\":\"Only source that plots the group means for the end of the adaptation phase; values must be read off the y axis (angular error, deg). Adaptation phase spans pointing episodes 6–20 (filled symbols).\"},{\"kind\":\"unknown\",\"page\":3,\"locator\":\"Results, adaptation-phase paragraph, exponential fits of adaptation time course\",\"quote\":\"An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects.\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"x_axis_kind\":\"unknown\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"young: y=9.92+53.51×exp(−x/5.89); old: y=29.51+29.91×exp(−x/5.13)\",\"role\":\"value\",\"notes\":\"Fitted-model parameters for the adaptation phase; the asymptote terms (9.92 deg young, 29.51 deg old) describe late adaptation but are fit parameters, not directly reported means. No dispersion given.\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, ANOVA for the adaptation phase (between-factor Age, within-factor Episode)\",\"quote\":\"significant effects were yielded for Age (F(1,22)=7.58, P<0.05), Episode (F(14,308)=41.14, P<0.001), and their interaction (F(14,308)=3.44, P<0.001).\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"x_axis_kind\":\"unknown\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"Age F(1,22)=7.58, P<0.05; Episode F(14,308)=41.14, P<0.001; Age×Episode F(14,308)=3.44, P<0.001\",\"role\":\"context\",\"notes\":\"Group comparison test across the whole adaptation phase; no group means printed.\"},{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, baseline episodes 1–5 (episodes without and with veridical feedback), triangles = young, squares = old\",\"quote\":\"Both age groups pointed quite accurately during the two baseline phases without and with visual feedback.\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"between_subject\",\"error_bar_evidence\":\"Also shown are the standard deviations\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"baseline\",\"notes\":\"Pre-rotation baseline pointing errors (three no-feedback episodes on day 1 and two veridical-feedback episodes on day 2) plotted to the left of the adaptation phase.\"},{\"kind\":\"text_mean_sd\",\"page\":4,\"locator\":\"Results, pooled-seniors correlation analysis paragraph\",\"quote\":\"The magnitude of adaptation in this sample was 0.49±0.21, and the normalized trail-making score was 1.78±0.55.\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"x_axis_kind\":\"unknown\",\"error_bar_scope\":\"between_subject\",\"error_bar_evidence\":\"seniors aged 64.0±4.5 years\",\"analysis_metric\":\"percent_of_perturbation\",\"values_in_text\":\"adaptation magnitude 0.49±0.21 (54 seniors)\",\"role\":\"context\",\"notes\":\"Adaptation magnitude A=(I−F)/I computed for a pooled sample of 54 seniors combining the present seniors with two unpublished experiments; no corresponding young-group value is printed, so this is not the dataset's group value.\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, refresh-phase ANOVAs (episodes 26–28 and comparison of episodes 20 vs 26)\",\"quote\":\"ANOVA yielded significant effects of Age (F(1,22)=13.42, P<0.01) and Episode (F(2,44)=6.18, P<0.01), but no significant interaction.\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"x_axis_kind\":\"unknown\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"Age F(1,22)=13.42, P<0.01; Episode F(2,44)=6.18, P<0.01; second ANOVA: Age F(1,22)=13.78, P<0.01; Episode F(1,22)=7.79, P<0.05\",\"role\":\"context\",\"notes\":\"Refresh phase = a second exposure to the rotation after a five-minute break (episodes 26–28 in Fig. 1), i.e. not the initial perturbation block; listed only for orientation.\"}]},{\"outcome_key\":\"aftereffect\",\"measure_name\":\"Median initial direction error of pointing responses (angular error) without visual feedback\",\"units\":\"deg\",\"higher_is_better\":\"unknown\",\"higher_is_better_evidence\":\"when visual feedback was removed after adaptation, the resulting after-effect was similar in both age groups, and gradually declined with practice\",\"operationalization\":\"Angular pointing error during the five after-effect episodes of pointing without visual feedback that immediately followed the 15 rotated-feedback adaptation episodes (episodes 21–25 in Fig. 1, open symbols); the first of these episodes is the first available after-effect measure. No block-average numbers are printed in the text.\",\"analysis_metric\":\"endpoint\",\"sources\":[{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, after-effect phase, first no-feedback episode (episode 21) and episodes 21–25: open triangles = young, open squares = old\",\"quote\":\"Open symbols indicate episodes where visual feedback was absent. Also shown are the standard deviations\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"between_subject\",\"error_bar_evidence\":\"Also shown are the standard deviations\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"value\",\"notes\":\"Only location plotting after-effect group means (negative angular errors, opposite in sign to the rotation); values must be read off the y axis.\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, ANOVA for the after-effect phase\",\"quote\":\"ANOVA yielded significant effects for Episode (F(4,88)=66.84, P<0.001) and the interaction (F(4,88)=3.95, P<0.01)\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"x_axis_kind\":\"unknown\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"Episode F(4,88)=66.84, P<0.001; interaction F(4,88)=3.95, P<0.01\",\"role\":\"context\",\"notes\":\"No main effect of Age reported (only Episode and Age×Episode); no group means printed.\"},{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, baseline no-feedback pointing episodes 1–3 (open symbols before the rotation), triangles = young, squares = old\",\"quote\":\"Next came three baseline episodes of pointing without visual feedback\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"between_subject\",\"error_bar_evidence\":\"Also shown are the standard deviations\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"baseline\",\"notes\":\"No-feedback baseline plotted at the start of Fig. 1; comparable feedback condition to the after-effect episodes.\"}]}]},{\"dataset_index\":2,\"outcomes\":[{\"outcome_key\":\"late_adaptation\",\"measure_name\":\"Root mean square error between target and cursor during tracking (RMSE)\",\"units\":\"mm\",\"higher_is_better\":\"lower_is_better\",\"higher_is_better_evidence\":\"Clearly, tracking errors were higher during visual rotation; this increase was substantial in control subjects, and was followed by a gradual improvement, particularly for young participants.\",\"operationalization\":\"Tracking RMSE per 50-s episode (excluding the initial 0.5 s of each episode) during the rotated-feedback tracking episodes of the control subjects, who received no prior pointing adaptation; late adaptation = the final rotated tracking episode of the control series in Fig. 2 (thin lines, episodes from 11 onward). Methods state control subjects performed \\\"five tracking episodes with +60° rotated feedback on the second day\\\".\",\"analysis_metric\":\"endpoint\",\"sources\":[{\"kind\":\"figure_line\",\"page\":4,\"locator\":\"Fig. 2, rotated-feedback portion (episodes 11 onward), thin lines: thin triangles = young control, thin squares = old control; last plotted rotated episode\",\"quote\":\"Fig. 2 Mean tracking errors of young (triangles) and old (squares) subjects before and during exposure to rotated visual feedback. Bold lines represent experimental subjects which adapted to the rotation in a pointing task before being transferred to tracking; thin lines represent control subjects not pre-adapted with pointing\",\"figure_id\":\"fig02\",\"table_id\":\"\",\"error_bar_type\":\"UNKNOWN\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"value\",\"notes\":\"Control-group RMSE values exist only in this figure; the caption does not state what the plotted error bars represent. Note the possible mismatch between Methods (\\\"five tracking episodes with +60° rotated feedback\\\") and the x axis of Fig. 2, which extends to episode 20.\"},{\"kind\":\"figure_line\",\"page\":4,\"locator\":\"Fig. 2, first rotated-feedback tracking episode (episode 11), thin lines (young and old control subjects)\",\"quote\":\"we were interested in the transfer of adaptation from pointing to tracking, as revealed by the first tracking episode under rotated feedback\",\"figure_id\":\"fig02\",\"table_id\":\"\",\"error_bar_type\":\"UNKNOWN\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"value\",\"notes\":\"Initial exposure point of the control series; relevant if the review uses the first rotated episode rather than the last.\"},{\"kind\":\"figure_line\",\"page\":4,\"locator\":\"Fig. 2, baseline veridical-feedback tracking episodes 1–10, thin lines (young and old control subjects)\",\"quote\":\"Those subjects only executed ten tracking episodes with veridical feedback on the first day and five tracking episodes with +60° rotated feedback on the second day.\",\"figure_id\":\"fig02\",\"table_id\":\"\",\"error_bar_type\":\"UNKNOWN\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"baseline\",\"notes\":\"Pre-rotation tracking baseline (mean RMSE of episodes 6–10 is the baseline used by the authors for the above-baseline error).\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, ANOVA on above-baseline tracking error (factors Age and Procedure)\",\"quote\":\"submitted the outcome to an ANOVA with the between-factors Age (young, old) and Procedure (experimental, control). Only the effect of Procedure was significant (F(1,43)=144,09, P<0.001).\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"x_axis_kind\":\"unknown\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"change_from_baseline\",\"values_in_text\":\"Procedure F(1,43)=144,09, P<0.001\",\"role\":\"context\",\"notes\":\"Above-baseline error defined as RMSE in episode 11 minus mean RMSE in episodes 6–10; no group means printed, and no Age effect statistic is reported numerically.\"}]}]}],\"notes\":\"Page numbers are PDF sheet positions (article printed pages 259–263 correspond to sheets 1–5). The paper prints almost no numeric values for the two outcomes: all pointing-error and tracking-RMSE group means live only in Fig. 1 (sheet 3) and Fig. 2 (sheet 4). Fig. 1 error bars are explicitly standard deviations (caption); Fig. 2's caption says nothing about its error bars, so their type is UNKNOWN. The only text numbers bearing on adaptation magnitude are the exponential-fit parameters (sheet 3) and the pooled 54-senior adaptation magnitude 0.49±0.21 (sheet 4), the latter from a supplemented sample with no matching young value. No aftereffect phase exists for the control tracking sample (dataset 2), so no aftereffect outcome is listed there. Trail-making, reaction-time and questionnaire results are not protocol outcomes and were not mapped.\"}",
+   "type": "text"
+  }
+ ],
+ "parsed": {
+  "datasets": [
+   {
+    "dataset_index": 1,
+    "outcomes": [
+     {
+      "outcome_key": "late_adaptation",
+      "measure_name": "Median initial direction error of pointing responses (angular error)",
+      "units": "deg",
+      "higher_is_better": "lower_is_better",
+      "higher_is_better_evidence": "Their errors increased abruptly at the onset of the adaptation phase, and then gradually dropped again. Most importantly, adaptive improvement was more pronounced for young than for old subjects.",
+      "operationalization": "Angular error (median initial direction of each response per episode, i.e. between movement onset and peak velocity) during the last of the 15 pointing episodes with +60° rotated visual feedback (adaptation phase, episodes 6–20 in Fig. 1); the paper reports no block average, only the per-episode group means plotted in Fig. 1 plus exponential fits of the adaptation time course.",
+      "analysis_metric": "endpoint",
+      "sources": [
+       {
+        "kind": "figure_line",
+        "page": 3,
+        "locator": "Fig. 1, adaptation phase, last adaptation episode (episode 20): filled triangles = young, filled squares = old",
+        "quote": "Fig. 1 Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback. Open symbols indicate episodes where visual feedback was absent. Also shown are the standard deviations",
+        "figure_id": "fig01",
+        "table_id": "",
+        "error_bar_type": "SD",
+        "x_axis_kind": "time",
+        "error_bar_scope": "between_subject",
+        "error_bar_evidence": "Also shown are the standard deviations",
+        "analysis_metric": "endpoint",
+        "values_in_text": "",
+        "role": "value",
+        "notes": "Only source that plots the group means for the end of the adaptation phase; values must be read off the y axis (angular error, deg). Adaptation phase spans pointing episodes 6–20 (filled symbols)."
+       },
+       {
+        "kind": "unknown",
+        "page": 3,
+        "locator": "Results, adaptation-phase paragraph, exponential fits of adaptation time course",
+        "quote": "An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects.",
+        "figure_id": "",
+        "table_id": "",
+        "error_bar_type": "NONE",
+        "x_axis_kind": "unknown",
+        "error_bar_scope": "unknown",
+        "error_bar_evidence": "",
+        "analysis_metric": "endpoint",
+        "values_in_text": "young: y=9.92+53.51×exp(−x/5.89); old: y=29.51+29.91×exp(−x/5.13)",
+        "role": "value",
+        "notes": "Fitted-model parameters for the adaptation phase; the asymptote terms (9.92 deg young, 29.51 deg old) describe late adaptation but are fit parameters, not directly reported means. No dispersion given."
+       },
+       {
+        "kind": "test_statistic",
+        "page": 3,
+        "locator": "Results, ANOVA for the adaptation phase (between-factor Age, within-factor Episode)",
+        "quote": "significant effects were yielded for Age (F(1,22)=7.58, P<0.05), Episode (F(14,308)=41.14, P<0.001), and their interaction (F(14,308)=3.44, P<0.001).",
+        "figure_id": "",
+        "table_id": "",
+        "error_bar_type": "NONE",
+        "x_axis_kind": "unknown",
+        "error_bar_scope": "unknown",
+        "error_bar_evidence": "",
+        "analysis_metric": "endpoint",
+        "values_in_text": "Age F(1,22)=7.58, P<0.05; Episode F(14,308)=41.14, P<0.001; Age×Episode F(14,308)=3.44, P<0.001",
+        "role": "context",
+        "notes": "Group comparison test across the whole adaptation phase; no group means printed."
+       },
+       {
+        "kind": "figure_line",
+        "page": 3,
+        "locator": "Fig. 1, baseline episodes 1–5 (episodes without and with veridical feedback), triangles = young, squares = old",
+        "quote": "Both age groups pointed quite accurately during the two baseline phases without and with visual feedback.",
+        "figure_id": "fig01",
+        "table_id": "",
+        "error_bar_type": "SD",
+        "x_axis_kind": "time",
+        "error_bar_scope": "between_subject",
+        "error_bar_evidence": "Also shown are the standard deviations",
+        "analysis_metric": "endpoint",
+        "values_in_text": "",
+        "role": "baseline",
+        "notes": "Pre-rotation baseline pointing errors (three no-feedback episodes on day 1 and two veridical-feedback episodes on day 2) plotted to the left of the adaptation phase."
+       },
+       {
+        "kind": "text_mean_sd",
+        "page": 4,
+        "locator": "Results, pooled-seniors correlation analysis paragraph",
+        "quote": "The magnitude of adaptation in this sample was 0.49±0.21, and the normalized trail-making score was 1.78±0.55.",
+        "figure_id": "",
+        "table_id": "",
+        "error_bar_type": "SD",
+        "x_axis_kind": "unknown",
+        "error_bar_scope": "between_subject",
+        "error_bar_evidence": "seniors aged 64.0±4.5 years",
+        "analysis_metric": "percent_of_perturbation",
+        "values_in_text": "adaptation magnitude 0.49±0.21 (54 seniors)",
+        "role": "context",
+        "notes": "Adaptation magnitude A=(I−F)/I computed for a pooled sample of 54 seniors combining the present seniors with two unpublished experiments; no corresponding young-group value is printed, so this is not the dataset's group value."
+       },
+       {
+        "kind": "test_statistic",
+        "page": 3,
+        "locator": "Results, refresh-phase ANOVAs (episodes 26–28 and comparison of episodes 20 vs 26)",
+        "quote": "ANOVA yielded significant effects of Age (F(1,22)=13.42, P<0.01) and Episode (F(2,44)=6.18, P<0.01), but no significant interaction.",
+        "figure_id": "",
+        "table_id": "",
+        "error_bar_type": "NONE",
+        "x_axis_kind": "unknown",
+        "error_bar_scope": "unknown",
+        "error_bar_evidence": "",
+        "analysis_metric": "endpoint",
+        "values_in_text": "Age F(1,22)=13.42, P<0.01; Episode F(2,44)=6.18, P<0.01; second ANOVA: Age F(1,22)=13.78, P<0.01; Episode F(1,22)=7.79, P<0.05",
+        "role": "context",
+        "notes": "Refresh phase = a second exposure to the rotation after a five-minute break (episodes 26–28 in Fig. 1), i.e. not the initial perturbation block; listed only for orientation."
+       }
+      ]
+     },
+     {
+      "outcome_key": "aftereffect",
+      "measure_name": "Median initial direction error of pointing responses (angular error) without visual feedback",
+      "units": "deg",
+      "higher_is_better": "unknown",
+      "higher_is_better_evidence": "when visual feedback was removed after adaptation, the resulting after-effect was similar in both age groups, and gradually declined with practice",
+      "operationalization": "Angular pointing error during the five after-effect episodes of pointing without visual feedback that immediately followed the 15 rotated-feedback adaptation episodes (episodes 21–25 in Fig. 1, open symbols); the first of these episodes is the first available after-effect measure. No block-average numbers are printed in the text.",
+      "analysis_metric": "endpoint",
+      "sources": [
+       {
+        "kind": "figure_line",
+        "page": 3,
+        "locator": "Fig. 1, after-effect phase, first no-feedback episode (episode 21) and episodes 21–25: open triangles = young, open squares = old",
+        "quote": "Open symbols indicate episodes where visual feedback was absent. Also shown are the standard deviations",
+        "figure_id": "fig01",
+        "table_id": "",
+        "error_bar_type": "SD",
+        "x_axis_kind": "time",
+        "error_bar_scope": "between_subject",
+        "error_bar_evidence": "Also shown are the standard deviations",
+        "analysis_metric": "endpoint",
+        "values_in_text": "",
+        "role": "value",
+        "notes": "Only location plotting after-effect group means (negative angular errors, opposite in sign to the rotation); values must be read off the y axis."
+       },
+       {
+        "kind": "test_statistic",
+        "page": 3,
+        "locator": "Results, ANOVA for the after-effect phase",
+        "quote": "ANOVA yielded significant effects for Episode (F(4,88)=66.84, P<0.001) and the interaction (F(4,88)=3.95, P<0.01)",
+        "figure_id": "",
+        "table_id": "",
+        "error_bar_type": "NONE",
+        "x_axis_kind": "unknown",
+        "error_bar_scope": "unknown",
+        "error_bar_evidence": "",
+        "analysis_metric": "endpoint",
+        "values_in_text": "Episode F(4,88)=66.84, P<0.001; interaction F(4,88)=3.95, P<0.01",
+        "role": "context",
+        "notes": "No main effect of Age reported (only Episode and Age×Episode); no group means printed."
+       },
+       {
+        "kind": "figure_line",
+        "page": 3,
+        "locator": "Fig. 1, baseline no-feedback pointing episodes 1–3 (open symbols before the rotation), triangles = young, squares = old",
+        "quote": "Next came three baseline episodes of pointing without visual feedback",
+        "figure_id": "fig01",
+        "table_id": "",
+        "error_bar_type": "SD",
+        "x_axis_kind": "time",
+        "error_bar_scope": "between_subject",
+        "error_bar_evidence": "Also shown are the standard deviations",
+        "analysis_metric": "endpoint",
+        "values_in_text": "",
+        "role": "baseline",
+        "notes": "No-feedback baseline plotted at the start of Fig. 1; comparable feedback condition to the after-effect episodes."
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "dataset_index": 2,
+    "outcomes": [
+     {
+      "outcome_key": "late_adaptation",
+      "measure_name": "Root mean square error between target and cursor during tracking (RMSE)",
+      "units": "mm",
+      "higher_is_better": "lower_is_better",
+      "higher_is_better_evidence": "Clearly, tracking errors were higher during visual rotation; this increase was substantial in control subjects, and was followed by a gradual improvement, particularly for young participants.",
+      "operationalization": "Tracking RMSE per 50-s episode (excluding the initial 0.5 s of each episode) during the rotated-feedback tracking episodes of the control subjects, who received no prior pointing adaptation; late adaptation = the final rotated tracking episode of the control series in Fig. 2 (thin lines, episodes from 11 onward). Methods state control subjects performed \"five tracking episodes with +60° rotated feedback on the second day\".",
+      "analysis_metric": "endpoint",
+      "sources": [
+       {
+        "kind": "figure_line",
+        "page": 4,
+        "locator": "Fig. 2, rotated-feedback portion (episodes 11 onward), thin lines: thin triangles = young control, thin squares = old control; last plotted rotated episode",
+        "quote": "Fig. 2 Mean tracking errors of young (triangles) and old (squares) subjects before and during exposure to rotated visual feedback. Bold lines represent experimental subjects which adapted to the rotation in a pointing task before being transferred to tracking; thin lines represent control subjects not pre-adapted with pointing",
+        "figure_id": "fig02",
+        "table_id": "",
+        "error_bar_type": "UNKNOWN",
+        "x_axis_kind": "time",
+        "error_bar_scope": "unknown",
+        "error_bar_evidence": "",
+        "analysis_metric": "endpoint",
+        "values_in_text": "",
+        "role": "value",
+        "notes": "Control-group RMSE values exist only in this figure; the caption does not state what the plotted error bars represent. Note the possible mismatch between Methods (\"five tracking episodes with +60° rotated feedback\") and the x axis of Fig. 2, which extends to episode 20."
+       },
+       {
+        "kind": "figure_line",
+        "page": 4,
+        "locator": "Fig. 2, first rotated-feedback tracking episode (episode 11), thin lines (young and old control subjects)",
+        "quote": "we were interested in the transfer of adaptation from pointing to tracking, as revealed by the first tracking episode under rotated feedback",
+        "figure_id": "fig02",
+        "table_id": "",
+        "error_bar_type": "UNKNOWN",
+        "x_axis_kind": "time",
+        "error_bar_scope": "unknown",
+        "error_bar_evidence": "",
+        "analysis_metric": "endpoint",
+        "values_in_text": "",
+        "role": "value",
+        "notes": "Initial exposure point of the control series; relevant if the review uses the first rotated episode rather than the last."
+       },
+       {
+        "kind": "figure_line",
+        "page": 4,
+        "locator": "Fig. 2, baseline veridical-feedback tracking episodes 1–10, thin lines (young and old control subjects)",
+        "quote": "Those subjects only executed ten tracking episodes with veridical feedback on the first day and five tracking episodes with +60° rotated feedback on the second day.",
+        "figure_id": "fig02",
+        "table_id": "",
+        "error_bar_type": "UNKNOWN",
+        "x_axis_kind": "time",
+        "error_bar_scope": "unknown",
+        "error_bar_evidence": "",
+        "analysis_metric": "endpoint",
+        "values_in_text": "",
+        "role": "baseline",
+        "notes": "Pre-rotation tracking baseline (mean RMSE of episodes 6–10 is the baseline used by the authors for the above-baseline error)."
+       },
+       {
+        "kind": "test_statistic",
+        "page": 3,
+        "locator": "Results, ANOVA on above-baseline tracking error (factors Age and Procedure)",
+        "quote": "submitted the outcome to an ANOVA with the between-factors Age (young, old) and Procedure (experimental, control). Only the effect of Procedure was significant (F(1,43)=144,09, P<0.001).",
+        "figure_id": "",
+        "table_id": "",
+        "error_bar_type": "NONE",
+        "x_axis_kind": "unknown",
+        "error_bar_scope": "unknown",
+        "error_bar_evidence": "",
+        "analysis_metric": "change_from_baseline",
+        "values_in_text": "Procedure F(1,43)=144,09, P<0.001",
+        "role": "context",
+        "notes": "Above-baseline error defined as RMSE in episode 11 minus mean RMSE in episodes 6–10; no group means printed, and no Age effect statistic is reported numerically."
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "notes": "Page numbers are PDF sheet positions (article printed pages 259–263 correspond to sheets 1–5). The paper prints almost no numeric values for the two outcomes: all pointing-error and tracking-RMSE group means live only in Fig. 1 (sheet 3) and Fig. 2 (sheet 4). Fig. 1 error bars are explicitly standard deviations (caption); Fig. 2's caption says nothing about its error bars, so their type is UNKNOWN. The only text numbers bearing on adaptation magnitude are the exponential-fit parameters (sheet 3) and the pooled 54-senior adaptation magnitude 0.49±0.21 (sheet 4), the latter from a supplemented sample with no matching young value. No aftereffect phase exists for the control tracking sample (dataset 2), so no aftereffect outcome is listed there. Trail-making, reaction-time and questionnaire results are not protocol outcomes and were not mapped."
+ },
+ "response": {
+  "id": "msg_011Ce8r6fKcxS1eJzdzLMVtu",
+  "container": null,
+  "content": [
+   {
+    "signature": "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",
+    "thinking": "",
+    "type": "thinking"
+   },
+   {
+    "citations": null,
+    "text": "{\"datasets\":[{\"dataset_index\":1,\"outcomes\":[{\"outcome_key\":\"late_adaptation\",\"measure_name\":\"Median initial direction error of pointing responses (angular error)\",\"units\":\"deg\",\"higher_is_better\":\"lower_is_better\",\"higher_is_better_evidence\":\"Their errors increased abruptly at the onset of the adaptation phase, and then gradually dropped again. Most importantly, adaptive improvement was more pronounced for young than for old subjects.\",\"operationalization\":\"Angular error (median initial direction of each response per episode, i.e. between movement onset and peak velocity) during the last of the 15 pointing episodes with +60° rotated visual feedback (adaptation phase, episodes 6–20 in Fig. 1); the paper reports no block average, only the per-episode group means plotted in Fig. 1 plus exponential fits of the adaptation time course.\",\"analysis_metric\":\"endpoint\",\"sources\":[{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, adaptation phase, last adaptation episode (episode 20): filled triangles = young, filled squares = old\",\"quote\":\"Fig. 1 Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback. Open symbols indicate episodes where visual feedback was absent. Also shown are the standard deviations\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"between_subject\",\"error_bar_evidence\":\"Also shown are the standard deviations\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"value\",\"notes\":\"Only source that plots the group means for the end of the adaptation phase; values must be read off the y axis (angular error, deg). Adaptation phase spans pointing episodes 6–20 (filled symbols).\"},{\"kind\":\"unknown\",\"page\":3,\"locator\":\"Results, adaptation-phase paragraph, exponential fits of adaptation time course\",\"quote\":\"An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects.\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"x_axis_kind\":\"unknown\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"young: y=9.92+53.51×exp(−x/5.89); old: y=29.51+29.91×exp(−x/5.13)\",\"role\":\"value\",\"notes\":\"Fitted-model parameters for the adaptation phase; the asymptote terms (9.92 deg young, 29.51 deg old) describe late adaptation but are fit parameters, not directly reported means. No dispersion given.\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, ANOVA for the adaptation phase (between-factor Age, within-factor Episode)\",\"quote\":\"significant effects were yielded for Age (F(1,22)=7.58, P<0.05), Episode (F(14,308)=41.14, P<0.001), and their interaction (F(14,308)=3.44, P<0.001).\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"x_axis_kind\":\"unknown\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"Age F(1,22)=7.58, P<0.05; Episode F(14,308)=41.14, P<0.001; Age×Episode F(14,308)=3.44, P<0.001\",\"role\":\"context\",\"notes\":\"Group comparison test across the whole adaptation phase; no group means printed.\"},{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, baseline episodes 1–5 (episodes without and with veridical feedback), triangles = young, squares = old\",\"quote\":\"Both age groups pointed quite accurately during the two baseline phases without and with visual feedback.\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"between_subject\",\"error_bar_evidence\":\"Also shown are the standard deviations\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"baseline\",\"notes\":\"Pre-rotation baseline pointing errors (three no-feedback episodes on day 1 and two veridical-feedback episodes on day 2) plotted to the left of the adaptation phase.\"},{\"kind\":\"text_mean_sd\",\"page\":4,\"locator\":\"Results, pooled-seniors correlation analysis paragraph\",\"quote\":\"The magnitude of adaptation in this sample was 0.49±0.21, and the normalized trail-making score was 1.78±0.55.\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"x_axis_kind\":\"unknown\",\"error_bar_scope\":\"between_subject\",\"error_bar_evidence\":\"seniors aged 64.0±4.5 years\",\"analysis_metric\":\"percent_of_perturbation\",\"values_in_text\":\"adaptation magnitude 0.49±0.21 (54 seniors)\",\"role\":\"context\",\"notes\":\"Adaptation magnitude A=(I−F)/I computed for a pooled sample of 54 seniors combining the present seniors with two unpublished experiments; no corresponding young-group value is printed, so this is not the dataset's group value.\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, refresh-phase ANOVAs (episodes 26–28 and comparison of episodes 20 vs 26)\",\"quote\":\"ANOVA yielded significant effects of Age (F(1,22)=13.42, P<0.01) and Episode (F(2,44)=6.18, P<0.01), but no significant interaction.\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"x_axis_kind\":\"unknown\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"Age F(1,22)=13.42, P<0.01; Episode F(2,44)=6.18, P<0.01; second ANOVA: Age F(1,22)=13.78, P<0.01; Episode F(1,22)=7.79, P<0.05\",\"role\":\"context\",\"notes\":\"Refresh phase = a second exposure to the rotation after a five-minute break (episodes 26–28 in Fig. 1), i.e. not the initial perturbation block; listed only for orientation.\"}]},{\"outcome_key\":\"aftereffect\",\"measure_name\":\"Median initial direction error of pointing responses (angular error) without visual feedback\",\"units\":\"deg\",\"higher_is_better\":\"unknown\",\"higher_is_better_evidence\":\"when visual feedback was removed after adaptation, the resulting after-effect was similar in both age groups, and gradually declined with practice\",\"operationalization\":\"Angular pointing error during the five after-effect episodes of pointing without visual feedback that immediately followed the 15 rotated-feedback adaptation episodes (episodes 21–25 in Fig. 1, open symbols); the first of these episodes is the first available after-effect measure. No block-average numbers are printed in the text.\",\"analysis_metric\":\"endpoint\",\"sources\":[{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, after-effect phase, first no-feedback episode (episode 21) and episodes 21–25: open triangles = young, open squares = old\",\"quote\":\"Open symbols indicate episodes where visual feedback was absent. Also shown are the standard deviations\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"between_subject\",\"error_bar_evidence\":\"Also shown are the standard deviations\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"value\",\"notes\":\"Only location plotting after-effect group means (negative angular errors, opposite in sign to the rotation); values must be read off the y axis.\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, ANOVA for the after-effect phase\",\"quote\":\"ANOVA yielded significant effects for Episode (F(4,88)=66.84, P<0.001) and the interaction (F(4,88)=3.95, P<0.01)\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"x_axis_kind\":\"unknown\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"Episode F(4,88)=66.84, P<0.001; interaction F(4,88)=3.95, P<0.01\",\"role\":\"context\",\"notes\":\"No main effect of Age reported (only Episode and Age×Episode); no group means printed.\"},{\"kind\":\"figure_line\",\"page\":3,\"locator\":\"Fig. 1, baseline no-feedback pointing episodes 1–3 (open symbols before the rotation), triangles = young, squares = old\",\"quote\":\"Next came three baseline episodes of pointing without visual feedback\",\"figure_id\":\"fig01\",\"table_id\":\"\",\"error_bar_type\":\"SD\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"between_subject\",\"error_bar_evidence\":\"Also shown are the standard deviations\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"baseline\",\"notes\":\"No-feedback baseline plotted at the start of Fig. 1; comparable feedback condition to the after-effect episodes.\"}]}]},{\"dataset_index\":2,\"outcomes\":[{\"outcome_key\":\"late_adaptation\",\"measure_name\":\"Root mean square error between target and cursor during tracking (RMSE)\",\"units\":\"mm\",\"higher_is_better\":\"lower_is_better\",\"higher_is_better_evidence\":\"Clearly, tracking errors were higher during visual rotation; this increase was substantial in control subjects, and was followed by a gradual improvement, particularly for young participants.\",\"operationalization\":\"Tracking RMSE per 50-s episode (excluding the initial 0.5 s of each episode) during the rotated-feedback tracking episodes of the control subjects, who received no prior pointing adaptation; late adaptation = the final rotated tracking episode of the control series in Fig. 2 (thin lines, episodes from 11 onward). Methods state control subjects performed \\\"five tracking episodes with +60° rotated feedback on the second day\\\".\",\"analysis_metric\":\"endpoint\",\"sources\":[{\"kind\":\"figure_line\",\"page\":4,\"locator\":\"Fig. 2, rotated-feedback portion (episodes 11 onward), thin lines: thin triangles = young control, thin squares = old control; last plotted rotated episode\",\"quote\":\"Fig. 2 Mean tracking errors of young (triangles) and old (squares) subjects before and during exposure to rotated visual feedback. Bold lines represent experimental subjects which adapted to the rotation in a pointing task before being transferred to tracking; thin lines represent control subjects not pre-adapted with pointing\",\"figure_id\":\"fig02\",\"table_id\":\"\",\"error_bar_type\":\"UNKNOWN\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"value\",\"notes\":\"Control-group RMSE values exist only in this figure; the caption does not state what the plotted error bars represent. Note the possible mismatch between Methods (\\\"five tracking episodes with +60° rotated feedback\\\") and the x axis of Fig. 2, which extends to episode 20.\"},{\"kind\":\"figure_line\",\"page\":4,\"locator\":\"Fig. 2, first rotated-feedback tracking episode (episode 11), thin lines (young and old control subjects)\",\"quote\":\"we were interested in the transfer of adaptation from pointing to tracking, as revealed by the first tracking episode under rotated feedback\",\"figure_id\":\"fig02\",\"table_id\":\"\",\"error_bar_type\":\"UNKNOWN\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"value\",\"notes\":\"Initial exposure point of the control series; relevant if the review uses the first rotated episode rather than the last.\"},{\"kind\":\"figure_line\",\"page\":4,\"locator\":\"Fig. 2, baseline veridical-feedback tracking episodes 1–10, thin lines (young and old control subjects)\",\"quote\":\"Those subjects only executed ten tracking episodes with veridical feedback on the first day and five tracking episodes with +60° rotated feedback on the second day.\",\"figure_id\":\"fig02\",\"table_id\":\"\",\"error_bar_type\":\"UNKNOWN\",\"x_axis_kind\":\"time\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"endpoint\",\"values_in_text\":\"\",\"role\":\"baseline\",\"notes\":\"Pre-rotation tracking baseline (mean RMSE of episodes 6–10 is the baseline used by the authors for the above-baseline error).\"},{\"kind\":\"test_statistic\",\"page\":3,\"locator\":\"Results, ANOVA on above-baseline tracking error (factors Age and Procedure)\",\"quote\":\"submitted the outcome to an ANOVA with the between-factors Age (young, old) and Procedure (experimental, control). Only the effect of Procedure was significant (F(1,43)=144,09, P<0.001).\",\"figure_id\":\"\",\"table_id\":\"\",\"error_bar_type\":\"NONE\",\"x_axis_kind\":\"unknown\",\"error_bar_scope\":\"unknown\",\"error_bar_evidence\":\"\",\"analysis_metric\":\"change_from_baseline\",\"values_in_text\":\"Procedure F(1,43)=144,09, P<0.001\",\"role\":\"context\",\"notes\":\"Above-baseline error defined as RMSE in episode 11 minus mean RMSE in episodes 6–10; no group means printed, and no Age effect statistic is reported numerically.\"}]}]}],\"notes\":\"Page numbers are PDF sheet positions (article printed pages 259–263 correspond to sheets 1–5). The paper prints almost no numeric values for the two outcomes: all pointing-error and tracking-RMSE group means live only in Fig. 1 (sheet 3) and Fig. 2 (sheet 4). Fig. 1 error bars are explicitly standard deviations (caption); Fig. 2's caption says nothing about its error bars, so their type is UNKNOWN. The only text numbers bearing on adaptation magnitude are the exponential-fit parameters (sheet 3) and the pooled 54-senior adaptation magnitude 0.49±0.21 (sheet 4), the latter from a supplemented sample with no matching young value. No aftereffect phase exists for the control tracking sample (dataset 2), so no aftereffect outcome is listed there. Trail-making, reaction-time and questionnaire results are not protocol outcomes and were not mapped.\"}",
+    "type": "text"
+   }
+  ],
+  "model": "claude-opus-5",
+  "role": "assistant",
+  "stop_details": null,
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "type": "message",
+  "usage": {
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 0,
+    "ephemeral_5m_input_tokens": 0
+   },
+   "cache_creation_input_tokens": 0,
+   "cache_read_input_tokens": 0,
+   "inference_geo": "global",
+   "input_tokens": 23511,
+   "output_tokens": 5897,
+   "output_tokens_details": {
+    "thinking_tokens": 845
+   },
+   "server_tool_use": null,
+   "service_tier": "standard"
+  }
+ },
+ "request_id": "req_011Ce8r6cQ1UiQHD3x1czQLp",
+ "effort": "high",
+ "max_tokens": 16000,
+ "cost_usd": 0.26498,
+ "created_at": "2026-08-17T19:09:59+00:00"
+}

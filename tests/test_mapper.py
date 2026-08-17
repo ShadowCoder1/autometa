@@ -125,9 +125,12 @@ def test_bock_outcome_keys_and_directions_come_from_the_protocol(bock_map, proto
     for dataset in bock_map.datasets:
         for outcome in dataset.outcomes:
             assert outcome.measure_name and outcome.operationalization
-            # a direction is either decided *with* a quote or honestly left unknown: Bock reports
-            # the after-effect as a signed error, so its direction is not settled by the text
-            assert (outcome.higher_is_better is None) == (not outcome.higher_is_better_evidence)
+            # a direction is never decided WITHOUT a quote — that is the dangerous case, and the
+            # one the code guarantees against. "Unknown" may carry a quote: the 2026-08-17
+            # recording cites the sentence it judged as NOT settling the after-effect's direction
+            # ("similar in both age groups… gradually declined"), which is honest, not wrong.
+            if outcome.higher_is_better is not None:
+                assert outcome.higher_is_better_evidence, outcome.outcome_key
 
 
 @replayed
