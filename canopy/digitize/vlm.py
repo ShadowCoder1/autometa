@@ -82,6 +82,21 @@ def render_prompt(name: str, **values: str) -> str:
 Quantity = Literal["mean_and_error", "points", "box"]
 LateWindowRule = Literal["paper_reported_block", "block_closest_to_end", "mean_of_block_sd"]
 
+#: WHAT a categorical x axis is a set of. Two opposite figure shapes hide behind that one word,
+#: and telling them apart is not a detail — it decides whether averaging across the axis is the
+#: quantity the review wants or the destruction of it:
+#:
+#: * `conditions` — target directions, hands, sessions, task blocks with no order. Each series
+#:   runs across the whole axis and the outcome is the average ACROSS it, so reading one point is
+#:   a different number, not a less precise one.
+#: * `groups` — the x categories ARE the comparison arms: the ordinary two-bar group chart, one
+#:   bar per group, the commonest effect-size figure there is. Each category IS one group's value.
+#:   Averaging across this axis computes `(mean_A + mean_B) / 2` for BOTH arms, which makes
+#:   Cohen's d exactly 0.0 with two routes in perfect agreement.
+#: * `unknown` — nobody has said. The digitiser decides it from what the readers report about the
+#:   x categories, or refuses; it never guesses.
+CategoricalX = Literal["conditions", "groups", "unknown"]
+
 
 @dataclass
 class TargetSpec:
@@ -97,9 +112,14 @@ class TargetSpec:
     error_bar_type_hint: str = "UNKNOWN"    # Source.error_bar_type (SD/SE/CI95/...)
     unit_hint: str = ""
     late_window_sd: LateWindowRule = "paper_reported_block"
-    #: the x axis is categorical (target directions, conditions) and the outcome is the average
-    #: ACROSS it, so every point of each series is read and the code averages them (task 16 P6)
+    #: the protocol PERMITS averaging across a categorical x axis (task 16 P6). Permission is not
+    #: the same question as whether averaging is the right thing to do here — see `categorical_x`.
     collapse_across_x: bool = False
+    #: what the categorical x axis is a set of. `groups` overrides `collapse_across_x`: when the
+    #: categories are the comparison arms there is nothing to average across, and doing it anyway
+    #: gives both arms the same mean. Left `unknown` by every caller today, in which case the
+    #: digitiser resolves it from the categories the readers name (`_categorical_role`).
+    categorical_x: CategoricalX = "unknown"
     notes: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -113,8 +133,11 @@ class TargetSpec:
             ("group A", self.group_a_label),
             ("group B", self.group_b_label),
             ("series / legend hint", self.series_hint),
-            ("x position to read", "every point on the x axis (the outcome is their average)"
-                                   if self.collapse_across_x else self.x_hint),
+            ("x position to read", self._x_instruction()),
+            ("what the x categories are", "" if self.categorical_x == "unknown" else (
+                "the two comparison groups themselves — one point per group"
+                if self.categorical_x == "groups"
+                else "conditions the outcome is averaged across")),
             ("quantity", self.quantity),
             ("error bars are said to be", self.error_bar_type_hint),
             ("expected unit", self.unit_hint),
@@ -123,6 +146,20 @@ class TargetSpec:
         ]
         lines = [f"- {label}: {value}" for label, value in rows if str(value).strip()]
         return "\n".join(lines) or "- (the mapper gave no details)"
+
+    def _x_instruction(self) -> str:
+        """Which x position this group's number is at — the one line the two categorical shapes
+        must not share. "Every point on the x axis" is the right instruction for a set of
+        conditions and a trap on a group chart, where the points on the x axis ARE the two groups
+        and following it literally hands back the same average for both."""
+        if self.categorical_x == "groups":
+            return ("this group's OWN category on the x axis — the x categories are the two "
+                    "groups, so read the one bar or point that belongs to this group")
+        if self.collapse_across_x:
+            return ("every point of THIS group's series along the x axis (the outcome is their "
+                    "average). If the x categories turn out to be the two groups themselves, "
+                    "this series has exactly one point: report it and name its category")
+        return self.x_hint
 
 
 # ----------------------------------------------------------------------------- schemas

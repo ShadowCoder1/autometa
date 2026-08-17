@@ -1853,7 +1853,11 @@ def test_a_categorical_x_axis_with_the_mode_OFF_is_never_a_wrong_number(bar_figu
         assert cand.mean is None and cand.dispersion_value is None
         assert cand.status == "ambiguous"
         assert cand.pixel_provenance[CATEGORICAL_UNSUPPORTED] is True
-        assert "average across it" in cand.notes
+        # the refusal now names BOTH shapes a "categorical" x axis can be, because the remedy for
+        # one of them (turn the collapse on) destroys the other (F1): on a group chart averaging
+        # across the axis gives both arms the same mean
+        assert "average across them" in cand.notes
+        assert "GROUPS THEMSELVES" in cand.notes
 
 
 def test_a_categorical_x_axis_with_the_mode_ON_reads_every_point_and_averages_them(bar_figure,
@@ -1912,6 +1916,172 @@ def test_the_collapsed_row_is_flagged_capped_and_can_be_excluded_by_the_pooler()
     row_flags = _approximation_flags([collapsed])
     assert DISPERSION_APPROXIMATED in row_flags
     assert f"{DISPERSION_APPROXIMATED}:mean_of_point_sd" in row_flags
+
+
+# ---------------------------------------------------- F1: when the x categories ARE the groups
+def _group_chart_payload(points_a, points_b, mean_a=None, mean_b=None, x_read=None):
+    """A read-out of a figure whose x axis is the comparison itself: one bar per group.
+
+    `points` carries what the reader was asked for when the collapse mode is on — every point on
+    the x axis. On this figure shape those points are the two groups' own bars.
+    """
+    def series(group, label, points, mean):
+        return {"group": group, "label_read": label, "mean": mean,
+                "error_half_length": None, "error_upper": None, "error_lower": None,
+                "error_sides": "both",
+                "x_read": x_read if x_read is not None else f"the {label} bar",
+                "points": [{"x_label": x, "mean": m, "error_half_length": e}
+                           for x, m, e in points],
+                "confidence": 0.8, "notes": ""}
+
+    return {"status": "found", "panel": "Fig 1", "unit": "deg",
+            "axis_read": "left y-axis (deg)", "axis_direction_note": "",
+            "legend_says": "error bars are SD", "tick_labels": [0, 10, 20, 30, 40, 50, 60],
+            "pixel_resolution_estimate": 0.1, "confidence": 0.8, "notes": "",
+            "groups": [series("A", "old", points_a, mean_a),
+                       series("B", "young", points_b, mean_b)]}
+
+
+def _ensembles(out):
+    return {c.group: c for c in out.candidates if c.extractor_id == "digitize:ensemble"}
+
+
+def test_a_categorical_axis_whose_categories_are_the_groups_is_read_as_a_group_chart(bar_figure,
+                                                                                     tmp_path):
+    """F1: one bar per group is not an axis to average over — it is the comparison itself.
+
+    With the collapse mode on, `_collapse_points` needed two points per series and each group has
+    exactly one bar, so the cell produced nothing after paying for the reads, and every pixel
+    route — which had read the bars correctly — was dropped as "reading one point". The categories
+    the reader names are what settles it: they are the two groups the protocol is comparing.
+    """
+    from canopy.digitize.digitizer import CATEGORICAL_GROUPS
+
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    payload = _group_chart_payload([("old", 31.5, 11.0)], [("young", 12.25, 11.75)])
+    provider = _scripted(payload, _coord_payload(bar_figure, view.scale))
+    target = replace(TARGET, collapse_across_x=True)
+    out = digitize(_client(provider), paper, fig, target, source=CATEGORICAL_SOURCE,
+                   dataset=DATASET, out_dir=tmp_path, result=True)
+
+    ens = _ensembles(out)
+    assert ens["A"].mean == pytest.approx(31.5, abs=0.6)
+    assert ens["B"].mean == pytest.approx(12.25, abs=0.6)
+    assert ens["A"].mean != ens["B"].mean
+    provenance = ens["A"].pixel_provenance
+    assert provenance["categorical_x_role"] == CATEGORICAL_GROUPS
+    assert "each category is a group's own value" in provenance["categorical_x_role_why"] or \
+           "one point per group" in provenance["categorical_x_role_why"]
+    assert not provenance.get("collapsed_across_x")
+    # the pixel routes read one datum per group, which on this figure IS the quantity
+    assert not [s for s in out.samples if s.route in ("B", "C") and s.dropped]
+
+
+def test_a_reader_that_lists_both_bars_for_both_groups_cannot_produce_d_equal_zero(bar_figure,
+                                                                                   tmp_path):
+    """F1's worst branch: "read every point on the x axis" is followed literally on a group chart.
+
+    Both group rows come back with the same two points, so both averages are `(A + B) / 2` — one
+    number reported twice, Cohen's d exactly 0.0, every route in perfect agreement with every
+    other, and nothing downstream comparing group A with group B to catch it. The categories name
+    the groups, so each group is read at its own.
+    """
+    both = [("old", 31.5, 11.0), ("young", 12.25, 11.75)]
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    provider = _scripted(_group_chart_payload(both, list(both)),
+                         _coord_payload(bar_figure, view.scale))
+    target = replace(TARGET, collapse_across_x=True)
+    out = digitize(_client(provider), paper, fig, target, source=CATEGORICAL_SOURCE,
+                   dataset=DATASET, out_dir=tmp_path, result=True)
+    ens = _ensembles(out)
+    assert ens["A"].mean == pytest.approx(31.5, abs=0.6)
+    assert ens["B"].mean == pytest.approx(12.25, abs=0.6)
+    assert ens["A"].mean != ens["B"].mean, "both arms took the average of the same two bars"
+
+
+def test_a_reader_that_names_its_own_category_settles_the_axis_without_listing_points(bar_figure,
+                                                                                        tmp_path):
+    """The commonest shape of the same evidence: the reader gives one mean per group and says
+    which x category it read it at. Each group naming its OWN category — and not the other's — is
+    the axis telling us the categories are the groups."""
+    from canopy.digitize.digitizer import CATEGORICAL_GROUPS
+
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    payload = _readout_payload(31.5, 11.0, 12.25, 11.75)
+    for row, x_read in zip(payload["groups"], ("the 'old' bar", "the 'young' bar")):
+        row["points"] = []
+        row["x_read"] = x_read
+    provider = _scripted(payload, _coord_payload(bar_figure, view.scale))
+    target = replace(TARGET, collapse_across_x=True)
+    out = digitize(_client(provider), paper, fig, target, source=CATEGORICAL_SOURCE,
+                   dataset=DATASET, out_dir=tmp_path, result=True)
+    ens = _ensembles(out)
+    assert ens["A"].pixel_provenance["categorical_x_role"] == CATEGORICAL_GROUPS
+    assert ens["A"].mean == pytest.approx(31.5, abs=0.6)
+    assert ens["B"].mean == pytest.approx(12.25, abs=0.6)
+
+
+def test_two_groups_read_off_the_same_points_produce_no_value_at_all(bar_figure, tmp_path):
+    """The same shape with categories that name nothing — the role cannot be resolved from them,
+    so the code falls back to the structural rule: two arms whose points are the very same points
+    are one series read twice, whatever the axis turns out to be."""
+    from canopy.digitize.digitizer import CATEGORICAL_CONDITIONS
+
+    twins = [("1", 31.5, 11.0), ("2", 12.25, 11.75)]
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    provider = _scripted(
+        _group_chart_payload(twins, list(twins), x_read="all the categories on the x axis"),
+        _coord_payload(bar_figure, view.scale))
+    target = replace(TARGET, collapse_across_x=True)
+    out = digitize(_client(provider), paper, fig, target, source=CATEGORICAL_SOURCE,
+                   dataset=DATASET, out_dir=tmp_path, result=True)
+    ens = _ensembles(out)
+    assert ens["A"].mean is None and ens["B"].mean is None
+    assert ens["A"].status == "ambiguous"
+    assert any("SAME points for both groups" in s.notes
+               for s in out.samples if s.route == "D")
+    assert ens["A"].pixel_provenance["categorical_x_role"] == CATEGORICAL_CONDITIONS
+
+
+def test_the_last_net_refuses_two_arms_that_collapsed_to_one_number(bar_figure):
+    """Belt and braces for the same failure, stated on the OUTPUT rather than on the input: two
+    collapsed arms that agree to the last digit on the mean AND the spread are one series
+    reported twice, and the effect size between them is zero by construction."""
+    from canopy.digitize.digitizer import _refuse_identical_collapse
+
+    paper, fig = _paper_for(bar_figure)
+    collapsed = {"collapsed_across_x": True, "n_points": 2}
+    twins = [_ensemble_of(bar_figure, [_d_sample(17.7, 2.45, extra=dict(collapsed))],
+                          {"cal_status": "confirmed"}) for _ in range(2)]
+    twins[1].group = "B"
+    _refuse_identical_collapse(twins)
+    for cand in twins:
+        assert cand.mean is None and cand.dispersion_value is None
+        assert cand.status == "ambiguous"
+        assert cand.pixel_provenance["identical_collapse_refused"] is True
+        assert "one series reported twice" in cand.notes
+
+
+def test_an_explicit_categorical_x_of_groups_skips_the_refusal_without_the_collapse_flag(
+        bar_figure, tmp_path):
+    """The data-model path: when a caller states the categories ARE the groups, the figure is an
+    ordinary group chart and the free refusal — which exists for the conditions case — does not
+    apply to it."""
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    provider = _scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                         _coord_payload(bar_figure, view.scale))
+    target = replace(TARGET, categorical_x="groups")       # collapse mode still OFF
+    out = digitize(_client(provider), paper, fig, target, source=CATEGORICAL_SOURCE,
+                   dataset=DATASET, out_dir=tmp_path, result=True)
+    ens = _ensembles(out)
+    assert ens["A"].mean == pytest.approx(31.5, abs=0.6)
+    assert ens["B"].mean == pytest.approx(12.25, abs=0.6)
+    assert not any(c.pixel_provenance.get("categorical_x_unsupported") for c in out.candidates)
 
 
 def test_the_sign_of_two_panels_of_one_paper_is_read_off_the_figure_not_assumed(bar_figure,

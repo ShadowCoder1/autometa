@@ -708,6 +708,142 @@ def _readout_plan(models: Sequence[str], n_readouts: int) -> list[ReadoutSpec]:
 MEAN_OF_POINT_SD = "mean_of_point_sd"
 
 
+#: the three answers `_categorical_role` can give, and what each one means for the read
+CATEGORICAL_GROUPS = "groups"           # the x categories ARE the comparison arms
+CATEGORICAL_CONDITIONS = "conditions"   # the outcome is the average across the categories
+CATEGORICAL_UNRESOLVED = "unknown"      # nothing said which, so nothing may be averaged
+
+_LABEL_JUNK = __import__("re").compile(r"[^a-z0-9]+")
+#: a label this short matches too much to be evidence of anything ("SD", "n", "A")
+_MIN_LABEL_CHARS = 3
+
+
+def _label_key(text: Any) -> str:
+    return _LABEL_JUNK.sub("", str(text or "").lower())
+
+
+def _labels_are_the_same(a: Any, b: Any) -> bool:
+    """Do a plotted x category and a protocol group label name the same thing?
+
+    Equal after stripping case and punctuation, or one contained in the other — a figure axis
+    says "Elderly" where the protocol says "Elderly adults", and an axis that says "old" is not
+    evidence about a group called "older adults" unless one spells the other.
+    """
+    left, right = _label_key(a), _label_key(b)
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    short, long = sorted((left, right), key=len)
+    return len(short) >= _MIN_LABEL_CHARS and short in long
+
+
+def _categorical_role(target: TargetSpec | None, readings: Sequence[Any]
+                      ) -> tuple[str, str]:
+    """`(role, why)` — are this figure's x categories the CONDITIONS or the GROUPS themselves?
+
+    `x_axis_kind: "categorical"` conflates two opposite figure shapes. On one, each series runs
+    across the axis and the review wants the average across it. On the other, the axis IS the
+    comparison — one bar per group — and averaging across it computes `(A + B) / 2` for both arms,
+    annihilating the contrast and reporting Cohen's d = 0.0 with every route in perfect agreement.
+    No number distinguishes them; the CATEGORY NAMES do.
+
+    So the question asked here is the only one that can settle it: *do the categories the readers
+    named map onto the groups the protocol is comparing?* If they do, each category is a group's
+    own value and must be read as that group's; if they demonstrably do not (and there is more
+    than one of them), they are conditions and collapsing is right. Anything else is unresolved,
+    and an unresolved cell produces no number rather than a wrong one.
+
+    Evidence, most authoritative first:
+
+    1. `target.categorical_x`, when a caller has stated it outright;
+    2. a reader listed categories matching BOTH group labels — the axis carries both arms;
+    3. each group's own points are one category matching that group's own label;
+    4. each group's `x_read` names its own group's label and not the other's;
+    5. some series has two or more categories, none of which names either group.
+    """
+    if target is not None and target.categorical_x in (CATEGORICAL_GROUPS,
+                                                       CATEGORICAL_CONDITIONS):
+        return target.categorical_x, f"the caller stated the x categories are {target.categorical_x}"
+    labels = {"A": getattr(target, "group_a_label", "") if target else "",
+              "B": getattr(target, "group_b_label", "") if target else ""}
+    if not any(labels.values()):
+        return CATEGORICAL_UNRESOLVED, "the protocol gave no group labels to match categories to"
+
+    # matching categories onto groups is only possible when both groups are named; a single
+    # label matching a single category says nothing about what the axis IS
+    both_labelled = all(labels.values())
+    conditions_seen: list[str] = []
+    for reading in readings:
+        rows = {g: reading.group(g) for g in GROUPS}
+        for group, row in rows.items():
+            if row is None:
+                continue
+            categories = [p.x_label for p in row.points if str(p.x_label or "").strip()]
+            hits = {g: [c for c in categories if _labels_are_the_same(c, labels[g])]
+                    for g in GROUPS if labels[g]}
+            if both_labelled and all(hits.get(g) for g in GROUPS):
+                named = ", ".join(sorted({c for cs in hits.values() for c in cs}))
+                return CATEGORICAL_GROUPS, (
+                    f"a reader listed the x categories as {named!r}, which are the two groups "
+                    f"being compared — each category is a group's own value, not a point to "
+                    f"average over")
+            if both_labelled and len(categories) == 1 and hits.get(group):
+                other = [g for g in GROUPS if g != group][0]
+                if not _labels_are_the_same(categories[0], labels.get(other, "")):
+                    return CATEGORICAL_GROUPS, (
+                        f"group {group}'s only x category is {categories[0]!r}, its own group "
+                        f"label — the axis puts one point per group")
+            if len(categories) >= 2 and not any(hits.get(g) for g in GROUPS if labels[g]):
+                conditions_seen.append(
+                    f"group {group} spans {len(categories)} categories "
+                    f"({', '.join(map(str, categories[:4]))}), none of them a group label")
+        reads = {g: str(getattr(rows[g], "x_read", "") or "") for g in GROUPS if rows[g]}
+        if both_labelled and len(reads) == 2 and all(reads.values()):
+            own = all(_labels_are_the_same(reads[g], labels[g]) for g in GROUPS if labels[g])
+            cross = any(_labels_are_the_same(reads[g], labels[o])
+                        for g, o in (("A", "B"), ("B", "A")) if labels[o])
+            if own and not cross:
+                return CATEGORICAL_GROUPS, (
+                    f"each group was read at its own category on the x axis "
+                    f"({reads['A']!r}, {reads['B']!r})")
+    if conditions_seen:
+        return CATEGORICAL_CONDITIONS, conditions_seen[0]
+    return CATEGORICAL_UNRESOLVED, ("nothing in the readings says whether the x categories are "
+                                    "conditions to average across or the groups themselves")
+
+
+def _same_points(row_a: Any, row_b: Any) -> bool:
+    """Did both groups come back with the very same points — the same categories at the same
+    heights? Then one series was read twice and the "contrast" between the two averages is zero
+    by construction. Two real arms of a comparison do not plot on top of each other."""
+    def key(row: Any) -> list[tuple[str, Any]]:
+        return [(_label_key(p.x_label), p.mean) for p in row.points]
+
+    if row_a is None or row_b is None or not row_a.points or not row_b.points:
+        return False
+    return key(row_a) == key(row_b)
+
+
+def _row_at_own_category(row: Any, label: str) -> Any:
+    """The group's row with `mean`/`error_half_length` filled in from its OWN x category.
+
+    On a group chart the reader may put the number in `points` (it was asked for points) rather
+    than in `mean`. That single point IS the group's value; nothing is averaged.
+    """
+    from dataclasses import replace as _replace
+
+    if row.mean is not None or not row.points:
+        return row
+    mine = [p for p in row.points if _labels_are_the_same(p.x_label, label)]
+    chosen = mine[0] if len(mine) == 1 else (row.points[0] if len(row.points) == 1 else None)
+    if chosen is None:
+        return row
+    return _replace(row, mean=chosen.mean,
+                    error_half_length=(row.error_half_length if row.error_half_length is not None
+                                       else chosen.error_half_length))
+
+
 def _collapse_points(row: Any) -> tuple[float | None, float | None, int]:
     """`(mean of the points, mean of their half-lengths, how many)` for a categorical x axis."""
     means = [p.mean for p in row.points if p.mean is not None]
@@ -762,14 +898,42 @@ def _unmeasured_cap_side(text: str) -> str | None:
     return found.pop() if len(found) == 1 else None
 
 
-def _samples_from_readout(reading: ReadOut, collapse: bool = False) -> list[RouteSample]:
+def _samples_from_readout(reading: ReadOut, collapse: bool = False,
+                          target: TargetSpec | None = None) -> list[RouteSample]:
+    role, role_why = (_categorical_role(target, [reading]) if collapse
+                      else (CATEGORICAL_CONDITIONS, ""))
+    # the guarantee that no cell can report the same mean for both arms out of the same points:
+    # when both series come back with identical categories at identical heights, one series was
+    # read twice, and averaging either of them is averaging the contrast away
+    twinned = collapse and _same_points(reading.group("A"), reading.group("B"))
     out: list[RouteSample] = []
     for group in GROUPS:
         row = reading.group(group)
         if row is None:
             continue
-        if collapse:
+        if collapse and role == CATEGORICAL_GROUPS:
+            # the x categories ARE the groups, so this figure is an ordinary group chart and the
+            # single category belonging to this group is its value. Nothing is averaged.
+            label = (target.group_a_label if group == "A" else target.group_b_label) if target else ""
+            resolved = _row_at_own_category(row, label)
+            if resolved.mean is None and row.points:
+                # the axis is the groups, but none of the categories this reader named can be
+                # matched to THIS group — so we cannot say which of them is its value, and
+                # picking one would be a guess about the contrast itself
+                from dataclasses import replace as _replace
+                resolved = _replace(row, notes=(
+                    f"{row.notes}; the x categories are the two groups, but none of the "
+                    f"{len(row.points)} this reader named ("
+                    f"{', '.join(str(p.x_label) for p in row.points[:4])}) can be matched to "
+                    f"group {group} ({label!r}), so no value is taken from it").strip("; "))
+            row = resolved
+            collapse_here = False
+        else:
+            collapse_here = collapse
+        if collapse_here:
             mean, error, n_points = _collapse_points(row)
+            if twinned:
+                mean, error = None, None
             sample = RouteSample(
                 route="D", group=group, model=reading.model, variant=reading.variant,
                 sample=reading.sample, mean=mean, error=error,
@@ -783,9 +947,18 @@ def _samples_from_readout(reading: ReadOut, collapse: bool = False) -> list[Rout
                        "axis_direction_note": reading.axis_direction_note,
                        "collapsed_across_x": mean is not None, "n_points": n_points,
                        "points": [p.to_dict() for p in row.points],
+                       "categorical_x_role": role, "categorical_x_role_why": role_why,
                        "dispersion_approximation": MEAN_OF_POINT_SD if error is not None else "",
                        "same_prompt_resample": reading.sample > 0})
-            if mean is None:
+            if twinned:
+                sample.notes = (sample.notes + "; this reader returned the SAME points for both "
+                                "groups, so their averages would be one number reported twice "
+                                "and the contrast between them zero by construction; no value "
+                                "is taken from it").strip("; ")
+            elif mean is None and role == CATEGORICAL_UNRESOLVED:
+                sample.notes = (sample.notes + f"; {role_why}, so nothing may be averaged across "
+                                "it").strip("; ")
+            elif mean is None:
                 sample.notes = (sample.notes + "; the reader gave fewer than two points, so the "
                                               "average across the categorical axis could not be "
                                               "formed").strip("; ")
@@ -823,6 +996,8 @@ def _samples_from_readout(reading: ReadOut, collapse: bool = False) -> list[Rout
                    "panel": reading.panel, "same_prompt_resample": reading.sample > 0,
                    "error_sides": row.error_sides, "axis_read": reading.axis_read,
                    "unmeasured_cap": unmeasured,
+                   "categorical_x_role": role if collapse else "",
+                   "categorical_x_role_why": role_why if collapse else "",
                    "axis_direction_note": reading.axis_direction_note}))
     return out
 
@@ -1644,7 +1819,8 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     # carries the outcome as the average across that axis; reading one point of it is a different
     # number, not a less precise one, so the cell says it cannot be converted rather than
     # returning something wrong (Heuer & Hegele Fig 2a, acceptance item 15).
-    if source is not None and source.x_axis_kind == "categorical" and not target.collapse_across_x:
+    if (source is not None and source.x_axis_kind == "categorical"
+            and not target.collapse_across_x and target.categorical_x != CATEGORICAL_GROUPS):
         return _categorical_unsupported(fig, target, paper, source, dataset, crop, result)
     text = caption if caption is not None else (fig.caption or "")
     # the `digitize:` prefix is what `canopy.llm.costs.stage_of` attributes to the
@@ -1666,7 +1842,8 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
                            sample=spec.sample, view=view,
                            cell_key=f"{key}/D/{spec.variant}{suffix}")
         readouts.append(reading)
-        samples.extend(_samples_from_readout(reading, collapse=target.collapse_across_x))
+        samples.extend(_samples_from_readout(reading, collapse=target.collapse_across_x,
+                                             target=target))
 
     # --- path D: the first `readouts_min` read-outs
     for spec in plan[:n_min]:
@@ -1685,13 +1862,20 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     pixel_samples = _samples_from_coords(coord, core, pixel_cal, cal_source)
     # --- path B: raster CV, matched by the nearest VLM coordinate
     pixel_samples += _samples_from_raster(coord, core, pixel_cal, cal_source)
-    if target.collapse_across_x:
-        # a pixel route resolves ONE datum; the quantity here is the mean of every datum on the
-        # axis, so its answer is a different number and must not enter the ensemble
+    cat_role, cat_role_why = ((_categorical_role(target, readouts)) if target.collapse_across_x
+                              else (CATEGORICAL_CONDITIONS, ""))
+    if target.collapse_across_x and cat_role != CATEGORICAL_GROUPS:
+        # a pixel route resolves ONE datum; when the outcome is the mean of every datum on the
+        # axis its answer is a different number and must not enter the ensemble. When the x
+        # categories ARE the groups there is nothing to average: one datum per group is exactly
+        # the quantity, and dropping these routes threw away correct readings.
         for pixel in pixel_samples:
             pixel.dropped = True
-            pixel.drop_reason = ("this route reads one point, and the outcome is the average "
-                                 "across the categorical x axis")
+            pixel.drop_reason = (
+                "this route reads one point, and the outcome is the average across the "
+                f"categorical x axis ({cat_role_why})" if cat_role == CATEGORICAL_CONDITIONS else
+                "this route reads one point, and nothing has established whether the x categories "
+                f"are conditions to average across or the groups themselves ({cat_role_why})")
     samples.extend(pixel_samples)
 
     _, tick_spacing = _tick_stats(pixel_cal)
@@ -1791,6 +1975,9 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     collapsed = [s for s in samples if s.extra.get("collapsed_across_x")]
     provenance["collapse_across_x"] = bool(target.collapse_across_x)
     provenance["x_axis_kind"] = source.x_axis_kind if source is not None else "unknown"
+    provenance["categorical_x"] = target.categorical_x
+    provenance["categorical_x_role"] = cat_role if target.collapse_across_x else ""
+    provenance["categorical_x_role_why"] = cat_role_why
     if collapsed:
         provenance["collapsed_across_x"] = True
         provenance["n_points"] = min(int(s.extra.get("n_points") or 0) for s in collapsed)
@@ -1804,12 +1991,44 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
                                    axis_range=axis_range, tick_spacing=tick_spacing,
                                    px_units=px_units, readouts=readouts,
                                    want_uncertainty=want_uncertainty, labels=labels)
+    _refuse_identical_collapse(candidates)
     cost = sum(r.cost_usd for r in readouts) + coord.cost_usd + sum(
         entry.get("cost_usd", 0.0) for entry in verify_log)
     if result:
         return DigitizeResult(candidates=candidates, samples=samples, calibration=cal,
                               overlay_path=overlay_path, cost_usd=cost, provenance=provenance)
     return candidates
+
+
+def _refuse_identical_collapse(candidates: Sequence[Candidate]) -> None:
+    """Neither arm keeps a value when BOTH were averaged across the axis to the same number.
+
+    The last net under `_same_points`, and it does not depend on having seen the points: two
+    groups whose averages across a categorical axis agree to the last digit on the mean AND on
+    the spread are one series reported twice, not a comparison. Cohen's d would be exactly 0.0,
+    every route would agree with every other (they are the same number), the sign check has no
+    direction to contradict, and the row would be pooled. Real data does not do this.
+    """
+    ensembles = {c.group: c for c in candidates if c.extractor_id == "digitize:ensemble"}
+    a, b = ensembles.get("A"), ensembles.get("B")
+    if a is None or b is None or a.mean is None or b.mean is None:
+        return
+    if not (a.pixel_provenance.get("collapsed_across_x")
+            and b.pixel_provenance.get("collapsed_across_x")):
+        return
+    if a.mean != b.mean or a.dispersion_value != b.dispersion_value:
+        return
+    reason = ("both groups came back as the same average across the categorical x axis "
+              f"(mean {a.mean}, spread {a.dispersion_value}) — that is one series reported twice, "
+              "and the effect size between them would be exactly zero by construction")
+    for cand in (a, b):
+        cand.mean = None
+        cand.dispersion_value = None
+        cand.status = "ambiguous"
+        cand.notes = "; ".join(x for x in (cand.notes, reason) if x)
+        cand.pixel_provenance["identical_collapse_refused"] = True
+        cand.pixel_provenance["needs_review"] = True
+        cand.pixel_provenance["needs_review_reason"] = reason
 
 
 _X_PX_RE = __import__("re").compile(r"x\s*(?:=|≈|~|of|at)?\s*([0-9]+(?:\.[0-9]+)?)\s*px")
@@ -1835,9 +2054,13 @@ def _categorical_unsupported(fig: FigureRegion, target: TargetSpec, paper: Paper
                              source: Source, dataset: DatasetSpec | None, crop: Path,
                              result: bool) -> list[Candidate] | DigitizeResult:
     """One ensemble candidate per group saying, with no number in it, why there is no number."""
-    reason = (f"the x axis of {source.locator or fig.id} is categorical, and this outcome is the "
-              f"average across it; reading one point would be a different quantity. Turn on "
-              f"`collapse_across_categorical_x` to read every point instead")
+    reason = (f"the x axis of {source.locator or fig.id} is recorded as categorical, and nothing "
+              f"says which kind. If its categories are CONDITIONS the outcome is the average "
+              f"across them and reading one point would be a different quantity — turn on "
+              f"`collapse_across_categorical_x` to read every point. If its categories are the "
+              f"two GROUPS THEMSELVES (one bar per group) there is nothing to average and this is "
+              f"an ordinary group chart, which the mapper has mis-classified; averaging across "
+              f"that axis would give both groups the same mean and an effect size of exactly zero")
     provenance = {"figure_id": fig.id, "figure_kind": fig.kind, "crop_dpi": fig.crop_dpi,
                   "x_axis_kind": source.x_axis_kind, "collapse_across_x": False,
                   CATEGORICAL_UNSUPPORTED: True, "needs_review": True,
