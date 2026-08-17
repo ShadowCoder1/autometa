@@ -83,6 +83,7 @@ CHECK_SEVERITY: dict[str, str] = {
     "metric_mixed_across_outcomes": "info",
     "unit_incoherent": "warn",
     "dispersion_type_conflict": "warn",
+    "dispersion_type_from_legend": "warn",
     "duplicate_across_outcomes": "warn",
     "figure_n_mismatch": "warn",
     "reopened_on_better_source": "warn",
@@ -94,6 +95,7 @@ CHECK_SEVERITY: dict[str, str] = {
     "sign_mismatch": "error",
     "figure_error_bar_unknown": "warn",
     "series_identity_conflict": "warn",
+    "series_marker_mismatch": "warn",
     "axis_conflict": "warn",
     "error_bar_unconfirmed": "info",
 }
@@ -175,6 +177,7 @@ def _check_one(cand: Candidate, dataset: DatasetSpec, outcome: OutcomeSources | 
     # …before the `found` gate: a cell that REFUSED to read a categorical axis has no value, and
     # the whole point of the refusal is that it says why rather than going quiet (task 16 P6)
     _check_categorical_x(cand, out)
+    _check_dispersion_source(cand, out)
     if cand.kind in ("test_statistic", "reported_d"):
         _check_statistic(cand, dataset, out)
         return
@@ -239,8 +242,16 @@ def _check_one(cand: Candidate, dataset: DatasetSpec, outcome: OutcomeSources | 
     # correct read of 31.3 was sent to a human by a ladder that had been misread as 1..4 (F1).
     _check_calibration(cand, out)
     _check_series_identity(cand, out)
-    confirmed = calibration_status(cand.pixel_provenance) in ("confirmed", "unknown")
-    if cand.mean is not None and confirmed:
+    # …on a calibration that is worth testing against. `confirmed` and a pre-task-16 record (which
+    # carries no status) always are. A `single_witness` ladder is too, but ONLY while the routes
+    # that read the figure agree with each other: two readers agreeing on a value the frame cannot
+    # draw is evidence about the reading, and dropping that check outright — as the first cut did —
+    # left a ladder misread the other way with nothing at all to stop it. A REFUTED ladder is not
+    # tested, and cannot be: `digitize` writes no `cal` for it, so there are no limits to test.
+    status = calibration_status(cand.pixel_provenance)
+    testable = status in ("confirmed", "unknown") or (
+        status == "single_witness" and routes_agree(cand.pixel_provenance) is not False)
+    if cand.mean is not None and testable:
         limits = axis_limits(cand.pixel_provenance)
         if limits is not None:
             low, high = limits
@@ -305,17 +316,43 @@ def _check_series_identity(cand: Candidate, out: list[CheckFlag]) -> None:
     """
     provenance = cand.pixel_provenance or {}
     series = provenance.get("series_identity")
-    if isinstance(series, dict) and series.get("conflict"):
-        _flag(out, "series_identity_conflict",
-              "; ".join(str(note) for note in series.get("notes") or [])
-              or "both groups resolve to the same plotted marker",
-              cand.candidate_id)
+    if isinstance(series, dict):
+        notes = "; ".join(str(note) for note in series.get("notes") or [])
+        if series.get("conflict"):
+            _flag(out, "series_identity_conflict",
+                  notes or "both groups resolve to the same plotted marker", cand.candidate_id)
+        # a transposition is a SIGN error, and a marker nobody can find means the value was
+        # measured somewhere the reader did not describe. Neither used to reach a flag at all.
+        if series.get("transposed") or series.get("marker_mismatch"):
+            _flag(out, "series_marker_mismatch",
+                  notes or "the described marker is not the one found at this value",
+                  cand.candidate_id)
     if provenance.get("axis_agreement") == "conflict":
         _flag(out, "axis_conflict",
               f"the readers of this figure answered off different value axes; the ensemble kept "
               f"{provenance.get('axis_kept')!r} and dropped "
               f"{', '.join(provenance.get('axis_dropped_samples') or [])}",
               cand.candidate_id)
+
+
+def _check_dispersion_source(cand: Candidate, out: list[CheckFlag]) -> None:
+    """The mapper could not say what the error bars are, and the legend was believed instead.
+
+    That substitution is worth making — `confidence._sd_of` returns None for UNKNOWN, so no route
+    reaches the figure gate and a cell fails on a spread the figure states plainly. But it is a
+    reading of the figure's own words by the same model that read its values, and it replaces the
+    determination two mapper agents are supposed to make. A legend that says "SEM" over SD bars
+    would otherwise pool unflagged where UNKNOWN went to a human, so it is flagged and capped.
+    """
+    provenance = cand.pixel_provenance or {}
+    if provenance.get("dispersion_type_from") != "legend":
+        return
+    kind = getattr(cand.dispersion_type, "value", cand.dispersion_type)
+    _flag(out, "dispersion_type_from_legend",
+          f"the map never determined what the error bars at this location are; {kind} was taken "
+          f"from the figure's own legend ({str(provenance.get('legend_says') or '')[:120]!r}) "
+          f"rather than from the two agents that are supposed to agree on it",
+          cand.candidate_id)
 
 
 def _check_categorical_x(cand: Candidate, out: list[CheckFlag]) -> None:

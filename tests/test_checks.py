@@ -437,14 +437,30 @@ def test_a_value_outside_an_UNCONFIRMED_axis_convicts_the_axis_instead():
     assert refuted.severity == "error" and "fig03" in refuted.message
 
 
-def test_a_single_witness_axis_is_a_warning_while_the_readers_agree():
+def test_a_single_witness_axis_inside_its_own_frame_is_only_a_warning():
+    dataset = make_dataset()
+    flags = run_checks(dataset, "late_adaptation",
+                       [_figure_cand(cal_status="single_witness", agree=True, mean=31.3)])
+    assert codes(flags) == ["calibration_single_witness"]
+    assert CHECK_SEVERITY["calibration_single_witness"] == "warn"
+
+
+def test_agreeing_readers_outside_a_single_witness_frame_are_still_an_error():
+    """Suppressing this outright left a ladder misread the OTHER way with nothing to stop it.
+
+    F1 is not this case: there the ladder was refuted, and `digitize` writes no `cal` for a refuted
+    ladder, so there are no limits to test a value against. Here the ladder stands, one witness
+    built it, and two readers agree on a value it cannot draw — which is evidence.
+    """
     dataset = make_dataset()
     flags = run_checks(dataset, "late_adaptation",
                        [_figure_cand(cal_status="single_witness", agree=True, mean=900.0)])
-    assert codes(flags).count("calibration_single_witness") == 1
-    assert "value_outside_axis" not in codes(flags)     # the axis is not evidence yet
+    assert "value_outside_axis" in codes(flags)
+    assert "calibration_single_witness" in codes(flags)
     assert "calibration_disputed" not in codes(flags)
-    assert CHECK_SEVERITY["calibration_single_witness"] == "warn"
+    # …and a refuted ladder still cannot convict the value, because it leaves no ladder behind
+    refuted = _figure_cand(cal_status="cal_refuted", ticks=None, mean=31.3)
+    assert "value_outside_axis" not in codes(run_checks(dataset, "late_adaptation", [refuted]))
 
 
 def test_a_single_witness_axis_whose_readers_also_disagree_is_a_humans_problem():
@@ -557,3 +573,39 @@ def test_a_figure_whose_readers_agreed_about_the_axis_raises_nothing():
                              "series_identity": {"conflict": False, "notes": []}}
     assert not [f for f in run_checks(dataset, "late_adaptation", [calm])
                 if f.code in ("axis_conflict", "series_identity_conflict")]
+
+
+def test_a_transposition_or_a_missing_marker_reaches_a_flag():
+    """Both branches used to write prose that no check could see."""
+    from canopy.verify.confidence import CAPPING_FLAGS
+
+    dataset = make_dataset()
+    for key in ("transposed", "marker_mismatch"):
+        cand = _figure_cand(cal_status="confirmed")
+        cand.pixel_provenance = {**cand.pixel_provenance, "series_identity": {
+            "conflict": False, key: True, "notes": [f"{key} happened"]}}
+        flags = run_checks(dataset, "late_adaptation", [cand])
+        assert "series_marker_mismatch" in codes(flags), key
+        assert next(f for f in flags if f.code == "series_marker_mismatch").message
+    assert "series_marker_mismatch" in CAPPING_FLAGS
+
+
+def test_a_dispersion_taken_from_the_legend_is_flagged_and_caps():
+    """UNKNOWN used to go to a human; believing the legend must not silently pool instead."""
+    from canopy.verify.confidence import CAPPING_FLAGS
+
+    dataset = make_dataset()
+    cand = _figure_cand(cal_status="confirmed")
+    cand.dispersion_type = DispersionType.SD
+    cand.pixel_provenance = {**cand.pixel_provenance, "dispersion_type_from": "legend",
+                             "legend_says": "error bars are the standard deviation"}
+    flags = run_checks(dataset, "late_adaptation", [cand])
+    assert "dispersion_type_from_legend" in codes(flags)
+    assert "standard deviation" in next(
+        f for f in flags if f.code == "dispersion_type_from_legend").message
+    assert "dispersion_type_from_legend" in CAPPING_FLAGS
+    # …and a type the MAP determined raises nothing
+    mapped = _figure_cand(cal_status="confirmed")
+    mapped.pixel_provenance = {**mapped.pixel_provenance, "dispersion_type_from": "mapper"}
+    assert "dispersion_type_from_legend" not in codes(
+        run_checks(dataset, "late_adaptation", [mapped]))

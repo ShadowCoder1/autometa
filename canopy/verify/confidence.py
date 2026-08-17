@@ -67,12 +67,37 @@ CAPPING_FLAGS: frozenset[str] = frozenset({
     "reopened_on_better_source",
     #: both groups resolve to the same plotted marker — the value may be the other series'
     "series_identity_conflict",
+    #: the described marker is not one the pixel pass found, or the two groups' markers are swapped
+    "series_marker_mismatch",
+    #: the error-bar type came from the figure's legend because the map never determined one
+    "dispersion_type_from_legend",
 })
 #: every cap is at or above `ACCEPT_WITH_NOTE`, so no COMBINATION of caps can push a cell that
 #: scored well enough on the evidence down into `needs_human` (controller ruling R2, task 16):
 #: only disagreement, a refutation, an unresolved direction or an `error` flag does that.
 _CAPS = (SINGLE_ROUTE_CAP, ADJUDICATED_CAP)
 assert all(cap >= ACCEPT_WITH_NOTE for cap in _CAPS), "a cap must never mean needs_human"
+
+#: How much a figure's axis costs when it is not fully corroborated — an ORDERED ladder, scored
+#: once per cell, and deliberately kept out of the generic warn arithmetic below.
+#:
+#: The first cut of this got it backwards twice over. `run_checks` raises the calibration flag on
+#: every candidate of a cell, the warn penalty counted FLAGS rather than codes, and the capping
+#: codes were `warn` — so six ensemble candidates carrying one `calibration_single_witness` spent
+#: the entire warn budget (-0.24) on one problem and dropped a clean figure cell from 0.60 to
+#: 0.36, i.e. `needs_human`. That is precisely the failure task 16 exists to remove: Cressman's
+#: late adaptation, with the TRUE ladder recovered, would have gone to a human anyway. Worse, the
+#: order inverted — `cal_refuted` (ladder known wrong, non-forcing, no penalty) outscored
+#: `single_witness` (ladder probably right).
+#:
+#: So the axis is scored here, once, on a ladder that is monotone by construction:
+#:     confirmed (nothing) > single_witness > refuted
+#: and the deduction is floored at `ACCEPT_WITH_NOTE`, because an uncorroborated axis is a reason
+#: to have a human LOOK at a cell, never a reason to withhold it on its own (R2).
+CALIBRATION_PENALTY: dict[str, float] = {
+    "calibration_single_witness": 0.08,
+    "calibration_refuted": 0.16,
+}
 
 #: `error`-severity codes that do NOT force a human on their own. `calibration_refuted` is an
 #: error against the CALIBRATION, not against the value: it is only ever raised when two or more
@@ -95,6 +120,10 @@ CAP_REASONS: dict[str, str] = {
                                   "the location itself was decided by a model"),
     "series_identity_conflict": ("both groups resolve to the same plotted marker, so this number "
                                  "may belong to the other series"),
+    "series_marker_mismatch": ("the marker the reader described is not the one the pixel pass "
+                               "found where this value was measured"),
+    "dispersion_type_from_legend": ("the error-bar type was read off the figure's legend, not "
+                                    "determined by the map, so nothing independent confirms it"),
 }
 
 
@@ -331,26 +360,52 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
         reasons.append(f"the digitisation uncertainty is {vote_result.sigma / abs(value):.0%} of "
                        f"the value (-{SPREAD_PENALTY:.2f})")
 
-    # --- consistency flags
+    # --- consistency flags. Penalties count distinct CODES, never flags: `run_checks` raises a
+    # code on every candidate it applies to, and one problem reported six times is one problem.
     errors = [f for f in flags if f.severity == "error" and f.code not in NON_FORCING_ERRORS]
     noted = sorted({f.code for f in flags
                     if f.severity == "error" and f.code in NON_FORCING_ERRORS})
     if noted:
         reasons.append(f"{', '.join(noted)}: the calibration is wrong, not the value — the "
                        f"reading stands, capped for review")
-    warns = [f for f in flags if f.severity == "warn"]
-    infos = [f for f in flags if f.severity == "info"]
+    codes = {f.code for f in flags}
+    warns = sorted({f.code for f in flags if f.severity == "warn"} - CAPPING_FLAGS
+                   - set(CALIBRATION_PENALTY))
+    capping_warns = sorted({f.code for f in flags if f.severity == "warn"}
+                           & (CAPPING_FLAGS - set(CALIBRATION_PENALTY)))
+    infos = sorted({f.code for f in flags if f.severity == "info"})
     if errors:
         forced_human = True
         reasons.append("consistency errors stand: " + ", ".join(sorted({f.code for f in errors})))
     if warns:
         penalty = min(WARN_CAP, WARN_PENALTY * len(warns))
         score -= penalty
-        reasons.append(f"warnings ({', '.join(sorted({f.code for f in warns}))}) -{penalty:.2f}")
+        reasons.append(f"warnings ({', '.join(warns)}) -{penalty:.2f}")
     if infos:
         penalty = min(INFO_CAP, INFO_PENALTY * len(infos))
         score -= penalty
-        reasons.append(f"notes ({', '.join(sorted({f.code for f in infos}))}) -{penalty:.2f}")
+        reasons.append(f"notes ({', '.join(infos)}) -{penalty:.2f}")
+
+    # Everything from here to the end of the caps is the CAPPING mechanism, and R2 says a
+    # combination of caps clamps AT `accept_with_note` — it never composes downwards into
+    # `needs_human`. So the score as it stands is remembered, the capping deductions and ceilings
+    # are applied, and the result is floored back to it: a cap can lower a cell to
+    # `accept_with_note` and no further, while a deduction that was already there for other
+    # reasons (an ungrounded quote, routes that are far apart) still stands on its own.
+    floor = min(score, ACCEPT_WITH_NOTE)
+
+    if capping_warns:
+        penalty = min(WARN_CAP, WARN_PENALTY * len(capping_warns))
+        score -= penalty
+        reasons.append(f"warnings ({', '.join(capping_warns)}) -{penalty:.2f}")
+
+    # --- how well corroborated the axis was, scored once and ordered (see CALIBRATION_PENALTY)
+    axis_codes = sorted(codes & set(CALIBRATION_PENALTY))
+    if axis_codes:
+        deduction = max(CALIBRATION_PENALTY[code] for code in axis_codes)
+        score -= deduction
+        reasons.append(f"{', '.join(axis_codes)}: the axis this value was read against is not "
+                       f"fully corroborated (-{deduction:.2f})")
 
     # --- orientation
     if orientation is None or orientation.higher_is_better is None:
@@ -368,12 +423,16 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
     if (vote_result.agreement == "single" and not settled
             and len(_agreeing_model_families(vote_result, candidates)) < 2):
         score = min(score, SINGLE_ROUTE_CAP)
-    capping = sorted({f.code for f in flags} & CAPPING_FLAGS)
+    capping = sorted(codes & CAPPING_FLAGS)
     if capping:
         score = min(score, ADJUDICATED_CAP)
         reasons.append(f"{', '.join(capping)} caps this cell at {ADJUDICATED_CAP:.2f}: "
                        + "; ".join(CAP_REASONS.get(code, "this reading is unconfirmed")
                                    for code in capping))
+    if score < floor:                    # R2: the caps clamp at accept_with_note, never below it
+        reasons.append(f"the caps above stop at {floor:.2f}: an unconfirmed reading is a reason "
+                       f"for a human to look at this cell, not to withhold it")
+        score = floor
 
     # --- amendment F: a purely digitised cell has to earn its automatic acceptance
     if routes and all(is_figure_route(r.route_key) for r in routes) and not settled:

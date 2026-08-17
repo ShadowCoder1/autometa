@@ -37,7 +37,8 @@ from ..agents.extract_stats import extract_test_statistics
 from ..agents.extract_text import extract_group_stats
 from ..agents.mapper import map_study
 from ..agents.orientation import orientation as orientation_verdict
-from ..agents.source_rank import keep_for_vote, match_named_source, rank_sources
+from ..agents.source_rank import (keep_for_vote, match_named_source, rank_sources,
+                                 source_of)
 from ..agents.verifier import MAX_REOPENS, verify_candidate, verifier_model_for
 from ..config import MODELS, live_enabled
 from ..digitize.digitizer import digitize
@@ -359,37 +360,61 @@ def _winner(candidates: Sequence[Candidate], result: VoteResult | None,
                                        c.candidate_id))[0]
 
 
+def _source_marker(source: Source) -> str:
+    return source.figure_id or source.table_id or f"p{source.page}:{source.locator}"
+
+
+def _already_read(cell: Sequence[Candidate], sources: Sequence[Source]) -> set[str]:
+    """Which of the mapper's locations this cell already has a reading from.
+
+    Figure ids are the reliable half; a text or table source is matched the way the checks match
+    one (its own id, or the page a candidate was read from), because a verifier naming the page-4
+    sentence that two text readers already answered on must not buy a third reading of it.
+    """
+    seen: set[str] = set()
+    for cand in cell:
+        source = source_of(cand, sources)
+        if source is not None:
+            seen.add(_source_marker(source))
+    return seen
+
+
 def _reopen_on_better_source(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                              sources: OutcomeSources, verdicts: Sequence[VerifierVerdict],
-                             cell: Sequence[Candidate]
+                             cell: Sequence[Candidate], status: PaperStatus
                              ) -> tuple[str, list[Candidate]] | None:
     """Re-extract ONE source a verifier named, when the mapper already had it and nobody read it."""
-    already = {s.figure_id or s.table_id or f"p{s.page}:{s.locator}"
-               for c in cell for s in sources.sources
-               if (c.pixel_provenance or {}).get("figure_id") == s.figure_id and s.figure_id}
+    already = _already_read(cell, sources.sources)
     for verdict in verdicts:
         named = (verdict.better_source or "").strip()
         if not named:
             continue
         source = match_named_source(named, sources.sources)
         if source is None:
+            status.warnings.append(
+                f"{dataset.dataset_id}/{sources.outcome_key}: a verifier named {named!r} as a "
+                f"better source, which is not in the mapper's list for this outcome — not "
+                f"re-opened, because acting on it would mean acting on a location a model invented")
             continue
-        marker = source.figure_id or source.table_id or f"p{source.page}:{source.locator}"
-        if marker in already:
+        if _source_marker(source) in already:
             continue                     # the cell already read it; re-reading buys nothing
+        # the re-extraction's own warnings belong to the paper, not to a throwaway status object
         extra = _extract_cell(ctx, paper, dataset,
                               sources.model_copy(update={"sources": [source]}),
-                              paper_dir(ctx.out_dir, paper.sha256) / "figures", PaperStatus(
-                                  paper_id=paper.sha256))
+                              paper_dir(ctx.out_dir, paper.sha256) / "figures", status)
         if extra:
             return named, list(extra)
+        status.warnings.append(
+            f"{dataset.dataset_id}/{sources.outcome_key}: re-opened on {named!r} at the verifier's "
+            f"suggestion and it produced no candidate")
     return None
 
 
 def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                  sources: OutcomeSources, candidates: Sequence[Candidate],
                  all_candidates: Sequence[Candidate], file_id: str,
-                 orientation: OrientationVerdict | None) -> _CellVerification:
+                 orientation: OrientationVerdict | None,
+                 status: PaperStatus) -> _CellVerification:
     key = sources.outcome_key
     outcome_def = ctx.protocol.outcome(key)
     # the digitiser's per-route samples stay in the stage file; only its ensemble votes
@@ -451,7 +476,8 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
     # P5's second half: the verifier's `better_source` answer was written, stored, printed — and
     # acted on nowhere. It is acted on now, ONCE, and only when it names a location the mapper
     # already found: a re-open on a page number a model invented would be worse than not looking.
-    reopened = _reopen_on_better_source(ctx, paper, dataset, sources, verifier_verdicts, cell)
+    reopened = _reopen_on_better_source(ctx, paper, dataset, sources, verifier_verdicts, cell,
+                                        status)
     if reopened is not None:
         named, extra = reopened
         out.reopened_source = named
@@ -514,7 +540,7 @@ def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: li
             cell = _cell_candidates([*candidates, *extra], dataset.dataset_id,
                                     sources.outcome_key)
             result = _verify_cell(ctx, paper, dataset, sources, cell, [*candidates, *extra],
-                                  file_id, orientations[measure])
+                                  file_id, orientations[measure], status)
             extra.extend(result.extra_candidates)
             verdicts.extend(result.verdicts)
             reopens += result.reopens

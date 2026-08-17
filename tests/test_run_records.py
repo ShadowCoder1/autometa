@@ -200,13 +200,15 @@ def test_bock_the_repaired_ensemble_moves_towards_the_published_effect():
     repaired = {}
     for group in ("A", "B"):
         values = ensembles[group]["pixel_provenance"]["route_values"]
-        means = [v["mean"] for v in values.values() if "vlm_coords" not in ""] + [routes[group][0]]
-        errors = [v["error"] for k, v in values.items() if "vlm_coords" not in k]
-        errors.append(routes[group][1])
-        repaired[group] = (ensemble_stats([v["mean"] for k, v in values.items()
-                                           if "vlm_coords" not in k] + [routes[group][0]])[0],
-                           ensemble_stats(errors)[0])
-        assert means                                     # the per-route means are all present
+        # every route EXCEPT the stale route C, whose repaired answer is appended in its place
+        others = {k: v for k, v in values.items() if "vlm_coords" not in k}
+        assert others, f"group {group}: the record holds no route besides vlm_coords"
+        assert len(others) < len(values) or group == "B", (
+            f"group {group}: the record no longer holds a vlm_coords route to repair")
+        means = [v["mean"] for v in others.values()] + [routes[group][0]]
+        errors = [v["error"] for v in others.values()] + [routes[group][1]]
+        assert len(means) == len(others) + 1
+        repaired[group] = (ensemble_stats(means)[0], ensemble_stats(errors)[0])
 
     d = cohens_d(repaired["A"][0], repaired["A"][1], 12, repaired["B"][0], repaired["B"][1], 12)
     stored = cohens_d(ensembles["A"]["mean"], ensembles["A"]["dispersion_value"], 12,

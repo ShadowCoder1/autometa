@@ -395,3 +395,81 @@ def test_two_model_families_inside_one_figure_route_count_as_agreement():
     assert shared[1] > lonely[1]
     assert any("independent model families" in r for r in shared[2])
     assert any("only one independent route" in r for r in lonely[2])
+
+
+# ------------------------------------------------------------------ R2 on a FIGURE-only cell
+def _figure_ensemble(cid: str, group: str, mean: float, cal_status: str = "confirmed",
+                     families=("claude-opus", "claude-sonnet")) -> Candidate:
+    """A digitised cell with no printed reader and no verifier — the shape R2 is really about."""
+    from canopy.models import SourceKind
+
+    return Candidate(
+        candidate_id=cid, paper_id="p", dataset_id="ds1", outcome_key="late_adaptation",
+        kind="group_stats", group=group, status="found", source_kind=SourceKind.figure_line,
+        n=12, mean=mean, dispersion_value=11.0, dispersion_type=DispersionType.SD, unit="deg",
+        route="figure", extractor_id="digitize:ensemble", model="", sigma=0.2,
+        pixel_provenance={"model_families": list(families), "cal_status": cal_status,
+                          "cal": {"ticks": [[0.0, 45.0], [100.0, -5.0]]}})
+
+
+def _cal_flags(code: str, n: int) -> list[CheckFlag]:
+    """The code as `run_checks` really emits it: once per candidate of the cell."""
+    severity = "error" if code == "calibration_refuted" else "warn"
+    return [CheckFlag(code=code, severity=severity, message=code, candidate_ids=[f"c{i}"])
+            for i in range(n)]
+
+
+def _score(flags: list[CheckFlag], cal_status: str = "confirmed"):
+    a = _figure_ensemble("fa", "A", 31.3, cal_status)
+    b = _figure_ensemble("fb", "B", 12.3, cal_status)
+    # no verifier verdict: a CONFIRMED verifier is +0.20 and hid this the first time round
+    return confidence(vote([a]), [], flags, None, candidates=[a, b], n_a=12, n_b=12,
+                      orientation=ORIENTED)
+
+
+def test_one_axis_problem_on_six_candidates_is_still_one_axis_problem():
+    """The regression: penalties counted FLAGS, so one code on six candidates spent -0.24.
+
+    A clean figure cell scores 0.60. Under the old arithmetic three `calibration_single_witness`
+    flags took it to 0.36 — `needs_human` — which is exactly the outcome task 16 exists to remove:
+    Cressman's late adaptation, with the true ladder recovered, would still have gone to a human.
+    """
+    clean_bucket, clean_score, _ = _score([])
+    assert (clean_bucket, clean_score) == ("accept_with_note", 0.60)
+    for n in (1, 3, 6):
+        bucket, score, _ = _score(_cal_flags("calibration_single_witness", n),
+                                  cal_status="single_witness")
+        assert bucket == "accept_with_note", f"{n} flags of one code buried the cell"
+        assert score == 0.52, f"{n} flags of one code scored {score}, not once"
+
+
+def test_the_axis_ladder_is_ordered_confirmed_then_single_witness_then_refuted():
+    """An axis known WRONG must never outscore an axis merely uncorroborated."""
+    confirmed = _score([])[1]
+    single = _score(_cal_flags("calibration_single_witness", 2), "single_witness")[1]
+    refuted = _score(_cal_flags("calibration_refuted", 2), "cal_refuted")[1]
+    assert confirmed > single > refuted, (confirmed, single, refuted)
+    for bucket, _s, _r in (_score([]), ):
+        assert bucket == "accept_with_note"
+    assert all(_score(_cal_flags(code, 2), status)[0] == "accept_with_note"
+               for code, status in (("calibration_single_witness", "single_witness"),
+                                    ("calibration_refuted", "cal_refuted")))
+
+
+def test_no_pile_of_capping_flags_sends_a_figure_cell_to_a_human():
+    """R2, on the route it actually bites: caps and axis doubt cost points, never the cell."""
+    from canopy.verify.confidence import ACCEPT_WITH_NOTE, CAPPING_FLAGS
+
+    flags: list[CheckFlag] = []
+    for code in sorted(CAPPING_FLAGS):
+        flags += _cal_flags(code, 4)
+    bucket, score, _ = _score(flags, cal_status="single_witness")
+    assert bucket == "accept_with_note", "capping flags composed downwards into needs_human"
+    assert score >= ACCEPT_WITH_NOTE
+
+
+def test_a_genuine_error_still_forces_a_human_on_the_same_cell():
+    """The floor is for CAPS. Evidence that the reading is wrong is untouched by it."""
+    disputed = [CheckFlag(code="calibration_disputed", severity="error", message="x",
+                          candidate_ids=["c0"])]
+    assert _score(disputed, "single_witness")[0] == "needs_human"
