@@ -518,3 +518,42 @@ def test_two_groups_that_simply_differ_are_not_a_unit_problem():
     rows = [cand("A", mean=0.5, dispersion_value=0.2),
             cand("B", candidate_id="cB", mean=30.0, dispersion_value=6.0)]
     assert "unit_incoherent" not in codes(run_checks(dataset, "late_adaptation", rows))
+
+
+# --------------------------------------------------------------------------- series and axis
+def test_both_groups_on_one_marker_is_flagged_and_caps_the_cell():
+    """Misses 4/5: numeric agreement says nothing about WHICH curve was read."""
+    from canopy.verify.confidence import CAPPING_FLAGS
+
+    dataset = make_dataset()
+    conflicted = _figure_cand(cal_status="confirmed")
+    conflicted.pixel_provenance = {**conflicted.pixel_provenance, "series_identity": {
+        "conflict": True, "notes": ["both groups were described as the same marker (open square)"]}}
+    flags = run_checks(dataset, "late_adaptation", [conflicted])
+    assert "series_identity_conflict" in codes(flags)
+    flag = next(f for f in flags if f.code == "series_identity_conflict")
+    assert "same marker" in flag.message and flag.severity == "warn"
+    assert "series_identity_conflict" in CAPPING_FLAGS
+
+
+def test_readers_who_answered_off_two_axes_are_reported_on_the_row():
+    """Miss 1: a left axis in degrees and a right one in per cent are both correct, and differ."""
+    dataset = make_dataset()
+    split = _figure_cand(cal_status="confirmed")
+    split.pixel_provenance = {**split.pixel_provenance, "axis_agreement": "conflict",
+                              "axis_kept": "left y-axis (deg)",
+                              "axis_dropped_samples": ["digitize:readout:claude-haiku-4-5:direct"]}
+    flags = run_checks(dataset, "late_adaptation", [split])
+    assert "axis_conflict" in codes(flags)
+    flag = next(f for f in flags if f.code == "axis_conflict")
+    assert "left y-axis (deg)" in flag.message
+    assert "digitize:readout:claude-haiku-4-5:direct" in flag.message
+
+
+def test_a_figure_whose_readers_agreed_about_the_axis_raises_nothing():
+    dataset = make_dataset()
+    calm = _figure_cand(cal_status="confirmed")
+    calm.pixel_provenance = {**calm.pixel_provenance, "axis_agreement": "agreed",
+                             "series_identity": {"conflict": False, "notes": []}}
+    assert not [f for f in run_checks(dataset, "late_adaptation", [calm])
+                if f.code in ("axis_conflict", "series_identity_conflict")]

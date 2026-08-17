@@ -675,7 +675,8 @@ def _samples_from_readout(reading: ReadOut) -> list[RouteSample]:
             extra={"legend_says": reading.legend_says, "x_read": row.x_read,
                    "tick_labels": list(reading.tick_labels), "unit": reading.unit,
                    "panel": reading.panel, "same_prompt_resample": reading.sample > 0,
-                   "error_sides": row.error_sides}))
+                   "error_sides": row.error_sides, "axis_read": reading.axis_read,
+                   "axis_direction_note": reading.axis_direction_note}))
     return out
 
 
@@ -1003,6 +1004,135 @@ def _route_tag(s: RouteSample) -> str:
     return tag
 
 
+# ----------------------------------------------------------------------------- which axis?
+def _axis_similar(a: str, b: str) -> bool:
+    """Do two free-text axis descriptions name the same ladder?"""
+    from difflib import SequenceMatcher
+
+    left, right = _axis_norm(a), _axis_norm(b)
+    if not left or not right:
+        return True                      # a reader that did not say cannot be said to disagree
+    if left == right:
+        return True
+    sides = {word for word in ("left", "right", "top", "bottom")}
+    a_side = sides & set(left.split())
+    b_side = sides & set(right.split())
+    if a_side and b_side and a_side != b_side:
+        return False                     # "left y-axis" and "right y-axis" are never the same axis
+    return SequenceMatcher(None, left, right).ratio() >= 0.6
+
+
+def _axis_norm(text: str) -> str:
+    import re
+
+    return re.sub(r"[^a-z0-9 ]+", " ", (text or "").lower()).strip()
+
+
+def _reconcile_axes(samples: list[RouteSample], target: TargetSpec) -> dict[str, Any]:
+    """Refuse to pool two read-outs that answered off DIFFERENT value axes (critique miss 1).
+
+    Cressman Fig. 3b carries a left y-axis in degrees and a right one in per cent of the imposed
+    distortion. Both are correct readings of the same marks and they differ by a factor; the
+    ensemble median of the two is a number that is on neither axis. OCR only ever reads the left
+    gutter, so the raster path was safe by luck — the read-outs and the vector text layer see both.
+    """
+    named = [s for s in samples if s.route == "D" and str(s.extra.get("axis_read", "")).strip()]
+    info: dict[str, Any] = {"axis_reads": sorted({str(s.extra.get("axis_read")) for s in named}),
+                            "axis_direction_notes": sorted(
+                                {str(s.extra.get("axis_direction_note")) for s in samples
+                                 if str(s.extra.get("axis_direction_note", "")).strip()})}
+    if len(named) < 2:
+        info["axis_agreement"] = "not_enough_readers"
+        return info
+    clusters: list[list[RouteSample]] = []
+    for sample in named:
+        for cluster in clusters:
+            if _axis_similar(str(sample.extra["axis_read"]), str(cluster[0].extra["axis_read"])):
+                cluster.append(sample)
+                break
+        else:
+            clusters.append([sample])
+    if len(clusters) < 2:
+        info["axis_agreement"] = "agreed"
+        return info
+
+    def rank(cluster: list[RouteSample]) -> tuple[int, int]:
+        text = _axis_norm(str(cluster[0].extra["axis_read"]))
+        hint = _axis_norm(target.unit_hint)
+        return (len(cluster), 1 if hint and hint.split()[0] in text else 0)
+
+    keep = max(clusters, key=rank)
+    dropped: list[str] = []
+    for cluster in clusters:
+        if cluster is keep:
+            continue
+        for sample in cluster:
+            sample.dropped = True
+            sample.drop_reason = (
+                f"read off {str(sample.extra['axis_read'])!r}, while the ensemble is on "
+                f"{str(keep[0].extra['axis_read'])!r} — two value axes are not one number")
+            dropped.append(sample.extractor_id)
+    info["axis_agreement"] = "conflict"
+    info["axis_kept"] = str(keep[0].extra["axis_read"])
+    info["axis_dropped_samples"] = sorted(set(dropped))
+    return info
+
+
+# ----------------------------------------------------------------------------- which series?
+_FILL_WORDS = {"open": "open", "unfilled": "open", "hollow": "open", "white": "open",
+               "empty": "open", "outline": "open",
+               "filled": "filled", "solid": "filled", "black": "filled", "closed": "filled",
+               "dark": "filled"}
+_SHAPE_WORDS = ("square", "circle", "triangle", "diamond", "star", "cross", "bar")
+
+
+def _marker_words(text: str) -> tuple[str, str]:
+    """`(fill, shape)` a free-text series description resolves to; `""` for what it does not say."""
+    words = _axis_norm(text).split()
+    fill = next((_FILL_WORDS[w] for w in words if w in _FILL_WORDS), "")
+    shape = next((sh for sh in _SHAPE_WORDS if any(w.startswith(sh) for w in words)), "")
+    return fill, shape
+
+
+def _series_identity(samples: Sequence[RouteSample], core: _Core) -> dict[str, Any]:
+    """Does each group's described marker exist, and is it a DIFFERENT marker from the other's?
+
+    Group assignment rested on one free-text `label_read` from one model ("Elderly: Misaligned
+    (open white squares)"), and `_needs_another_readout` looks at means only — so two routes
+    agreeing numerically on the WRONG series stopped the plan (critique misses 4 and 5).
+    `detect_markers` knows fill and shape; this is where the two are put side by side.
+    """
+    described: dict[str, tuple[str, str]] = {}
+    for group in GROUPS:
+        texts = [s.label_read for s in samples if s.group == group and s.label_read]
+        for text in texts:
+            fill, shape = _marker_words(text)
+            if fill or shape:
+                described[group] = (fill, shape)
+                break
+    info: dict[str, Any] = {"described": {g: list(v) for g, v in described.items()},
+                            "conflict": False, "notes": []}
+    if len(described) == 2 and described["A"] == described["B"] and any(described["A"]):
+        info["conflict"] = True
+        info["notes"].append(
+            f"both groups were described as the same marker ({' '.join(w for w in described['A'] if w)}) "
+            f"— one of the two series is being read for both groups")
+    detected = {(m.kind, ) for m in core.markers}
+    kinds = {kind for (kind, ) in detected}
+    if kinds:
+        info["detected_marker_kinds"] = sorted(kinds)
+        for group, (fill, shape) in described.items():
+            if fill == "open" and kinds and "open" not in kinds:
+                info["notes"].append(
+                    f"group {group} was described as an OPEN marker, but every marker the pixel "
+                    f"pass found is filled ({', '.join(sorted(kinds))})")
+            if shape and shape not in kinds and shape in ("square", "circle", "triangle"):
+                info["notes"].append(
+                    f"group {group} was described as a {shape}, which the pixel pass did not "
+                    f"find among {', '.join(sorted(kinds))}")
+    return info
+
+
 # ----------------------------------------------------------------------------- legend check
 _LEGEND_PATTERNS = (
     (DispersionType.SE, ("standard error", "std. error", "s.e.m", "sem", " se ", "±se", "+/- se")),
@@ -1079,7 +1209,8 @@ def _needs_another_readout(samples: Sequence[RouteSample], *, axis_range: float,
 
 
 def _overlay_wanted(verify: bool, policy: str, samples: Sequence[RouteSample], *,
-                    axis_range: float, tick_spacing: float, px_units: float) -> tuple[bool, str]:
+                    axis_range: float, tick_spacing: float, px_units: float,
+                    series_conflict: bool = False) -> tuple[bool, str]:
     """Whether to spend the overlay-verification call, and why (task 15 §A3).
 
     It exists to catch a mark that landed on the wrong datum, and a mark on the wrong datum shows
@@ -1090,6 +1221,11 @@ def _overlay_wanted(verify: bool, policy: str, samples: Sequence[RouteSample], *
         return False, "overlay verification is switched off"
     if policy == "always":
         return True, "overlay verification runs on every figure"
+    if series_conflict:
+        # exactly what the overlay call is for: the routes agree on a NUMBER while disagreeing
+        # about which series it belongs to, and no amount of numeric agreement settles that
+        return True, ("both groups were described as the same marker, so the marks are checked "
+                      "against the picture before the numbers are trusted")
     if any(s.dropped for s in samples):
         return True, "a route sample was already dropped"
     if any(s.route != "D" and s.snap_conf == 0.0 for s in samples):
@@ -1197,13 +1333,17 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     samples.extend(_samples_from_vector(scene, vec_info, coord, core, readouts))
     _corroborate_vector_whiskers(samples, px_units)
 
+    # --- two readers off two different value axes are not two reads of one number
+    axis_info = _reconcile_axes(samples, target)
+    series_info = _series_identity(samples, core)
+
     # --- overlay verify: drop what the model says is misplaced, then recompute
     labels = {"A": target.group_a_label or "group A", "B": target.group_b_label or "group B"}
     overlay_path = ""
     verify_log: list[dict[str, Any]] = []
     do_verify, verify_reason = _overlay_wanted(
         verify, cfg.overlay_verify, samples, axis_range=axis_range, tick_spacing=tick_spacing,
-        px_units=px_units)
+        px_units=px_units, series_conflict=bool(series_info.get("conflict")))
     if do_verify:
         for iteration in range(1, MAX_OVERLAY_ITERATIONS + 1):
             marks, owners = _overlay_marks(samples, cal, core, labels)
@@ -1240,6 +1380,8 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
             overlay_path = str(out_png)
 
     provenance = _base_provenance(fig, core, choice, coord, vec_info, verify_log, target)
+    provenance.update(axis_info)
+    provenance["series_identity"] = series_info
     provenance["axis_range"] = axis_range
     provenance["axis_range_source"] = axis_range_source
     provenance["call_plan"] = {
@@ -1252,7 +1394,8 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     # ensemble has to pick one, so without this the vote cannot tell two families from two prompts
     provenance["model_families"] = model_families(samples)
     provenance["readout_families"] = sorted({r.model for r in readouts})
-    provenance.update(_late_window_provenance(target, samples, plan))
+    provenance.update(_late_window_provenance(target, samples, plan,
+                                              x_tick_px=_x_tick_spacing(core)))
     candidates = _build_candidates(samples, target=target, fig=fig, paper=paper, source=source,
                                    dataset=dataset, core=core, cal=cal, crop=crop,
                                    overlay_path=overlay_path, base=provenance,
@@ -1267,23 +1410,68 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     return candidates
 
 
+_X_PX_RE = __import__("re").compile(r"x\s*(?:=|≈|~|of|at)?\s*([0-9]+(?:\.[0-9]+)?)\s*px")
+
+
+def _x_pixels(samples: Sequence[RouteSample]) -> list[float]:
+    """Every x position a reader named, in pixels — from `x_px` or from the text it wrote."""
+    out: list[float] = []
+    for s in samples:
+        if s.x_px is not None:
+            out.append(float(s.x_px))
+            continue
+        match = _X_PX_RE.search(str(s.extra.get("x_read", "")))
+        if match:
+            out.append(float(match.group(1)))
+    return out
+
+
 def _late_window_provenance(target: TargetSpec, samples: Sequence[RouteSample],
-                            plan: Sequence[ReadoutSpec]) -> dict[str, Any]:
+                            plan: Sequence[ReadoutSpec], x_tick_px: float = 0.0) -> dict[str, Any]:
     """Which time-series rule was actually APPLIED, and what x the models say they read at.
 
     The configured rule is only an instruction; what matters downstream is whether it applied at
     all (it does not on a non-time-series figure) and which point the read-outs actually landed on.
+
+    Agreement is measured in PIXELS, not in prose (critique miss 6). Cressman's two reads are
+    "Block 33 (last block, x ≈ 1451 px)" and "Block 33 (…x=1449 px)" — the same block, two pixels
+    apart, and a string comparison scored it as a disagreement. Two genuinely different blocks
+    phrased identically would have scored as agreement, which is the worse half of the same bug.
     """
     x_reads = sorted({str(s.extra.get("x_read", "")).strip()
                       for s in samples if str(s.extra.get("x_read", "")).strip()})
+    pixels = _x_pixels(samples)
+    tolerance = max(0.5 * abs(x_tick_px), 4.0)
+    if len(pixels) >= 2:
+        spread = max(pixels) - min(pixels)
+        agrees, how = spread <= tolerance, "pixels"
+    else:
+        spread, agrees, how = None, len(x_reads) <= 1, "text"
     applied = target.late_window_sd if target.x_hint else "not_a_time_series"
     return {
         "late_window_rule": applied,
         "late_window_rule_configured": target.late_window_sd,
         "late_window_x_read": x_reads,
-        "late_window_x_agrees": len(x_reads) <= 1,
+        "late_window_x_px": sorted(pixels),
+        "late_window_x_spread_px": spread,
+        "late_window_x_tolerance_px": tolerance,
+        "late_window_x_compared": how,
+        "late_window_x_agrees": bool(agrees),
         "readout_plan": [spec.to_dict() for spec in plan],
     }
+
+
+def _x_tick_spacing(core: _Core) -> float:
+    """Median gap between x tick marks, in pixels — half of one is "the same x position"."""
+    try:
+        columns = sorted(find_tick_marks(core.gray, core.axes).get("bottom", []))
+    except Exception:                                         # pragma: no cover - defensive
+        return 0.0
+    gaps = [b - a for a, b in zip(columns, columns[1:]) if b > a]
+    if gaps:
+        return float(statistics.median(gaps))
+    x0, _, x1, _ = core.axes.plot_bbox
+    return 0.02 * abs(x1 - x0)
 
 
 def _asset(paper: PaperRecord, rel: str) -> Path:
@@ -1369,6 +1557,13 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
     mapper_type = source.error_bar_type if source is not None else DispersionType.UNKNOWN
     legend_text = " ".join(r.legend_says for r in readouts if r.legend_says)
     legend_type = _legend_dispersion(legend_text)
+    # miss 10: `UNKNOWN` dispersion is a needs_human factory — `confidence._sd_of` returns None for
+    # it, no route reaches the figure gate, and the cell fails on a spread the FIGURE stated
+    # plainly. When the mapper could not say and the legend says outright, the legend is the
+    # evidence; where it came from travels in provenance.
+    dispersion_from = "mapper"
+    if mapper_type is DispersionType.UNKNOWN and legend_type is not None:
+        mapper_type, dispersion_from = legend_type, "legend"
     unit = _unit(target, readouts)
     page = source.page if source is not None and source.page else fig.page
     locator = (source.locator if source is not None and source.locator
@@ -1431,8 +1626,8 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             spread = (max(errors) - min(errors)) if len(errors) > 1 else 0.0
             widen = 0.5 * spread if not agreement["error_agrees"] else 0.0
             dispersion_sigma = max(error_mad, widen, floor)
-        conflict = (legend_type is not None and mapper_type != DispersionType.UNKNOWN
-                    and legend_type != mapper_type)
+        conflict = (dispersion_from == "mapper" and legend_type is not None
+                    and mapper_type != DispersionType.UNKNOWN and legend_type != mapper_type)
         reasons = list(agreement["reasons"])
         reasons += [n for n in zero_notes if "excluded" not in n]
         if conflict:
@@ -1454,6 +1649,7 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             "legend_says": legend_text,
             "legend_dispersion": legend_type.value if legend_type else None,
             "mapper_dispersion": mapper_type.value if mapper_type else None,
+            "dispersion_type_from": dispersion_from,
             "per_route": [s.to_dict() for s in mine],
             "route_values": {s.extractor_id: {"mean": s.mean, "error": s.error} for s in live},
             "snap_confidences": {s.extractor_id: s.snap_conf for s in mine

@@ -142,6 +142,17 @@ def target_for_source(source: Source, dataset: DatasetSpec, outcome_sources: Out
                         if part)[:400])
 
 
+#: source kinds that put NUMBERS in characters somewhere a text reader could find them. A source
+#: of an unrecognised kind counts: it is a location a human has to route, and refusing to look at
+#: it would be the pipeline deciding that for them.
+_PRINTED_KINDS = frozenset(SourceKind) - FIGURE_KINDS
+
+
+def _has_printed_source(sources: Sequence[Source]) -> bool:
+    """Is there anything on this cell for a text or statistic reader to read?"""
+    return any(s.kind in _PRINTED_KINDS and not s.figure_id for s in sources)
+
+
 def _figure(paper: PaperRecord, figure_id: str) -> FigureRegion | None:
     return next((f for f in paper.figures if f.id == figure_id), None)
 
@@ -257,13 +268,23 @@ def _extract_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
     """
     key = sources.outcome_key
     out = out if out is not None else []
-    # the two heterogeneous text readings the vote needs (different model AND different prompt)
-    out.extend(extract_group_stats(ctx.client, paper, ctx.protocol, dataset, key, sources.sources,
-                                   variant="table_first", model=ctx.models["primary"]))
-    out.extend(extract_group_stats(ctx.client, paper, ctx.protocol, dataset, key, sources.sources,
-                                   variant="narrative_first", model=ctx.models["secondary"]))
-    out.extend(extract_test_statistics(ctx.client, paper, ctx.protocol, dataset, key,
-                                       sources.sources, model=ctx.models["primary"]))
+    # the two heterogeneous text readings the vote needs (different model AND different prompt) —
+    # bought only when there is something printed to read. A cell whose only source is a figure
+    # used to buy three text calls and get three `not_on_these_pages` answers back (critique
+    # miss 9); the figure routes are what carry such a cell, and they are unaffected.
+    if _has_printed_source(sources.sources):
+        out.extend(extract_group_stats(ctx.client, paper, ctx.protocol, dataset, key,
+                                       sources.sources, variant="table_first",
+                                       model=ctx.models["primary"]))
+        out.extend(extract_group_stats(ctx.client, paper, ctx.protocol, dataset, key,
+                                       sources.sources, variant="narrative_first",
+                                       model=ctx.models["secondary"]))
+        out.extend(extract_test_statistics(ctx.client, paper, ctx.protocol, dataset, key,
+                                           sources.sources, model=ctx.models["primary"]))
+    else:
+        status.warnings.append(
+            f"{dataset.dataset_id}/{key}: every source the mapper found for this outcome is a "
+            f"figure, so the text and statistic readers were not bought")
     for source in sources.sources:
         if source.kind not in FIGURE_KINDS and not source.figure_id:
             continue

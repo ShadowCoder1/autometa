@@ -12,6 +12,14 @@ unless the figure itself carries it.
    Use the `crop_image` tool to zoom in whenever a label, a marker or an error-bar cap is too
    small to read confidently — you may zoom several times. `list_regions` reports the axis, tick
    and mark positions a computer-vision pass already found; treat it as a hint, not as truth.
+   **Many panels carry two value axes** — a left-hand one in the measured unit and a right-hand
+   one in per cent, or a second axis for a second quantity. Say in `axis_read` which one your
+   numbers came off, quoting its printed title and its side ("left y-axis, 'Aftereffects at Peak
+   Velocity (deg)'"). Answering off the wrong ladder is wrong by a factor, not by a pixel, and
+   nothing downstream can tell the two apart from the numbers alone.
+   Say in `axis_direction_note` what the axis' sign convention is when the ticks alone do not
+   carry it — "positive is counter-clockwise, per the y-axis title", "the ticks are unsigned and
+   the title says error magnitude". Leave it empty when the ticks are signed and unambiguous.
 3. Locate the x position the target names. For a time series or a blocked design this is a
    specific point or block, not the whole curve.
 4. For each group, read the plotted central value and the error bar. Report the error bar as a

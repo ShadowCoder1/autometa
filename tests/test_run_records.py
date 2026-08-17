@@ -337,3 +337,49 @@ def test_cressman_the_family_gate_would_have_bought_the_second_read_out(cressman
                                mean=31.4, error=2.0))
     needed, why = _needs_another_readout(samples, axis_range=50.0, tick_spacing=5.0, px_units=0.07)
     assert not needed and "two model families" in why
+
+
+def test_cressman_the_two_block_33_reads_agree_once_compared_in_pixels(cressman_late):
+    """Acceptance item 5: "x ≈ 1451 px" and "x=1449 px" are the same block, two pixels apart."""
+    from canopy.digitize.digitizer import RouteSample, _late_window_provenance
+    from canopy.digitize.vlm import TargetSpec
+
+    assert cressman_late["late_window_x_agrees"] is False, "the record no longer shows the failure"
+    assert len(cressman_late["late_window_x_read"]) == 2
+
+    samples = [RouteSample(route=row["route"], group=row["group"], model=row["model"],
+                           mean=row["mean"], extra={"x_read": row["extra"].get("x_read", "")})
+               for row in cressman_late["per_route"]]
+    out = _late_window_provenance(TargetSpec(outcome_key="late_adaptation",
+                                             x_hint="last adaptation block"),
+                                  samples, [], x_tick_px=80.0)
+    assert out["late_window_x_compared"] == "pixels"
+    assert out["late_window_x_px"] == [1449.0, 1451.0]
+    assert out["late_window_x_spread_px"] == 2.0
+    assert out["late_window_x_agrees"] is True
+
+
+def test_cressman_fig3b_names_two_value_axes_and_only_one_of_them_is_pooled():
+    """Acceptance item 7: the locator itself says the panel has a deg axis AND a per-cent axis."""
+    from canopy.digitize.digitizer import RouteSample, _reconcile_axes
+    from canopy.digitize.vlm import TargetSpec
+
+    fig3b = _cell("cressman", "aftereffect", "digitize:ensemble", "A", figure="fig03")
+    assert "left y-axis" in fig3b["locator"] and "right y-axis" in fig3b["locator"]
+    assert "(deg)" in fig3b["locator"] and "(%)" in fig3b["locator"]
+    # the read-outs of that run carried no `axis_read` at all — the field did not exist
+    assert all("axis_read" not in (row.get("extra") or {})
+               for row in fig3b["pixel_provenance"]["per_route"])
+
+    # with it, a reader that answers off the right-hand ladder is dropped rather than averaged in
+    deg, pct = "left y-axis 'Aftereffects at Peak Velocity (deg)'", "right y-axis '… (%)'"
+    samples = [RouteSample(route="D", group="A", model="claude-opus-5", mean=17.5,
+                           extra={"axis_read": deg}),
+               RouteSample(route="D", group="A", model="claude-sonnet-5", mean=17.4,
+                           extra={"axis_read": deg}),
+               RouteSample(route="D", group="A", model="claude-haiku-4-5", mean=58.0,
+                           extra={"axis_read": pct})]
+    info = _reconcile_axes(samples, TargetSpec(outcome_key="aftereffect", unit_hint="deg"))
+    assert info["axis_agreement"] == "conflict"
+    assert samples[2].dropped is True and not samples[0].dropped
+    assert [s.mean for s in samples if not s.dropped] == [17.5, 17.4]

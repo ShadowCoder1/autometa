@@ -135,6 +135,13 @@ READOUT_SCHEMA = _obj({
     "status": _STATUS,
     "panel": {"type": "string"},
     "unit": {"type": "string"},
+    #: WHICH value axis these numbers came off. A panel with a left-hand axis in degrees and a
+    #: right-hand one in per cent (Cressman 2010 Fig. 3b) gives two readers two different correct
+    #: answers, and nothing in the numbers says which ladder each used (critique miss 1).
+    "axis_read": {"type": "string"},
+    #: the axis' sign convention when the ticks do not carry it — a CW/CCW axis whose direction
+    #: lives in the title reads +17.5 in one paper and -21.5 in another for the same outcome
+    "axis_direction_note": {"type": "string"},
     "legend_says": {"type": "string"},
     "tick_labels": {"type": "array", "items": {"type": "number"}},
     "pixel_resolution_estimate": _NUM,
@@ -222,6 +229,8 @@ class ReadOut:
     tick_labels: list[float] = field(default_factory=list)
     pixel_resolution_estimate: float | None = None
     unit: str = ""
+    axis_read: str = ""                          # which value axis the numbers came off
+    axis_direction_note: str = ""                # the axis' sign convention, when the ticks lack one
     panel: str = ""
     confidence: float = 0.0
     notes: str = ""
@@ -666,6 +675,8 @@ def _parse_readout(result: ToolLoopResult, model: str, variant: str,
         legend_says=str(data.get("legend_says") or ""), tick_labels=ticks,
         pixel_resolution_estimate=_number(data.get("pixel_resolution_estimate")),
         unit=str(data.get("unit") or ""), panel=str(data.get("panel") or ""),
+        axis_read=str(data.get("axis_read") or ""),
+        axis_direction_note=str(data.get("axis_direction_note") or ""),
         confidence=float(_number(data.get("confidence")) or 0.0),
         notes=str(data.get("notes") or ""), model=model, variant=variant, sample=sample,
         call_ids=list(result.call_ids), tool_calls=list(result.tool_calls),

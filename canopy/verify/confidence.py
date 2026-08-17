@@ -65,6 +65,8 @@ CAPPING_FLAGS: frozenset[str] = frozenset({
     "collapsed_across_x",
     #: extraction was re-opened on a source the verifier named
     "reopened_on_better_source",
+    #: both groups resolve to the same plotted marker — the value may be the other series'
+    "series_identity_conflict",
 })
 #: every cap is at or above `ACCEPT_WITH_NOTE`, so no COMBINATION of caps can push a cell that
 #: scored well enough on the evidence down into `needs_human` (controller ruling R2, task 16):
@@ -91,6 +93,8 @@ CAP_REASONS: dict[str, str] = {
                            "approximation, not the paper's own"),
     "reopened_on_better_source": ("extraction was re-opened on a source the verifier named, so "
                                   "the location itself was decided by a model"),
+    "series_identity_conflict": ("both groups resolve to the same plotted marker, so this number "
+                                 "may belong to the other series"),
 }
 
 

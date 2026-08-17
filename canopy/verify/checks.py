@@ -90,6 +90,8 @@ CHECK_SEVERITY: dict[str, str] = {
     "orientation_unknown": "warn",
     "sign_mismatch": "error",
     "figure_error_bar_unknown": "warn",
+    "series_identity_conflict": "warn",
+    "axis_conflict": "warn",
     "error_bar_unconfirmed": "info",
 }
 
@@ -230,6 +232,7 @@ def _check_one(cand: Candidate, dataset: DatasetSpec, outcome: OutcomeSources | 
     # what the axis is. Convicting a value on a calibration nobody corroborated is exactly how a
     # correct read of 31.3 was sent to a human by a ladder that had been misread as 1..4 (F1).
     _check_calibration(cand, out)
+    _check_series_identity(cand, out)
     confirmed = calibration_status(cand.pixel_provenance) in ("confirmed", "unknown")
     if cand.mean is not None and confirmed:
         limits = axis_limits(cand.pixel_provenance)
@@ -284,6 +287,29 @@ def _check_calibration(cand: Candidate, out: list[CheckFlag]) -> None:
             _flag(out, "calibration_single_witness",
                   f"only one witness calibrated the axis of {where}, so the scale this value was "
                   f"read against is uncorroborated ({note})", cid)
+
+
+def _check_series_identity(cand: Candidate, out: list[CheckFlag]) -> None:
+    """Which SERIES this value came from, and which AXIS it was read against (misses 1, 4, 5).
+
+    Two routes that agree on a number can still both be reading the wrong curve: group assignment
+    rests on one free-text legend read, and the numeric agreement the plan stops on says nothing
+    about it. Likewise a panel with two value axes gives two readers two correct answers that
+    differ by a factor.
+    """
+    provenance = cand.pixel_provenance or {}
+    series = provenance.get("series_identity")
+    if isinstance(series, dict) and series.get("conflict"):
+        _flag(out, "series_identity_conflict",
+              "; ".join(str(note) for note in series.get("notes") or [])
+              or "both groups resolve to the same plotted marker",
+              cand.candidate_id)
+    if provenance.get("axis_agreement") == "conflict":
+        _flag(out, "axis_conflict",
+              f"the readers of this figure answered off different value axes; the ensemble kept "
+              f"{provenance.get('axis_kept')!r} and dropped "
+              f"{', '.join(provenance.get('axis_dropped_samples') or [])}",
+              cand.candidate_id)
 
 
 def _check_statistic(cand: Candidate, dataset: DatasetSpec, out: list[CheckFlag]) -> None:

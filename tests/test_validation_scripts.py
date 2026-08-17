@@ -677,3 +677,35 @@ def test_a_line_plot_with_tiny_markers_still_reaches_the_marker_detector(drawn_c
     assert core.markers, "the line's own markers were not detected"
     without = _cv_core(Path(case.files["png"]), prefer_markers=False)
     assert without.bars and not without.markers, "this case no longer demonstrates the failure"
+
+
+def test_a_right_hand_second_axis_is_read_off_one_ladder_only(drawn_corpus):
+    """Acceptance item 18: two value axes in two units, and nothing may mix them."""
+    from canopy.digitize.calibrate import px_to_value
+
+    case, core = drawn_corpus["points_right_hand_axis"]
+    assert case.right_axis is not None
+    left = sorted(v for _, v in core.cal.ticks)
+    # OCR reads the LEFT gutter, so the ladder must be the left one (0..30), never the right (0..100)
+    assert set(left) <= set(float(t) for t in case.ticks)
+    assert max(left) <= 30.0, f"the right-hand 0..100 ladder leaked into the fit: {left}"
+    # …and the values it implies are the ones plotted on the left axis
+    for series in case.series:
+        assert 0.0 <= series.value <= 30.0
+    top = max(core.cal.ticks, key=lambda t: t[1])
+    assert px_to_value(core.cal, top[0]) == pytest.approx(top[1], abs=0.5)
+
+
+def test_route_b_reads_a_line_plot_whose_markers_are_three_pixels_wide(drawn_corpus, tmp_path):
+    """Acceptance item 20: the marker detector runs, and route B produces a VALUE, not just a blob."""
+    from canopy.digitize.calibrate import px_to_value
+
+    case, core = drawn_corpus["line_tiny_markers"]
+    assert core.markers, "detect_markers did not run despite `detect_bars` claiming a bar"
+    # the rightmost marker of each series is the outcome (the late-window rule)
+    picked, status = synthetic_figures.select_marks(core.markers, case, lambda m: m.x)
+    assert status == "read", status
+    read = [px_to_value(core.cal, mark.y) for mark in picked]
+    for value, series in zip(read, case.series):
+        assert abs(value - series.value) <= 0.02 * case.axis_range, \
+            f"route B read {value} for {series.label}, plotted at {series.value}"

@@ -1301,3 +1301,111 @@ def test_the_family_rule_buys_a_second_family_and_records_which_ones_answered(ba
     assert ensemble.pixel_provenance["model_families"] == ["claude-opus", "claude-sonnet"]
     assert model_families([s for s in out.samples if s.group == "A"]) == ["claude-opus",
                                                                          "claude-sonnet"]
+
+
+# ------------------------------------------------------------------ task 16 (e): the misses
+def _readout_sample(group, model, axis_read="", label_read="", mean=10.0, x_read=""):
+    return RouteSample(route="D", group=group, model=model, variant="direct", mean=mean,
+                       label_read=label_read,
+                       extra={"axis_read": axis_read, "x_read": x_read,
+                              "axis_direction_note": ""})
+
+
+def test_two_readers_on_two_different_value_axes_are_not_pooled():
+    """Miss 1: Cressman Fig. 3b has a left axis in degrees and a right one in per cent."""
+    from canopy.digitize.digitizer import _reconcile_axes
+
+    left = "left y-axis 'Aftereffects at Peak Velocity (deg)'"
+    right = "right y-axis 'Aftereffects at Peak Velocity (%)'"
+    samples = [_readout_sample("A", "claude-opus-5", left, mean=17.5),
+               _readout_sample("A", "claude-sonnet-5", left, mean=17.4),
+               _readout_sample("A", "claude-haiku-4-5", right, mean=58.0)]
+    info = _reconcile_axes(samples, replace(TARGET, unit_hint="deg"))
+    assert info["axis_agreement"] == "conflict"
+    assert "deg" in info["axis_kept"]
+    assert len(info["axis_dropped_samples"]) == 1
+    assert [s.dropped for s in samples] == [False, False, True]
+    assert "two value axes are not one number" in samples[2].drop_reason
+
+
+def test_readers_who_name_the_same_axis_differently_are_still_pooled():
+    from canopy.digitize.digitizer import _reconcile_axes
+
+    samples = [_readout_sample("A", "claude-opus-5", "y-axis: angular error (deg)"),
+               _readout_sample("A", "claude-sonnet-5", "the y axis, angular error in deg")]
+    info = _reconcile_axes(samples, TARGET)
+    assert info["axis_agreement"] == "agreed"
+    assert not any(s.dropped for s in samples)
+    # and a reader that did not say cannot be said to disagree
+    quiet = [_readout_sample("A", "claude-opus-5", "y-axis (deg)"),
+             _readout_sample("A", "claude-sonnet-5", "")]
+    assert _reconcile_axes(quiet, TARGET)["axis_agreement"] == "not_enough_readers"
+
+
+def test_both_groups_described_as_the_same_marker_is_a_conflict():
+    """Misses 4 and 5: group assignment rests on one free-text legend read."""
+    from canopy.digitize.cv import Marker
+    from canopy.digitize.digitizer import _series_identity
+
+    core = _core_with(None)
+    core.markers = [Marker(x=10.0, y=20.0, colour="#000000", kind="square", size=6.0),
+                    Marker(x=40.0, y=25.0, colour="#ffffff", kind="open", size=6.0)]
+    same = [_readout_sample("A", "m", label_read="Young: open white squares"),
+            _readout_sample("B", "m", label_read="Elderly: open white squares")]
+    info = _series_identity(same, core)
+    assert info["conflict"] is True
+    assert "same marker" in " ".join(info["notes"])
+
+    distinct = [_readout_sample("A", "m", label_read="Young: filled black squares"),
+                _readout_sample("B", "m", label_read="Elderly: open white squares")]
+    assert _series_identity(distinct, core)["conflict"] is False
+
+
+def test_a_marker_the_pixel_pass_never_found_is_reported():
+    from canopy.digitize.cv import Marker
+    from canopy.digitize.digitizer import _series_identity
+
+    core = _core_with(None)
+    core.markers = [Marker(x=10.0, y=20.0, colour="#000000", kind="square", size=6.0)]
+    described = [_readout_sample("A", "m", label_read="Young: open white circles"),
+                 _readout_sample("B", "m", label_read="Elderly: filled black squares")]
+    info = _series_identity(described, core)
+    assert info["conflict"] is False
+    assert any("OPEN marker" in note for note in info["notes"])
+    assert info["detected_marker_kinds"] == ["square"]
+
+
+def test_the_late_window_compares_pixels_not_prose():
+    """Miss 6: "x ≈ 1451 px" and "x=1449 px" are the same block, and used to score as a clash."""
+    from canopy.digitize.digitizer import _late_window_provenance
+
+    cressman = [_readout_sample("A", "m", x_read="Block 33 (last block, x ≈ 1451 px)"),
+                _readout_sample("A", "m", x_read="Block 33 (last block, x=1449 px)")]
+    out = _late_window_provenance(replace(TARGET, x_hint="last block"), cressman, [],
+                                  x_tick_px=40.0)
+    assert out["late_window_x_agrees"] is True
+    assert out["late_window_x_compared"] == "pixels"
+    assert out["late_window_x_spread_px"] == 2.0
+    assert len(out["late_window_x_read"]) == 2       # the prose still disagreed, and is recorded
+
+    # …and two genuinely different blocks phrased identically do NOT agree
+    apart = [_readout_sample("A", "m", x_read="the last block (x=1451 px)"),
+             _readout_sample("A", "m", x_read="the last block (x=980 px)")]
+    assert _late_window_provenance(replace(TARGET, x_hint="last block"), apart, [],
+                                   x_tick_px=40.0)["late_window_x_agrees"] is False
+
+
+def test_the_legend_supplies_the_dispersion_type_the_mapper_could_not(bar_figure, tmp_path):
+    """Miss 10: UNKNOWN dispersion is a needs_human factory — `_sd_of` returns None for it."""
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    payload = _readout_payload(31.5, 11.0, 12.25, 11.75)
+    payload["legend_says"] = "error bars are the standard deviation of the mean"
+    provider = _scripted(payload, _coord_payload(bar_figure, view.scale))
+    blind = SOURCE.model_copy(update={"error_bar_type": DispersionType.UNKNOWN})
+    out = digitize(_client(provider), paper, fig, TARGET, source=blind, dataset=DATASET,
+                   out_dir=tmp_path, result=True)
+    ensemble = next(c for c in out.candidates if c.extractor_id == "digitize:ensemble")
+    assert ensemble.dispersion_type is DispersionType.SD
+    assert ensemble.pixel_provenance["dispersion_type_from"] == "legend"
+    assert ensemble.status == "found", "the legend agreeing with itself is not a conflict"

@@ -917,3 +917,19 @@ def test_an_extract_that_finished_is_marked_complete(tmp_path, papers_dir, fake_
     assert payload["complete"] is True
     assert payload["cells_extracted"] and not payload["cells_budget_exhausted"]
     assert stage_done(out, paper.paper_id, "extract") is True
+
+
+def test_a_figure_only_cell_does_not_buy_three_text_calls(tmp_path):
+    """Miss 9: Cressman's aftereffect bought four text readings of a cell with no printed values."""
+    from canopy.models import Source, SourceKind
+    from canopy.pipeline.run import _has_printed_source
+
+    figures = [Source(kind=SourceKind.figure_bar, page=6, locator="Fig 3b", figure_id="fig03"),
+               Source(kind=SourceKind.figure_points, page=9, locator="Fig 5", figure_id="fig05")]
+    assert _has_printed_source(figures) is False
+    assert _has_printed_source([*figures,
+                                Source(kind=SourceKind.text_mean_sd, page=3, locator="Results")])
+    assert _has_printed_source([Source(kind=SourceKind.table, page=4, locator="Table 1")])
+    # a source of a kind nobody recognised is a location a human has to route: still worth reading
+    assert _has_printed_source([Source(kind=SourceKind.unknown, page=4, locator="fitted model")])
+    assert _has_printed_source([]) is False
