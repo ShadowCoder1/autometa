@@ -899,11 +899,17 @@ def test_digitize_is_ambiguous_not_absent_when_verification_drops_every_route(ba
                                                                              tmp_path):
     paper, fig = _paper_for(bar_figure)
     view = FigureView(bar_figure["path"])
+    # every reader names the pixel it read at, so each mark is the reader's own claim and a
+    # verdict on it is a verdict on the reader (a mark at a borrowed x convicts nobody)
+    coords = _coord_payload(bar_figure, view.scale)
+    readout = _readout_payload(31.5, 11.0, 12.25, 11.75)
+    for row, cg in zip(readout["groups"], coords["groups"]):
+        row["x_read"] = f"the bar at x≈{int(cg['x_px'])} px"
 
     def respond(request):
         system = _system_of(request)
         if "read numeric values" in system:
-            return _submit(_readout_payload(31.5, 11.0, 12.25, 11.75))
+            return _submit(readout)
         if "locate features" in system:
             return _submit(_coord_payload(bar_figure, view.scale))
         verdicts = [{"number": int(line.split(".")[0]), "verdict": "wrong_series",
