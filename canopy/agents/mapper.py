@@ -43,7 +43,7 @@ from ..llm.errors import LLMError
 from ..llm.context import FILES_API_BETA, figure_blocks, text_block
 from ..models import (AnalysisMetric, Citation, DatasetSpec, DispersionType, ErrorBarScope,
                       ExposureOrder, GroupSpec, OutcomeSources, Protocol, RosterDecision, Source,
-                      SourceKind, StudyMap, XAxisKind)
+                      SourceKind, SourceRole, StudyMap, XAxisKind)
 from . import load_prompt, render_prompt
 
 __all__ = ["map_study", "protocol_text", "roster_text", "roster_entries", "dataset_text",
@@ -97,7 +97,7 @@ _SOURCE_SCHEMA: dict[str, Any] = {
     "type": "object", "additionalProperties": False,
     "required": ["kind", "page", "locator", "quote", "figure_id", "table_id", "error_bar_type",
                  "error_bar_scope", "error_bar_evidence", "analysis_metric", "values_in_text",
-                 "x_axis_kind", "notes"],
+                 "x_axis_kind", "role", "notes"],
     "properties": {
         "kind": _enum([k.value for k in SourceKind]),
         "page": {"type": "integer"},
@@ -111,6 +111,7 @@ _SOURCE_SCHEMA: dict[str, Any] = {
         "error_bar_evidence": {"type": "string"},
         "analysis_metric": _enum(get_args(AnalysisMetric)),
         "values_in_text": {"type": "string"},
+        "role": _enum(get_args(SourceRole)),
         "notes": {"type": "string"},
     },
 }

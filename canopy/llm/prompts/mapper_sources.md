@@ -72,6 +72,17 @@ route it, so quote it well.
 baseline, baseline-corrected values, values expressed as a percentage of the manipulation, or
 unknown. Locations can differ within one outcome — record what each one shows.
 
+`role` says what the location IS for this outcome, and it decides whether a number is read there:
+
+* `value` — the outcome's own number for the two groups can be read at this location. This is
+  the default and the only role an extractor reads a value from.
+* `baseline` — a pre-manipulation, control-condition or aligned/veridical series plotted or
+  printed beside the outcome (the aligned-cursor curve next to the rotated one; a pre-test next to
+  a post-test). It could correct the value; it is not the value. Listing it as `value` puts a
+  baseline number where the outcome should be.
+* `context` — a location that defines the measurement window, names the blocks, or reports a
+  test with no group values printed. Useful to a reader; nothing to extract.
+
 ### Error bars
 For every source that has a dispersion (figure error bars, table ±, text ±):
 

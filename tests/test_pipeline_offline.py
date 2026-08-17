@@ -623,6 +623,54 @@ def test_the_methods_paragraph_reports_the_spend_the_manifest_recorded(tmp_path,
     assert f"{manifest.n_llm_calls}" in html
 
 
+def test_a_baseline_source_is_kept_for_the_record_and_never_read_as_the_value(
+        tmp_path, papers_dir, fake_specs):
+    """Cressman's Fig. 3a plots the aligned-cursor (baseline) curves beside the misaligned ones.
+
+    The map listed both under late adaptation — the baseline "for baseline correction" — and the
+    extractor digitised the baseline as if it were the outcome (3.9° beside 31.4°). A source now
+    says what it is; only a `value` source is read for the number.
+    """
+    from canopy.pipeline.run import run_pipeline
+
+    router = fake_router(fake_specs)
+    seen: dict[str, int] = {"digitize_calls": 0}
+
+    def with_baseline(request: LLMRequest) -> Any:
+        payload = router(request)
+        system = " ".join(str(b.get("text", "")) for m in request.messages
+                          for b in (m.get("content") if isinstance(m.get("content"), list) else [])
+                          if isinstance(b, dict))
+        if isinstance(payload, dict) and payload.get("datasets") \
+                and "outcomes" in (payload["datasets"][0] or {}):
+            for d in payload["datasets"]:
+                for o in d.get("outcomes") or []:
+                    twin = dict(o["sources"][0])
+                    twin["locator"] = "aligned-cursor baseline curves"
+                    twin["role"] = "baseline"
+                    o["sources"] = list(o["sources"]) + [twin]
+        if "read numeric values" in system or "locate features" in system:
+            seen["digitize_calls"] += 1
+        return payload
+
+    client = LLMClient(provider=FakeProvider([with_baseline]), allow_live=True, cache_dir=None)
+    out = tmp_path / "run"
+    manifest = run_pipeline(papers_dir, PROTOCOL, out, client=client, concurrency=1)
+    warnings = [w for w in manifest.papers[0].warnings if "baseline source" in w]
+    assert warnings, manifest.papers[0].warnings
+    assert "not read for the value" in warnings[0]
+    # the map still carries the baseline location for a reader
+    study = json.loads((out / "papers" / manifest.papers[0].paper_id[:12] / "map.json")
+                       .read_text())["study"]
+    roles = [src.get("role") for d in study["datasets"] for o in d["outcomes"]
+             for src in o["sources"]]
+    assert "baseline" in roles and "value" in roles
+    # …and no candidate was ever produced from it
+    extract = json.loads((out / "papers" / manifest.papers[0].paper_id[:12] / "extract.json")
+                         .read_text())
+    assert not [c for c in extract["candidates"] if "aligned-cursor" in str(c.get("locator", ""))]
+
+
 def test_an_eligible_paper_with_no_dataset_never_leaves_the_run_in_silence(
         tmp_path, papers_dir, fake_specs):
     """It contributes no row, so it has to appear in the exclusions table and say why.

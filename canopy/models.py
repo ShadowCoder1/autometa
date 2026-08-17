@@ -63,6 +63,12 @@ AnalysisMetric = Literal["endpoint", "change_from_baseline", "baseline_corrected
                          "percent_of_perturbation", "unknown"]
 ErrorBarScope = Literal["between_subject", "within_subject_normalized", "unknown"]
 ErrorBarAgreement = Literal["agreed", "conflict", "unconfirmed"]
+#: what a source IS for the outcome it is listed under. `value` — the outcome's own number for
+#: the groups can be read here; `baseline` — a pre-manipulation or control series that could
+#: correct the value but is not the value (an aligned-cursor curve beside the rotated one, a
+#: pre-test beside a post-test); `context` — a location that defines the window, names the
+#: blocks, or reports a test with no group values. Only `value` sources are read for the number.
+SourceRole = Literal["value", "baseline", "context", "unknown"]
 WhiskerDefinition = Literal["min_max", "iqr_1_5", "percentile_5_95", "sd", "se", "ci", "unknown"]
 TestDesign = Literal["independent_t", "one_way_between", "mixed_main_effect", "interaction",
                      "ancova", "paired", "welch", "unknown"]
@@ -213,6 +219,10 @@ class Source(CanopyModel):
     values_in_text: str = ""                    # verbatim values if printed
     #: set in code: did a second agent independently confirm `error_bar_type` for this location?
     error_bar_agreement: ErrorBarAgreement = "unconfirmed"
+    #: `value` unless the mapper says otherwise. A baseline series listed "for baseline
+    #: correction" was read as the outcome itself once (Cressman's aligned-cursor curves, 3.9°,
+    #: beside the misaligned curves' 31.4°) — the map knew, and had no field to say it in.
+    role: SourceRole = "value"
     notes: str = ""
 
 

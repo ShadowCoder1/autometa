@@ -274,24 +274,35 @@ def _extract_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
     """
     key = sources.outcome_key
     out = out if out is not None else []
+    # only the sources the map says carry the VALUE are read for it. A baseline plotted beside
+    # the outcome, or a location that only defines the window, stays on the record for a reader
+    # and is named here: the aligned-cursor curves of Cressman's Fig. 3a were digitised as late
+    # adaptation (3.9° beside the misaligned curves' 31.4°) before the map could say which was
+    # which.
+    readable = [s for s in sources.sources if s.role in ("value", "unknown")]
+    for skipped in sources.sources:
+        if skipped.role not in ("value", "unknown"):
+            status.warnings.append(
+                f"{dataset.dataset_id}/{key}: {skipped.locator[:80]!r} is a {skipped.role} "
+                f"source — kept for the record, not read for the value")
     # the two heterogeneous text readings the vote needs (different model AND different prompt) —
     # bought only when there is something printed to read. A cell whose only source is a figure
     # used to buy three text calls and get three `not_on_these_pages` answers back (critique
     # miss 9); the figure routes are what carry such a cell, and they are unaffected.
-    if _has_printed_source(sources.sources):
+    if _has_printed_source(readable):
         out.extend(extract_group_stats(ctx.client, paper, ctx.protocol, dataset, key,
-                                       sources.sources, variant="table_first",
+                                       readable, variant="table_first",
                                        model=ctx.models["primary"]))
         out.extend(extract_group_stats(ctx.client, paper, ctx.protocol, dataset, key,
-                                       sources.sources, variant="narrative_first",
+                                       readable, variant="narrative_first",
                                        model=ctx.models["secondary"]))
         out.extend(extract_test_statistics(ctx.client, paper, ctx.protocol, dataset, key,
-                                           sources.sources, model=ctx.models["primary"]))
+                                           readable, model=ctx.models["primary"]))
     else:
         status.warnings.append(
             f"{dataset.dataset_id}/{key}: every source the mapper found for this outcome is a "
             f"figure, so the text and statistic readers were not bought")
-    for source in sources.sources:
+    for source in readable:
         if source.kind not in FIGURE_KINDS and not source.figure_id:
             continue
         figure = _figure(paper, source.figure_id or "")

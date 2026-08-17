@@ -1474,15 +1474,44 @@ def _corroborate_vector_whiskers(samples: list[RouteSample], px_units: float) ->
 
 
 # ----------------------------------------------------------------------------- overlay verify
+def _own_x_px(s: RouteSample, scale: float) -> float | None:
+    """The x THIS sample read at, in crop pixels: its `x_px`, or the pixel it named in prose.
+
+    A read-out has no `x_px` field; it says where it read in `x_read` ("episode 20 (last filled
+    square, x≈1242 px)"), in the pixels of the image it was shown, which is the crop scaled by
+    `scale`. That is the reader's own claim about x, and the only x a `wrong_x` verdict on its
+    mark can fairly be about.
+    """
+    if s.x_px is not None:
+        return float(s.x_px)
+    match = _X_PX_RE.search(str(s.extra.get("x_read", "")))
+    if match and scale > 0:
+        return float(match.group(1)) / scale
+    return None
+
+
 def _overlay_marks(samples: Sequence[RouteSample], cal: AxisCalibration | None,
-                   core: _Core, labels: dict[str, str]) -> tuple[list[dict], list[list[int]]]:
-    """One numbered mark per distinct resolved pixel, with the sample indices behind each."""
+                   core: _Core, labels: dict[str, str], scale: float = 1.0
+                   ) -> tuple[list[dict], list[list[int]]]:
+    """One numbered mark per distinct resolved pixel, with the sample indices behind each.
+
+    Every mark records whether each owner's x was its OWN (`x_px`, or the pixel it named) or
+    BORROWED from another sample of the group. Bock's Fig. 1: three read-outs said "episode 20,
+    x≈1242 px" and 32.0; their mark was drawn at the coordinate route's x≈970 (episode 14), the
+    verifier said "wrong x" — correctly, of the mark — and all three readers were dropped for a
+    position that was never theirs.
+    """
     marks: list[dict[str, Any]] = []
     owners: list[list[int]] = []
+    own: dict[int, float] = {}
+    for i, s in enumerate(samples):
+        x = _own_x_px(s, scale)
+        if x is not None:
+            own[i] = x
     x_by_group: dict[str, float] = {}
-    for s in samples:
-        if s.x_px is not None:
-            x_by_group.setdefault(s.group, s.x_px)
+    for i, s in enumerate(samples):
+        if i in own:
+            x_by_group.setdefault(s.group, own[i])
     mid_x = (core.axes.plot_bbox[0] + core.axes.plot_bbox[2]) / 2.0
     for i, s in enumerate(samples):
         if s.dropped or s.mean is None:
@@ -1492,19 +1521,22 @@ def _overlay_marks(samples: Sequence[RouteSample], cal: AxisCalibration | None,
             if cal is None:
                 continue
             y = value_to_px(cal, s.mean)
-        x = s.x_px if s.x_px is not None else x_by_group.get(s.group, mid_x)
+        borrowed = i not in own
+        x = own.get(i, x_by_group.get(s.group, mid_x))
         for j, mark in enumerate(marks):
             if abs(mark["x"] - x) <= _MARK_MERGE_PX and abs(mark["y"] - y) <= _MARK_MERGE_PX:
                 owners[j].append(i)
                 mark["_routes"].append(_route_tag(s))
+                mark["_borrowed"][i] = borrowed
                 break
         else:
             marks.append({"x": x, "y": y, "kind": "point", "_routes": [_route_tag(s)],
-                          "_group": s.group})
+                          "_group": s.group, "_borrowed": {i: borrowed}})
             owners.append([i])
     for mark in marks:
         who = ", ".join(dict.fromkeys(mark.pop("_routes")))
         group = mark.pop("_group")
+        mark["borrowed_x"] = mark.pop("_borrowed")            # sample index → borrowed?
         mark["label"] = (f"group {group} ({labels.get(group, '?')}) mean, read by {who}")
     return marks, owners
 
@@ -2106,7 +2138,7 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
         px_units=px_units, series_conflict=bool(series_info.get("conflict")))
     if do_verify:
         for iteration in range(1, MAX_OVERLAY_ITERATIONS + 1):
-            marks, owners = _overlay_marks(samples, cal, core, labels)
+            marks, owners = _overlay_marks(samples, cal, core, labels, scale=view.scale)
             if not marks:
                 break
             out_png = work / f"{fig.id}.overlay{iteration}.png"
@@ -2138,18 +2170,27 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
                         samples[idx].extra["overlay_disputed"] = f"{v.verdict} — {v.reason}"
                 break
             for v in bad:
+                borrowed = marks[v.number - 1].get("borrowed_x") or {}
                 for idx in owners[v.number - 1]:
-                    if not samples[idx].dropped:
-                        samples[idx].dropped = True
-                        samples[idx].drop_reason = f"overlay verify: {v.verdict} — {v.reason}"
-                        dropped += 1
+                    if samples[idx].dropped:
+                        continue
+                    if v.verdict == "wrong_x" and borrowed.get(idx, False):
+                        # the mark's x was borrowed from another sample of the group; a verdict
+                        # about that x says nothing about a reader that never claimed it. It is
+                        # recorded, and the reader stands until judged at its own x
+                        samples[idx].extra["overlay_disputed"] = (
+                            f"{v.verdict} at a borrowed x — {v.reason}")
+                        continue
+                    samples[idx].dropped = True
+                    samples[idx].drop_reason = f"overlay verify: {v.verdict} — {v.reason}"
+                    dropped += 1
             verify_log[-1]["dropped_samples"] = dropped
             if not dropped or not any(s.usable for s in samples):
                 break
     else:
         # the model is not asked, but the picture is still drawn: it costs nothing, and it is what
         # a reviewer opens to see where the routes landed
-        marks, _ = _overlay_marks(samples, cal, core, labels)
+        marks, _ = _overlay_marks(samples, cal, core, labels, scale=view.scale)
         if marks:
             out_png = work / f"{fig.id}.overlay1.png"
             draw_overlay(crop, marks, out_png)

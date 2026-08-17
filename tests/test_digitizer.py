@@ -592,6 +592,82 @@ def test_the_overlay_cannot_convict_a_reader_under_an_unconfirmed_calibration(ba
     assert calls["verify"] == 1                                # no recompute loop either
 
 
+def test_a_wrong_x_verdict_convicts_only_the_sample_whose_x_it_was(bar_figure, tmp_path):
+    """Bock 2005 Fig. 1 in `runs/rerun-fixed`: three read-outs said "episode 20, x≈1242 px" and
+    32.0 — the published value to three decimals — and their mark was drawn at the coordinate
+    route's x (episode 14). The verifier said "wrong x", correctly, of the mark; all three readers
+    were dropped for a position that was never theirs, and the cell resolved to nothing.
+    A reader's mark sits at the reader's own x, and a wrong-x verdict on a borrowed x convicts
+    nobody who did not claim it."""
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    wrong_x = _coord_payload(bar_figure, view.scale)
+    for g in wrong_x["groups"]:                       # the coordinate route lands 120 px left
+        g["x_px"] = g["x_px"] - 120.0
+    readout = _readout_payload(31.5, 11.0, 12.25, 11.75)
+    for g in readout["groups"]:                       # …the readers say where THEY read, in prose
+        g["x_read"] = f"last block ({'old' if g['group'] == 'A' else 'young'} bar, x≈{int(_coord_payload(bar_figure, view.scale)['groups'][0 if g['group']=='A' else 1]['x_px'])} px)"
+    calls = {"verify": 0}
+
+    def respond(request):
+        system = _system_of(request)
+        if "read numeric values" in system:
+            return _submit(readout)
+        if "locate features" in system:
+            return _submit(wrong_x)
+        calls["verify"] += 1
+        verdicts = []
+        for line in system.splitlines():
+            head, _, rest = line.partition(". ")
+            if head.strip().isdigit():
+                # the verifier condemns the mark that only the coordinate route stands behind
+                only_coords = "vlm_coords" in rest and "readout" not in rest
+                verdicts.append({"number": int(head.strip()),
+                                 "verdict": "wrong_x" if only_coords else "ok",
+                                 "reason": "sits at the wrong block" if only_coords else "on it"})
+        return _submit({"marks": verdicts, "notes": ""})
+
+    out = digitize(_client(FakeProvider([respond])), paper, fig, TARGET, source=SOURCE,
+                   dataset=DATASET, out_dir=tmp_path, result=True,
+                   settings=DigitizeSettings(overlay_verify="always"))
+    readers = [s for s in out.samples if s.route == "D"]
+    coords = [s for s in out.samples if s.route == "C"]
+    assert readers and not any(s.dropped for s in readers), \
+        [s.drop_reason for s in readers]
+    assert coords and all(s.dropped for s in coords), "the route that WAS at the wrong x is dropped"
+    ens = _ensembles(out)
+    assert ens["A"].mean == pytest.approx(31.5, abs=MEAN_TOL)
+
+
+def test_a_reader_with_no_x_of_its_own_borrows_one_but_is_not_convicted_on_it(bar_figure, tmp_path):
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    wrong_x = _coord_payload(bar_figure, view.scale)
+    for g in wrong_x["groups"]:
+        g["x_px"] = g["x_px"] - 120.0
+    readout = _readout_payload(31.5, 11.0, 12.25, 11.75)
+    for g in readout["groups"]:
+        g["x_read"] = "the last block"                # no pixel named: x is borrowed
+
+    def respond(request):
+        system = _system_of(request)
+        if "read numeric values" in system:
+            return _submit(readout)
+        if "locate features" in system:
+            return _submit(wrong_x)
+        verdicts = [{"number": int(l.partition(". ")[0].strip()), "verdict": "wrong_x",
+                     "reason": "wrong block"} for l in system.splitlines()
+                    if l.partition(". ")[0].strip().isdigit()]
+        return _submit({"marks": verdicts, "notes": ""})
+
+    out = digitize(_client(FakeProvider([respond])), paper, fig, TARGET, source=SOURCE,
+                   dataset=DATASET, out_dir=tmp_path, result=True,
+                   settings=DigitizeSettings(overlay_verify="always"))
+    readers = [s for s in out.samples if s.route == "D"]
+    assert readers and not any(s.dropped for s in readers)
+    assert all("borrowed x" in str(s.extra.get("overlay_disputed", "")) for s in readers)
+
+
 def test_digitize_flags_narrow_bars(tmp_path):
     plt = _mpl()
     fig_, ax = plt.subplots(figsize=(5.0, 4.0), dpi=100)
