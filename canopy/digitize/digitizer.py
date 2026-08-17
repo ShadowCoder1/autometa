@@ -140,9 +140,15 @@ def ensemble_stats(values: Sequence[float]) -> tuple[float, float]:
     return med, _MAD_TO_SIGMA * mad
 
 
-#: an "arm" shorter than this fraction of the other one is not the far end of a symmetric error
-#: bar: it is the marker's own edge, the bar top, or the axis line the cap walk ran into
-_ONE_SIDED_RATIO = 0.5
+#: An error bar is `mean ± half-length`: its two arms are the SAME length by construction, up to
+#: how precisely each cap can be located. So two arms are two arms only while they agree, and
+#: "agree" means a couple of pixels' worth (the caller's `floor`) or a quarter of the longer arm,
+#: whichever is larger — NOT the 2:1 disparity the first cut allowed. A shorter arm outside that
+#: tolerance is not half of a symmetric bar; it is whatever the cap walk stopped on (the marker's
+#: own edge, the bar top, the axis line, the next series' mark), and averaging it in halves the
+#: spread. In `runs/proof` a genuine 7.78-deg arm was averaged with a 4.82-deg non-arm at ratio
+#: 0.62 and reported as 6.30.
+_ARM_ASYMMETRY_FRACTION = 0.25
 
 
 def resolve_arms(up: float | None, down: float | None, floor: float = 0.0
@@ -157,8 +163,13 @@ def resolve_arms(up: float | None, down: float | None, floor: float = 0.0
     routes that agreed about the means look like a disagreement (task 13-14 report, limitation 7a).
 
     So an arm counts only if it is longer than `floor` (in the same units as the arms — pass two
-    pixels' worth) and at least `_ONE_SIDED_RATIO` of the other. What survives alone IS the
+    pixels' worth) and within `_ARM_ASYMMETRY_FRACTION` of the other. What survives alone IS the
     half-length, and `one_sided` says which side it was read from.
+
+    When the two arms disagree, the LONGER one is the reading. That is not a coin toss: every way
+    a cap walk goes wrong stops it EARLY (on the marker's own edge, on the bar it grew out of, on
+    a neighbouring series' mark), so the short arm is the suspect one. It is also the conservative
+    direction — a larger dispersion shrinks |d| rather than inflating it.
     """
     arms = {"up": up, "down": down}
     live = {side: abs(v) for side, v in arms.items() if v is not None and abs(v) > floor}
@@ -169,7 +180,8 @@ def resolve_arms(up: float | None, down: float | None, floor: float = 0.0
         return value, side
     longest = max(live, key=lambda s: live[s])
     shortest = min(live, key=lambda s: live[s])
-    if live[shortest] < _ONE_SIDED_RATIO * live[longest]:
+    slack = max(abs(float(floor)), _ARM_ASYMMETRY_FRACTION * live[longest])
+    if live[longest] - live[shortest] > slack:
         return live[longest], longest
     return statistics.mean(live.values()), None
 
@@ -707,6 +719,49 @@ def _collapse_points(row: Any) -> tuple[float | None, float | None, int]:
             len(means))
 
 
+#: words with which a reader says a cap was NOT measured — it was hidden, or it was made up
+_CAP_UNMEASURED = ("hidden", "obscured", "occluded", "coincident", "shared", "overlap",
+                   "inferred", "assumed", "symmetry", "not drawn", "not visible", "invisible",
+                   "cut off", "clipped", "estimated", "guessed", "behind")
+#: …and words with which it says the opposite, which veto the clause they appear in
+_CAP_MEASURED = ("visible", "drawn", "seen", "measured", "read", "clear", "distinct")
+_CAP_NOUNS = ("cap", "whisker", "error bar", "errorbar", "arm", "error", "bar")
+_CAP_SIDES = {"up": ("upper", "top", "above", "positive"),
+              "down": ("lower", "bottom", "below", "negative")}
+_CLAUSE_SPLIT = __import__("re").compile(r"[,;.\n]")
+
+
+def _unmeasured_cap_side(text: str) -> str | None:
+    """Which cap the reader's own prose says it did not measure — `"up"`, `"down"`, or None.
+
+    The read-out prompt asks for the cap on an undrawn side to be left null. When the model fills
+    it in anyway and then admits so in `notes`, the fabricated cap is what makes a one-armed bar
+    look two-armed: in `runs/proof` a reader reported `error_sides: "both"` with
+    `error_lower: -29.0` and the note *"lower cap inferred by symmetry"*, and another reported
+    `"both"` beside *"upper error cap hidden, half-length inferred from the visible lower arm"*.
+    A cap the reader says it did not see is not evidence, whatever the enum beside it says.
+
+    Read clause by clause, because one sentence often reports both states ("upper cap hidden,
+    half-length from the visible lower arm"). A clause counts only if it names a side, names a
+    cap-like thing, says the cap is absent or invented, and does NOT also say it was seen. If
+    both sides come out unmeasured the prose is not usable — a bar with no arms at all is not a
+    reading — and None is returned.
+    """
+    found: set[str] = set()
+    for clause in _CLAUSE_SPLIT.split((text or "").lower()):
+        if not any(noun in clause for noun in _CAP_NOUNS):
+            continue
+        if not any(word in clause for word in _CAP_UNMEASURED):
+            continue
+        if any(word in clause for word in _CAP_MEASURED):
+            continue
+        sides = [side for side, words in _CAP_SIDES.items()
+                 if any(word in clause for word in words)]
+        if len(sides) == 1:
+            found.add(sides[0])
+    return found.pop() if len(found) == 1 else None
+
+
 def _samples_from_readout(reading: ReadOut, collapse: bool = False) -> list[RouteSample]:
     out: list[RouteSample] = []
     for group in GROUPS:
@@ -737,14 +792,23 @@ def _samples_from_readout(reading: ReadOut, collapse: bool = False) -> list[Rout
             out.append(sample)
             continue
         error, one_sided = row.error_half_length, None
+        unmeasured = _unmeasured_cap_side(row.notes)
         if row.mean is not None:
             up = None if row.error_upper is None else abs(row.error_upper - row.mean)
             down = None if row.error_lower is None else abs(row.error_lower - row.mean)
+            if unmeasured == "up":
+                up = None
+            elif unmeasured == "down":
+                down = None
             resolved, one_sided = resolve_arms(up, down)
             if error is None:                     # the model gave caps but no half-length
                 error = resolved
         if row.error_sides in ("up", "down"):     # the model was asked outright, and answered
             one_sided = row.error_sides
+        if unmeasured is not None:
+            # the prose beats the enum when they contradict: `error_sides` is one token the model
+            # picked, the note is the model reporting what it could actually SEE
+            one_sided = "down" if unmeasured == "up" else "up"
         out.append(RouteSample(
             route="D", group=group, model=reading.model, variant=reading.variant,
             sample=reading.sample,
@@ -758,6 +822,7 @@ def _samples_from_readout(reading: ReadOut, collapse: bool = False) -> list[Rout
                    "tick_labels": list(reading.tick_labels), "unit": reading.unit,
                    "panel": reading.panel, "same_prompt_resample": reading.sample > 0,
                    "error_sides": row.error_sides, "axis_read": reading.axis_read,
+                   "unmeasured_cap": unmeasured,
                    "axis_direction_note": reading.axis_direction_note}))
     return out
 
@@ -802,9 +867,47 @@ def _marker_floor_px(core: _Core, x: float | None, y: float | None) -> float:
     return max(2.0, 0.5 * float(marker.size))
 
 
+def _drop_caps_on_other_series(samples: Sequence[RouteSample], core: _Core) -> None:
+    """Blank any cap that has landed on ANOTHER series' datum: that ink is the other mark.
+
+    Overlapping series are the ordinary case in a two-group figure, and a cap walk that starts at
+    one series' datum runs into the other series' marker before it finds anything else. What comes
+    back is not a short arm — it is a measurement of the wrong object, and `resolve_arms` cannot
+    tell that from the two lengths alone. In `runs/proof` this turned Bock 2005's old group from a
+    genuine 7.78-deg up arm into a fabricated symmetric 6.30, and the route said so itself:
+    *"lower cap taken as the upper of the coincident cap pair near y=729"*, where y=723.6 is the
+    young group's own triangle.
+
+    "Landed on" is deliberately literal: the cap sits inside the other datum's own marker glyph
+    (half a marker height, never under two pixels) AND in the same column the walk ran down
+    (marks a column apart cannot be what a vertical walk stopped on). Dropping the arm is safe —
+    a symmetric bar reads the same half-length from either side, so the cost of being wrong is
+    the loss of one corroborating arm, not of the measurement.
+    """
+    for sample in samples:
+        for other in samples:
+            if other is sample or other.group == sample.group:
+                continue
+            if other.y_px is None or sample.x_px is None or other.x_px is None:
+                continue
+            near_y = max(2.0, _marker_floor_px(core, other.x_px, other.y_px))
+            if abs(other.x_px - sample.x_px) > max(4.0, 2.0 * near_y):
+                continue
+            for side, attr in (("upper", "cap_top_px"), ("lower", "cap_bottom_px")):
+                cap = getattr(sample, attr)
+                if cap is None or abs(cap - other.y_px) > near_y:
+                    continue
+                setattr(sample, attr, None)
+                sample.notes = (f"{sample.notes}; the {side} cap fell on group {other.group}'s "
+                                f"own mark (y {other.y_px:.1f}), so it is that series' ink, not "
+                                f"this one's whisker").strip("; ")
+                sample.extra.setdefault("caps_on_other_series", []).append(side)
+
+
 def _samples_from_coords(coord: CoordReadout, core: _Core, cal: AxisCalibration | None,
                          cal_source: str) -> list[RouteSample]:
     out: list[RouteSample] = []
+    floors: list[tuple[RouteSample, float]] = []
     for group in GROUPS:
         row = coord.group(group)
         if row is None or row.y_px is None:
@@ -829,14 +932,18 @@ def _samples_from_coords(coord: CoordReadout, core: _Core, cal: AxisCalibration 
         sample.cap_top_px = _closest(top, found_top)
         sample.cap_bottom_px = _closest(bottom, found_bottom)
         sample.extra["cap_source"] = {"model": [top, bottom], "cv": [found_top, found_bottom]}
+        out.append(sample)
+        floors.append((sample, _marker_floor_px(core, x, snapped)))
+    # every group's datum has to be known before any cap can be judged against it, so the guard
+    # and the conversion both run once the loop has seen the whole reading
+    _drop_caps_on_other_series(out, core)
+    for sample, floor_px in floors:
         if cal is not None:
             sample.mean, sample.error, sample.one_sided = _values_from_pixels(
-                cal, snapped, sample.cap_top_px, sample.cap_bottom_px,
-                floor_px=_marker_floor_px(core, x, snapped))
-            sample.sigma = _pixel_sigma(cal, snapped)
+                cal, sample.y_px, sample.cap_top_px, sample.cap_bottom_px, floor_px=floor_px)
+            sample.sigma = _pixel_sigma(cal, sample.y_px)
         else:
             sample.notes = (sample.notes + " no y calibration; pixels only").strip()
-        out.append(sample)
     return out
 
 
@@ -886,6 +993,7 @@ def _samples_from_raster(coord: CoordReadout | None, core: _Core,
     if cal is None or coord is None or not (core.bars or core.markers):
         return []
     out: list[RouteSample] = []
+    floors: list[tuple[RouteSample, float]] = []
     span = abs(core.axes.plot_bbox[3] - core.axes.plot_bbox[1]) or float(core.gray.shape[0])
     for group in GROUPS:
         row = coord.group(group)
@@ -917,12 +1025,14 @@ def _samples_from_raster(coord: CoordReadout | None, core: _Core,
             sample.extra = {"marker": marker.to_dict()}
             top, bottom = find_cap_ends(core.gray, marker.x, marker.y, max_len_px=span)
         sample.cap_top_px, sample.cap_bottom_px = top, bottom
-        sample.mean, sample.error, sample.one_sided = _values_from_pixels(
-            cal, sample.y_px, top, bottom,
-            floor_px=_marker_floor_px(core, sample.x_px, sample.y_px))
-        sample.sigma = _pixel_sigma(cal, sample.y_px)
         sample.snap_conf = 1.0
         out.append(sample)
+        floors.append((sample, _marker_floor_px(core, sample.x_px, sample.y_px)))
+    _drop_caps_on_other_series(out, core)
+    for sample, floor_px in floors:
+        sample.mean, sample.error, sample.one_sided = _values_from_pixels(
+            cal, sample.y_px, sample.cap_top_px, sample.cap_bottom_px, floor_px=floor_px)
+        sample.sigma = _pixel_sigma(cal, sample.y_px)
     return out
 
 

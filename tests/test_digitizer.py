@@ -1343,6 +1343,114 @@ def test_a_figure_with_no_calibration_at_all_says_so_on_the_row(bar_figure):
     assert "no y calibration" not in seeing.notes
 
 
+# ------------------------------------------------------------------ F2: dispersion arms
+def test_two_arms_that_do_not_agree_are_not_a_symmetric_bar():
+    """F2, with the numbers from `runs/proof` Bock 2005 Fig. 1, group A (aftereffect).
+
+    Route C reported `y=692.137, cap_top=631.0, cap_bottom=730.0` on a ladder of 0.1272 deg/px:
+    a 7.78-deg up arm and a 4.82-deg "down arm" that is really the young group's triangle. At a
+    ratio of 0.62 the old rule kept both and returned their mean, 6.30 — a bar that corresponds
+    to no ink in the panel. An error bar is `mean ± half-length`, so its arms are equal by
+    construction; a 61% disparity is not measurement noise.
+    """
+    from canopy.digitize.digitizer import resolve_arms
+
+    error, side = resolve_arms(7.783, 4.821, floor=0.254)
+    assert error == pytest.approx(7.783) and side == "up"
+
+
+def test_two_arms_that_differ_only_by_pixel_noise_are_still_averaged():
+    """The other half of the same rule: a genuinely symmetric bar must not become one-armed."""
+    from canopy.digitize.digitizer import resolve_arms
+
+    error, side = resolve_arms(11.0, 10.6, floor=0.254)
+    assert error == pytest.approx(10.8) and side is None
+    # a difference under the caller's floor is noise however small the arms are
+    error, side = resolve_arms(0.9, 0.7, floor=0.4)
+    assert error == pytest.approx(0.8) and side is None
+
+
+def _marker(x, y, size=15.0):
+    from canopy.digitize.cv import Marker
+    return Marker(x=x, y=y, colour="#000000", kind="square", size=size)
+
+
+def test_a_cap_that_landed_on_the_other_series_mark_is_not_this_series_whisker():
+    """F2: two series stacked in one column, and the cap walk stops on the wrong one.
+
+    Real geometry from `runs/proof` Bock 2005 Fig. 1, episode 21: the square sits at y 692 and the
+    triangle at y 723.6, 6.4 px from the "lower cap" route C reported for the square. The panel's
+    only real caps are at y 630 (above the square) and y 769 (below the triangle) — I scanned the
+    column. A cap inside another series' glyph is that series' ink.
+    """
+    from canopy.digitize.digitizer import _drop_caps_on_other_series
+
+    core = _core_with(None)
+    core.markers = [_marker(1336.0, 692.1), _marker(1336.0, 723.6)]
+    a = RouteSample(route="C", group="A", x_px=1336.0, y_px=692.137,
+                    cap_top_px=631.0, cap_bottom_px=730.0)
+    b = RouteSample(route="C", group="B", x_px=1336.0, y_px=723.616,
+                    cap_top_px=730.0, cap_bottom_px=769.5)
+    _drop_caps_on_other_series([a, b], core)
+    assert a.cap_top_px == 631.0 and a.cap_bottom_px is None
+    assert "group B" in a.notes and "whisker" in a.notes
+    # …and group B loses only the cap that sits on group A's square, keeping its real lower one
+    assert b.cap_bottom_px == 769.5
+
+
+def test_a_cap_a_column_away_is_left_alone():
+    """The guard is about a vertical walk running into a mark, so it needs the same column."""
+    from canopy.digitize.digitizer import _drop_caps_on_other_series
+
+    core = _core_with(None)
+    core.markers = [_marker(100.0, 200.0), _marker(400.0, 260.0)]
+    a = RouteSample(route="C", group="A", x_px=100.0, y_px=200.0,
+                    cap_top_px=160.0, cap_bottom_px=258.0)
+    b = RouteSample(route="C", group="B", x_px=400.0, y_px=260.0,
+                    cap_top_px=220.0, cap_bottom_px=300.0)
+    _drop_caps_on_other_series([a, b], core)
+    assert a.cap_bottom_px == 258.0 and b.cap_top_px == 220.0
+
+
+@pytest.mark.parametrize("note, side", [
+    ("Marker overlaps the filled young square; upper error cap hidden, half-length inferred "
+     "from the visible lower arm.", "up"),
+    ("lower cap inferred by symmetry", "down"),
+    # a clause naming BOTH sides does not say which cap is missing, so the prose guard declines
+    # to act on it. This real note (`runs/proof`, route C on Bock Fig. 1) is caught instead by
+    # `_drop_caps_on_other_series`, which can see that the cap sits on the other group's mark.
+    ("lower cap taken as the upper of the coincident cap pair near y=729", None),
+    ("both caps clearly visible", None),
+    ("", None),
+    ("the lower panel is not visible in this crop", None),      # no cap named: not about a cap
+    ("upper cap hidden and lower cap hidden", None),            # a bar with no arms is not usable
+    ("error bars are standard deviations", None),
+])
+def test_a_cap_the_reader_says_it_did_not_see_is_read_out_of_its_prose(note, side):
+    """F2/F5: the read-out prompt asks for an undrawn cap to be left null; readers fill it in
+    anyway and then say so in `notes`. A cap the reader admits it invented is not evidence."""
+    from canopy.digitize.digitizer import _unmeasured_cap_side
+
+    assert _unmeasured_cap_side(note) == side
+
+
+def test_a_fabricated_cap_does_not_make_a_one_armed_bar_look_symmetric():
+    """`runs/proof` cache 7258771c…: `error_sides: "both"`, `error_lower: -29.0`, note "lower cap
+    inferred by symmetry". The half-length it measured off the visible arm stands; the topology
+    it asserted does not."""
+    from canopy.digitize.digitizer import _samples_from_readout
+    from canopy.digitize.vlm import GroupReadOut, ReadOut
+
+    reading = ReadOut(groups=[GroupReadOut(
+        group="A", mean=-21.2, error_half_length=7.8, error_upper=-13.4, error_lower=-29.0,
+        error_sides="both", notes="lower cap inferred by symmetry")],
+        model="claude-opus-5", variant="direct")
+    sample = _samples_from_readout(reading)[0]
+    assert sample.error == pytest.approx(7.8), "the measured arm is still the half-length"
+    assert sample.one_sided == "up"
+    assert sample.extra["unmeasured_cap"] == "down"
+
+
 def test_the_marker_floor_rejects_a_cap_inside_the_marker(bar_figure):
     """Bock 2005 route C stopped on the square's own lower edge (acceptance item 9)."""
     from canopy.digitize.digitizer import _values_from_pixels
