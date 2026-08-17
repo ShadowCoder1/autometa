@@ -513,7 +513,16 @@ def _label_groups(crop: np.ndarray, side: str, ticks: list[float] | None,
 
 def _starts_on_band_edge(comps: list[tuple[int, int, int, int]], side: str, edge: float,
                          tol: float = 1.0) -> bool:
-    """Does any kept glyph begin within `tol` px of the band edge the walk stopped at?"""
+    """Does any kept glyph begin within `tol` px of the band edge the walk stopped at?
+
+    This is a CHEAP TRIGGER, not a diagnosis, and by construction it is almost always true: `edge`
+    is where the walk stopped, which is the outer boundary of the widest label, so that label's own
+    outermost glyph sits on it. It is deliberately that way — the question "was a digit cut off?"
+    cannot be answered from this side of the cut, so what decides is the RETRY: the band is re-cut
+    at twice the tolerance and the wider version is kept only when it brings back more ink without
+    doubling the band's extent (`_label_groups`). That accept test is the real check; this only
+    says when it is worth running, and running it costs one more pass over an occupancy array.
+    """
     if side == "left":
         return any(c[0] <= edge + tol for c in comps)
     return any(c[1] + c[3] >= edge - tol for c in comps)

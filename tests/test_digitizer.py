@@ -1531,3 +1531,191 @@ def test_the_sign_of_two_panels_of_one_paper_is_read_off_the_figure_not_assumed(
     assert ensembles["A"].mean == pytest.approx(
         statistics.fmean([m for m, _ in aftereffect_a]), abs=1e-9)
     assert ensembles["A"].dispersion_value > 0, "a half-length is a magnitude"
+
+
+# ------------------------------------------------------------------ review fix: symmetric ladder
+def test_the_magnitude_rule_refuses_a_ladder_the_data_sits_BELOW_as_well_as_above():
+    """The first cut tested the upper side only, in absolute value, so this walked through."""
+    from canopy.digitize.digitizer import _choose_calibration
+
+    ladder = _cal([(268.0, 4.0), (412.0, 3.0), (557.0, 2.0), (702.0, 1.0)])
+    core = _core_with(ladder, rows=[268.0, 412.0, 557.0, 702.0])
+    below = _choose_calibration(core, None, None, [
+        _readout({"A": -31.3, "B": -33.3}, [], variant="direct"),
+        _readout({"A": -31.3, "B": -33.3}, [], variant="ticks_first")])
+    assert below.status == "cal_refuted" and below.refutation["side"] == "below"
+    above = _choose_calibration(core, None, None, [
+        _readout({"A": 31.3, "B": 33.3}, [], variant="direct"),
+        _readout({"A": 31.3, "B": 33.3}, [], variant="ticks_first")])
+    assert above.status == "cal_refuted" and above.refutation["side"] == "above"
+
+
+def test_a_group_that_is_off_the_end_alone_does_not_condemn_the_ladder():
+    """One series off the frame is a bad read of that series; the whole cell off it is the ladder."""
+    from canopy.digitize.digitizer import _choose_calibration
+
+    ladder = _cal([(100.0, 40.0), (200.0, 30.0), (300.0, 20.0), (400.0, 10.0)])
+    core = _core_with(ladder, rows=[100.0, 200.0, 300.0, 400.0])
+    choice = _choose_calibration(core, None, None, [
+        _readout({"A": 25.0, "B": 900.0}, [], variant="direct"),
+        _readout({"A": 25.0, "B": 900.0}, [], variant="ticks_first")])
+    assert choice.status != "cal_refuted"
+
+
+def test_two_readers_reporting_the_same_ladder_outrank_one_tesseract_pass():
+    """A ladder read uniformly too LARGE has values inside its own frame — nothing refutes it.
+
+    What settles it is the other witness: two models reading the same printed labels and agreeing
+    beat one OCR pass. Preferring `cv_ocr` on a tie is what read 45/35/25/15 as 4/3/2/1.
+    """
+    from canopy.digitize.digitizer import _choose_calibration
+
+    inflated = _cal([(500.0, 10.0), (400.0, 20.0), (300.0, 30.0), (200.0, 40.0), (100.0, 50.0)])
+    rows = [100.0, 200.0, 300.0, 400.0, 500.0]
+    core = _core_with(inflated, rows=rows)
+    truth = [5, 4, 3, 2, 1]
+    choice = _choose_calibration(core, None, None, [
+        _readout({"A": 3.0, "B": 4.2}, truth, variant="direct"),
+        _readout({"A": 3.0, "B": 4.2}, truth, variant="ticks_first")])
+    assert choice.source == "readout_ticks"
+    assert sorted(v for _, v in choice.cal.ticks) == [1.0, 2.0, 3.0, 4.0, 5.0]
+    # …and a lone read-out ladder does NOT get to overturn the OCR pass on its own
+    lonely = _choose_calibration(core, None, None,
+                                 [_readout({"A": 3.0}, truth, variant="direct")])
+    assert lonely.source == "cv_ocr"
+
+
+def test_two_series_read_onto_each_others_rows_are_caught():
+    """A clean A/B transposition: both readings are real, both are on the wrong group."""
+    from canopy.digitize.cv import Marker
+    from canopy.digitize.digitizer import _series_identity
+
+    core = _core_with(None)
+    # the OPEN marker is high on the plot (small y), the FILLED one low
+    core.markers = [Marker(x=100.0, y=50.0, colour="#ffffff", kind="open", size=6.0),
+                    Marker(x=100.0, y=250.0, colour="#000000", kind="square", size=6.0)]
+    swapped = [RouteSample(route="C", group="A", model="m", mean=40.0, x_px=100.0, y_px=50.0,
+                           label_read="Young: filled black squares"),
+               RouteSample(route="C", group="B", model="m", mean=10.0, x_px=100.0, y_px=250.0,
+                           label_read="Elderly: open white squares")]
+    info = _series_identity(swapped, core)
+    assert info["transposed"] is True
+    assert "transposed" in " ".join(info["notes"])
+    assert info["conflict"] is False
+
+    right_way = [RouteSample(route="C", group="A", model="m", mean=40.0, x_px=100.0, y_px=50.0,
+                             label_read="Young: open white squares"),
+                 RouteSample(route="C", group="B", model="m", mean=10.0, x_px=100.0, y_px=250.0,
+                             label_read="Elderly: filled black squares")]
+    assert _series_identity(right_way, core)["transposed"] is False
+
+
+def test_a_described_marker_the_pixel_pass_cannot_find_is_actionable_not_prose():
+    """These notes were written and nothing ever read them — the branch was dead."""
+    from canopy.digitize.cv import Marker
+    from canopy.digitize.digitizer import _series_identity
+
+    core = _core_with(None)
+    core.markers = [Marker(x=10.0, y=20.0, colour="#000000", kind="square", size=6.0)]
+    info = _series_identity(
+        [RouteSample(route="D", group="A", model="m", mean=1.0,
+                     label_read="Young: open white circles"),
+         RouteSample(route="D", group="B", model="m", mean=2.0,
+                     label_read="Elderly: filled black squares")], core)
+    assert info["marker_mismatch"] is True
+    assert any("OPEN marker" in note for note in info["notes"])
+
+
+# ------------------------------------------------------------------ acceptance items 13 / 14
+#: Heuer & Hegele 2008, shaped like Fig 2a (adaptation, n = 20/20, SE bars over 8 target
+#: directions) and Fig 2b (aftereffect, same design, OPPOSITE sign).
+#:
+#: **What these payloads are and are not.** They are not a stand-in for the figure: nobody here has
+#: Heuer's per-direction values, and choosing point values that land on the published d and then
+#: asserting that d would be asserting this file's own arithmetic back at itself. What is under
+#: test is the CHAIN — collapse eight points to a mean, average the per-point half-lengths, carry
+#: SE with n through to Cohen's d, and keep the sign — against expectations computed independently
+#: from the same inputs. Whether the digitiser READS Heuer as these numbers is a question only the
+#: live re-run can answer, and the report says so.
+HEUER_2A = {
+    "A": [(19.0, 1.05), (20.5, 1.10), (18.0, 1.00), (21.0, 1.15),
+          (19.5, 1.05), (20.0, 1.10), (18.5, 1.00), (21.5, 1.15)],
+    "B": [(22.0, 1.15), (23.5, 1.20), (21.0, 1.10), (24.0, 1.25),
+          (22.5, 1.15), (23.0, 1.20), (21.5, 1.10), (24.5, 1.25)]}
+HEUER_2B = {
+    "A": [(-5.0, 0.62), (-4.5, 0.60), (-5.5, 0.64), (-4.8, 0.61),
+          (-5.2, 0.63), (-4.6, 0.60), (-5.4, 0.64), (-5.0, 0.62)],
+    "B": [(-5.8, 0.66), (-5.4, 0.64), (-6.2, 0.68), (-5.6, 0.65),
+          (-6.0, 0.67), (-5.5, 0.64), (-6.1, 0.68), (-5.9, 0.66)]}
+
+
+def _expected_d(points: dict, n: int = 20) -> float:
+    """Cohen's d from the per-point readings, computed here rather than taken from the code."""
+    import math
+
+    from canopy.stats.effect_sizes import cohens_d
+
+    def summary(rows):
+        return (statistics.fmean([m for m, _ in rows]),
+                statistics.fmean([e for _, e in rows]) * math.sqrt(n))
+
+    (mean_a, sd_a), (mean_b, sd_b) = summary(points["A"]), summary(points["B"])
+    return cohens_d(mean_a, sd_a, n, mean_b, sd_b, n)
+
+
+def _collapsed_ensembles(points, bar_figure, tmp_path, outcome_key):
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    provider = _scripted(_categorical_payload(points["A"], points["B"]),
+                         _coord_payload(bar_figure, view.scale))
+    dataset = DatasetSpec(dataset_id="d1", group_a=GroupSpec(label="young", n=20, n_evidence="20"),
+                          group_b=GroupSpec(label="older", n=20, n_evidence="20"))
+    target = replace(TARGET, collapse_across_x=True, outcome_key=outcome_key)
+    out = digitize(_client(provider), paper, fig, target,
+                   source=CATEGORICAL_SOURCE.model_copy(
+                       update={"error_bar_type": DispersionType.SE}),
+                   dataset=dataset, out_dir=tmp_path, result=True)
+    return {c.group: c for c in out.candidates if c.extractor_id == "digitize:ensemble"}
+
+
+def test_the_collapsed_chain_carries_eight_points_through_to_an_effect_size(bar_figure, tmp_path):
+    """Acceptance item 13, on the arithmetic the categorical mode is responsible for."""
+    import math
+
+    from canopy.stats.effect_sizes import cohens_d
+
+    ensembles = _collapsed_ensembles(HEUER_2A, bar_figure, tmp_path / "a", "late_adaptation")
+    for group in ("A", "B"):
+        assert ensembles[group].pixel_provenance["n_points"] == 8
+        assert ensembles[group].dispersion_type is DispersionType.SE
+        assert ensembles[group].n == 20
+    d = cohens_d(ensembles["A"].mean, ensembles["A"].dispersion_value * math.sqrt(20), 20,
+                 ensembles["B"].mean, ensembles["B"].dispersion_value * math.sqrt(20), 20)
+    assert d == pytest.approx(_expected_d(HEUER_2A), abs=1e-9)
+    assert d < 0, "the adaptation panel has the older group higher, so d is negative"
+
+
+def test_the_two_heuer_panels_come_out_with_opposite_signs(bar_figure, tmp_path):
+    """Acceptance item 14: 2a and 2b are the same design and the sign flips between them.
+
+    A collapse that dropped or normalised the sign would pass every magnitude assertion in this
+    file and still put the aftereffect on the wrong side of zero.
+    """
+    import math
+
+    from canopy.stats.effect_sizes import cohens_d
+
+    def effect(points, key, where):
+        ens = _collapsed_ensembles(points, bar_figure, tmp_path / where, key)
+        return cohens_d(ens["A"].mean, ens["A"].dispersion_value * math.sqrt(20), 20,
+                        ens["B"].mean, ens["B"].dispersion_value * math.sqrt(20), 20), ens
+
+    adaptation, ens_a = effect(HEUER_2A, "late_adaptation", "2a")
+    aftereffect, ens_b = effect(HEUER_2B, "aftereffect", "2b")
+    assert adaptation == pytest.approx(_expected_d(HEUER_2A), abs=1e-9)
+    assert aftereffect == pytest.approx(_expected_d(HEUER_2B), abs=1e-9)
+    assert adaptation < 0 < aftereffect, (adaptation, aftereffect)
+    # the aftereffect panel's own values are negative, and that survives the collapse
+    assert ens_b["A"].mean < 0 and ens_b["B"].mean < 0
+    assert ens_b["A"].dispersion_value > 0, "a half-length is a magnitude, whatever the mean's sign"
+    assert ens_a["A"].mean > 0

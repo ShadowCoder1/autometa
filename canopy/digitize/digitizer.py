@@ -390,8 +390,8 @@ def _ladder_from_values(values: Sequence[float], rows: Sequence[float]
 
 
 def _readout_calibration(readouts: Sequence[ReadOut], rows: Sequence[float]
-                         ) -> tuple[AxisCalibration | None, str]:
-    """The ladder the read-outs themselves reported, as a calibration — the free fourth witness."""
+                         ) -> tuple[AxisCalibration | None, str, int]:
+    """The ladder the read-outs reported, as a calibration, and how many of them agreed on it."""
     fits: list[AxisCalibration] = []
     for reading in readouts:
         pairs = _ladder_from_values(reading.tick_labels, rows)
@@ -401,7 +401,7 @@ def _readout_calibration(readouts: Sequence[ReadOut], rows: Sequence[float]
         if cal is not None:
             fits.append(cal)
     if not fits:
-        return None, "no read-out tick ladder could be paired with the detected tick marks"
+        return None, "no read-out tick ladder could be paired with the detected tick marks", 0
     best, support = fits[0], 0
     for cal in fits:
         tol = _agreement_tolerance(cal)
@@ -409,7 +409,7 @@ def _readout_calibration(readouts: Sequence[ReadOut], rows: Sequence[float]
         if agree > support or (agree == support and len(cal.ticks) > len(best.ticks)):
             best, support = cal, agree
     return best, (f"{support} of {len(fits)} read-out tick ladder(s) agree "
-                  f"({len(best.ticks)} ticks)")
+                  f"({len(best.ticks)} ticks)"), support
 
 
 def _agreement_tolerance(cal: AxisCalibration) -> float:
@@ -485,32 +485,45 @@ def _readout_means(readouts: Sequence[ReadOut]) -> dict[str, list[float]]:
 
 def _magnitude_refutes(cal: AxisCalibration, readouts: Sequence[ReadOut]
                        ) -> dict[str, Any] | None:
-    """Do two agreeing read-outs report a value the ladder could not have drawn?
+    """Do agreeing read-outs report values the ladder could not have drawn — in EITHER direction?
 
     This is the load-bearing half of "two witnesses": two readers of the same truncated glyph
     agree with each other and are both wrong, and no power-of-ten rule catches Cressman's 8.3x.
     What does catch it is the values: a ladder whose top tick is 4 cannot carry a datum at 33.
+
+    The first cut tested only the upper side, and in absolute value — so a ladder misread the
+    other way (its labels read as 1/2/3/4 where the data sits at −31, or an axis whose ticks were
+    read too small at the bottom) walked straight through. The test is stated on the ladder's own
+    SIGNED range now, widened by a fifth of its span at each end, and it refuses only when EVERY
+    agreeing group is outside that frame: one group off the end is a bad read of one series, and
+    the whole cell being off the end is a bad ladder.
     """
     values = sorted(v for _, v in cal.ticks)
     if len(values) < 2:
         return None
-    span = values[-1] - values[0]
-    tick_max = max(abs(v) for v in values)
+    lo, hi = values[0], values[-1]
+    span = hi - lo
+    slack = _MAGNITUDE_SLACK * abs(span)
+    low_limit, high_limit = lo - slack, hi + slack
     by_group = _readout_means(readouts)
     agreeing = [means for means in by_group.values()
                 if len(means) >= 2 and (max(means) - min(means))
                 <= _READOUT_AGREE_FRACTION * max(abs(m) for m in means)]
     if not agreeing:
         return None
-    biggest = max(abs(m) for means in agreeing for m in means)
-    limit = tick_max + _MAGNITUDE_SLACK * abs(span)
-    if biggest <= limit:
+    every = [m for means in agreeing for m in means]
+    if any(low_limit <= m <= high_limit for m in every):
         return None
-    return {"tick_max": tick_max, "tick_span": span, "limit": limit,
-            "readout_max_abs_mean": biggest,
+    biggest = max(every, key=abs)
+    side = "above" if biggest > high_limit else "below"
+    return {"tick_max": max(abs(v) for v in values), "tick_span": span,
+            "tick_low": lo, "tick_high": hi,
+            "limit": high_limit if side == "above" else low_limit,
+            "low_limit": low_limit, "high_limit": high_limit, "side": side,
+            "readout_max_abs_mean": max(abs(m) for m in every),
             "readout_means": {g: v for g, v in by_group.items()},
-            "why": (f"{len(agreeing)} group(s) of read-outs agree on a value of {biggest:.4g}, "
-                    f"which the tick ladder (max {tick_max:.4g}, span {span:.4g}) cannot draw")}
+            "why": (f"{len(agreeing)} group(s) of read-outs agree on values around {biggest:.4g}, "
+                    f"{side} everything the tick ladder ({lo:.4g}..{hi:.4g}) can draw")}
 
 
 def _choose_calibration(core: _Core, coord: CoordReadout | None,
@@ -537,7 +550,7 @@ def _choose_calibration(core: _Core, coord: CoordReadout | None,
     if cal_vec is not None:
         witnesses["vector"] = cal_vec
         notes["vector"] = f"the PDF text layer ({len(cal_vec.ticks)} ticks)"
-    cal_read, read_note = _readout_calibration(readouts, core.tick_rows)
+    cal_read, read_note, read_support = _readout_calibration(readouts, core.tick_rows)
     if cal_read is not None:
         witnesses["readout_ticks"] = cal_read
     notes["readout_ticks"] = read_note
@@ -558,21 +571,31 @@ def _choose_calibration(core: _Core, coord: CoordReadout | None,
         record[name]["refuted"] = why
     survivors = {name: cal for name, cal in witnesses.items() if name not in refuted}
     if not survivors:
-        first = sorted(witnesses, key=_rank)[0]
+        first = sorted(witnesses, key=_rank)[0]                 # nothing survived: report the top
         return CalibrationChoice(cal=witnesses[first], source=first, status="cal_refuted",
                                  why=refuted[first]["why"], witnesses=record,
                                  refutation=refuted[first],
                                  scale_note=core.scale_note if first == "cv_ocr" else "")
     witnesses = survivors
 
+    # when two witnesses disagree and neither has corroboration, the tie cannot be broken by a
+    # fixed preference: `cv_ocr` first is what read 45/35/25/15 as 4/3/2/1 in the first place. A
+    # ladder that TWO OR MORE read-outs independently reported goes first instead — two models
+    # reading the printed labels beat one tesseract pass, which is the whole lesson of F1.
+    trusted_readout = "readout_ticks" in witnesses and read_support >= 2
+    order = (("readout_ticks", *[n for n in CAL_PREFERENCE if n != "readout_ticks"])
+             if trusted_readout else CAL_PREFERENCE)
+
+    def rank(name: str) -> int:
+        return order.index(name) if name in order else 99
+
     best: list[str] = []
     for name, cal in witnesses.items():
         tol = _agreement_tolerance(cal)
         cluster = sorted((other for other, cal_b in witnesses.items()
-                          if _calibrations_agree(cal, cal_b, tol)),
-                         key=lambda n: CAL_PREFERENCE.index(n) if n in CAL_PREFERENCE else 99)
+                          if _calibrations_agree(cal, cal_b, tol)), key=rank)
         if len(cluster) > len(best) or (len(cluster) == len(best) and best
-                                        and _rank(cluster[0]) < _rank(best[0])):
+                                        and rank(cluster[0]) < rank(best[0])):
             best = cluster
     source = best[0]
     cal = witnesses[source]
@@ -581,6 +604,7 @@ def _choose_calibration(core: _Core, coord: CoordReadout | None,
 
     choice = CalibrationChoice(cal=cal, source=source, witnesses=record, agreeing=list(best),
                                scale_note=scale_note)
+    record.setdefault("readout_ticks", {})["support"] = read_support
     if len(best) >= 2:
         choice.status = "confirmed"
         choice.why = (f"{len(best)} independent witnesses agree on the mapping "
@@ -1135,13 +1159,45 @@ def _marker_words(text: str) -> tuple[str, str]:
     return fill, shape
 
 
+def _detected_descriptor(marker: Marker) -> tuple[str, str]:
+    """`(fill, shape)` for a marker the pixel pass found. `kind` conflates the two, so unpack it."""
+    kind = str(marker.kind)
+    if kind == "open":
+        return "open", ""
+    if kind in _SHAPE_WORDS:
+        return "filled", kind
+    return "", ""
+
+
+def _descriptors_match(described: tuple[str, str], detected: tuple[str, str]) -> bool:
+    """Do a reader's words and a detected marker agree on everything BOTH of them state?"""
+    return all(not a or not b or a == b for a, b in zip(described, detected))
+
+
+def _nearest_marker(core: _Core, x: float | None, y: float | None) -> Marker | None:
+    if y is None or not core.markers:
+        return None
+    if x is None:
+        return min(core.markers, key=lambda m: abs(m.y - y))
+    return min(core.markers, key=lambda m: (m.x - x) ** 2 + (m.y - y) ** 2)
+
+
 def _series_identity(samples: Sequence[RouteSample], core: _Core) -> dict[str, Any]:
-    """Does each group's described marker exist, and is it a DIFFERENT marker from the other's?
+    """Does each group's described marker exist, is it that group's, and is it the OTHER group's?
 
     Group assignment rested on one free-text `label_read` from one model ("Elderly: Misaligned
     (open white squares)"), and `_needs_another_readout` looks at means only — so two routes
     agreeing numerically on the WRONG series stopped the plan (critique misses 4 and 5).
     `detect_markers` knows fill and shape; this is where the two are put side by side.
+
+    Three distinct answers, and the first cut only acted on the first:
+
+    * `conflict` — both groups resolve to the SAME marker, so one series is being read twice;
+    * `transposed` — each group's described marker is the one found where the OTHER group's value
+      was measured. Both readings are of real series; they are on the wrong rows, which is a sign
+      flip in the effect size and nothing else catches it;
+    * `marker_mismatch` — the described marker is not among the ones the pixel pass found at all.
+      These used to be recorded as prose and nothing read them.
     """
     described: dict[str, tuple[str, str]] = {}
     for group in GROUPS:
@@ -1152,22 +1208,47 @@ def _series_identity(samples: Sequence[RouteSample], core: _Core) -> dict[str, A
                 described[group] = (fill, shape)
                 break
     info: dict[str, Any] = {"described": {g: list(v) for g, v in described.items()},
-                            "conflict": False, "notes": []}
+                            "conflict": False, "transposed": False, "marker_mismatch": False,
+                            "notes": []}
     if len(described) == 2 and described["A"] == described["B"] and any(described["A"]):
         info["conflict"] = True
         info["notes"].append(
             f"both groups were described as the same marker ({' '.join(w for w in described['A'] if w)}) "
             f"— one of the two series is being read for both groups")
-    detected = {(m.kind, ) for m in core.markers}
-    kinds = {kind for (kind, ) in detected}
+
+    # what the pixel pass actually found where each group's value was measured
+    detected: dict[str, tuple[str, str]] = {}
+    for group in GROUPS:
+        pixel = next((s for s in samples if s.group == group and s.y_px is not None), None)
+        marker = _nearest_marker(core, pixel.x_px if pixel else None,
+                                 pixel.y_px if pixel else None)
+        if marker is not None:
+            detected[group] = _detected_descriptor(marker)
+    if detected:
+        info["detected"] = {g: list(v) for g, v in detected.items()}
+    kinds = {str(m.kind) for m in core.markers}
     if kinds:
         info["detected_marker_kinds"] = sorted(kinds)
+
+    if (len(described) == 2 and len(detected) == 2 and described["A"] != described["B"]
+            and any(described["A"]) and any(described["B"])
+            and _descriptors_match(described["A"], detected["B"])
+            and _descriptors_match(described["B"], detected["A"])
+            and not _descriptors_match(described["A"], detected["A"])):
+        info["transposed"] = True
+        info["notes"].append(
+            "each group's described marker is the one found where the OTHER group's value was "
+            "measured — the two series are transposed, which flips the sign of the effect")
+
+    if kinds:
         for group, (fill, shape) in described.items():
-            if fill == "open" and kinds and "open" not in kinds:
+            if fill == "open" and "open" not in kinds:
+                info["marker_mismatch"] = True
                 info["notes"].append(
                     f"group {group} was described as an OPEN marker, but every marker the pixel "
                     f"pass found is filled ({', '.join(sorted(kinds))})")
             if shape and shape not in kinds and shape in ("square", "circle", "triangle"):
+                info["marker_mismatch"] = True
                 info["notes"].append(
                     f"group {group} was described as a {shape}, which the pixel pass did not "
                     f"find among {', '.join(sorted(kinds))}")
