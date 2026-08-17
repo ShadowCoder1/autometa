@@ -1398,6 +1398,24 @@ def test_a_cap_that_landed_on_the_other_series_mark_is_not_this_series_whisker()
     assert b.cap_bottom_px == 769.5
 
 
+def test_a_cap_found_past_the_other_series_is_that_series_whisker():
+    """The same guard, the other failure direction: the walk did not stop on the neighbour's mark,
+    it ran through it and stopped on the neighbour's own CAP. Found by building a stacked-series
+    figure with known truth — the short-arm case alone left this one reading 12.05 for a bar of
+    8.0."""
+    from canopy.digitize.digitizer import _drop_caps_on_other_series
+
+    core = _core_with(None)
+    core.markers = [_marker(384.0, 226.0), _marker(384.0, 257.0)]
+    a = RouteSample(route="C", group="A", x_px=384.0, y_px=226.0,
+                    cap_top_px=164.0, cap_bottom_px=318.0)
+    b = RouteSample(route="C", group="B", x_px=384.0, y_px=257.0,
+                    cap_top_px=164.0, cap_bottom_px=318.0)
+    _drop_caps_on_other_series([a, b], core)
+    assert a.cap_top_px == 164.0 and a.cap_bottom_px is None      # 318 is past group B
+    assert b.cap_bottom_px == 318.0 and b.cap_top_px is None      # 164 is past group A
+
+
 def test_a_cap_a_column_away_is_left_alone():
     """The guard is about a vertical walk running into a mark, so it needs the same column."""
     from canopy.digitize.digitizer import _drop_caps_on_other_series
@@ -1449,6 +1467,180 @@ def test_a_fabricated_cap_does_not_make_a_one_armed_bar_look_symmetric():
     assert sample.error == pytest.approx(7.8), "the measured arm is still the half-length"
     assert sample.one_sided == "up"
     assert sample.extra["unmeasured_cap"] == "down"
+
+
+@pytest.fixture(scope="module")
+def stacked_figure(tmp_path_factory) -> dict:
+    """Two series in ONE column, each with a whisker drawn on one side only.
+
+    This is the shape of Bock 2005 Fig. 1 (and of any figure that plots two overlapping groups at
+    the same x): the upper series' whisker goes up, the lower series' goes down, and the space
+    between the two marks contains nothing but the other group's ink. The synthetic corpus under
+    `validation/synthetic/` has no case of this class — every one of its cases puts its series in
+    separate columns — so the truth here is built the same way that corpus builds its own:
+    matplotlib, with the plotted values as ground truth.
+    """
+    plt = _mpl()
+    truth = {"A": (40.0, 8.0), "B": (36.0, 8.0)}       # value, one-armed half-length
+    dpi, x, w = 150, 1.0, 0.12
+    fig, ax = plt.subplots(figsize=(5.0, 4.0), dpi=dpi)
+    for key, (value, err), sign, colour in (("A", truth["A"], 1, "#111111"),
+                                            ("B", truth["B"], -1, "#666666")):
+        cap = value + sign * err
+        ax.plot([x, x], [value, cap], color="black", lw=1.2)
+        ax.plot([x - w, x + w], [cap, cap], color="black", lw=1.6)
+        ax.plot([x], [value], marker="s", color=colour, markersize=13, linestyle="none")
+    ax.set_xlim(0, 2)
+    ax.set_ylim(0, 60)
+    ax.set_yticks([0, 10, 20, 30, 40, 50, 60])
+    ax.set_xticks([1])
+    ax.set_xticklabels(["ep 21"])
+    ax.set_ylabel("error (deg)")
+    fig.canvas.draw()
+    out = tmp_path_factory.mktemp("stacked")
+    path = out / "figures" / "fig01.png"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=dpi)
+    h_px = int(round(fig.get_size_inches()[1] * dpi))
+    rows = {k: h_px - ax.transData.transform((0, v))[1] for k, (v, _) in truth.items()}
+    column = ax.transData.transform((x, 0))[0]
+    plt.close(fig)
+    return {"path": path, "out_dir": out, "truth": truth, "rows": rows, "column": column,
+            "px_per_unit": (rows["B"] - rows["A"]) / (truth["A"][0] - truth["B"][0])}
+
+
+def test_a_cap_on_the_neighbouring_series_no_longer_halves_a_one_armed_whisker(stacked_figure):
+    """F2, end to end on a figure whose half-lengths are known by construction.
+
+    The caps here are the ones route C really reported for Bock 2005 in `runs/proof`: group A's
+    genuine upper cap, and a "lower cap" that has landed just past group B's mark. At a ratio of
+    0.62 the old rule averaged the two and reported 6.37 for a bar that is 8.0 — a 20% error in
+    the denominator of every effect size computed from it.
+    """
+    from canopy.digitize.digitizer import (_choose_calibration, _samples_from_coords)
+    from canopy.digitize.vlm import CoordReadout, GroupCoords
+
+    truth, rows, per_unit = (stacked_figure["truth"], stacked_figure["rows"],
+                             stacked_figure["px_per_unit"])
+    core = _cv_core_of(stacked_figure["path"])
+    coord = CoordReadout(status="found", model="claude-opus-5", groups=[
+        GroupCoords(group="A", x_px=stacked_figure["column"], y_px=rows["A"],
+                    cap_top_px=rows["A"] - truth["A"][1] * per_unit,
+                    cap_bottom_px=rows["B"] + 0.85 * per_unit),
+        GroupCoords(group="B", x_px=stacked_figure["column"], y_px=rows["B"],
+                    cap_bottom_px=rows["B"] + truth["B"][1] * per_unit)])
+    choice = _choose_calibration(core, None, None, [])
+    samples = {s.group: s for s in
+               _samples_from_coords(coord, core, choice.usable_for_pixels, choice.source)}
+
+    assert samples["A"].error == pytest.approx(truth["A"][1], abs=0.1)     # was 6.37
+    assert samples["A"].one_sided == "up"
+    assert samples["A"].cap_bottom_px is None
+    assert "group B" in samples["A"].notes
+    # the series that was never misread is untouched
+    assert samples["B"].error == pytest.approx(truth["B"][1], abs=0.1)
+    assert samples["B"].one_sided == "down"
+
+
+def _cv_core_of(path):
+    from canopy.digitize.digitizer import _cv_core
+    return _cv_core(path, prefer_markers=True)
+
+
+# ------------------------------------------------------------------ F4: the adaptive stop
+#: `runs/proof/papers/5039533c85ef/extract.json`, `…:late_adaptation:{A,B}:digitize:ensemble`.
+#: Two read-outs, agreeing on the means and 1.2 deg apart on group A's half-length, on an axis
+#: whose ticks are 10 deg apart and whose fitted resolution is 0.0691 deg/px.
+_CRESSMAN_AXIS = dict(axis_range=50.26, tick_spacing=10.0, px_units=0.0691)
+
+
+def _proof_pair(group, opus, sonnet):
+    return [RouteSample(route="D", group=group, model="claude-opus-5", variant="direct",
+                        mean=opus[0], error=opus[1]),
+            RouteSample(route="D", group=group, model="claude-sonnet-5", variant="direct",
+                        mean=sonnet[0], error=sonnet[1])]
+
+
+def test_the_stop_rule_buys_another_read_out_when_the_dispersions_disagree():
+    """F4: `dual_tolerance` was handed an empty error list, so the plan stopped on the means.
+
+    The record shows what that cost: `error_agrees: false, error_spread: 1.2` against a tolerance
+    of 0.24, `extra_readouts_bought: 0`, a third read-out planned and inside `readouts_max`, and
+    the two half-lengths implying d = -0.2548 or d = -0.1478 depending on which is believed. A
+    spread the effect size divides by is as load-bearing as the mean it subtracts.
+    """
+    from canopy.digitize.digitizer import _needs_another_readout
+
+    disputed = _proof_pair("A", (31.2, 1.8), (31.0, 3.0))
+    needed, why = _needs_another_readout(disputed, **_CRESSMAN_AXIS)
+    assert needed and "error half-lengths span" in why
+    assert "means span" not in why, "the means agreed; it is the spread that is in dispute"
+
+    # the same cell's other group agrees on BOTH quantities and still stops at two read-outs
+    settled = _proof_pair("B", (33.3, 3.2), (32.5, 3.5))
+    needed, why = _needs_another_readout(settled, **_CRESSMAN_AXIS)
+    assert not needed and "two model families" in why
+
+
+def test_a_disputed_dispersion_also_buys_the_overlay_check():
+    """The overlay call exists to look at the picture when the routes disagree — and they do."""
+    from canopy.digitize.digitizer import _overlay_wanted
+
+    disputed = _proof_pair("A", (31.2, 1.8), (31.0, 3.0))
+    wanted, why = _overlay_wanted(True, "on_disagreement", disputed, **_CRESSMAN_AXIS)
+    assert wanted and "error half-lengths span" in why
+
+
+# ------------------------------------------------------------------ F5: the dispersion combiner
+def test_a_one_armed_read_outvotes_a_two_armed_one_on_the_half_length(bar_figure):
+    """F5: the ensemble was measurably less accurate than its best member, and always on the
+    spread. Routes that disagree about the whisker's TOPOLOGY are not measuring the same object.
+
+    A one-armed read is the half-length whether the bar is one-armed (it measured the only arm)
+    or two-armed (the arms of `mean ± half-length` are equal). A two-armed read is the half-length
+    only in the second case: in the first, its "other arm" is whatever its cap walk stopped on.
+    So when the two conflict the one-armed reads carry the evidence — and this is about the
+    reading, not about which model or route produced it.
+    """
+    one_armed = _d_sample(31.2, 1.8, one_sided="down")
+    two_armed = _d_sample(31.0, 3.0, model="claude-sonnet-5")
+    base = {"cal_status": "confirmed", "figure_id": "fig03"}
+    ens = _ensemble_of(bar_figure, [one_armed, two_armed], base)
+    assert ens.dispersion_value == pytest.approx(1.8)
+    assert ens.pixel_provenance["n_routes_with_error"] == 2
+    assert ens.pixel_provenance["n_routes_voting_on_error"] == 1
+    assert "one side only" in ens.pixel_provenance["dispersion_topology_note"]
+    # the disagreement is settled, not erased: the record still shows both reads and the
+    # dispersion keeps an uncertainty that spans them
+    assert ens.pixel_provenance["error_agreement"] is False
+    assert ens.dispersion_sigma >= 0.5 * (3.0 - 1.8)
+    assert sorted(r["error"] for r in
+                  ens.pixel_provenance["dispersion_route_errors"].values()) == [1.8, 3.0]
+
+
+def test_routes_that_agree_about_the_topology_are_all_still_medianed(bar_figure):
+    """The segregation only fires on a conflict; two one-armed reads are two votes as before."""
+    both_one_armed = [_d_sample(31.2, 1.8, one_sided="down"),
+                      _d_sample(31.0, 2.2, one_sided="down", model="claude-sonnet-5")]
+    base = {"cal_status": "confirmed", "figure_id": "fig03"}
+    ens = _ensemble_of(bar_figure, both_one_armed, base)
+    assert ens.dispersion_value == pytest.approx(2.0)
+    assert ens.pixel_provenance["n_routes_voting_on_error"] == 2
+    assert ens.pixel_provenance["dispersion_topology_note"] == ""
+
+
+def test_an_asymmetric_whisker_kind_is_left_alone(bar_figure):
+    """An IQR box has genuinely unequal arms, so one arm is not a half-length and the argument
+    for preferring a one-armed read does not hold. Nothing is segregated there."""
+    from canopy.models import DispersionType
+
+    mixed = [_d_sample(31.2, 1.8, one_sided="down"),
+             _d_sample(31.0, 3.0, model="claude-sonnet-5")]
+    iqr_source = SOURCE.model_copy(update={"error_bar_type": DispersionType.IQR})
+    ens = _ensemble_of(bar_figure, mixed, {"cal_status": "confirmed", "figure_id": "fig03"},
+                       source=iqr_source)
+    assert ens.dispersion_value == pytest.approx(2.4)          # the plain median of both
+    assert ens.pixel_provenance["dispersion_topology_note"] == ""
 
 
 def test_the_marker_floor_rejects_a_cap_inside_the_marker(bar_figure):

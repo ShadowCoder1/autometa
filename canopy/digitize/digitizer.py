@@ -868,40 +868,53 @@ def _marker_floor_px(core: _Core, x: float | None, y: float | None) -> float:
 
 
 def _drop_caps_on_other_series(samples: Sequence[RouteSample], core: _Core) -> None:
-    """Blank any cap that has landed on ANOTHER series' datum: that ink is the other mark.
+    """Blank any cap this series' whisker could only have reached through ANOTHER series' mark.
 
-    Overlapping series are the ordinary case in a two-group figure, and a cap walk that starts at
-    one series' datum runs into the other series' marker before it finds anything else. What comes
-    back is not a short arm — it is a measurement of the wrong object, and `resolve_arms` cannot
-    tell that from the two lengths alone. In `runs/proof` this turned Bock 2005's old group from a
-    genuine 7.78-deg up arm into a fabricated symmetric 6.30, and the route said so itself:
-    *"lower cap taken as the upper of the coincident cap pair near y=729"*, where y=723.6 is the
-    young group's own triangle.
+    Overlapping series are the ordinary case in a two-group figure, and a cap search that starts
+    at one series' datum and walks toward the other has two ways to come back with the wrong
+    number: it stops ON the other mark (a short "arm" that is really the neighbour's glyph), or it
+    runs straight past it and stops on the neighbour's own CAP (a long "arm" that is really the
+    neighbour's whisker). Both were reproduced on a figure whose half-lengths are known by
+    construction, and the first is what `runs/proof` recorded for Bock 2005 Fig. 1: a "lower cap"
+    6.4 px past the young group's triangle, averaged with a genuine 7.78-deg upper arm to give
+    6.30. The route said so itself — *"lower cap taken as the upper of the coincident cap pair
+    near y=729"*.
 
-    "Landed on" is deliberately literal: the cap sits inside the other datum's own marker glyph
-    (half a marker height, never under two pixels) AND in the same column the walk ran down
-    (marks a column apart cannot be what a vertical walk stopped on). Dropping the arm is safe —
-    a symmetric bar reads the same half-length from either side, so the cost of being wrong is
-    the loss of one corroborating arm, not of the measurement.
+    So the rule is directional and geometric: walking from this datum toward the other group's
+    datum, anything at or beyond the point where the other group's own marker begins is that
+    series' ink. It applies only in the column the walk ran down — marks a column apart cannot be
+    what a vertical search stopped on.
+
+    Dropping the arm is safe. An error bar is `mean ± half-length`, so the arm on the far side
+    reads the same number; the cost of being wrong is one corroborating arm, never the
+    measurement. The half-length that survives is recorded as one-sided, which is what it is.
     """
     for sample in samples:
+        if sample.y_px is None or sample.x_px is None:
+            continue
         for other in samples:
             if other is sample or other.group == sample.group:
                 continue
-            if other.y_px is None or sample.x_px is None or other.x_px is None:
+            if other.y_px is None or other.x_px is None:
                 continue
-            near_y = max(2.0, _marker_floor_px(core, other.x_px, other.y_px))
-            if abs(other.x_px - sample.x_px) > max(4.0, 2.0 * near_y):
+            near = max(2.0, _marker_floor_px(core, other.x_px, other.y_px))
+            if abs(other.x_px - sample.x_px) > max(4.0, 2.0 * near):
                 continue
-            for side, attr in (("upper", "cap_top_px"), ("lower", "cap_bottom_px")):
+            toward = 1.0 if other.y_px > sample.y_px else -1.0     # image rows grow downward
+            limit = other.y_px - toward * near                     # where the other glyph begins
+            for name, attr in (("upper", "cap_top_px"), ("lower", "cap_bottom_px")):
                 cap = getattr(sample, attr)
-                if cap is None or abs(cap - other.y_px) > near_y:
+                if cap is None or cap == sample.y_px:
+                    continue
+                if (cap - sample.y_px) * toward <= 0:              # points away from the other mark
+                    continue
+                if (cap - limit) * toward < 0:                     # stops short of the other glyph
                     continue
                 setattr(sample, attr, None)
-                sample.notes = (f"{sample.notes}; the {side} cap fell on group {other.group}'s "
-                                f"own mark (y {other.y_px:.1f}), so it is that series' ink, not "
-                                f"this one's whisker").strip("; ")
-                sample.extra.setdefault("caps_on_other_series", []).append(side)
+                sample.notes = (f"{sample.notes}; the {name} cap is at or past group "
+                                f"{other.group}'s own mark (y {other.y_px:.1f}), so it is that "
+                                f"series' ink, not this one's whisker").strip("; ")
+                sample.extra.setdefault("caps_on_other_series", []).append(name)
 
 
 def _samples_from_coords(coord: CoordReadout, core: _Core, cal: AxisCalibration | None,
@@ -1439,6 +1452,54 @@ def _series_identity(samples: Sequence[RouteSample], core: _Core) -> dict[str, A
     return info
 
 
+# ----------------------------------------------------------------------------- topology vote
+#: dispersions whose two arms are the SAME length by construction, so that one arm of the bar is
+#: the whole half-length. An IQR or a min-max whisker is not one of these: its arms genuinely
+#: differ and a single arm is not a half-length, so nothing below applies to it.
+_SYMMETRIC_DISPERSIONS = (DispersionType.SD, DispersionType.SE, DispersionType.CI95,
+                          DispersionType.CI90)
+
+
+def _dispersion_topology_vote(with_error: Sequence[RouteSample], kind: DispersionType
+                              ) -> tuple[list[RouteSample], str]:
+    """The routes that may vote on the half-length when they disagree about the WHISKER'S SHAPE.
+
+    Two routes can agree that a bar exists and still be measuring different objects: one reports
+    a whisker drawn on one side only and hands back the arm it saw, the other reports two arms and
+    hands back their mean. Medianing those is medianing a measurement with a half-measurement, and
+    it produces a number no route reported.
+
+    When they conflict, the one-armed reads are the evidence, and the reason is an asymmetry in
+    what can go wrong rather than a preference for any route or model:
+
+    * if the whisker really is one-armed, the two-armed read's "other arm" is whatever its cap
+      walk stopped on — the marker's own edge, the bar, a neighbouring series' mark — so its
+      half-length is contaminated by a non-measurement;
+    * if the whisker really is two-armed, the one-armed read measured one arm of a bar whose arms
+      are equal by construction, and so has the half-length right anyway.
+
+    A one-armed read is therefore correct under both hypotheses and a two-armed read under only
+    one. `runs/proof` shows the cost of not doing this: on Cressman 2010 Fig. 3b one route read a
+    one-armed 1.8 (noting the upper cap was hidden — and the pixels agree: the open square's only
+    cap is 1.7-2.0 below it) while the other read a two-armed 3.0, and the median 2.4 was
+    published with an empty flags column.
+
+    Returns `(routes that vote, why)`; `why` is empty when there was nothing to settle.
+    """
+    if kind not in _SYMMETRIC_DISPERSIONS:
+        return list(with_error), ""
+    one_armed = [s for s in with_error if s.one_sided]
+    two_armed = [s for s in with_error if not s.one_sided]
+    if not one_armed or not two_armed:
+        return list(with_error), ""
+    sides = "/".join(sorted({s.one_sided for s in one_armed if s.one_sided}))
+    return one_armed, (
+        f"{len(one_armed)} route(s) read this whisker as drawn on one side only ({sides}) and "
+        f"{len(two_armed)} read two arms; a one-armed read is the half-length whichever is true, "
+        f"a two-armed read only if two arms are really drawn, so the half-length comes from the "
+        f"{len(one_armed)} one-armed read(s)")
+
+
 # ----------------------------------------------------------------------------- legend check
 _LEGEND_PATTERNS = (
     (DispersionType.SE, ("standard error", "std. error", "s.e.m", "sem", " se ", "±se", "+/- se")),
@@ -1483,14 +1544,24 @@ def _needs_another_readout(samples: Sequence[RouteSample], *, axis_range: float,
     """Is one more vision read-out worth its price? (task 15 §A3, amended by task 16 §R1c)
 
     Yes when a group has fewer than two usable routes, when the routes that read it disagree about
-    the MEAN beyond amendment F's tolerance, or — this is F2 — when every route that answered
-    comes from ONE model family. Two prompts of one model that agree are one voter agreeing with
-    itself: they share the model's failure modes, `vote.route_key` counts them as a single route,
-    and the cell can never be accepted by agreement. A second family is what makes the agreement
-    mean something, and it is bought before any adaptive stop.
+    the MEAN **or about the error half-length** beyond amendment F's tolerance, or — this is F2 —
+    when every route that answered comes from ONE model family. Two prompts of one model that
+    agree are one voter agreeing with itself: they share the model's failure modes,
+    `vote.route_key` counts them as a single route, and the cell can never be accepted by
+    agreement. A second family is what makes the agreement mean something, and it is bought
+    before any adaptive stop.
 
-    A third pass that only confirms two agreeing families buys nothing: the ensemble is already a
-    median of routes that agree, and the confidence gate looks at the means.
+    The dispersion used to be invisible here: `dual_tolerance` was called with an empty error
+    list, and it only evaluates the error branch when it is given two or more. So the plan stopped
+    on the means alone, on a cell whose spread was in open dispute. `runs/proof` records exactly
+    that for Cressman 2010 Fig. 3b — `error_agrees: false`, `error_spread: 1.2` against a
+    tolerance of 0.24, a third read-out planned, affordable and never bought — and the two routes'
+    half-lengths imply d = -0.2548 or d = -0.1478 depending on which you believe. A spread the
+    effect size divides by is exactly as load-bearing as the mean it subtracts, so an adaptive
+    stopping rule that covers one and not the other is not a stopping rule.
+
+    A pass that only confirms two agreeing families buys nothing: the ensemble is already a median
+    of routes that agree on both quantities.
     """
     means = _means_by_group(samples)
     if not means:
@@ -1507,9 +1578,12 @@ def _needs_another_readout(samples: Sequence[RouteSample], *, axis_range: float,
             return True, (f"group {group} was read by only one model family "
                           f"({', '.join(families) or 'none'}); two prompts of one model share its "
                           f"failure modes and count as one route in the vote")
-        agreement = dual_tolerance(values, [], axis_range=axis_range, tick_spacing=tick_spacing,
-                                   px_units=px_units)
-        if not agreement["mean_agrees"]:
+        # the errors that will actually vote in the ensemble — `_build_candidates` medians the
+        # half-lengths of exactly these samples, so these are the numbers whose disagreement costs
+        errors = [s.error for s in mine if s.error is not None]
+        agreement = dual_tolerance(values, errors, axis_range=axis_range,
+                                   tick_spacing=tick_spacing, px_units=px_units)
+        if not agreement["agrees"]:
             return True, f"group {group}: {'; '.join(agreement['reasons'])}"
     return False, "the routes agreed across two model families, so no further read-out was bought"
 
@@ -1961,10 +2035,15 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
         means = [s.mean for s in live]
         # a route that found no whisker does not get a vote on the whisker's length
         with_error = [s for s in live if s.error is not None]
-        errors = [s.error for s in with_error]
+        all_errors = [s.error for s in with_error]
+        voting, topology_note = _dispersion_topology_vote(with_error, mapper_type)
+        errors = [s.error for s in voting]
         mean, mad_sigma = ensemble_stats(means)
         error, error_mad = ensemble_stats(errors) if errors else (None, 0.0)
-        agreement = dual_tolerance(means, errors, axis_range=axis_range,
+        # the agreement verdict is computed over EVERY route that found a whisker, not over the
+        # subset that supplied the number: segregating the vote settles which reading to use, it
+        # does not make the disagreement go away, and the record has to keep showing it
+        agreement = dual_tolerance(means, all_errors, axis_range=axis_range,
                                    tick_spacing=tick_spacing, px_units=px_units)
         floor = px_units
         if cal is not None:
@@ -1979,7 +2058,10 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             # the MAD collapses to zero when a majority of the routes happen to agree exactly
             # ([11, 16, 16] has MAD 0), and a disagreement that wide is not zero uncertainty; half
             # the span is the honest floor for "somewhere between the smallest and largest read".
-            spread = (max(errors) - min(errors)) if len(errors) > 1 else 0.0
+            # The span is the one across ALL the routes that found a whisker, for the same reason
+            # the agreement verdict is: choosing which read to believe is not evidence that the
+            # others were never made.
+            spread = (max(all_errors) - min(all_errors)) if len(all_errors) > 1 else 0.0
             widen = 0.5 * spread if not agreement["error_agrees"] else 0.0
             dispersion_sigma = max(error_mad, widen, floor)
         conflict = (dispersion_from == "mapper" and legend_type is not None
@@ -2005,10 +2087,12 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
         if dispersion_only:
             reasons.append(
                 f"the routes agree about the mean and disagree about the error half-length "
-                f"({', '.join(f'{v:.4g}' for v in sorted(errors))}); the median of the "
-                f"{len(errors)} route(s) that found a whisker is used and its own uncertainty is "
+                f"({', '.join(f'{v:.4g}' for v in sorted(all_errors))}); the median of the "
+                f"{len(errors)} route(s) that supplied one is used and its own uncertainty is "
                 f"widened to {dispersion_sigma:.4g}"
                 + (f" (whisker drawn on one side only: {'/'.join(sides)})" if sides else ""))
+        if topology_note:
+            reasons.append(topology_note)
         mine_collapsed = [s for s in mine if s.extra.get("collapsed_across_x")]
         provenance = {
             **base,
@@ -2032,6 +2116,11 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             "snap_confidences": {s.extractor_id: s.snap_conf for s in mine
                                  if s.snap_conf is not None},
             "n_routes": len(live), "n_routes_with_error": len(with_error),
+            "n_routes_voting_on_error": len(voting),
+            "dispersion_topology_note": topology_note,
+            "dispersion_route_errors": {s.extractor_id: {"error": s.error,
+                                                         "one_sided": s.one_sided}
+                                        for s in with_error},
             "mad_sigma": mad_sigma, "dispersion_mad_sigma": error_mad,
             "agreement": agreement,
             "mean_agreement": agreement["mean_agrees"],
