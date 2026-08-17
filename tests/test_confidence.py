@@ -220,7 +220,7 @@ def test_digitised_routes_that_imply_different_effects_fail_the_gate():
             fig_cand("b2", 12.4, route="pathD", group="B", model=SONNET, sigma=0.2)]
     ok, delta, _, reasons = figure_gate(rows, 12, 12)
     assert ok is False and delta > DELTA_D_LIMIT
-    assert any("across routes" in r for r in reasons)
+    assert any("imply effects that differ by" in r for r in reasons)
 
 
 def test_a_large_digitisation_uncertainty_fails_the_gate():

@@ -311,8 +311,9 @@ def figure_gate(candidates: Sequence[Candidate], n_a: int | None, n_b: int | Non
                        f"both groups with a usable spread, so the effect this figure implies is "
                        f"corroborated by nothing — one path cannot agree with another")
     elif delta >= DELTA_D_LIMIT:
-        reasons.append(f"the digitizer routes imply effects that differ by {delta:.3f} across "
-                       f"routes (limit {DELTA_D_LIMIT})")
+        reasons.append(f"the digitizer's measurement paths imply effects that differ by "
+                       f"{delta:.3f} (limit {DELTA_D_LIMIT}), so how this picture was measured "
+                       f"changes the answer")
 
     share = None
     if effects:
@@ -625,8 +626,9 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
                        + "; ".join(CAP_REASONS.get(code, "this reading is unconfirmed")
                                    for code in capping))
     if score < floor:                    # R2: the caps clamp at accept_with_note, never below it
-        reasons.append(f"the caps above stop at {floor:.2f}: an unconfirmed reading is a reason "
-                       f"for a human to look at this cell, not to withhold it")
+        reasons.append(f"the caps above stop at {floor:.2f}: an under-corroborated reading is a "
+                       f"reason for a human to look at this cell, not on its own a reason to "
+                       f"withhold it")
         score = floor
 
     # --- amendment F: a purely digitised cell has to earn its automatic acceptance
@@ -635,8 +637,8 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
         reasons += gate_reasons
         if not ok:
             score = min(score, ADJUDICATED_CAP)
-            reasons.append("a digitised cell that does not meet the digitisation gate cannot be "
-                           "accepted automatically")
+            reasons.append(f"a digitised cell that does not meet the digitisation gate cannot "
+                           f"be accepted automatically, so it stops at {ADJUDICATED_CAP:.2f}")
 
     score = round(max(0.0, min(1.0, score)), 4)
     if forced_human:
