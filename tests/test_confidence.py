@@ -160,13 +160,19 @@ def test_an_adjudicator_that_asks_for_a_human_gets_one():
     assert bucket == "needs_human"
 
 
-def test_a_row_only_table_match_caps_the_cell():
-    """Numbers found in the named row but not the named column may be the other group's."""
+def test_a_row_only_table_match_withholds_the_cell():
+    """Numbers found in the named row but not the named column may be the other group's.
+
+    EXPECTATION CHANGED (was `accept_with_note`): `quote_row_only` is a report that the value may
+    be a DIFFERENT QUANTITY — the neighbouring column is the other group — not that it is
+    under-corroborated. Two readers agreeing on the other group's number agree on the wrong
+    number, so no score can settle it and it belongs to `CONTRADICTING_FLAGS`.
+    """
     result = vote([text_cand("a", 31.51), text_cand("b", 31.51, model=SONNET)])
     flags = [CheckFlag(code="quote_row_only", severity="warn",
                        message="found in the row but not the column", candidate_ids=["a"])]
     bucket, score, reasons = confidence(result, CONFIRMED, flags, None, orientation=ORIENTED)
-    assert bucket == "accept_with_note" and score <= 0.70
+    assert bucket == "needs_human" and score <= 0.70
     assert any("other group" in r for r in reasons)
 
 
@@ -343,7 +349,13 @@ def test_a_single_witness_calibration_caps_a_cell_but_never_sinks_it():
 
 
 def test_every_cap_in_combination_still_means_accept_with_note():
-    """No pile-up of caps may add up to `needs_human`: only evidence does that."""
+    """No pile-up of caps may add up to `needs_human`: only evidence does that.
+
+    SCOPE NARROWED: `CAPPING_FLAGS` is now only the under-corroborated family. The codes that
+    report "this may be a different quantity" moved to `CONTRADICTING_FLAGS`, and the fact that
+    they DO withhold is asserted by
+    `test_a_flag_that_says_this_may_be_a_different_quantity_withholds_the_cell`.
+    """
     from canopy.verify.confidence import ACCEPT_WITH_NOTE, CAPPING_FLAGS
 
     result = vote([text_cand("a", 31.51), text_cand("b", 31.51, model=SONNET)])
@@ -457,7 +469,12 @@ def test_the_axis_ladder_is_ordered_confirmed_then_single_witness_then_refuted()
 
 
 def test_no_pile_of_capping_flags_sends_a_figure_cell_to_a_human():
-    """R2, on the route it actually bites: caps and axis doubt cost points, never the cell."""
+    """R2, on the route it actually bites: caps and axis doubt cost points, never the cell.
+
+    SCOPE NARROWED, with its mirror image next door: this asserts the floor for the
+    under-corroborated family, and `test_a_pile_of_contradictions_is_not_floored_at_
+    accept_with_note` asserts that the contradicting family is NOT floored.
+    """
     from canopy.verify.confidence import ACCEPT_WITH_NOTE, CAPPING_FLAGS
 
     flags: list[CheckFlag] = []
@@ -473,3 +490,67 @@ def test_a_genuine_error_still_forces_a_human_on_the_same_cell():
     disputed = [CheckFlag(code="calibration_disputed", severity="error", message="x",
                           candidate_ids=["c0"])]
     assert _score(disputed, "single_witness")[0] == "needs_human"
+
+
+# ---------------------------------------- "less corroborated" vs "this may be a different quantity"
+# Controller ruling (task 16 R2, overturned in part): the two doubts below used to share one set
+# and one floor. They have opposite consequences and must not.
+def test_the_two_doubt_families_are_disjoint_and_every_code_belongs_to_exactly_one():
+    from canopy.verify.checks import CHECK_SEVERITY
+    from canopy.verify.confidence import CAP_REASONS, CAPPING_FLAGS, CONTRADICTING_FLAGS
+
+    assert CAPPING_FLAGS.isdisjoint(CONTRADICTING_FLAGS)
+    assert CAPPING_FLAGS and CONTRADICTING_FLAGS
+    for code in CAPPING_FLAGS | CONTRADICTING_FLAGS:
+        assert (code in CAPPING_FLAGS) ^ (code in CONTRADICTING_FLAGS), code
+        assert code in CAP_REASONS, f"{code} caps a cell without telling the reviewer why"
+        assert code in CHECK_SEVERITY, f"{code} is not a code any check can raise"
+
+
+def test_a_flag_that_says_this_may_be_a_different_quantity_withholds_the_cell():
+    """No amount of agreement about a number establishes that it is the right number.
+
+    Each of these codes reports that the value may have been measured somewhere other than where
+    it was asked for — off another axis, off the other series, out of another column. The
+    meta-analysis downstream pools whatever it is given and cannot recover from a value of the
+    wrong quantity, so these must be able to withhold, unlike the merely under-corroborated ones.
+    """
+    from canopy.verify.confidence import CONTRADICTING_FLAGS
+
+    for code in sorted(CONTRADICTING_FLAGS):
+        bucket, _points, reasons = _score(_cal_flags(code, 4))
+        assert bucket == "needs_human", f"{code} did not withhold the cell"
+        assert any(code in r for r in reasons), code
+
+
+def test_a_pile_of_contradictions_is_not_floored_at_accept_with_note():
+    """The R2 floor is for caps. A contradiction is evidence, and evidence is never restored."""
+    from canopy.verify.confidence import ACCEPT_WITH_NOTE, CONTRADICTING_FLAGS
+
+    flags: list[CheckFlag] = []
+    for code in sorted(CONTRADICTING_FLAGS):
+        flags += _cal_flags(code, 4)
+    bucket, points, _reasons = _score(flags)
+    assert bucket == "needs_human"
+    assert points < ACCEPT_WITH_NOTE, "the floor restored a score the evidence took away"
+
+
+def test_the_wrong_panel_figure_read_is_withheld_by_its_own_axis_conflict():
+    """Regression from a real record, `runs/rerun-hardened/papers/b511dbb76fa6/verify.json`.
+
+    That cell (`b511dbb76fa6:d2 late_adaptation`, both groups) carries `axis_conflict`,
+    `dispersion_type_from_legend` and `figure_error_bar_unknown`, two model families, and an
+    ambiguous verifier; it was digitised off the wrong panel in the wrong unit. The run recorded
+    `needs_human` at 0.39. Commit `e9401f2` then moved `axis_conflict` under the R2 floor, which
+    restored the 0.08 it had cost and landed the cell on exactly 0.4500 — the acceptance
+    threshold — so a replay of the same inputs pooled it. Rule, stated generally: a reading whose
+    own readers answered off different value axes may not be released by an arithmetic floor.
+    """
+    ambiguous = [VerifierVerdict(candidate_id="fa", verdict="ambiguous",
+                                 reason="the figure prints no number", model=SONNET)]
+    flags = (_cal_flags("axis_conflict", 2) + _cal_flags("dispersion_type_from_legend", 2)
+             + _cal_flags("figure_error_bar_unknown", 2))
+    a, b = _figure_ensemble("fa", "A", 52.77), _figure_ensemble("fb", "B", 39.0)
+    bucket, score, reasons = confidence(vote([a]), ambiguous, flags, None, candidates=[a, b],
+                                        n_a=12, n_b=12, orientation=ORIENTED)
+    assert (bucket, score) == ("needs_human", 0.39), (bucket, score, reasons)

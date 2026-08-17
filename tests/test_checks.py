@@ -537,9 +537,9 @@ def test_two_groups_that_simply_differ_are_not_a_unit_problem():
 
 
 # --------------------------------------------------------------------------- series and axis
-def test_both_groups_on_one_marker_is_flagged_and_caps_the_cell():
+def test_both_groups_on_one_marker_is_flagged_and_withholds_the_cell():
     """Misses 4/5: numeric agreement says nothing about WHICH curve was read."""
-    from canopy.verify.confidence import CAPPING_FLAGS
+    from canopy.verify.confidence import CONTRADICTING_FLAGS
 
     dataset = make_dataset()
     conflicted = _figure_cand(cal_status="confirmed")
@@ -549,7 +549,9 @@ def test_both_groups_on_one_marker_is_flagged_and_caps_the_cell():
     assert "series_identity_conflict" in codes(flags)
     flag = next(f for f in flags if f.code == "series_identity_conflict")
     assert "same marker" in flag.message and flag.severity == "warn"
-    assert "series_identity_conflict" in CAPPING_FLAGS
+    # EXPECTATION CHANGED (was `in CAPPING_FLAGS`): one series read for both groups means one
+    # group's number IS the other's, which is a different quantity, not a weaker one.
+    assert "series_identity_conflict" in CONTRADICTING_FLAGS
 
 
 def test_readers_who_answered_off_two_axes_are_reported_on_the_row():
@@ -575,19 +577,63 @@ def test_a_figure_whose_readers_agreed_about_the_axis_raises_nothing():
                 if f.code in ("axis_conflict", "series_identity_conflict")]
 
 
-def test_a_transposition_or_a_missing_marker_reaches_a_flag():
-    """Both branches used to write prose that no check could see."""
-    from canopy.verify.confidence import CAPPING_FLAGS
+def _series_cand(**series) -> Candidate:
+    cand = _figure_cand(cal_status="confirmed")
+    cand.pixel_provenance = {**cand.pixel_provenance, "series_identity": {
+        "conflict": False, "transposed": False, "marker_mismatch": False, "notes": [], **series}}
+    return cand
+
+
+def test_a_transposition_and_a_marker_quibble_are_no_longer_the_same_finding():
+    """Two findings with opposite consequences must not share a code.
+
+    "The marker vocabulary did not line up" is a soft doubt about a shape word. "Each group's
+    value was measured on the other group's marker" is a determination that the effect's sign is
+    inverted, which no downstream stage can recover from. They shared `series_marker_mismatch`,
+    so the second could only ever cost a cell 0.08 and a note.
+    """
+    from canopy.verify.confidence import CAPPING_FLAGS, CONTRADICTING_FLAGS
 
     dataset = make_dataset()
-    for key in ("transposed", "marker_mismatch"):
-        cand = _figure_cand(cal_status="confirmed")
-        cand.pixel_provenance = {**cand.pixel_provenance, "series_identity": {
-            "conflict": False, key: True, "notes": [f"{key} happened"]}}
-        flags = run_checks(dataset, "late_adaptation", [cand])
-        assert "series_marker_mismatch" in codes(flags), key
-        assert next(f for f in flags if f.code == "series_marker_mismatch").message
+    swapped = _series_cand(transposed=True, notes=["the two series are transposed"],
+                           described={"A": ["filled", "square"], "B": ["open", "circle"]},
+                           detected={"A": ["open", "circle"], "B": ["filled", "square"]})
+    assert "series_transposed" in codes(run_checks(dataset, "late_adaptation", [swapped]))
+    assert "series_marker_mismatch" not in codes(run_checks(dataset, "late_adaptation", [swapped]))
+    assert "series_transposed" in CONTRADICTING_FLAGS
+
+    quibble = _series_cand(marker_mismatch=True, notes=["group A was described as a square"])
+    assert "series_marker_mismatch" in codes(run_checks(dataset, "late_adaptation", [quibble]))
+    assert "series_transposed" not in codes(run_checks(dataset, "late_adaptation", [quibble]))
     assert "series_marker_mismatch" in CAPPING_FLAGS
+
+
+def test_a_transposition_nobody_could_see_at_both_points_is_only_a_doubt():
+    """A detector's "I could not tell" must never be read as "it is not there".
+
+    The producer's test is "these two descriptors agree on everything BOTH of them state", which
+    is vacuously true against a marker whose shape and fill the pixel pass could not resolve. A
+    conviction that inverts an effect's sign may not rest on a vacuous match, so a transposition
+    that is not positively corroborated at BOTH measured points falls back to the soft doubt.
+    """
+    dataset = make_dataset()
+    vacuous = _series_cand(transposed=True, notes=["the two series are transposed"],
+                           described={"A": ["filled", "square"], "B": ["filled", "triangle"]},
+                           detected={"A": ["filled", "triangle"], "B": ["", ""]})
+    found = codes(run_checks(dataset, "late_adaptation", [vacuous]))
+    assert "series_transposed" not in found
+    assert "series_marker_mismatch" in found
+    message = next(f for f in run_checks(dataset, "late_adaptation", [vacuous])
+                   if f.code == "series_marker_mismatch").message
+    assert "could not" in message or "not corroborated" in message
+
+
+def test_a_transposition_with_no_descriptors_recorded_at_all_is_only_a_doubt():
+    """An older record carries the boolean and not the descriptors it was derived from."""
+    dataset = make_dataset()
+    bare = _series_cand(transposed=True, notes=["transposed"])
+    assert "series_transposed" not in codes(run_checks(dataset, "late_adaptation", [bare]))
+    assert "series_marker_mismatch" in codes(run_checks(dataset, "late_adaptation", [bare]))
 
 
 def test_a_dispersion_taken_from_the_legend_is_flagged_and_caps():
@@ -611,11 +657,16 @@ def test_a_dispersion_taken_from_the_legend_is_flagged_and_caps():
         run_checks(dataset, "late_adaptation", [mapped]))
 
 
-def test_an_axis_conflict_caps_the_cell_it_survives():
-    """A value off the wrong ladder is wrong by a factor; keeping the majority does not prove it."""
-    from canopy.verify.confidence import CAPPING_FLAGS
+def test_an_axis_conflict_withholds_the_cell_it_survives():
+    """A value off the wrong ladder is wrong by a factor; keeping the majority does not prove it.
 
-    assert "axis_conflict" in CAPPING_FLAGS
+    EXPECTATION CHANGED (was `in CAPPING_FLAGS`): under the R2 floor this flag could not move a
+    cell out of the accept band at all. A figure read off the wrong panel in the wrong unit,
+    carrying exactly this flag, replayed at 0.4500 — the acceptance threshold.
+    """
+    from canopy.verify.confidence import CONTRADICTING_FLAGS
+
+    assert "axis_conflict" in CONTRADICTING_FLAGS
     dataset = make_dataset()
     split = _figure_cand(cal_status="confirmed")
     split.pixel_provenance = {**split.pixel_provenance, "axis_agreement": "conflict",

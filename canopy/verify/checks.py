@@ -20,7 +20,7 @@ costs it points, an `info` is recorded for the provenance bundle.
 from __future__ import annotations
 
 import math
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 from ..models import (Candidate, CheckFlag, DatasetSpec, DispersionType, GroupSpec,
                       OrientationVerdict, OutcomeSources, Source)
@@ -96,6 +96,7 @@ CHECK_SEVERITY: dict[str, str] = {
     "figure_error_bar_unknown": "warn",
     "series_identity_conflict": "warn",
     "series_marker_mismatch": "warn",
+    "series_transposed": "warn",
     "axis_conflict": "warn",
     "error_bar_unconfirmed": "info",
 }
@@ -306,6 +307,37 @@ def _check_calibration(cand: Candidate, out: list[CheckFlag]) -> None:
                   f"read against is uncorroborated ({note})", cid)
 
 
+def _descriptor(value: Any) -> tuple[str, str]:
+    """`(fill, shape)` from a recorded descriptor pair; `("", "")` for anything unusable."""
+    if isinstance(value, (list, tuple)) and len(value) == 2:
+        return str(value[0] or ""), str(value[1] or "")
+    return "", ""
+
+
+def _positively_matches(described: tuple[str, str], detected: tuple[str, str]) -> bool:
+    """Do these two agree on everything both state, AND state at least one thing in common?
+
+    The producer's own test is the first half only, which is vacuously true against a marker whose
+    fill and shape the pixel pass could not resolve — the detector's "I could not tell" read as a
+    positive identification. Convicting a reading on that is how a correct row gets withheld.
+    """
+    if not any(a and b for a, b in zip(described, detected)):
+        return False
+    return all(not a or not b or a == b for a, b in zip(described, detected))
+
+
+def _transposition_is_corroborated(series: dict[str, Any]) -> bool:
+    """Was the swap SEEN at both measured points, or inferred from a marker nobody could read?"""
+    described, detected = series.get("described"), series.get("detected")
+    if not isinstance(described, dict) or not isinstance(detected, dict):
+        return False
+    groups = ("A", "B")
+    if not all(g in described and g in detected for g in groups):
+        return False
+    return (_positively_matches(_descriptor(described["A"]), _descriptor(detected["B"]))
+            and _positively_matches(_descriptor(described["B"]), _descriptor(detected["A"])))
+
+
 def _check_series_identity(cand: Candidate, out: list[CheckFlag]) -> None:
     """Which SERIES this value came from, and which AXIS it was read against (misses 1, 4, 5).
 
@@ -321,9 +353,26 @@ def _check_series_identity(cand: Candidate, out: list[CheckFlag]) -> None:
         if series.get("conflict"):
             _flag(out, "series_identity_conflict",
                   notes or "both groups resolve to the same plotted marker", cand.candidate_id)
-        # a transposition is a SIGN error, and a marker nobody can find means the value was
-        # measured somewhere the reader did not describe. Neither used to reach a flag at all.
-        if series.get("transposed") or series.get("marker_mismatch"):
+        # A transposition and a marker quibble are NOT one finding, though they arrived here as
+        # one code. "The described shape is not in this figure's marker vocabulary" is a doubt
+        # about words; "each group's value was measured on the OTHER group's marker" is a
+        # determination that the effect's sign is inverted, and nothing downstream can undo it.
+        # They are split so the second can withhold the row and the first cannot.
+        if series.get("transposed") and _transposition_is_corroborated(series):
+            _flag(out, "series_transposed",
+                  notes or "each group's value was measured on the other group's marker, which "
+                           "inverts the sign of the effect",
+                  cand.candidate_id)
+        elif series.get("transposed"):
+            # …and a conviction that inverts a sign may not rest on a marker the pixel pass could
+            # not resolve: `_descriptors_match` is vacuously true against an unknown descriptor,
+            # so an uncorroborated transposition is reported as the doubt it actually is.
+            _flag(out, "series_marker_mismatch",
+                  f"the two series may be transposed, but that could not be corroborated at both "
+                  f"measured points — the pixel pass resolved no marker to compare against "
+                  f"({notes or 'no descriptors were recorded'})",
+                  cand.candidate_id)
+        elif series.get("marker_mismatch"):
             _flag(out, "series_marker_mismatch",
                   notes or "the described marker is not the one found at this value",
                   cand.candidate_id)

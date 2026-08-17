@@ -53,31 +53,64 @@ WARN_PENALTY, WARN_CAP = 0.08, 0.24
 INFO_PENALTY, INFO_CAP = 0.01, 0.03
 MAD_SHARE, SIGMA_SHARE, SPREAD_PENALTY = 0.05, 0.10, 0.05
 FIGURE_CONFLICT_PENALTY = 0.05
-#: flags that cap a cell at `accept_with_note` however well it scores otherwise — each one is a
-#: specific way the value could be the wrong number, which no amount of agreement rules out
+#: TWO DOUBTS, and they are not the same doubt. Both used to live in `CAPPING_FLAGS` under one
+#: floor, which made the second incapable of withholding anything (controller ruling R2 as first
+#: written; overturned in part after a wrong-panel figure read landed on exactly 0.4500).
+#:
+#: `CAPPING_FLAGS` — **"this reading is under-corroborated."** Nothing here says the number is the
+#: wrong number: each one says the scale, the error-bar type, the location or the dispersion rests
+#: on one witness, one model's choice or an approximation. A reviewer should LOOK at such a cell;
+#: withholding it on that alone would bury correct readings, which is the failure task 16 exists
+#: to remove. So these are deducted, capped, and then floored back at `ACCEPT_WITH_NOTE`.
 CAPPING_FLAGS: frozenset[str] = frozenset({
-    "quote_row_only",
     #: one witness calibrated the axis: the value may be right and nothing corroborates the scale
     "calibration_single_witness",
     #: the read-outs agree on a value the ladder cannot draw — their number stands, the ladder does not
     "calibration_refuted",
-    #: an average across a categorical axis, with a dispersion the code approximated
+    #: an average across a categorical axis the protocol ASKED for, with a dispersion the code
+    #: approximated: a declared transformation whose spread is not the paper's own
     "collapsed_across_x",
-    #: extraction was re-opened on a source the verifier named
+    #: extraction was re-opened on a source the verifier named, so a model chose the location
     "reopened_on_better_source",
-    #: both groups resolve to the same plotted marker — the value may be the other series'
-    "series_identity_conflict",
-    #: the described marker is not one the pixel pass found, or the two groups' markers are swapped
-    "series_marker_mismatch",
     #: the error-bar type came from the figure's legend because the map never determined one
     "dispersion_type_from_legend",
+    #: the reader's words about this series and the markers the pixel pass found do not line up.
+    #: A soft doubt about a shape vocabulary — the *transposition* it used to share a code with
+    #: is `series_transposed`, below, because the two have opposite consequences.
+    "series_marker_mismatch",
+})
+
+#: `CONTRADICTING_FLAGS` — **"this may be a different quantity."** Each one is evidence that the
+#: number was measured somewhere other than where it was asked for: off another value axis, off
+#: the other series, out of another column, with the two groups swapped. No amount of agreement
+#: about a number establishes that it is the right number, and nothing downstream can recover: the
+#: meta-analysis pools whatever it is handed, at whatever sign it carries. These are therefore
+#: EXEMPT from the floor below and force a human — they are evidence, not a cap.
+CONTRADICTING_FLAGS: frozenset[str] = frozenset({
+    #: the numbers are in the named table row but not the named column — the other group's cell
+    "quote_row_only",
+    #: both groups resolve to the same plotted marker — one series was read twice, so one group's
+    #: number is the other's
+    "series_identity_conflict",
+    #: each group's value was measured on the OTHER group's marker: the effect's sign is inverted
+    "series_transposed",
     #: the readers answered off different value axes and one cluster was kept — a value off the
     #: wrong ladder is wrong by a factor, and keeping the majority does not prove it was right
     "axis_conflict",
 })
+
+#: A code belongs to exactly one of the two, and every one of them tells the reviewer why it
+#: fired: a code in neither is scored as an ordinary warning by accident, and a code in both would
+#: be deducted twice and floored inconsistently.
+WITHHOLDING_FLAGS: frozenset[str] = CAPPING_FLAGS | CONTRADICTING_FLAGS
+assert CAPPING_FLAGS.isdisjoint(CONTRADICTING_FLAGS), \
+    "a doubt is either under-corroboration or contradiction, never both"
+assert all((code in CAPPING_FLAGS) ^ (code in CONTRADICTING_FLAGS) for code in WITHHOLDING_FLAGS)
+
 #: every cap is at or above `ACCEPT_WITH_NOTE`, so no COMBINATION of caps can push a cell that
 #: scored well enough on the evidence down into `needs_human` (controller ruling R2, task 16):
-#: only disagreement, a refutation, an unresolved direction or an `error` flag does that.
+#: only disagreement, a refutation, a contradiction, an unresolved direction or an `error` flag
+#: does that.
 _CAPS = (SINGLE_ROUTE_CAP, ADJUDICATED_CAP)
 assert all(cap >= ACCEPT_WITH_NOTE for cap in _CAPS), "a cap must never mean needs_human"
 
@@ -109,10 +142,12 @@ CALIBRATION_PENALTY: dict[str, float] = {
 #: agree the checks raise `calibration_disputed`, which is not on this list.
 NON_FORCING_ERRORS: frozenset[str] = frozenset({"calibration_refuted"})
 
-#: why each capping flag caps — a reviewer reads these lines, so each one names the actual doubt
+#: why each flag above holds a cell back — a reviewer reads these lines, so each one names the
+#: actual doubt, and names the comparison that was really made rather than the one it would be
+#: nice to have made
 CAP_REASONS: dict[str, str] = {
-    "quote_row_only": ("the numbers may belong to the other group, which agreement cannot rule "
-                       "out"),
+    "quote_row_only": ("the numbers are somewhere in the named table row but not in the column "
+                       "this reading claims, so they may be the other group's"),
     "calibration_single_witness": ("only one witness calibrated this figure's axis, so the scale "
                                    "the value was read against is uncorroborated"),
     "calibration_refuted": ("the readers agree on a value the tick ladder cannot draw, so the "
@@ -123,8 +158,12 @@ CAP_REASONS: dict[str, str] = {
                                   "the location itself was decided by a model"),
     "series_identity_conflict": ("both groups resolve to the same plotted marker, so this number "
                                  "may belong to the other series"),
-    "series_marker_mismatch": ("the marker the reader described is not the one the pixel pass "
-                               "found where this value was measured"),
+    "series_marker_mismatch": ("the reader's description of this series and the markers the "
+                               "pixel pass found do not line up, so which series this number was "
+                               "measured on rests on the reader's words alone"),
+    "series_transposed": ("each group's described marker is the one found where the OTHER "
+                          "group's value was measured, so the two series are swapped and the "
+                          "sign of the effect is inverted"),
     "dispersion_type_from_legend": ("the error-bar type was read off the figure's legend, not "
                                     "determined by the map, so nothing independent confirms it"),
     "axis_conflict": ("the readers answered off different value axes and only one of them was "
@@ -374,7 +413,7 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
         reasons.append(f"{', '.join(noted)}: the calibration is wrong, not the value — the "
                        f"reading stands, capped for review")
     codes = {f.code for f in flags}
-    warns = sorted({f.code for f in flags if f.severity == "warn"} - CAPPING_FLAGS
+    warns = sorted({f.code for f in flags if f.severity == "warn"} - WITHHOLDING_FLAGS
                    - set(CALIBRATION_PENALTY))
     capping_warns = sorted({f.code for f in flags if f.severity == "warn"}
                            & (CAPPING_FLAGS - set(CALIBRATION_PENALTY)))
@@ -391,18 +430,39 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
         score -= penalty
         reasons.append(f"notes ({', '.join(infos)}) -{penalty:.2f}")
 
+    # --- "this may be a different quantity" (CONTRADICTING_FLAGS). Deducted HERE, ABOVE the
+    # floor, and forcing: a contradiction is evidence about what was measured, not a cap on how
+    # well corroborated it is, so the floor below must not be able to restore it. Under one shared
+    # floor these were arithmetically incapable of withholding anything — a figure read off the
+    # wrong panel in the wrong unit, carrying `axis_conflict`, landed on exactly the acceptance
+    # threshold and would have been pooled.
+    contradicting = sorted(codes & CONTRADICTING_FLAGS)
+    if contradicting:
+        penalty = min(WARN_CAP, WARN_PENALTY * len(contradicting))
+        score -= penalty
+        forced_human = True
+        reasons.append(f"{', '.join(contradicting)} (-{penalty:.2f}) — a human decides: "
+                       + "; ".join(CAP_REASONS.get(code, "this may be a different quantity")
+                                   for code in contradicting)
+                       + ". Agreement about a number never establishes that it is the right "
+                         "number, so this is not something a score can settle")
+
     # Everything from here to the end of the caps is the CAPPING mechanism, and R2 says a
     # combination of caps clamps AT `accept_with_note` — it never composes downwards into
     # `needs_human`. So the score as it stands is remembered, the capping deductions and ceilings
     # are applied, and the result is floored back to it: a cap can lower a cell to
     # `accept_with_note` and no further, while a deduction that was already there for other
-    # reasons (an ungrounded quote, routes that are far apart) still stands on its own.
+    # reasons (an ungrounded quote, routes that are far apart, a contradiction above) still
+    # stands on its own.
     floor = min(score, ACCEPT_WITH_NOTE)
 
     if capping_warns:
         penalty = min(WARN_CAP, WARN_PENALTY * len(capping_warns))
         score -= penalty
-        reasons.append(f"warnings ({', '.join(capping_warns)}) -{penalty:.2f}")
+        # said plainly because it is true: under the floor below, this deduction ranks a cell
+        # inside the accept band and can never move it out of one (see the restore line)
+        reasons.append(f"warnings ({', '.join(capping_warns)}) -{penalty:.2f}, which orders this "
+                       f"cell in the review queue but cannot withhold it")
 
     # --- how well corroborated the axis was, scored once and ordered (see CALIBRATION_PENALTY)
     axis_codes = sorted(codes & set(CALIBRATION_PENALTY))
@@ -429,8 +489,9 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
             and len(_agreeing_model_families(vote_result, candidates)) < 2):
         score = min(score, SINGLE_ROUTE_CAP)
     capping = sorted(codes & CAPPING_FLAGS)
-    if capping:
+    if capping or contradicting:
         score = min(score, ADJUDICATED_CAP)
+    if capping:
         reasons.append(f"{', '.join(capping)} caps this cell at {ADJUDICATED_CAP:.2f}: "
                        + "; ".join(CAP_REASONS.get(code, "this reading is unconfirmed")
                                    for code in capping))
