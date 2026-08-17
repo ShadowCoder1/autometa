@@ -319,7 +319,23 @@ def _check_calibration(cand: Candidate, out: list[CheckFlag]) -> None:
               f"the axis calibration was discarded and the reading rests on the read-outs alone "
               f"({note})", cid)
     elif status == "single_witness":
-        if routes_agree(cand.pixel_provenance) is False:
+        pp = cand.pixel_provenance or {}
+        source = str(pp.get("cal_source") or "")
+        disputed = [str(x) for x in (pp.get("cal_disputed") or [])]
+        overlay_disputed = any((entry or {}).get("not_applied")
+                               for entry in (pp.get("overlay_iterations") or []))
+        if source and source in disputed:
+            _flag(out, "calibration_disputed",
+                  f"the ladder {where} was read against ({source}) carries none of the tick "
+                  f"values the readers report for this axis — it is a ladder of another axis of "
+                  f"the crop, and it was used anyway because nothing better was built ({note})",
+                  cid)
+        elif overlay_disputed:
+            _flag(out, "calibration_disputed",
+                  f"the overlay judged a mark off the datum on {where}, but the calibration the "
+                  f"mark was drawn with has one witness, so the mark and the reading disagree "
+                  f"and nothing says which is wrong ({note})", cid)
+        elif routes_agree(cand.pixel_provenance) is False:
             _flag(out, "calibration_disputed",
                   f"only one witness calibrated {where} AND the routes that read it disagree "
                   f"about the value, so neither the scale nor the number is corroborated "

@@ -550,6 +550,48 @@ def test_digitize_drops_a_route_the_overlay_verifier_rejects_and_recomputes(bar_
     assert len(out.provenance["overlay_iterations"]) >= 2
 
 
+def test_the_overlay_cannot_convict_a_reader_under_an_unconfirmed_calibration(bar_figure,
+                                                                             tmp_path):
+    """The live probe of Cressman Fig. 3b: three read-outs across two families were dropped for
+    sitting "3.4 deg below the bar top" — a bar top measured with the neighbouring panel's ladder.
+    The mark is drawn with the calibration; under a ruler only one witness built, "not on the
+    datum" is a disagreement between the mark and the reading, and the ruler is the suspect."""
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    coords = _coord_payload(bar_figure, view.scale)
+    coords["ticks"] = []                                       # no model ladder → OCR stands alone
+    readout = _readout_payload(31.5, 11.0, 12.25, 11.75)
+    readout["tick_labels"] = []                                # …and no read-out ladder either
+    calls = {"verify": 0}
+
+    def respond(request):
+        system = _system_of(request)
+        if "read numeric values" in system:
+            return _submit(readout)
+        if "locate features" in system:
+            return _submit(coords)
+        calls["verify"] += 1
+        verdicts = []
+        for line in system.splitlines():
+            head, _, rest = line.partition(". ")
+            if head.strip().isdigit():
+                verdicts.append({"number": int(head.strip()),
+                                 "verdict": "not_on_datum" if "readout" in rest else "ok",
+                                 "reason": "sits below the bar top"})
+        return _submit({"marks": verdicts, "notes": ""})
+
+    out = digitize(_client(FakeProvider([respond])), paper, fig, TARGET, source=SOURCE,
+                   dataset=DATASET, out_dir=tmp_path, result=True,
+                   settings=DigitizeSettings(overlay_verify="always"))
+    assert out.provenance["cal_status"] != "confirmed", out.provenance["cal_note"]
+    readers = [s for s in out.samples if s.route == "D"]
+    assert readers and not any(s.dropped for s in readers), \
+        "a reader was convicted on a mark drawn with an uncorroborated ruler"
+    assert all(s.extra.get("overlay_disputed") for s in readers)
+    assert out.provenance["overlay_iterations"][0]["not_applied"]
+    assert calls["verify"] == 1                                # no recompute loop either
+
+
 def test_digitize_flags_narrow_bars(tmp_path):
     plt = _mpl()
     fig_, ax = plt.subplots(figsize=(5.0, 4.0), dpi=100)
@@ -1223,6 +1265,71 @@ def test_an_ambiguous_scale_is_never_a_confirmed_calibration():
                                  [_readout({"A": 25.0}, [40, 30, 20, 10])])
     assert choice.status == "single_witness"
     assert "linear or logarithmic" in choice.why
+
+
+def _probe_witnesses():
+    """The witnesses the ~$1 live probe of Cressman Fig. 3b recorded, verbatim.
+
+    Two panels side by side. The PDF text layer's ladder is panel a's (45..5, rmse 0.003 px);
+    the model's tick pixels are panel b's (30..0); the readers read panel b and listed its ticks.
+    """
+    from canopy.digitize.vlm import CoordReadout, TickCoord
+
+    vector = _cal([(268.23, 45.0), (412.92, 35.0), (557.59, 25.0), (702.26, 15.0), (846.94, 5.0)])
+    coord = CoordReadout(ticks=[TickCoord(30.0, 279.33), TickCoord(20.0, 513.69),
+                                TickCoord(10.0, 741.92), TickCoord(0.0, 989.91)])
+    ocr = _cal([(268.43, 4.0), (412.6, 3.0), (557.5, 2.0), (702.43, 1.0)])   # 45→4, 35→3 …
+    core = _core_with(ocr, rows=[268.43, 412.6, 557.5, 702.43])
+    readers = [_readout({"A": 17.6, "B": 18.5}, [0, 10, 20, 30], model="claude-opus-5"),
+               _readout({"A": 17.6, "B": 18.6}, [0, 10, 20, 30], model="claude-sonnet-5",
+                        variant="direct"),
+               _readout({"A": 17.6, "B": 18.5}, [0, 10, 20, 30], variant="ticks_first")]
+    return core, coord, vector, readers
+
+
+def test_a_ladder_that_shares_no_tick_value_with_the_axis_the_readers_report_is_not_this_axis():
+    """The live probe: the neighbouring panel's ladder won on precision, and every pixel route
+    then converted the right pixels with the wrong ruler — 23.7 for a bar three readers put at
+    17.6. Precision cannot tell two axes apart; the tick values can."""
+    from canopy.digitize.digitizer import _choose_calibration, px_to_value
+
+    core, coord, vector, readers = _probe_witnesses()
+    choice = _choose_calibration(core, coord, vector, readers)
+    assert "vector" in choice.disputed
+    assert choice.source in ("vlm_ticks", "readout_ticks"), choice.why
+    assert choice.status == "confirmed", choice.why           # readers' labels + model pixels
+    # and the bar top the pixel route found (y ≈ 577 px) is now 17-and-a-bit, not 23.7
+    assert px_to_value(choice.cal, 577.0) == pytest.approx(17.4, abs=0.6)
+    assert "another axis" in choice.witnesses["vector"]["disputed_by_readouts"]
+
+
+def test_a_ladder_with_more_ticks_than_the_readers_listed_still_shares_the_axis():
+    """Minor ticks, or readers listing a subset: overlap ≥ 2 values is enough. Only a DISJOINT
+    ladder is another axis."""
+    from canopy.digitize.digitizer import _agreed_tick_labels, _shares_the_axis
+
+    full = _cal([(100.0, 30.0), (150.0, 25.0), (200.0, 20.0), (250.0, 15.0), (300.0, 10.0),
+                 (350.0, 5.0), (400.0, 0.0)])
+    readers = [_readout({"A": 12.0}, [0, 10, 20, 30]), _readout({"A": 12.1}, [0, 10, 20, 30])]
+    agreed = _agreed_tick_labels(readers)
+    assert agreed == {0.0, 10.0, 20.0, 30.0}
+    assert _shares_the_axis(full, agreed)
+    other_panel = _cal([(100.0, 45.0), (200.0, 35.0), (300.0, 25.0), (400.0, 15.0)])
+    assert not _shares_the_axis(other_panel, agreed)
+    percent = _cal([(100.0, 100.0), (175.0, 75.0), (250.0, 50.0), (325.0, 25.0), (400.0, 0.0)])
+    assert not _shares_the_axis(percent, agreed)             # the dual-axis case: one common zero
+    # one reader alone, or two who list different things, decide nothing
+    assert _agreed_tick_labels([readers[0]]) == set()
+    assert _shares_the_axis(other_panel, set())
+
+
+def test_when_every_ladder_is_disputed_the_choice_says_the_axis_is_unsettled():
+    from canopy.digitize.digitizer import _choose_calibration
+
+    core, coord, vector, readers = _probe_witnesses()
+    choice = _choose_calibration(core, None, vector, readers)   # no model ticks: only panel a's
+    assert choice.status == "single_witness"
+    assert "unsettled" in choice.why and choice.source in choice.disputed
 
 
 def test_the_magnitude_rule_refutes_a_ladder_that_cannot_draw_the_read_values():

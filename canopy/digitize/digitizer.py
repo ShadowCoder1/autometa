@@ -401,19 +401,84 @@ def _ladder_from_values(values: Sequence[float], rows: Sequence[float]
     return None
 
 
-def _readout_calibration(readouts: Sequence[ReadOut], rows: Sequence[float]
+#: witnesses whose tick VALUES are trustworthy enough that, disputed, they prove the rows they sit
+#: on are another axis. The PDF text layer is typeset numbers; OCR and the model's tick read are
+#: measurements of glyphs and can be wrong about the values while sitting on the right rows.
+_TRUSTED_VALUE_WITNESSES = frozenset({"vector"})
+
+#: how many tick values two witnesses must share before they can be the same axis
+_MIN_SHARED_TICKS = 2
+
+
+def _agreed_tick_labels(readouts: Sequence[ReadOut]) -> set[float]:
+    """The tick values at least two read-outs both listed for the value axis they read from.
+
+    Every read-out reports the ladder it read the numbers off (`tick_labels`), and it costs
+    nothing. Two readers listing the same labels is independent evidence of WHICH axis the
+    numbers are in — the thing no pixel-exact ladder can know on a figure with more than one
+    value axis. Cressman's Fig. 3 has two panels side by side and a second, percentage axis on
+    the right of the second one; the PDF text layer's ladder (45/35/25/15/5, rmse 0.003 px) was
+    the neighbouring panel's, and it won on precision.
+    """
+    sets = [set(float(v) for v in reading.tick_labels) for reading in readouts
+            if len(reading.tick_labels) >= 2]
+    agreed: set[float] = set()
+    for i, one in enumerate(sets):
+        for other in sets[i + 1:]:
+            agreed |= one & other
+    return agreed
+
+
+def _shares_the_axis(cal: AxisCalibration, agreed: set[float]) -> bool:
+    """Does this ladder carry at least `_MIN_SHARED_TICKS` of the tick values the readers agree on?
+
+    A ladder with more ticks than the readers listed (minor ticks, or the readers listed a
+    subset) still shares them; a ladder from another panel or the other axis of a dual-axis
+    panel shares none, or one (a common zero). Nothing is decided when the readers agreed on
+    fewer than three labels — that is not enough to say what the axis is.
+    """
+    if len(agreed) < 3:
+        return True
+    values = {float(v) for _, v in cal.ticks}
+    return len(values & agreed) >= _MIN_SHARED_TICKS
+
+
+def _readout_calibration(readouts: Sequence[ReadOut], rows: Sequence[float],
+                         model_ticks: Sequence[tuple[float, float]] = (),
+                         rows_disputed: bool = False
                          ) -> tuple[AxisCalibration | None, str, int]:
-    """The ladder the read-outs reported, as a calibration, and how many of them agreed on it."""
+    """The ladder the read-outs reported, as a calibration, and how many of them agreed on it.
+
+    The values come from the read-outs; the pixels come from the CV tick rows or, when those
+    belong to another axis of the crop, from the model's own tick pixels — paired only where the
+    read-out listed the very values the model put at those pixels. The CV rows of a two-panel
+    crop are the first panel's; a read-out ladder that cannot be paired with them is not absent,
+    it is on the other panel.
+    """
     fits: list[AxisCalibration] = []
+    model_by_value = {float(v): float(px) for px, v in model_ticks}
     for reading in readouts:
-        pairs = _ladder_from_values(reading.tick_labels, rows)
+        listed = {float(v) for v in reading.tick_labels}
+        pairs = None
+        # a VALUED match first: the model put these very values at these pixels, so pairing the
+        # read-out's labels with them is evidence, not coincidence
+        shared = sorted(listed & set(model_by_value)) if model_by_value else []
+        if len(shared) >= 3 and len(shared) >= len(listed) - 1:
+            pairs = [(model_by_value[v], v) for v in shared]
+        # a COUNT match with the CV rows only after that, and never with rows that belong to an
+        # axis the readers have disputed — four labels landing on four rows of the neighbouring
+        # panel is exactly the mis-pairing this witness exists to catch
+        elif not rows_disputed:
+            pairs = _ladder_from_values(reading.tick_labels, rows)
         if not pairs:
             continue
         cal, _scale = fit_best_scale(pairs, axis="y")
         if cal is not None:
             fits.append(cal)
     if not fits:
-        return None, "no read-out tick ladder could be paired with the detected tick marks", 0
+        return None, ("no read-out tick ladder could be paired with the detected tick marks"
+                      + (" (the detected rows are an axis the readers dispute)"
+                         if rows_disputed else "")), 0
     best, support = fits[0], 0
     for cal in fits:
         tol = _agreement_tolerance(cal)
@@ -485,6 +550,8 @@ class CalibrationChoice:
     agreeing: list[str] = field(default_factory=list)
     scale_note: str = ""
     refutation: dict[str, Any] | None = None
+    #: witnesses set aside because their tick values are not the axis the readers report
+    disputed: list[str] = field(default_factory=list)
 
     @property
     def confirmed(self) -> bool:
@@ -572,7 +639,29 @@ def _choose_calibration(core: _Core, coord: CoordReadout | None,
     if cal_vec is not None:
         witnesses["vector"] = cal_vec
         notes["vector"] = f"the PDF text layer ({len(cal_vec.ticks)} ticks)"
-    cal_read, read_note, read_support = _readout_calibration(readouts, core.tick_rows)
+    # --- the axis-identity question is settled FIRST, before any read-out ladder is built: a
+    # ladder that shares none of the tick values two readers agree the axis carries is a ladder
+    # of ANOTHER axis — the neighbouring panel's, or the right-hand axis of a dual-axis panel.
+    # Precision cannot rescue it: the PDF text layer's 45/35/25/15/5 fitted panel a to 0.003 px
+    # while the readers read panel b's 0/10/20/30, and every pixel route then converted the
+    # right pixels with the wrong ruler.
+    agreed = _agreed_tick_labels(readouts)
+    disputed = {name for name, cal in witnesses.items() if not _shares_the_axis(cal, agreed)}
+    # The CV tick rows are the rows of whichever axis the pixel witnesses sit on. When a witness
+    # whose VALUES can be trusted — the PDF's own typeset text — is disputed, those rows really
+    # are another axis, and the read-out labels must not be count-paired with them. A disputed
+    # OCR ladder testifies to nothing of the kind: OCR misreading the glyphs at these rows (F1's
+    # 45→4) leaves them the readers' own axis, and pairing the readers' labels with them is
+    # exactly how F1 was fixed.
+    disputed_rows = [px for name in disputed if name in _TRUSTED_VALUE_WITNESSES
+                     for px, _ in witnesses[name].ticks]
+    rows_disputed = bool(disputed_rows) and bool(core.tick_rows) and (
+        sum(1 for r in core.tick_rows if any(abs(r - px) <= 3.0 for px in disputed_rows))
+        >= max(2, len(core.tick_rows) // 2))
+    model_ticks = (cal_model.ticks if cal_model is not None and "vlm_ticks" not in disputed
+                   else ())
+    cal_read, read_note, read_support = _readout_calibration(
+        readouts, core.tick_rows, model_ticks, rows_disputed=rows_disputed)
     if cal_read is not None:
         witnesses["readout_ticks"] = cal_read
     notes["readout_ticks"] = read_note
@@ -583,10 +672,26 @@ def _choose_calibration(core: _Core, coord: CoordReadout | None,
     if not witnesses:
         return CalibrationChoice(status="none", why="no y calibration could be built",
                                  witnesses=record)
+    for name in disputed:
+        record[name]["disputed_by_readouts"] = (
+            f"its ticks {sorted(float(v) for _, v in witnesses[name].ticks)} share fewer than "
+            f"{_MIN_SHARED_TICKS} values with the {sorted(agreed)} two readers report for this "
+            f"axis — a ladder of another axis of the crop")
+    all_witnesses = dict(witnesses)
+    if disputed and len(disputed) < len(witnesses):
+        witnesses = {name: cal for name, cal in witnesses.items() if name not in disputed}
+        for name in disputed:
+            notes[name] = f"{notes.get(name, name)} — disputed by the readers' tick labels"
 
-    # --- the magnitude test runs FIRST, witness by witness: a ladder the agreed read-out values
-    # cannot be drawn on is not a candidate, and dropping it lets a surviving witness (Cressman's
-    # own read-out ladder, 45..-5) supply the axis instead of the cell losing its calibration
+    # --- the magnitude test, witness by witness (disputed ones included, so the record carries
+    # both facts): a ladder the agreed read-out values cannot be drawn on is not a candidate, and
+    # dropping it lets a surviving witness (Cressman's own read-out ladder, 45..-5) supply the
+    # axis instead of the cell losing its calibration
+    for name in disputed:
+        if name in all_witnesses and name not in witnesses:
+            why = _magnitude_refutes(all_witnesses[name], readouts)
+            if why is not None:
+                record[name]["refuted"] = why
     refutations = {name: _magnitude_refutes(cal, readouts) for name, cal in witnesses.items()}
     refuted = {name: why for name, why in refutations.items() if why is not None}
     for name, why in refuted.items():
@@ -634,6 +739,7 @@ def _choose_calibration(core: _Core, coord: CoordReadout | None,
     choice = CalibrationChoice(cal=cal, source=source, witnesses=record, agreeing=list(best),
                                scale_note=scale_note)
     record.setdefault("readout_ticks", {})["support"] = read_support
+    choice.disputed = sorted(disputed)
     if len(best) >= 2:
         choice.status = "confirmed"
         choice.why = (f"{len(best)} independent witnesses agree on the mapping "
@@ -650,6 +756,15 @@ def _choose_calibration(core: _Core, coord: CoordReadout | None,
         choice.refutation = next(iter(refuted.values()))
         choice.why = (f"{choice.why}; the {', '.join(sorted(refuted))} ladder was refused — "
                       f"{choice.refutation['why']}")
+    if disputed and source in disputed:
+        # every witness was disputed and the top one is being used anyway: say so, and nothing
+        # downstream may treat this ruler as corroborated
+        choice.status = "single_witness"
+        choice.why = (f"{choice.why}; the readers' tick labels {sorted(agreed)} dispute EVERY "
+                      f"ladder, including this one — the axis these numbers are in is unsettled")
+    elif disputed:
+        choice.why = (f"{choice.why}; the {', '.join(sorted(disputed))} ladder was set aside — "
+                      f"it shares no tick values with the axis the readers report")
     return choice
 
 
@@ -2006,6 +2121,22 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
             if not bad:
                 break
             dropped = 0
+            if not choice.confirmed:
+                # The mark is drawn with the calibration. Under a ruler only one witness built —
+                # or one the readers dispute — "the circle is not on the datum" is a disagreement
+                # between the mark and the reading, and the ruler is the suspect: it says
+                # nothing about which of the two is wrong. Three read-outs across two families
+                # were dropped this way on Cressman's Fig. 3b for sitting "3.4 deg below the bar
+                # top" — the bar top measured with the neighbouring panel's ladder. A conviction
+                # needs a corroborated ruler; without one the verdict is recorded, not applied.
+                verify_log[-1]["not_applied"] = (
+                    f"{len(bad)} mark(s) judged off the datum, but the calibration is "
+                    f"{choice.status}, so the mark's own placement is uncorroborated and no "
+                    f"read-out is dropped on it")
+                for v in bad:
+                    for idx in owners[v.number - 1]:
+                        samples[idx].extra["overlay_disputed"] = f"{v.verdict} — {v.reason}"
+                break
             for v in bad:
                 for idx in owners[v.number - 1]:
                     if not samples[idx].dropped:
@@ -2222,6 +2353,7 @@ def _base_provenance(fig: FigureRegion, core: _Core, choice: CalibrationChoice,
         "cal_status": choice.status,
         "cal_witnesses": choice.witnesses,
         "cal_agreeing": list(choice.agreeing),
+        "cal_disputed": list(choice.disputed),
         "cal_scale": choice.scale_note,
         "cal_refuted_ladder": (choice.cal.to_dict()
                                if choice.status == "cal_refuted" and choice.cal else None),
