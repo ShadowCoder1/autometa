@@ -718,6 +718,12 @@ def _run_paper(ctx: RunContext, group: PaperGroup) -> PaperResult:
         result.study = study
         status.status = "mapped"
         status.eligible = study.eligible
+        # `StudyMap.needs_human` was written by the mapper and read by nothing outside the browser,
+        # so every objection it raised — a wrong outcome key, a conflicting unit, a group mapping
+        # two agents could not agree on, "no dataset in an eligible paper, twice" — died where it
+        # was made. An objection that reaches no output is the same as no objection at all.
+        for note in study.needs_human:
+            status.warnings.append(f"map: {note}")
         if study.eligible is False:
             status.status = "excluded"
             result.exclusions.append({
@@ -916,15 +922,16 @@ def run_pipeline(papers_dir: str | Path, protocol_path: str | Path, out_dir: str
         manifest.warnings.extend(f"{sha12(result.status.paper_id)}: {w}"
                                  for w in result.status.warnings if not w.startswith("Traceback"))
 
+    # The spend has to be on the manifest BEFORE the report is built: `report.html` and the
+    # methods paragraph read `n_llm_calls` and `cost_usd` off it, and building them first printed
+    # "0 model calls were made at a cost of $0.00" into every run's methods text while the
+    # per-paper rows of the same page showed the real figures. A methods paragraph is written to
+    # be pasted into a paper, so a wrong number there is published.
+    _account(manifest, client)
     outputs = _write_outputs(ctx, manifest, results, paths, groups, n_duplicates)
     manifest.outputs = {k: str(Path(v).relative_to(out)) if Path(v).is_relative_to(out) else str(v)
                         for k, v in outputs.items()}
-    calls = client.calls()
-    manifest.n_llm_calls = len(calls)
-    manifest.cache_hits = sum(1 for c in calls if c.get("cached"))
-    manifest.cost_by_stage = cost_by_stage(calls)
-    manifest.cache = cache_stats(calls)
-    manifest.cost_usd = round(client.total_cost(), 6)
+    _account(manifest, client)               # …and again, so the saved manifest counts the writing
     manifest.seconds = round(time.perf_counter() - started, 3)
     save_manifest(out, manifest)
     if read_overrides(out):
@@ -1035,6 +1042,16 @@ def _write_outputs(ctx: RunContext, manifest: RunManifest, results: Sequence[Pap
                                             "provenance_json": outputs.get("provenance.json")})
     outputs.update({f"report.{k}": v for k, v in report.items()})
     return outputs
+
+
+def _account(manifest: RunManifest, client: LLMClient) -> None:
+    """Copy the client's spend onto the manifest. Called before the report and again after it."""
+    calls = client.calls()
+    manifest.n_llm_calls = len(calls)
+    manifest.cache_hits = sum(1 for c in calls if c.get("cached"))
+    manifest.cost_by_stage = cost_by_stage(calls)
+    manifest.cache = cache_stats(calls)
+    manifest.cost_usd = round(client.total_cost(), 6)
 
 
 def _prisma_counts(results: Sequence[PaperResult], paths: Sequence[Path], n_duplicates: int,

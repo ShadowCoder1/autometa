@@ -529,6 +529,54 @@ def test_an_ineligible_paper_is_excluded_with_its_reason(tmp_path, papers_dir, f
     assert any(r["reason"] == "not_eligible" for r in rows)
 
 
+def test_a_mapper_objection_reaches_the_run_instead_of_dying_where_it_was_made(
+        tmp_path, papers_dir, fake_specs):
+    """`StudyMap.needs_human` was written at `mapper.py` and read by nothing but `app.js`.
+
+    Wrong outcome key, conflicting units, a group mapping two agents could not agree on — all of
+    it was raised and then dropped before any table, queue or manifest saw it.
+    """
+    from canopy.pipeline.run import run_pipeline
+
+    router = fake_router(fake_specs)
+
+    def disagree(request: LLMRequest) -> Any:
+        """Make the cross-check name a dataset the primary map does not have."""
+        payload = router(request)
+        if isinstance(payload, dict) and "roster_error_bars" in payload:      # the cross-check
+            extra = dict((payload.get("datasets") or [{}])[0])
+            extra["label"] = "a condition only the second agent saw"
+            payload = {**payload, "datasets": list(payload.get("datasets") or []) + [extra]}
+        return payload
+
+    client = LLMClient(provider=FakeProvider([disagree]), allow_live=True, cache_dir=None)
+    out = tmp_path / "run"
+    manifest = run_pipeline(papers_dir, PROTOCOL, out, client=client, concurrency=1)
+    mapped = [w for w in manifest.warnings if "map: " in w]
+    assert mapped, manifest.warnings
+    assert any("does not contain" in w for w in mapped), mapped
+
+
+def test_the_methods_paragraph_reports_the_spend_the_manifest_recorded(tmp_path, papers_dir,
+                                                                       fake_client):
+    """Every run so far wrote "0 model calls were made at a cost of $0.00" into its methods text.
+
+    `report.html` and `methods.md` read `n_llm_calls`/`cost_usd` off the manifest, and the report
+    was built before those fields were filled in — so the same page showed real per-paper costs
+    beside a zeroed total. A methods paragraph exists to be pasted into a paper.
+    """
+    from canopy.pipeline.run import run_pipeline
+
+    out = tmp_path / "run"
+    manifest = run_pipeline(papers_dir, PROTOCOL, out, client=fake_client, concurrency=1)
+    assert manifest.n_llm_calls > 0, "the fake run made no calls; the test proves nothing"
+    methods = (out / "methods.md").read_text(encoding="utf-8")
+    assert f"{manifest.n_llm_calls} model calls" in methods, methods[-400:]
+    assert "0 model calls" not in methods
+    html = (out / "report.html").read_text(encoding="utf-8")
+    assert f"{manifest.n_llm_calls}" in html
+
+
 def test_an_eligible_paper_with_no_dataset_never_leaves_the_run_in_silence(
         tmp_path, papers_dir, fake_specs):
     """It contributes no row, so it has to appear in the exclusions table and say why.
