@@ -1025,6 +1025,28 @@ def map_study(client: LLMClient, paper: PaperRecord, protocol: Protocol, *,
     study = _build_map(parsed, paper)
     call_ids = [primary.call_id]
 
+    if study.eligible is not False and not study.datasets:
+        # An eligible paper with no contrast in it is a self-contradiction, and it is the one
+        # failure that leaves no trace behind: no dataset means no source pass, no candidate, no
+        # row, and nothing in the review queue for a person to look at. Heuer & Hegele 2008 came
+        # back exactly this way — eligible, 900 words of design notes, `datasets: []` — while the
+        # cross-check of the very same paper found two. Ask once more before believing it.
+        again = client.structured(
+            model=model_primary, system=SYSTEM, schema=MAPPER_SCHEMA, effort="high",
+            max_tokens=16000, betas=betas, prompt_version=PROMPT_VERSION,
+            cache_key_extra="retry-no-datasets", cell_key=f"map:{sha12}",
+            messages=[{"role": "user", "content": [document, text_block(render_prompt(
+                "mapper", PROTOCOL=protocol_prompt, ROSTER=roster_prompt))]}])
+        call_ids.append(again.call_id)
+        retried = _build_map(again.parsed or {}, paper)
+        disagreements.append(f"the primary map found no dataset in a paper it called eligible; "
+                             f"asked again and got {len(retried.datasets)}")
+        if retried.datasets:
+            parsed, study = again.parsed or {}, retried
+        else:
+            flags.append("the mapper found no dataset in a paper it called eligible, twice — "
+                         "needs human")
+
     if study.datasets:                       # nothing to locate when the paper has no contrast
         content = [document, text_block(render_prompt(
             "mapper_sources", PROTOCOL=protocol_prompt, ROSTER=roster_prompt,

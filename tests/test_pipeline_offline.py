@@ -529,6 +529,37 @@ def test_an_ineligible_paper_is_excluded_with_its_reason(tmp_path, papers_dir, f
     assert any(r["reason"] == "not_eligible" for r in rows)
 
 
+def test_an_eligible_paper_with_no_dataset_never_leaves_the_run_in_silence(
+        tmp_path, papers_dir, fake_specs):
+    """It contributes no row, so it has to appear in the exclusions table and say why.
+
+    `runs/proof`: Heuer & Hegele 2008 was mapped eligible with `datasets: []` and then vanished
+    — absent from the forest plot, from the review queue and from the exclusions table alike, so
+    a reader counting papers had no way to learn it had been dropped.
+    """
+    from canopy.pipeline.run import run_pipeline
+
+    router = fake_router(fake_specs)
+
+    def empty_map(request: LLMRequest) -> Any:
+        payload = router(request)
+        if isinstance(payload, dict) and "eligible" in payload:
+            payload = {**payload, "datasets": []}
+        return payload
+
+    client = LLMClient(provider=FakeProvider([empty_map]), allow_live=True, cache_dir=None)
+    out = tmp_path / "run"
+    manifest = run_pipeline(papers_dir, PROTOCOL, out, client=client, concurrency=1)
+    assert manifest.papers[0].status == "excluded"
+    assert manifest.papers[0].eligible is True          # eligible, and contributed nothing anyway
+    assert any("no dataset was mapped" in w for w in manifest.papers[0].warnings)
+    rows = list(csv.DictReader((out / "exclusions.csv").open(newline="", encoding="utf-8")))
+    entry = [r for r in rows if r["reason"] == "no_usable_data"]
+    assert entry, [r["reason"] for r in rows]
+    assert entry[0]["reason_as_given"] == "no_usable_data:no_datasets_mapped"
+    assert "no dataset was mapped" in entry[0]["detail"]
+
+
 def test_validate_repools_a_finished_run_without_any_model_call(tmp_path, papers_dir, fake_client):
     from canopy.pipeline.run import revalidate, run_pipeline
 

@@ -36,7 +36,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from ..config import MODELS, api_key, live_enabled, load_env
 from ..models import Protocol, StatsSettings
-from ..protocol import apply_profile, available_profiles, dump_protocol, load_protocol
+from ..protocol import (apply_profile, available_profiles, dump_protocol, load_protocol,
+                        load_yaml_strict)
 from .jobs import Job, JobBusy, JobManager, TooManyRuns
 from .overrides import (OverrideRejected, append_override, apply_overrides_and_repool,
                         override_summary, read_overrides, repool_lock)
@@ -85,9 +86,12 @@ def _validation_message(error: ValidationError) -> str:
 def _parse_protocol(text: str) -> Protocol:
     """The uploaded YAML as a `Protocol`, or a 422 a person can act on."""
     try:
-        raw = yaml.safe_load(text)
+        # strict: a repeated key would otherwise drop everything under the first copy in silence
+        raw = load_yaml_strict(text, "the protocol")
     except yaml.YAMLError as exc:
         raise HTTPException(status_code=422, detail=f"the protocol is not valid YAML: {exc}")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     if not isinstance(raw, dict):
         raise HTTPException(status_code=422, detail="the protocol must be a YAML mapping")
     try:

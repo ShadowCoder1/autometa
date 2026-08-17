@@ -54,6 +54,28 @@ def test_example_protocol_methods_content():
         p.outcome("nope")
 
 
+def test_a_repeated_key_in_a_protocol_is_an_error_not_a_silent_overwrite(tmp_path):
+    """The failure this prevents: `runs/proof` lost `digitize.collapse_across_categorical_x`.
+
+    The protocol had two `digitize:` blocks — the flag in the first, the read-out settings in
+    the second — and PyYAML kept only the last, so the setting was never applied and the cell it
+    governed produced no value. Nothing in the run said a word about it.
+    """
+    path = tmp_path / "protocol.yaml"
+    body = EXAMPLE.read_text() + "\ndigitize:\n  collapse_across_categorical_x: true\n"
+    path.write_text(body + "digitize:\n  readouts_min: 2\n", encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        load_protocol(path)
+    assert "duplicate key 'digitize'" in str(exc.value)
+    assert "dropped in silence" in str(exc.value)
+
+
+def test_a_protocol_without_repeated_keys_still_loads(tmp_path):
+    path = tmp_path / "protocol.yaml"
+    path.write_text(EXAMPLE.read_text(), encoding="utf-8")
+    assert isinstance(load_protocol(path), Protocol)
+
+
 def test_example_protocol_uses_cisneros_profile():
     p = load_protocol(EXAMPLE)
     assert p.stats.profile == "cisneros2024"

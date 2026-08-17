@@ -17,6 +17,41 @@ PROFILE_DIR = Path(__file__).resolve().parent / "profiles"
 _META_KEYS = {"name", "description", "reference"}
 
 
+class _StrictLoader(yaml.SafeLoader):
+    """A YAML loader that refuses duplicate mapping keys instead of silently keeping the last.
+
+    PyYAML follows the spec's "last one wins" for a repeated key, without a word. A protocol is
+    the one file where every line is load-bearing, and the usual way to break it is to append a
+    section that already exists further up. A live run of this tool lost a whole `digitize:`
+    block that way; the setting's absence then looked exactly like the feature being broken
+    rather than like it never having been switched on. Refuse to load such a file at all.
+    """
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
+        seen: set[Any] = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            try:
+                duplicate = key in seen
+            except TypeError:                # an unhashable key is legal YAML and not our problem
+                continue
+            if duplicate:
+                raise ValueError(
+                    f"duplicate key {key!r} on line {key_node.start_mark.line + 1}: YAML keeps "
+                    f"only the last one, so everything under the first is dropped in silence. "
+                    f"Merge the two blocks into one.")
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
+def load_yaml_strict(text: str, what: str) -> Any:
+    """`yaml.safe_load` that will not silently drop a repeated key. See `_StrictLoader`."""
+    try:
+        return yaml.load(text, Loader=_StrictLoader)
+    except ValueError as exc:
+        raise ValueError(f"{what}: {exc}") from exc
+
+
 def available_profiles() -> list[str]:
     return sorted(p.stem for p in PROFILE_DIR.glob("*.yaml"))
 
@@ -26,7 +61,7 @@ def load_profile(name: str) -> dict[str, Any]:
     path = PROFILE_DIR / f"{name}.yaml"
     if not path.exists():
         raise KeyError(f"unknown stats profile {name!r} (available: {available_profiles()})")
-    data = yaml.safe_load(path.read_text()) or {}
+    data = load_yaml_strict(path.read_text(), f"profile {name!r}") or {}
     if not isinstance(data, dict):
         raise ValueError(f"profile {name!r} must be a mapping")
     unknown = set(data) - _META_KEYS - set(StatsSettings.model_fields)
@@ -58,7 +93,7 @@ def apply_profile(settings: StatsSettings) -> StatsSettings:
 def load_protocol(path: str | Path) -> Protocol:
     """Load a protocol YAML/JSON file and resolve its statistics profile."""
     path = Path(path)
-    raw = yaml.safe_load(path.read_text()) or {}
+    raw = load_yaml_strict(path.read_text(), f"protocol {path}") or {}
     if not isinstance(raw, dict):
         raise ValueError(f"protocol {path} must be a mapping")
     protocol = Protocol.model_validate(raw)

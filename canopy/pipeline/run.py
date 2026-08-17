@@ -727,6 +727,23 @@ def _run_paper(ctx: RunContext, group: PaperGroup) -> PaperResult:
             emit(ctx.progress, "map", label, "excluded",
                  cost_so_far=ctx.client.total_cost(), message=study.exclusion_reason)
             return result
+        if not study.datasets:
+            # Eligible and empty. Without this the paper leaves the run without appearing
+            # anywhere at all — no row in the forest plot, none in the review queue, none in the
+            # exclusions table — and a reader counting papers would never learn it was dropped.
+            # A paper that contributes nothing has to say so and give its reason.
+            status.status = "excluded"
+            why = "; ".join(study.disagreements[-2:]) or "the mapper listed no dataset"
+            status.warnings.append(f"eligible but no dataset was mapped: {why}")
+            result.exclusions.append({
+                "paper_id": group.sha256, "filename": status.filename, "stage": "map",
+                "reason": "no_usable_data:no_datasets_mapped",
+                "quote": study.eligibility_rationale, "decider": "mapper",
+                "detail": f"the paper was called eligible but no dataset was mapped, so it "
+                          f"contributes no row: {why}"})
+            emit(ctx.progress, "map", label, "excluded", cost_so_far=ctx.client.total_cost(),
+                 message="eligible, but no dataset was mapped")
+            return result
         emit(ctx.progress, "map", label, "done", cost_so_far=ctx.client.total_cost(),
              message=f"{len(study.datasets)} datasets")
 

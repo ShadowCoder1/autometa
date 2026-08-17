@@ -817,3 +817,34 @@ def test_prompt_version_tracks_the_prompt_files(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mapper, "load_prompt", lambda name: original(name) + "\nedited")
     assert mapper.prompt_fingerprint() != PROMPT_VERSION.split("@")[1]
+
+
+# ------------------------------------------------------------------ eligible, but empty
+def test_an_eligible_paper_with_no_dataset_is_asked_a_second_time(paper, protocol):
+    """Heuer & Hegele 2008 in `runs/proof`: eligible, 900 words of design notes, `datasets: []`.
+
+    No dataset means no source pass, no candidate and no row, so the paper left that run without
+    appearing anywhere — while the cross-check of the same PDF found two datasets. A
+    contradiction that costs a whole paper is worth one more question.
+    """
+    study, provider = _mapped(paper, protocol,
+                              [_primary(datasets=[]), _primary(), _sources(), _check()])
+    assert len(provider.requests) == 4                   # map, map again, sources, cross-check
+    assert study.datasets and study.datasets[0].dataset_id == f"{paper.sha256[:12]}:d1"
+    assert any("asked again and got 1" in d for d in study.disagreements)
+    assert not any("twice" in flag for flag in study.needs_human)
+
+
+def test_the_second_empty_answer_is_flagged_for_a_human_rather_than_dropped(paper, protocol):
+    study, provider = _mapped(paper, protocol,
+                              [_primary(datasets=[]), _primary(datasets=[]), _check(datasets=[])])
+    assert len(provider.requests) == 3                   # no source pass: there is nothing to map
+    assert not study.datasets
+    assert any("no dataset in a paper it called eligible, twice" in f for f in study.needs_human)
+
+
+def test_an_ineligible_paper_is_not_asked_again(paper, protocol):
+    """The retry answers a contradiction. "Ineligible, and so no dataset" is not one."""
+    _, provider = _mapped(paper, protocol,
+                          [_primary(datasets=[], eligible=False), _check(eligible=False)])
+    assert len(provider.requests) == 2
