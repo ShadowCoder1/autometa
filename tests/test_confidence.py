@@ -597,3 +597,107 @@ def test_one_model_reading_two_different_places_in_the_paper_is_two_witnesses():
                                          orientation=ORIENTED)
     assert bucket == "auto_accept"
     assert any("independent routes agree" in r for r in reasons)
+
+
+# ---------------------------------------------- amendment F's gate, on the input it really receives
+def _route_row(extractor_id: str, mean: float | None, error: float | None, *,
+               sigma: float | None = 0.08, dropped: bool = False) -> dict:
+    """One row of `pixel_provenance["per_route"]`, shaped as `RouteSample.to_dict()` writes it."""
+    return {"extractor_id": extractor_id, "mean": mean, "error": error, "sigma": sigma,
+            "dropped": dropped, "status": "found", "group": "A", "route": "D"}
+
+
+def _ensemble_with_routes(cid: str, group: str, mean: float, rows: list[dict], *,
+                          dispersion_type=DispersionType.SD, sd: float = 11.0,
+                          n: int = 12) -> Candidate:
+    return Candidate(
+        candidate_id=cid, paper_id="p", dataset_id="ds1", outcome_key="late_adaptation",
+        kind="group_stats", group=group, status="found", source_kind=SourceKind.figure_line,
+        n=n, mean=mean, dispersion_value=sd, dispersion_type=dispersion_type, unit="deg",
+        route="figure", extractor_id="digitize:ensemble", model="", sigma=0.08,
+        pixel_provenance={"model_families": ["claude-opus", "claude-sonnet"],
+                          "cal_status": "confirmed", "per_route": rows,
+                          "cal": {"ticks": [[0.0, 60.0], [100.0, 0.0]]}})
+
+
+def test_the_figure_gate_can_pass_on_the_candidates_the_pipeline_really_hands_it():
+    """The gate has to be satisfiable by the input `resolve_cell` actually receives.
+
+    `run.py:vote_candidates` admits exactly one `digitize:ensemble` candidate per group, so the
+    gate — which compared candidates of two different digitizer modalities — saw one route in
+    every figure cell of every completed run, printed "1 digitizer route(s) read both groups" 21
+    times, and capped every one of them. A check that the pipeline's own upstream filter makes
+    unsatisfiable is worse than no check: it spends a reviewer's attention on a reason that reads
+    like a finding. The routes were there all along, inside `pixel_provenance["per_route"]`.
+    """
+    a = _ensemble_with_routes("ea", "A", 31.5, [
+        _route_row("digitize:readout:claude-opus-5:direct", 31.5, 11.0),
+        _route_row("digitize:vlm_coords:claude-opus-5", 31.6, 11.1)])
+    b = _ensemble_with_routes("eb", "B", 12.3, [
+        _route_row("digitize:readout:claude-opus-5:direct", 12.3, 11.0),
+        _route_row("digitize:vlm_coords:claude-opus-5", 12.4, 11.1)], sd=11.0)
+    ok, delta, share, reasons = figure_gate([a, b], 12, 12)
+    assert ok is True, reasons
+    assert delta is not None and delta < DELTA_D_LIMIT
+    assert share is not None and share < DIGITIZATION_SE_SHARE
+
+
+def test_a_figure_cell_whose_paths_pass_the_gate_is_not_capped_by_it():
+    """End to end: the gate's cap is now conditional on evidence, not on the pipeline's shape."""
+    a = _ensemble_with_routes("ea", "A", 31.5, [
+        _route_row("digitize:readout:claude-opus-5:direct", 31.5, 11.0),
+        _route_row("digitize:vlm_coords:claude-opus-5", 31.6, 11.1)])
+    b = _ensemble_with_routes("eb", "B", 12.3, [
+        _route_row("digitize:readout:claude-opus-5:direct", 12.3, 11.0),
+        _route_row("digitize:vlm_coords:claude-opus-5", 12.4, 11.1)])
+    bucket, score, reasons = confidence(vote([a]), CONFIRMED, [], None, candidates=[a, b],
+                                        n_a=12, n_b=12, orientation=ORIENTED)
+    assert not any("cannot be accepted automatically" in r for r in reasons), reasons
+    assert (bucket, score) == ("auto_accept", 0.80), (bucket, score, reasons)
+
+
+def test_the_gate_fails_when_the_digitisers_paths_imply_different_effects():
+    """Numbers from a real record: `runs/rerun-hardened/…/b511dbb76fa6:d2 late_adaptation`.
+
+    That is the cell digitised off the wrong panel in the wrong unit. Its two surviving paths
+    imply d = 0.783 and d = 0.608 — 0.174 apart, well over the limit — which no reader of the
+    run could see, because the gate never compared them.
+    """
+    a = _ensemble_with_routes("ea", "A", 52.8, [
+        _route_row("digitize:readout:claude-opus-5:direct", 52.8, 11.0),
+        _route_row("digitize:readout:claude-sonnet-5:direct", 52.0, 9.0, dropped=True),
+        _route_row("digitize:vlm_coords:claude-opus-5", 52.770661652842584, 9.96508568385304),
+        _route_row("digitize:raster_cv", 52.81071631697411, None)],
+        dispersion_type=DispersionType.SE, sd=10.48254284192652)
+    b = _ensemble_with_routes("eb", "B", 28.4, [
+        _route_row("digitize:readout:claude-opus-5:direct", 28.4, 6.4),
+        _route_row("digitize:vlm_coords:claude-opus-5", 28.380926636087487, 12.98338661960863),
+        _route_row("digitize:raster_cv", 29.00482401688621, 0.7982431512276698)],
+        dispersion_type=DispersionType.SE, sd=6.4)
+    ok, delta, _share, reasons = figure_gate([a, b], 12, 12)
+    assert ok is False
+    assert delta is not None and round(delta, 3) == 0.174, delta
+    assert any("differ by" in r for r in reasons), reasons
+
+
+def test_a_dropped_route_does_not_vote_in_the_gate():
+    """A reading the ensemble threw away is not a witness to anything, here least of all."""
+    kept = _route_row("digitize:readout:claude-opus-5:direct", 31.5, 11.0)
+    thrown = _route_row("digitize:vlm_coords:claude-opus-5", 99.0, 11.0, dropped=True)
+    a = _ensemble_with_routes("ea", "A", 31.5, [kept, thrown])
+    b = _ensemble_with_routes("eb", "B", 12.3, [
+        _route_row("digitize:readout:claude-opus-5:direct", 12.3, 11.0),
+        _route_row("digitize:vlm_coords:claude-opus-5", 80.0, 11.0, dropped=True)])
+    ok, delta, _share, reasons = figure_gate([a, b], 12, 12)
+    assert ok is False and delta is None
+    assert any("one" in r for r in reasons)
+
+
+def test_the_gate_says_plainly_when_it_had_nothing_to_evaluate():
+    """An absence of evidence must not be printed as a finding about the reading."""
+    a = _ensemble_with_routes("ea", "A", 31.5, [])
+    b = _ensemble_with_routes("eb", "B", 12.3, [])
+    ok, delta, _share, reasons = figure_gate([a, b], 12, 12)
+    assert ok is False and delta is None
+    assert any("could not be evaluated" in r for r in reasons), reasons
+    assert not any("route(s) read both groups" in r for r in reasons), reasons

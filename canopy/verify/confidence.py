@@ -22,14 +22,14 @@ from __future__ import annotations
 
 import math
 import statistics
-from typing import Iterable, Sequence
+from typing import Any, Iterable, NamedTuple, Sequence
 
 from ..models import (Adjudication, Candidate, CheckFlag, ConfidenceBucket, DatasetSpec,
                       DispersionType, OrientationVerdict, VerifierVerdict, Verdict)
 from ..stats.effect_sizes import cohens_d, pooled_sd, se_smd
 from .checks import run_checks
 from .grounding import is_short_quote
-from .vote import VoteResult, is_figure_route, modality, vote
+from .vote import VoteResult, digitizer_path, is_figure_route, modality, vote
 
 __all__ = ["confidence", "resolve_cell", "figure_gate", "AUTO_ACCEPT", "ACCEPT_WITH_NOTE",
            "DELTA_D_LIMIT", "DIGITIZATION_SE_SHARE", "SINGLE_ROUTE_CAP", "ADJUDICATED_CAP"]
@@ -172,24 +172,86 @@ CAP_REASONS: dict[str, str] = {
 
 
 # ----------------------------------------------------------------------------- amendment F gate
-def _sd_of(cand: Candidate) -> float | None:
-    """The candidate's spread as a standard deviation, when it is one or converts trivially."""
-    if cand.dispersion_value is None or cand.dispersion_value <= 0:
+def _as_sd(value: float | None, kind: DispersionType, n: int | None) -> float | None:
+    """A spread as a standard deviation, when it is one or converts trivially."""
+    if value is None or value <= 0:
         return None
-    if cand.dispersion_type is DispersionType.SD:
-        return cand.dispersion_value
-    if cand.dispersion_type is DispersionType.SE and cand.n:
-        return cand.dispersion_value * math.sqrt(cand.n)
+    if kind is DispersionType.SD:
+        return value
+    if kind is DispersionType.SE and n:
+        return value * math.sqrt(n)
     return None
 
 
-def _per_route(candidates: Iterable[Candidate], group: str) -> dict[str, list[Candidate]]:
-    out: dict[str, list[Candidate]] = {}
-    for cand in candidates:
-        if (cand.group == group and cand.kind == "group_stats" and cand.status == "found"
-                and cand.mean is not None and _sd_of(cand) is not None):
-            out.setdefault(modality(cand), []).append(cand)
+def _sd_of(cand: Candidate) -> float | None:
+    """The candidate's spread as a standard deviation, when it is one or converts trivially."""
+    return _as_sd(cand.dispersion_value, cand.dispersion_type, cand.n)
+
+
+class _Reading(NamedTuple):
+    """One digitizer path's answer for one group, in data units."""
+
+    mean: float
+    sd: float
+    sigma: float | None
+
+
+def _number(value: Any) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _recorded_paths(cand: Candidate) -> dict[str, list[_Reading]] | None:
+    """The digitizer paths recorded INSIDE one ensemble candidate, or `None` when it records none.
+
+    `run.py:vote_candidates` admits exactly one `digitize:ensemble` candidate per group — the
+    digitiser's four or five ways of measuring one picture must not outvote a printed value — so
+    the several routes amendment F wants to compare never arrive here as candidates. They arrive
+    as `pixel_provenance["per_route"]`, which is where they are read from. A route's `error` is
+    the error-bar half-length in the ensemble's own dispersion type, because that is what
+    `digitize._build_candidates` builds each per-route candidate with.
+
+    A dropped reading is not a witness: the ensemble threw it away, and counting it here would
+    let a value that lost an axis conflict corroborate the one that won it.
+    """
+    rows = (cand.pixel_provenance or {}).get("per_route")
+    if not isinstance(rows, (list, tuple)):
+        return None
+    out: dict[str, list[_Reading]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or row.get("dropped") or row.get("status", "found") != "found":
+            continue
+        mean = _number(row.get("mean"))
+        sd = _as_sd(_number(row.get("error")), cand.dispersion_type, cand.n)
+        if mean is None or sd is None:
+            continue
+        out.setdefault(digitizer_path(str(row.get("extractor_id") or "")), []).append(
+            _Reading(mean, sd, _number(row.get("sigma")) or cand.sigma))
     return out
+
+
+def _per_route(candidates: Iterable[Candidate], group: str
+               ) -> tuple[dict[str, list[_Reading]], bool]:
+    """`(readings by digitizer path, whether any candidate recorded its paths at all)`.
+
+    An ensemble that records its paths is REPLACED by them — counting the median of a set of
+    routes as a further route would let one measured path plus its own summary look like two
+    paths agreeing perfectly.
+    """
+    out: dict[str, list[_Reading]] = {}
+    recorded = False
+    for cand in candidates:
+        if not (cand.group == group and cand.kind == "group_stats" and cand.status == "found"):
+            continue
+        paths = _recorded_paths(cand)
+        if paths is not None:
+            recorded = True
+            for name, readings in paths.items():
+                out.setdefault(name, []).extend(readings)
+            continue
+        sd = _sd_of(cand)
+        if cand.mean is not None and sd is not None:
+            out.setdefault(modality(cand), []).append(_Reading(cand.mean, sd, cand.sigma))
+    return out, recorded
 
 
 def _median(values: Sequence[float]) -> float:
@@ -209,23 +271,34 @@ def figure_gate(candidates: Sequence[Candidate], n_a: int | None, n_b: int | Non
     if not n_a or not n_b:
         return False, None, None, ["the analysed group sizes are unknown, so the digitisation "
                                    "uncertainty cannot be compared with the sampling error"]
-    routes_a, routes_b = _per_route(candidates, "A"), _per_route(candidates, "B")
+    (routes_a, recorded_a), (routes_b, recorded_b) = _per_route(candidates, "A"), \
+        _per_route(candidates, "B")
     shared = sorted(set(routes_a) & set(routes_b))
     effects: dict[str, float] = {}
     for route in shared:
         a, b = routes_a[route], routes_b[route]
-        mean_a, sd_a = _median([c.mean for c in a]), _median([_sd_of(c) for c in a])
-        mean_b, sd_b = _median([c.mean for c in b]), _median([_sd_of(c) for c in b])
+        mean_a, sd_a = _median([r.mean for r in a]), _median([r.sd for r in a])
+        mean_b, sd_b = _median([r.mean for r in b]), _median([r.sd for r in b])
         try:
             effects[route] = cohens_d(mean_a, sd_a, n_a, mean_b, sd_b, n_b)
-        except ValueError:                                # pragma: no cover - guarded by _sd_of
+        except ValueError:                                # pragma: no cover - guarded by _as_sd
             continue
 
     delta = (max(effects.values()) - min(effects.values())) if len(effects) >= 2 else None
-    if delta is None:
-        reasons.append(f"{len(effects)} digitizer route(s) read both groups, so the effect "
-                       f"implied across routes could not be compared — one route cannot agree "
-                       f"with another")
+    paths = set(routes_a) | set(routes_b)
+    # An absence of evidence must not be printed as though it were a finding about the reading:
+    # "nothing here says how this picture was measured" and "the ways it was measured do not
+    # agree" are opposite states, and the reviewer is the one who has to tell them apart.
+    if delta is None and not paths and not (recorded_a or recorded_b):
+        reasons.append("this cell records no per-route digitisation detail, so the digitisation "
+                       "gate could not be evaluated either way")
+    elif delta is None and not paths:
+        reasons.append("no digitizer path recorded both a value and a usable spread, so the "
+                       "digitisation gate could not be evaluated either way")
+    elif delta is None:
+        reasons.append(f"{len(effects)} of the digitizer's {len(paths)} measurement path(s) read "
+                       f"both groups with a usable spread, so the effect this figure implies is "
+                       f"corroborated by nothing — one path cannot agree with another")
     elif delta >= DELTA_D_LIMIT:
         reasons.append(f"the digitizer routes imply effects that differ by {delta:.3f} across "
                        f"routes (limit {DELTA_D_LIMIT})")
@@ -233,10 +306,10 @@ def figure_gate(candidates: Sequence[Candidate], n_a: int | None, n_b: int | Non
     share = None
     if effects:
         d = _median(list(effects.values()))
-        sds_a = [_sd_of(c) for row in routes_a.values() for c in row]
-        sds_b = [_sd_of(c) for row in routes_b.values() for c in row]
-        sigma_a = [c.sigma for row in routes_a.values() for c in row if c.sigma is not None]
-        sigma_b = [c.sigma for row in routes_b.values() for c in row if c.sigma is not None]
+        sds_a = [r.sd for row in routes_a.values() for r in row]
+        sds_b = [r.sd for row in routes_b.values() for r in row]
+        sigma_a = [r.sigma for row in routes_a.values() for r in row if r.sigma is not None]
+        sigma_b = [r.sigma for row in routes_b.values() for r in row if r.sigma is not None]
         if sds_a and sds_b and (sigma_a or sigma_b):
             sp = pooled_sd(_median(sds_a), n_a, _median(sds_b), n_b)
             se_dig = math.sqrt(((_median(sigma_a) if sigma_a else 0.0) / sp) ** 2

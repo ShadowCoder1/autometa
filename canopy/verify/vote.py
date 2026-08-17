@@ -53,6 +53,7 @@ from .figures import (AXIS_FRACTION, FALLBACK_FRACTION, FIGURE_KINDS, TICK_FRACT
 from .grounding import is_short_quote as _is_short_quote
 
 __all__ = ["vote", "vote_groups", "VoteResult", "RouteValue", "route_key", "modality",
+           "digitizer_path",
            "model_family", "precision_tolerance", "figure_tolerance", "candidate_tolerance",
            "AXIS_FRACTION", "TICK_FRACTION"]
 
@@ -71,11 +72,17 @@ def model_family(model: str) -> str:
     return "-".join(parts) or name
 
 
+def digitizer_path(extractor_id: str) -> str:
+    """`digitize:readout:claude-opus-5:direct` → `figure:readout` — which way the picture was
+    measured, without the model or the prompt variant. Two prompts of one path are one path."""
+    pieces = (extractor_id or "").split(":")
+    return f"figure:{pieces[1]}" if len(pieces) > 1 and pieces[1] else "figure"
+
+
 def modality(cand: Candidate) -> str:
     """How this value was obtained — the half of a route that is not the model."""
     if cand.extractor_id.startswith("digitize:"):
-        pieces = cand.extractor_id.split(":")
-        return f"figure:{pieces[1]}" if len(pieces) > 1 and pieces[1] else "figure"
+        return digitizer_path(cand.extractor_id)
     if cand.source_kind in FIGURE_KINDS:
         return "figure"
     if cand.kind in ("test_statistic", "reported_d"):
