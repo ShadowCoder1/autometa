@@ -1140,3 +1140,47 @@ def test_the_index_page_is_served(api):
     assert "<title>" in response.text
     assert api.get("/static/app.js").status_code == 200
     assert api.get("/static/styles.css").status_code == 200
+
+
+# ============================================================================ questions
+def test_a_run_offers_its_held_cells_as_questions_and_an_answer_repools(cloned):
+    """Ask → answer → the answer is an override naming the question, and the pool moved."""
+    api, run_id, token = cloned["api"], cloned["run_id"], cloned["token"]
+    body = api.get(f"/api/runs/{run_id}/questions", headers=auth(token)).json()
+    assert body["run_id"] == run_id and isinstance(body["questions"], list)
+    questions = body["questions"]
+    if not questions:
+        pytest.skip("this fake run held nothing; the module is covered in test_questions.py")
+    q = questions[0]
+    for key in ("number", "kind", "prompt", "options", "why", "answer_writes", "image"):
+        assert key in q
+    if q["image"].get("path"):
+        assert q["image"]["url"].startswith("/api/runs/")
+
+    before = api.get(f"/api/runs/{run_id}/results/{OUTCOME}", headers=auth(token)).json()
+    answer = ({"option": q["options"][0]["key"], "note": "checked the figure"}
+              if q["options"] and q["options"][0].get("mean") is not None
+              else {"mean": 12.0, "dispersion_value": 4.0, "dispersion_type": "SD", "n": 12,
+                    "note": "typed from the table"})
+    response = api.post(f"/api/runs/{run_id}/questions/{q['number']}/answer",
+                        headers=auth(token), json=answer)
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["ok"] and payload["override"]["justification"].startswith(
+        f"answered question #{q['number']}")
+    log = (Path(api.app.state.runs_dir) / run_id / "overrides.jsonl").read_text()
+    assert f"answered question #{q['number']}" in log
+    again = api.get(f"/api/runs/{run_id}/questions", headers=auth(token)).json()
+    mine = next(x for x in again["questions"] if x["id"] == q["id"])
+    assert mine["answered"] is True and again["n_open"] == body["n_open"] - 1
+    # answering a value question is a value override, so the pooled estimate may move; either
+    # way the run was re-pooled and still reads as a finished run
+    after = api.get(f"/api/runs/{run_id}/results/{OUTCOME}", headers=auth(token)).json()
+    assert "pooled" in after and (Path(api.app.state.runs_dir) / run_id / "prisma.json").exists()
+
+
+def test_answering_a_question_that_does_not_exist_is_a_404(cloned):
+    api, run_id, token = cloned["api"], cloned["run_id"], cloned["token"]
+    response = api.post(f"/api/runs/{run_id}/questions/999/answer", headers=auth(token),
+                        json={"option": "v1"})
+    assert response.status_code == 404

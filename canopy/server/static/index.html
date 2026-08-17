@@ -218,6 +218,9 @@
               aria-controls="pane-forest" aria-selected="true">Forest</button>
       <button type="button" class="tab" data-tab="table" role="tab" id="tab-table"
               aria-controls="pane-table" aria-selected="false">Extraction table</button>
+      <button type="button" class="tab" data-tab="questions" role="tab" id="tab-questions"
+              aria-controls="pane-questions" aria-selected="false">Questions
+        <span class="count" id="questions-count" hidden></span></button>
       <button type="button" class="tab" data-tab="flags" role="tab" id="tab-flags"
               aria-controls="pane-flags" aria-selected="false">Flags</button>
       <button type="button" class="tab" data-tab="figures" role="tab" id="tab-figures"
@@ -243,6 +246,16 @@
           <input type="search" id="filter-text" placeholder="author, dataset, quote…"></label>
       </div>
       <div class="table-wrap"><table class="grid" id="extraction"><thead></thead><tbody></tbody></table></div>
+    </div>
+
+    <div class="card pane" id="pane-questions" role="tabpanel" tabindex="0"
+         aria-labelledby="tab-questions" hidden>
+      <div class="card-head">
+        <p class="hint">Each held cell as one question: the picture the tool read, the answers it
+           is choosing between, and why it could not decide. Answering writes a recorded override
+           and re-pools the forest plot.</p>
+      </div>
+      <div id="questions"></div>
     </div>
 
     <div class="card pane" id="pane-flags" role="tabpanel" tabindex="0"

@@ -754,6 +754,45 @@ def create_app(runs_dir: str | Path = "runs", *,
         return {"overrides": read_overrides(job.run_dir),
                 "summary": override_summary(job.run_dir)}
 
+    # ------------------------------------------------------------------ questions
+    @app.get("/api/runs/{run_id}/questions")
+    def run_questions(run_id: str, request: Request) -> dict[str, Any]:
+        """Every held cell as a question with its screenshot, answers and reason."""
+        job = run_of(run_id, request)
+        if not (job.run_dir / "manifest.json").exists():
+            raise HTTPException(status_code=409, detail="this run has not finished yet")
+        from ..review.questions import questions_for_run
+        questions = questions_for_run(job.run_dir)
+        for q in questions:
+            image = q.get("image") or {}
+            if image.get("path"):
+                image["url"] = _file_url(job, str(job.run_dir / image["path"]))
+        return {"run_id": job.run_id, "questions": questions,
+                "n_open": sum(1 for q in questions if not q.get("answered"))}
+
+    @app.post("/api/runs/{run_id}/questions/{number}/answer", status_code=201)
+    def answer_question(run_id: str, number: int, request: Request,
+                        body: dict[str, Any]) -> dict[str, Any]:
+        """An answer becomes an override with a justification naming the question, and the run
+        is re-pooled so the forest plot reflects it."""
+        job = run_of(run_id, request)
+        from ..review.questions import answer_to_override, questions_for_run
+        question = next((q for q in questions_for_run(job.run_dir) if q["number"] == number), None)
+        if question is None:
+            raise HTTPException(status_code=404, detail=f"no question #{number} in this run")
+        payload = answer_to_override(question, body or {})
+        try:
+            record = append_override(job.run_dir, payload)
+        except OverrideRejected as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        with repool_lock(job.run_dir):
+            try:
+                summary = apply_overrides_and_repool(job.run_dir)
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=409, detail=str(exc))
+        return {"ok": True, "override": record, "repool": summary,
+                "n_open": sum(1 for q in questions_for_run(job.run_dir) if not q.get("answered"))}
+
     @app.post("/api/runs/{run_id}/repool")
     def repool(run_id: str, request: Request) -> dict[str, Any]:
         job = run_of(run_id, request)

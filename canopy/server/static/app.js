@@ -806,11 +806,147 @@
         other.classList.toggle("is-on", on);
         other.setAttribute("aria-selected", on ? "true" : "false");
       });
-      ["forest", "table", "flags", "figures", "downloads"].forEach(function (key) {
+      ["forest", "table", "questions", "flags", "figures", "downloads"].forEach(function (key) {
         show($("pane-" + key), key === name);
       });
+      if (name === "questions") { loadQuestions(); }
     });
   });
+
+  /* ── questions: every held cell as one thing to decide, with its screenshot ── */
+  function loadQuestions() {
+    if (!state.runId) { return Promise.resolve(null); }
+    return api("/api/runs/" + state.runId + "/questions")
+      .then(function (body) { renderQuestions(body.questions || [], body.n_open || 0); })
+      .catch(function (error) {
+        clear($("questions"));
+        $("questions").appendChild(h("p", { cls: "hint", text: error.message }));
+      });
+  }
+
+  function renderQuestions(questions, nOpen) {
+    var badge = $("questions-count");
+    badge.textContent = String(nOpen);
+    show(badge, nOpen > 0);
+    var holder = $("questions");
+    clear(holder);
+    if (!questions.length) {
+      holder.appendChild(h("p", { cls: "hint",
+        text: "Nothing to ask: every cell was settled by the tool itself." }));
+      return;
+    }
+    questions.forEach(function (q) { holder.appendChild(questionCard(q)); });
+  }
+
+  function questionCard(q) {
+    var head = h("div", { cls: "q-head" }, [
+      h("span", { cls: "q-num", text: "#" + q.number }),
+      h("span", { cls: "q-paper", text: q.paper + (q.dataset_label ? " · " + q.dataset_label : "") }),
+      h("span", { cls: "q-cell", text: (q.outcome_key || "").replace(/_/g, " ")
+        + (q.group_label ? " · " + q.group_label : "") }),
+      q.answered ? h("span", { cls: "pill ok", text: "answered" })
+                 : h("span", { cls: "pill", text: q.kind.replace(/_/g, " ") })
+    ]);
+    var body = h("div", { cls: "q-body" });
+    if (q.image && q.image.url) {
+      var img = h("img", { cls: "q-image", attrs: { src: q.image.url, alt: q.where || "evidence",
+        loading: "lazy" } });
+      body.appendChild(h("a", { attrs: { href: q.image.url, target: "_blank", rel: "noopener" } },
+        [img]));
+    }
+    var right = h("div", { cls: "q-right" });
+    right.appendChild(h("p", { cls: "q-prompt", text: q.prompt }));
+    var form = h("form", { cls: "q-form", on: { submit: function (event) {
+      event.preventDefault();
+      submitAnswer(q, form);
+    } } });
+    (q.options || []).forEach(function (o, i) {
+      var id = "q" + q.number + "-o" + i;
+      var backed = o.backed_by && o.backed_by.length ? " — " + o.backed_by.join(", ") : "";
+      var quote = o.quote ? " “" + String(o.quote).slice(0, 140) + "”" : "";
+      form.appendChild(h("label", { cls: "q-option" }, [
+        h("input", { attrs: { type: "radio", name: "option", value: o.key, id: id } }),
+        h("span", { text: o.label + backed + quote })
+      ]));
+    });
+    var freeId = "q" + q.number + "-free";
+    form.appendChild(h("label", { cls: "q-option" }, [
+      h("input", { attrs: { type: "radio", name: "option", value: "__free__", id: freeId } }),
+      h("span", { text: (q.kind === "no_value")
+        ? "it is here (say where), or it is not reported"
+        : "none of these — I will type it" })
+    ]));
+    var free = h("div", { cls: "q-free", attrs: { hidden: true } });
+    if (q.kind === "no_value") {
+      free.appendChild(h("input", { attrs: { type: "text", name: "hint",
+        placeholder: "e.g. Table 2, row 'older', p. 5 — or leave empty for 'not reported'" } }));
+    } else {
+      free.appendChild(h("input", { attrs: { type: "number", step: "any", name: "mean",
+        placeholder: "mean" + (q.unit ? " (" + q.unit + ")" : "") } }));
+      free.appendChild(h("input", { attrs: { type: "number", step: "any", name: "dispersion_value",
+        placeholder: "spread" } }));
+      var sel = h("select", { attrs: { name: "dispersion_type" } });
+      ["", "SD", "SE", "CI95", "IQR", "RANGE"].forEach(function (t) {
+        sel.appendChild(h("option", { text: t || "spread type", attrs: { value: t } }));
+      });
+      free.appendChild(sel);
+      free.appendChild(h("input", { attrs: { type: "number", step: "1", name: "n",
+        placeholder: "n" } }));
+    }
+    form.appendChild(free);
+    form.addEventListener("change", function () {
+      var picked = form.querySelector("input[name=option]:checked");
+      show(free, !!picked && picked.value === "__free__");
+    });
+    form.appendChild(h("input", { cls: "q-note", attrs: { type: "text", name: "note",
+      placeholder: "note for the record (optional)" } }));
+    var actions = h("div", { cls: "q-actions" }, [
+      h("button", { cls: "btn small", attrs: { type: "submit" }, text: "Answer & re-pool" }),
+      h("button", { cls: "btn small ghost", attrs: { type: "button" }, text: "Exclude this cell",
+        on: { click: function () { submitAnswer(q, form, true); } } })
+    ]);
+    form.appendChild(actions);
+    right.appendChild(form);
+    var why = h("details", { cls: "q-why" }, [
+      h("summary", { text: "why the tool could not decide" }),
+      h("p", { text: q.why || "" })
+    ]);
+    right.appendChild(why);
+    if (q.answered && q.answers && q.answers.length) {
+      right.appendChild(h("p", { cls: "hint",
+        text: "Answered: " + (q.answers[q.answers.length - 1].justification || "") }));
+    }
+    body.appendChild(right);
+    return h("section", { cls: "card q-card" + (q.answered ? " is-answered" : ""),
+      attrs: { "data-question": q.number } }, [head, body]);
+  }
+
+  function submitAnswer(q, form, exclude) {
+    var picked = form.querySelector("input[name=option]:checked");
+    var payload = { note: (form.querySelector("input[name=note]") || {}).value || "" };
+    if (exclude) { payload.exclude = true; }
+    else if (!picked) { toast("Choose an answer first."); return; }
+    else if (picked.value === "__free__") {
+      ["hint", "mean", "dispersion_value", "dispersion_type", "n"].forEach(function (name) {
+        var input = form.querySelector("[name=" + name + "]");
+        if (input && input.value !== "") { payload[name] = input.value; }
+      });
+      if (q.kind !== "no_value" && payload.mean === undefined && payload.dispersion_value === undefined
+          && payload.n === undefined) { toast("Type at least a mean, a spread or an n."); return; }
+    } else { payload.option = picked.value; }
+    var buttons = form.querySelectorAll("button");
+    Array.prototype.forEach.call(buttons, function (b) { b.disabled = true; });
+    api("/api/runs/" + state.runId + "/questions/" + q.number + "/answer",
+        { method: "POST", json: payload })
+      .then(function (body) {
+        toast("Recorded. " + (body.n_open ? body.n_open + " question(s) still open." : "No open questions."));
+        return refreshRun().then(loadResults).then(loadQuestions);
+      })
+      .catch(function (error) {
+        toast(error.message);
+        Array.prototype.forEach.call(buttons, function (b) { b.disabled = false; });
+      });
+  }
 
   $("repool-btn").addEventListener("click", function () {
     var button = $("repool-btn");
@@ -828,6 +964,13 @@
 
   function loadResults() {
     if (!state.runId || !state.outcome) { return Promise.resolve(null); }
+    if (state.runId) {
+      api("/api/runs/" + state.runId + "/questions").then(function (body) {
+        var badge = $("questions-count");
+        badge.textContent = String(body.n_open || 0);
+        show(badge, (body.n_open || 0) > 0);
+      }).catch(function () { /* the run may not have finished; the tab says so when opened */ });
+    }
     return api("/api/runs/" + state.runId + "/results/" + encodeURIComponent(state.outcome))
       .then(function (results) {
         state.results = results;

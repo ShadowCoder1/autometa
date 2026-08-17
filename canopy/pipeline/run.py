@@ -1024,6 +1024,14 @@ def _write_outputs(ctx: RunContext, manifest: RunManifest, results: Sequence[Pap
             manifest.human_review_queue, out / "human_review_queue",
             ["paper_id", "dataset_id", "outcome_key", "group", "confidence", "route", "reason",
              "impact_abs_delta_pooled", "candidates"], formats=("csv", "json")).items()})
+        # …and the same cells as QUESTIONS: the picture the tool read, the answers it is choosing
+        # between, and why it could not decide — what a reviewer actually wants to be shown
+        try:
+            from ..review.questions import questions_for_run, write_questions
+            outputs.update({f"questions.{k}": v for k, v in
+                            write_questions(out, questions_for_run(out)).items()})
+        except Exception as exc:                        # pragma: no cover - never fail a run on it
+            manifest.warnings.append(f"questions could not be written: {type(exc).__name__}: {exc}")
 
     outputs.update({f"exclusions.{k}": v for k, v in
                     exclusions_table(exclusions, out / "exclusions").items()})
