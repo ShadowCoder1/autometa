@@ -1267,6 +1267,82 @@ def test_a_correct_ladder_is_not_refuted_by_values_inside_it():
     assert choice.status != "cal_refuted"
 
 
+def test_the_printed_tick_ladder_outranks_an_ocr_read_of_the_same_axis():
+    """F3: the PDF text layer is the number the publisher typeset; OCR is a guess about it.
+
+    Both ladders here describe the SAME mapping, so the vote confirms either one; what is under
+    test is which witness's numbers are then used. Measured on the audited corpus the vector fit
+    residual is 0.003 px against tesseract's 0.20-0.92 px, and tesseract produced two
+    order-of-magnitude misreads on three figures. Ranking a read of a rendered glyph above the
+    glyph's own source is backwards for any figure whose PDF still carries its text.
+    """
+    from canopy.digitize.digitizer import CAL_PREFERENCE, _choose_calibration
+
+    assert CAL_PREFERENCE.index("vector") < CAL_PREFERENCE.index("cv_ocr")
+    ladder = [(100.0, 40.0), (200.0, 30.0), (300.0, 20.0), (400.0, 10.0)]
+    core = _core_with(_cal(ladder), rows=[100.0, 200.0, 300.0, 400.0])
+    choice = _choose_calibration(core, None, _cal(ladder), [])
+    assert choice.status == "confirmed"
+    assert choice.source == "vector"
+    assert set(choice.agreeing) == {"vector", "cv_ocr"}
+
+
+def test_a_two_tick_ladder_never_supplies_the_numbers_when_a_checkable_one_agrees():
+    """A ladder fitted through two ticks reproduces a linear AND a log axis exactly and equally,
+    so nothing about it can be checked against itself. It is a witness, not the source of record —
+    whatever route built it. (Same threshold as `_MIN_TICKS_FOR_SCALE`.)"""
+    from canopy.digitize.digitizer import _choose_calibration
+
+    ladder = [(100.0, 40.0), (200.0, 30.0), (300.0, 20.0), (400.0, 10.0)]
+    core = _core_with(_cal(ladder), rows=[100.0, 200.0, 300.0, 400.0])
+    thin_vector = _cal([(100.0, 40.0), (400.0, 10.0)])
+    choice = _choose_calibration(core, None, thin_vector, [])
+    assert choice.status == "confirmed"
+    assert set(choice.agreeing) == {"vector", "cv_ocr"}
+    assert choice.source == "cv_ocr", "a 2-tick ladder outranked a 4-tick one"
+
+
+def _ensemble_of(bar_figure, samples, base, **kw):
+    """`_build_candidates` on a hand-made sample list — the ensemble candidate for group A."""
+    from canopy.digitize.digitizer import _build_candidates
+
+    paper, fig = _paper_for(bar_figure)
+    out = _build_candidates(
+        list(samples), target=kw.get("target", TARGET), fig=fig, paper=paper,
+        source=kw.get("source", SOURCE), dataset=DATASET, core=_core_with(None), cal=None,
+        crop=bar_figure["path"], overlay_path="", base=base, axis_range=60.0, tick_spacing=10.0,
+        px_units=0.1, readouts=kw.get("readouts", []), want_uncertainty=True,
+        labels={"A": "old", "B": "young"})
+    return next(c for c in out
+                if c.extractor_id == "digitize:ensemble" and c.group == "A")
+
+
+def _d_sample(mean, error, **kw):
+    """One route-D sample for group A (the ensemble arithmetic under test needs nothing else)."""
+    kw.setdefault("model", "claude-opus-5")
+    return RouteSample(route="D", group="A", variant="direct", mean=mean, error=error, **kw)
+
+
+def test_a_figure_with_no_calibration_at_all_says_so_on_the_row(bar_figure):
+    """F3: `cal_status="none"` used to be the quietest state in the system.
+
+    The read-out routes need no ladder to produce a number, so a cell whose axis was never
+    calibrated was released with an empty reason — while a cell with ONE witness was capped and
+    flagged. Zero witnesses cannot be less suspicious than one.
+    """
+    pair = [_d_sample(31.5, 11.0), _d_sample(31.4, 11.1, model="claude-sonnet-5")]
+    blind = _ensemble_of(bar_figure, pair, {"cal_status": "none", "figure_id": "fig01"})
+    assert blind.pixel_provenance["cal_missing"] is True
+    assert blind.pixel_provenance["needs_review"] is True
+    assert blind.pixel_provenance["needs_review_kind"] == "calibration"
+    assert "no y calibration could be built" in blind.notes
+
+    seeing = _ensemble_of(bar_figure, pair, {"cal_status": "confirmed", "figure_id": "fig01"})
+    assert seeing.pixel_provenance["cal_missing"] is False
+    assert seeing.pixel_provenance["needs_review"] is False
+    assert "no y calibration" not in seeing.notes
+
+
 def test_the_marker_floor_rejects_a_cap_inside_the_marker(bar_figure):
     """Bock 2005 route C stopped on the square's own lower edge (acceptance item 9)."""
     from canopy.digitize.digitizer import _values_from_pixels

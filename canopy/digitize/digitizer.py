@@ -430,9 +430,19 @@ def _calibrations_agree(a: AxisCalibration, b: AxisCalibration, tol: float) -> b
         return False
 
 
-#: which witness's numbers are used when several agree — the OCR ladder is the most precise, the
-#: PDF's own text layer next, then the model's tick pixels, then the ladder the read-outs reported
-CAL_PREFERENCE = ("cv_ocr", "vector", "vlm_ticks", "readout_ticks")
+#: which witness's numbers are used when several agree.
+#:
+#: The PDF's own text layer goes first, because it is not a measurement: it is the typeset number
+#: the publisher drew the tick with, carried at `confidence = 1.0` (`calibrate.py`), and its fit
+#: residual on this corpus is 0.003 px against tesseract's 0.20-0.92 px. OCR of a rendered glyph
+#: is a guess, and a guess that has already failed by an order of magnitude ("45/35/25/15" read as
+#: "4/3/2/1") and returned six unusable labels on one axis. A ladder that is READ outranking a
+#: ladder that is PRINTED is backwards in any figure whose PDF still carries its text.
+#:
+#: This is only a tie-break: `_magnitude_refutes` runs on every witness first, so a stale or
+#: off-panel text layer is refuted on the values before the preference is consulted, and
+#: `trusted_readout` still hoists a ladder two independent read-outs agree on above all of them.
+CAL_PREFERENCE = ("vector", "cv_ocr", "vlm_ticks", "readout_ticks")
 #: a read-out mean this far past the top tick means the ladder is not the one the values were
 #: drawn against (Cressman: ticks max 4.0, read-outs 31.3/33.3)
 _MAGNITUDE_SLACK = 0.2
@@ -587,7 +597,14 @@ def _choose_calibration(core: _Core, coord: CoordReadout | None,
              if trusted_readout else CAL_PREFERENCE)
 
     def rank(name: str) -> int:
-        return order.index(name) if name in order else 99
+        base = order.index(name) if name in order else len(order)
+        # a ladder built from two ticks has no residual and no scale evidence — it reproduces a
+        # linear and a log axis exactly and equally, so nothing about it can be checked against
+        # itself (`_MIN_TICKS_FOR_SCALE` states the same threshold for the linear/log question).
+        # Whatever its provenance, it goes behind every witness that CAN be checked.
+        cal_here = witnesses.get(name)
+        unchecked = cal_here is None or len(cal_here.ticks) < _MIN_TICKS_FOR_SCALE
+        return base + (len(order) + 1 if unchecked else 0)
 
     best: list[str] = []
     for name, cal in witnesses.items():
@@ -1864,6 +1881,16 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
                            f"{mapper_type.value}")
         status = _ensemble_status(agreement["mean_agrees"], conflict, zero_notes)
         dispersion_only = (status == "found" and not agreement["error_agrees"])
+        # NO calibration at all is the weakest evidence a figure cell can rest on, and it used to
+        # be the quietest: the read-out routes need no ladder to produce a number, so the cell
+        # sailed through with `cal_status="none"` and an empty reason. One witness is treated as
+        # suspicious; zero must not be treated as fine. The digitiser says so on the row itself,
+        # because it is the only stage that knows the ladder was never built.
+        no_calibration = base.get("cal_status") == "none"
+        if no_calibration:
+            reasons.append(
+                "no y calibration could be built for this figure, so nothing independent checked "
+                "that these values lie on the axis they were read from")
         sides = sorted({s.one_sided for s in with_error if s.one_sided})
         if dispersion_only:
             reasons.append(
@@ -1903,9 +1930,11 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             "zero_confidence_snaps": zero_notes,
             "resampled_routes": [s.extractor_id for s in live if s.sample > 0],
             "tool_calls": _aggregate_tool_calls(mine),
-            "needs_review": status == "ambiguous" or dispersion_only,
+            "cal_missing": no_calibration,
+            "needs_review": status == "ambiguous" or dispersion_only or no_calibration,
             "needs_review_kind": ("mean" if status == "ambiguous"
-                                  else ("dispersion" if dispersion_only else None)),
+                                  else ("dispersion" if dispersion_only
+                                        else ("calibration" if no_calibration else None))),
             "needs_review_reason": "; ".join(reasons),
             "dropped_samples": [s.to_dict() for s in mine if s.dropped],
         }
