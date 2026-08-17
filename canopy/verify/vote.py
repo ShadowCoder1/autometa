@@ -51,6 +51,7 @@ from ..models import CanopyModel, Candidate, DispersionType, GroupKey, SourceKin
 from .figures import (AXIS_FRACTION, FALLBACK_FRACTION, FIGURE_KINDS, TICK_FRACTION,
                       figure_tolerance)
 from .grounding import is_short_quote as _is_short_quote
+from .units import unit_key
 
 __all__ = ["vote", "vote_groups", "VoteResult", "RouteValue", "route_key", "modality",
            "digitizer_path",
@@ -151,6 +152,11 @@ class RouteValue(CanopyModel):
     tolerance: float = 0.0               # what THIS route can honestly claim about its own value
     spread: float | None = None          # furthest candidate from this route's own median
     consistent: bool = True
+    #: the unit this route's members share, once routes are split by unit ("" = none stated)
+    unit: str = ""
+    #: a route whose members disagree with each other and corroborate nothing abstains: its
+    #: `value` is None and it is kept here for the record, not counted in the vote
+    abstained: bool = False
 
 
 class VoteResult(CanopyModel):
@@ -181,6 +187,9 @@ class VoteResult(CanopyModel):
     disagreeing_ids: list[str] = Field(default_factory=list)
     needs_third_candidate: bool = False
     routes: list[RouteValue] = Field(default_factory=list)
+    #: candidates whose unit is not the outcome's, set aside before the vote (Cressman's Fig. 3b
+    #: read off its percentage axis when the outcome is in degrees) — the checks flag them
+    unit_set_aside_ids: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 
     @property
@@ -256,29 +265,77 @@ def _pair_tolerance(a: RouteValue, b: RouteValue) -> float:
 
 def _route_values(rows: Sequence[Candidate], axis_range: float | None,
                   notes: list[str]) -> list[RouteValue]:
-    grouped: dict[str, list[Candidate]] = {}
+    """One voter per modality × model family × UNIT, each voting only what its members corroborate.
+
+    Two things a route may not do. It may not hold readings in different units — a bar read off
+    a degrees axis and the same bar read off the percentage axis beside it are two quantities,
+    and Cressman's Fig. 3b put 18.5° and 61.5% into one route whose "median" of the two, 39.99,
+    was in no unit at all. And a route whose members disagree may not vote a middle that none of
+    them read: with two members the median IS their average, a number nobody produced. The
+    largest cluster of mutually-agreeing members votes; if no two members agree and there are
+    more than one, the route abstains and is kept for the record.
+    """
+    grouped: dict[tuple[str, str], list[Candidate]] = {}
     for cand in rows:
-        grouped.setdefault(route_key(cand), []).append(cand)
+        grouped.setdefault((route_key(cand), unit_key(cand.unit)), []).append(cand)
+    units_per_key: dict[str, set[str]] = {}
+    for key, unit in grouped:
+        units_per_key.setdefault(key, set()).add(unit)
     routes: list[RouteValue] = []
-    for key in sorted(grouped):
-        members = grouped[key]
+    for key, unit in sorted(grouped):
+        members = grouped[(key, unit)]
+        label = key if len(units_per_key[key]) == 1 else f"{key}[{unit or 'no unit'}]"
         means = [c.mean for c in members]
         median = _median(means)
         spread = max(abs(m - median) for m in means)
         tolerance = _route_tolerance(members, axis_range)
         consistent = spread <= tolerance
+        voters = members
+        value: float | None = median
         if not consistent:
-            notes.append(f"route {key} disagrees with itself: {means} (spread {spread:.4g} > "
-                         f"tolerance {tolerance:.4g}); its median {median:.4g} still votes")
-        dispersions = [c.dispersion_value for c in members if c.dispersion_value is not None]
-        sigmas = [c.sigma for c in members if c.sigma is not None]
+            # the median of an odd count is a member's own reading, and it stands if at least
+            # one other member is within tolerance of it (an outlier does not move it); the
+            # median of two far-apart members is their average, which nobody read
+            at_median = [c for c in members if c.mean == median]
+            partners = [c for c in members if abs(c.mean - median) <= tolerance]
+            if at_median and len(partners) >= 2:
+                voters = partners
+                notes.append(f"route {label} disagrees with itself: {means}; its median "
+                             f"{median:.4g} is a reading {len(partners)} of {len(members)} "
+                             f"agree with, and it votes; the rest are set aside")
+            else:
+                cluster = _largest_cluster(members, tolerance)
+                if len(cluster) >= 2:
+                    voters = cluster
+                    value = _median([c.mean for c in cluster])
+                    notes.append(f"route {label} disagrees with itself: {means}; the "
+                                 f"{len(cluster)} of {len(members)} that agree vote "
+                                 f"{value:.4g}, the rest are set aside")
+                else:
+                    value = None
+                    notes.append(f"route {label} disagrees with itself: {means} (spread "
+                                 f"{spread:.4g} > tolerance {tolerance:.4g}) and no two of its "
+                                 f"readings agree — it abstains; a middle none of them read is "
+                                 f"not a reading")
+        dispersions = [c.dispersion_value for c in voters if c.dispersion_value is not None]
+        sigmas = [c.sigma for c in voters if c.sigma is not None]
         routes.append(RouteValue(
-            route_key=key, value=median,
+            route_key=label, value=value,
             dispersion_value=_median(dispersions) if dispersions else None,
-            n=_mode([c.n for c in members]), sigma=_median(sigmas) if sigmas else None,
-            candidate_ids=[c.candidate_id for c in members], tolerance=tolerance,
-            spread=spread, consistent=consistent))
+            n=_mode([c.n for c in voters]), sigma=_median(sigmas) if sigmas else None,
+            candidate_ids=[c.candidate_id for c in voters], tolerance=tolerance,
+            spread=spread, consistent=consistent, unit=unit, abstained=value is None))
     return routes
+
+
+def _largest_cluster(members: Sequence[Candidate], tolerance: float) -> list[Candidate]:
+    """The biggest set of members that all sit within `tolerance` of one of them."""
+    best: list[Candidate] = []
+    for seed in members:
+        cluster = [c for c in members if abs(c.mean - seed.mean) <= tolerance]
+        if len(cluster) > len(best):
+            best = cluster
+    return best
 
 
 def _best_cluster(routes: Sequence[RouteValue]) -> list[RouteValue]:
@@ -323,8 +380,14 @@ def _fill_values(result: VoteResult, agreeing: Sequence[Candidate], notes: list[
 
 
 def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
-         group: GroupKey | None = None) -> VoteResult:
-    """The vote for ONE group. Pass `group` when `candidates` covers more than one."""
+         group: GroupKey | None = None, unit_hint: str = "") -> VoteResult:
+    """The vote for ONE group. Pass `group` when `candidates` covers more than one.
+
+    `unit_hint` is the unit the map/protocol recorded for this outcome. A candidate that names a
+    DIFFERENT unit is a different expression of the quantity (a percentage axis beside a degrees
+    axis) and is set aside before the vote — unless every candidate is in that other unit, in
+    which case the hint is the odd one out and nothing is set aside.
+    """
     rows = _usable(candidates, group)
     groups = {c.group for c in rows}
     if group is None and len(groups) > 1:
@@ -337,6 +400,17 @@ def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
         result.notes = ["no candidate reported a value for this cell"]
         return result
 
+    hint = unit_key(unit_hint)
+    if hint:
+        other = [c for c in rows if unit_key(c.unit) and unit_key(c.unit) != hint]
+        if other and len(other) < len(rows):
+            result.unit_set_aside_ids = [c.candidate_id for c in other]
+            rows = [c for c in rows if c not in other]
+            notes.append(f"{len(other)} candidate(s) read in "
+                         f"{sorted({unit_key(c.unit) for c in other})} were set aside: the "
+                         f"outcome is recorded in {hint!r}, and a value in another unit is "
+                         f"another expression of it, not a second reading")
+
     if any(is_figure_route(route_key(c)) for c in rows) and all(
             figure_tolerance(c, axis_range) is None
             for c in rows if is_figure_route(route_key(c))):
@@ -346,6 +420,12 @@ def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
     routes = _route_values(rows, axis_range, notes)
     result.routes = routes
     by_id = {c.candidate_id: c for c in rows}
+    routes = [r for r in routes if not r.abstained]        # kept on the record, not in the vote
+    if not routes:
+        result.agreement, result.method = "disagree", "none"
+        result.disagreeing_ids = [c.candidate_id for c in rows]
+        result.notes = notes + ["every route disagrees with itself; nothing corroborated votes"]
+        return result
 
     if len(routes) == 1:
         route = routes[0]
@@ -468,8 +548,8 @@ def _decide(result: VoteResult, rows: Sequence[Candidate], winners: Sequence[Rou
     result.notes = notes
 
 
-def vote_groups(candidates: Sequence[Candidate],
-                axis_range: float | None = None) -> dict[str, VoteResult]:
+def vote_groups(candidates: Sequence[Candidate], axis_range: float | None = None,
+                unit_hint: str = "") -> dict[str, VoteResult]:
     """One `VoteResult` per group present in `candidates` (the shape Task 10 iterates)."""
     keys = sorted({c.group for c in candidates if c.group in ("A", "B")})
-    return {key: vote(candidates, axis_range, group=key) for key in keys}
+    return {key: vote(candidates, axis_range, group=key, unit_hint=unit_hint) for key in keys}

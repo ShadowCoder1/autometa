@@ -326,7 +326,10 @@ def test_the_median_of_a_route_represents_it():
     result = vote(rows + [text_cand("t", 31.51, model=SONNET)])
     route = next(r for r in result.routes if r.route_key.startswith("figure:pathD"))
     assert route.value == pytest.approx(31.0)
-    assert route.candidate_ids == ["a", "b", "c"]
+    # the outlier (38) is on the route's record — `spread`, the note — but it did not read the
+    # value the route votes, so it is not among the readings that carry it
+    assert route.candidate_ids == ["a", "b"]
+    assert not route.consistent and route.spread == pytest.approx(7.0)
     assert result.agreement == "agree"
 
 
@@ -394,3 +397,65 @@ def test_voting_never_changes_a_candidate():
     before = [c.model_dump() for c in rows]
     vote(rows)
     assert [c.model_dump() for c in rows] == before
+
+
+# --------------------------------------------------------------------------- units and middles
+def _ens(cid, mean, unit, group="B", model=OPUS, **kw):
+    """A digitiser ensemble candidate — the shape two figure sources of one cell produce."""
+    cand = figure_cand(cid, mean, route="ensemble", group=group, model=model,
+                       cal={"y_min": 0.0, "y_max": 30.0 if unit == "deg" else 100.0,
+                            "y_tick": 10.0 if unit == "deg" else 25.0}, **kw)
+    return cand.model_copy(update={"unit": unit})
+
+
+def test_two_readings_in_different_units_are_two_quantities_not_one_route():
+    """Cressman 2010 Fig. 3b in `runs/rerun-fixed`: the map listed the bars twice — the degrees
+    axis and the percentage axis beside it — and both ensembles were stamped "deg". They landed
+    in one route whose "median" of the two, 39.99, was in no unit at all, and it voted."""
+    a = _ens("ens:deg", 18.49, "deg")
+    b = _ens("ens:pct", 61.50, "%")
+    # (the fix in the digitiser now stamps each ensemble with the unit its readers named)
+    result = vote([a, b], group="B", unit_hint="degrees (CCW/left of target); also percentage")
+    assert result.mean == pytest.approx(18.49)
+    assert result.unit_set_aside_ids == ["ens:pct"]
+    assert result.agreement == "single"
+    assert any("set aside" in n and "another expression" in n for n in result.notes)
+
+
+def test_without_a_unit_hint_two_units_are_still_two_routes_and_never_averaged():
+    a = _ens("ens:deg", 18.49, "deg")
+    b = _ens("ens:pct", 61.50, "%")
+    result = vote([a, b], group="B")
+    assert result.mean != pytest.approx(39.995), "the average of a degree and a percent voted"
+    keys = {r.route_key for r in result.routes}
+    assert any("[deg]" in k for k in keys) and any("[%]" in k for k in keys)
+    assert result.agreement == "disagree"
+
+
+def test_a_route_that_disagrees_with_itself_does_not_vote_a_middle_none_of_it_read():
+    """Two members, far apart, same unit: their median is their average — nobody's reading."""
+    a = _ens("ens:one", 18.49, "deg")
+    b = _ens("ens:two", 61.50, "deg")
+    result = vote([a, b], group="B")
+    route = result.routes[0]
+    assert route.abstained and route.value is None
+    assert result.mean is None and result.agreement == "disagree"
+    assert any("a middle none of them read is not a reading" in n for n in result.notes)
+
+
+def test_a_route_with_a_corroborated_cluster_votes_the_cluster_not_the_outlier():
+    a = _ens("ens:one", 18.4, "deg")
+    b = _ens("ens:two", 18.6, "deg")
+    c = _ens("ens:odd", 61.5, "deg")
+    result = vote([a, b, c], group="B")
+    route = result.routes[0]
+    assert not route.abstained and route.value == pytest.approx(18.5, abs=0.11)
+    assert set(route.candidate_ids) == {"ens:one", "ens:two"}
+
+
+def test_when_every_candidate_is_in_the_other_unit_the_hint_is_the_odd_one_out():
+    a = _ens("ens:pct1", 61.5, "%")
+    b = _ens("ens:pct2", 61.7, "%", model=SONNET)
+    result = vote([a, b], group="B", unit_hint="degrees")
+    assert result.unit_set_aside_ids == []
+    assert result.mean == pytest.approx(61.6, abs=0.15)

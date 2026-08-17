@@ -671,6 +671,36 @@ def test_a_baseline_source_is_kept_for_the_record_and_never_read_as_the_value(
     assert not [c for c in extract["candidates"] if "aligned-cursor" in str(c.get("locator", ""))]
 
 
+def test_a_truncated_verifier_leaves_the_cell_unverified_not_the_paper_dead(
+        tmp_path, papers_dir, fake_specs):
+    """Heuer & Hegele 2008 in `runs/rerun-fixed` pass 3: one verifier answer ran past its output
+    limit twice, the exception left `_verify_cell`, and a paper with 47 candidates finished with
+    no verdicts and no rows. The verifier is one voice; a voice that cannot be heard is a cell
+    without a verdict, not a paper without a result."""
+    from canopy.llm.errors import TruncatedOutput
+    from canopy.pipeline.run import run_pipeline
+
+    router = fake_router(fake_specs)
+
+    def truncating_verifier(request: LLMRequest) -> Any:
+        if {"verdict", "checked", "better_source"} <= _properties(request):
+            raise TruncatedOutput("response hit max_tokens=8000 twice (request req_test)")
+        return router(request)
+
+    client = LLMClient(provider=FakeProvider([truncating_verifier]), allow_live=True,
+                       cache_dir=None)
+    out = tmp_path / "run"
+    manifest = run_pipeline(papers_dir, PROTOCOL, out, client=client, concurrency=1)
+    paper = manifest.papers[0]
+    assert paper.status == "resolved", (paper.status, paper.error)
+    assert any("verifier truncated" in w for w in paper.warnings), paper.warnings
+    verify = json.loads((out / "papers" / paper.paper_id[:12] / "verify.json").read_text())
+    assert verify["verdicts"], "the paper still has verdicts"
+    assert all(v["verifier_verdict"] in ("ambiguous", "not_run") for v in verify["verdicts"])
+    rows = list(csv.DictReader((out / "results" / "extraction_table_all.csv").open()))
+    assert rows, "and it still has rows"
+
+
 def test_an_eligible_paper_with_no_dataset_never_leaves_the_run_in_silence(
         tmp_path, papers_dir, fake_specs):
     """It contributes no row, so it has to appear in the exclusions table and say why.

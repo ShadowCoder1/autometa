@@ -2442,10 +2442,25 @@ def _group_n(dataset: DatasetSpec | None, group: str) -> tuple[int | None, str]:
 
 
 def _unit(target: TargetSpec, readouts: Sequence[ReadOut]) -> str:
-    """The mapper's unit wins; otherwise the first unit any read-out managed to read."""
-    if target.unit_hint:
-        return target.unit_hint
-    return next((r.unit for r in readouts if r.unit), "")
+    """The unit the READERS say the axis is in; the mapper's hint only when none of them said.
+
+    The mapper's hint is the outcome's unit, which is not the same thing as the unit of the axis
+    a reading came off. Cressman's Fig. 3b was read twice, once off its degrees axis and once off
+    the percentage axis beside it, and both ensembles were stamped with the outcome's "degrees" —
+    so nothing downstream could tell them apart, and 18.5° and 61.5% went into one vote. Two
+    readers naming the same unit outrank the hint; a lone reader's unit is taken when the hint
+    is empty or agrees with it in kind.
+    """
+    from ..verify.units import unit_key
+
+    named = [r.unit for r in readouts if str(r.unit or "").strip()]
+    if named:
+        keys = [unit_key(u) for u in named]
+        best = max(set(keys), key=keys.count)
+        if best and (keys.count(best) >= 2 or not target.unit_hint
+                     or unit_key(target.unit_hint) in ("", best)):
+            return next(u for u, k in zip(named, keys) if k == best)
+    return target.unit_hint or (named[0] if named else "")
 
 
 def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: FigureRegion,

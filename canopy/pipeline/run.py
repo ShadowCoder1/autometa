@@ -48,7 +48,7 @@ from ..ingest.pdf import FigureRegion, PaperRecord, ingest_pdf
 from ..llm.client import LLMClient
 from ..llm.context import upload_pdf
 from ..llm.costs import cache_stats, cache_summary_line, cost_by_stage
-from ..llm.errors import BudgetExceeded
+from ..llm.errors import BudgetExceeded, LLMError, TruncatedOutput
 from ..models import (Adjudication, Candidate, CheckFlag, DatasetSpec, EffectSizeRecord,
                       OrientationVerdict, OutcomeSources, PaperStatus, Protocol, RunManifest,
                       SourceKind, Source, StatsSettings, StudyMap, Verdict, VerifierVerdict)
@@ -447,7 +447,7 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
 
     flags = run_checks(dataset, key, cell, other_candidates=others, orientation=orientation,
                        total_n=total_n)
-    votes = vote_groups(cell)
+    votes = vote_groups(cell, unit_hint=sources.units or outcome_def.units_hint)
 
     # amendment G: the two text extractors disagreed, so buy a third cheap reading — the secondary
     # model on the prompt variant it has not seen — and let it move that route's median.
@@ -459,7 +459,7 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
             cell = [*cell, *third]
             flags = run_checks(dataset, key, cell, other_candidates=others,
                                orientation=orientation, total_n=total_n)
-            votes = vote_groups(cell)
+            votes = vote_groups(cell, unit_hint=sources.units or outcome_def.units_hint)
 
     verifier_verdicts = []
     refuted = False
@@ -473,10 +473,31 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
             # cache key, so it is a fresh answer rather than the cached one
             preferred = (ctx.models["secondary"], ctx.models["primary"],
                          ctx.models["adjudicator"])[min(reopen, 2)]
-            verdict = verify_candidate(
-                ctx.client, paper, winner, model=verifier_model_for(winner, preferred=preferred),
-                protocol=ctx.protocol, dataset=dataset, outcome=outcome_def,
-                pdf_file_id=file_id or None, reopen=reopen)
+            try:
+                verdict = verify_candidate(
+                    ctx.client, paper, winner,
+                    model=verifier_model_for(winner, preferred=preferred),
+                    protocol=ctx.protocol, dataset=dataset, outcome=outcome_def,
+                    pdf_file_id=file_id or None, reopen=reopen)
+            except (BudgetExceeded, PaperBudgetExceeded):
+                raise                                   # money is the run's business, not the cell's
+            except TruncatedOutput as exc:
+                # one reader wrote past its output limit twice; that is a verdict the cell does
+                # not have, not a reason for the paper to have no verdicts at all. Heuer &
+                # Hegele lost its whole verify stage — 47 candidates, no rows — to one such call.
+                verdict = VerifierVerdict(
+                    candidate_id=winner.candidate_id, verdict="ambiguous",
+                    reason=f"the verifier's answer was cut off at its output limit twice and "
+                           f"could not be read ({exc}); this candidate is unverified")
+                status.warnings.append(f"{dataset.dataset_id}/{key}: verifier truncated on "
+                                       f"{winner.candidate_id} — cell left unverified")
+            except LLMError as exc:
+                verdict = VerifierVerdict(
+                    candidate_id=winner.candidate_id, verdict="ambiguous",
+                    reason=f"the verifier could not be run ({type(exc).__name__}: "
+                           f"{str(exc)[:160]}); this candidate is unverified")
+                status.warnings.append(f"{dataset.dataset_id}/{key}: verifier failed on "
+                                       f"{winner.candidate_id} ({type(exc).__name__})")
             verifier_verdicts.append(verdict)
             if verdict.verdict != "refuted":
                 break
@@ -503,7 +524,7 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
             message=(f"a verifier named {named!r} as a better source for this outcome and "
                      f"extraction was re-opened on it (one hop, once)"),
             candidate_ids=sorted(c.candidate_id for c in vote_candidates(extra))))
-        votes = vote_groups(cell)
+        votes = vote_groups(cell, unit_hint=sources.units or outcome_def.units_hint)
 
     disagreed = any(v.agreement == "disagree" for v in votes.values())
     errors = any(f.severity == "error" for f in flags)
