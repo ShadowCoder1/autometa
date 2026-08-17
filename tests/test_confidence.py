@@ -32,7 +32,8 @@ def dataset() -> DatasetSpec:
 def text_cand(cid, mean, *, model=OPUS, group="A", **kwargs):
     return Candidate(candidate_id=cid, dataset_id="ds1", outcome_key="late_adaptation",
                      kind="group_stats", group=group, status=kwargs.pop("status", "found"),
-                     source_kind=SourceKind.text_mean_sd, mean=mean, n=12,
+                     source_kind=kwargs.pop("source_kind", SourceKind.text_mean_sd),
+                     mean=mean, n=12,
                      dispersion_value=kwargs.pop("dispersion_value", 11.12),
                      dispersion_type=kwargs.pop("dispersion_type", DispersionType.SD),
                      unit="deg", value_as_written=f"{mean} ± 11.12 deg",
@@ -554,3 +555,45 @@ def test_the_wrong_panel_figure_read_is_withheld_by_its_own_axis_conflict():
     bucket, score, reasons = confidence(vote([a]), ambiguous, flags, None, candidates=[a, b],
                                         n_a=12, n_b=12, orientation=ORIENTED)
     assert (bucket, score) == ("needs_human", 0.39), (bucket, score, reasons)
+
+
+# ------------------------------------------------ what makes two readings two independent witnesses
+def test_one_model_reading_one_sentence_twice_is_not_two_agreeing_routes():
+    """`route_key` is modality x model family, and modality is a label the model wrote itself.
+
+    A model that reports the same sentence once as `text` and once as `table` produced two route
+    keys, which scored as agreement: +0.25 for "2 independent routes agree", no single-route cap,
+    and a maximum-score `auto_accept` with no human and no note — off one model reading one
+    sentence. Route independence is a property of the EVIDENCE, not of a label the reader wrote.
+    """
+    a = text_cand("a", 31.51)
+    b = text_cand("b", 31.51, source_kind=SourceKind.table)
+    result = vote([a, b])
+    assert len(result.routes) == 2, "the vote still sees two routes, as it should"
+    bucket, score, reasons = confidence(result, CONFIRMED, [], None, candidates=[a, b],
+                                        orientation=ORIENTED)
+    assert bucket == "accept_with_note", (bucket, score, reasons)
+    assert score <= 0.70
+    assert not any("independent routes agree" in r for r in reasons)
+    assert any("one witness" in r for r in reasons), reasons
+
+
+def test_two_model_families_quoting_one_sentence_are_still_two_witnesses():
+    """A second family is a different failure mode even on the same sentence — that is the point."""
+    a = text_cand("a", 31.51)
+    b = text_cand("b", 31.51, model=SONNET, source_kind=SourceKind.table)
+    bucket, _score, reasons = confidence(vote([a, b]), CONFIRMED, [], None, candidates=[a, b],
+                                         orientation=ORIENTED)
+    assert bucket == "auto_accept"
+    assert any("independent routes agree" in r for r in reasons)
+
+
+def test_one_model_reading_two_different_places_in_the_paper_is_two_witnesses():
+    """The paper printing a value twice is corroboration of the transcription, not of the model."""
+    a = text_cand("a", 31.51)
+    b = text_cand("b", 31.51, source_kind=SourceKind.table,
+                  quote="Table 2 gives 31.51 for the older group", page=7)
+    bucket, _score, reasons = confidence(vote([a, b]), CONFIRMED, [], None, candidates=[a, b],
+                                         orientation=ORIENTED)
+    assert bucket == "auto_accept"
+    assert any("independent routes agree" in r for r in reasons)

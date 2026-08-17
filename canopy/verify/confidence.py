@@ -306,6 +306,32 @@ def _agreeing_model_families(result: VoteResult,
     return sorted(families)
 
 
+def _witness_families(result: VoteResult, candidates: Sequence[Candidate] | None) -> set[str]:
+    """Every model family behind the agreeing readings — from the route keys and from inside them.
+
+    A digitiser ensemble is one candidate however many models read the figure, so the families it
+    ran are recorded in its provenance; a text or table route carries its family in its route key.
+    An empty family is "not stated", never a second one.
+    """
+    families = {key.split("/", 1)[1] for key in (r.route_key for r in _agreeing_routes(result))}
+    families |= set(_agreeing_model_families(result, candidates))
+    return {name for name in families if name}
+
+
+def _witness_locations(result: VoteResult, candidates: Sequence[Candidate] | None) -> set[str]:
+    """The distinct places in the document the agreeing readings came from.
+
+    A quote, or the locator when a value was measured rather than transcribed. NOT the page, and
+    NOT `source_kind`: both are fields the reading model filled in itself, and a self-declared
+    label is not a second place in the paper. Anything that states no location at all is not a
+    location.
+    """
+    agreeing = set(result.agreeing_ids)
+    places = {" ".join((c.quote or c.locator or "").split()).casefold()
+              for c in candidates or [] if c.candidate_id in agreeing}
+    return {place for place in places if place}
+
+
 def _base_kind(routes: Sequence) -> str:
     kinds = {r.route_key.split("/", 1)[0] for r in routes}
     if any(k == "text" for k in kinds):
@@ -337,15 +363,33 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
     score = BASE_SCORE[_base_kind(routes)]
     reasons.append(f"source kind {_base_kind(routes)} (+{BASE_SCORE[_base_kind(routes)]:.2f})")
 
+    # Two readings are two WITNESSES when something outside the reading model separates them: a
+    # second model family (a different failure mode) or a second place in the document (the paper
+    # printed the value twice). `route_key` alone does not establish that, because half of it is
+    # `source_kind` — a label the reading model wrote about its own source. One model reporting
+    # one sentence as `text` and again as `table` was two routes, +0.25, no cap, and a
+    # maximum-score automatic acceptance off one model reading one sentence.
+    families = _witness_families(vote_result, candidates)
+    places = _witness_locations(vote_result, candidates)
+    independent = len(families) >= 2 or len(places) >= 2
+    one_witness = ""
+
     # --- agreement
     if settled:
         reasons.append("the adjudicator settled a cell the vote could not, so the vote neither "
                        "credits nor penalises it")
-    elif vote_result.agreement == "agree":
+    elif vote_result.agreement == "agree" and independent:
         extra = min(EXTRA_ROUTE_CAP, EXTRA_ROUTE_BONUS * max(0, len(routes) - 2))
         score += AGREE_BONUS + extra
         reasons.append(f"{len(routes)} independent routes agree within {vote_result.tolerance:.4g} "
                        f"(+{AGREE_BONUS + extra:.2f})")
+    elif vote_result.agreement == "agree":
+        one_witness = (f"{len(routes)} routes agree, but they are one witness: one model family "
+                       f"({', '.join(sorted(families)) or 'unnamed'}) reading one place in the "
+                       f"paper. Two prompts of one model share a failure mode, and how a reading "
+                       f"labels its own source is not a second place — so this is not agreement "
+                       f"and cannot be accepted by vote")
+        reasons.append(one_witness)
     elif vote_result.agreement == "single":
         heterogeneous = _agreeing_model_families(vote_result, candidates)
         if len(heterogeneous) >= 2:
@@ -485,8 +529,9 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
             reasons.append("the adjudicator asked for a human")
         score = min(score, ADJUDICATED_CAP)
         reasons.append(f"adjudicated cells are capped at {ADJUDICATED_CAP:.2f}")
-    if (vote_result.agreement == "single" and not settled
-            and len(_agreeing_model_families(vote_result, candidates)) < 2):
+    if not settled and (one_witness or (
+            vote_result.agreement == "single"
+            and len(_agreeing_model_families(vote_result, candidates)) < 2)):
         score = min(score, SINGLE_ROUTE_CAP)
     capping = sorted(codes & CAPPING_FLAGS)
     if capping or contradicting:
