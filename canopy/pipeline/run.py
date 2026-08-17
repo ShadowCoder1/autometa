@@ -37,6 +37,7 @@ from ..agents.extract_stats import extract_test_statistics
 from ..agents.extract_text import extract_group_stats
 from ..agents.mapper import map_study
 from ..agents.orientation import orientation as orientation_verdict
+from ..agents.source_rank import keep_for_vote, match_named_source, rank_sources
 from ..agents.verifier import MAX_REOPENS, verify_candidate, verifier_model_for
 from ..config import MODELS, live_enabled
 from ..digitize.digitizer import digitize
@@ -47,15 +48,15 @@ from ..llm.client import LLMClient
 from ..llm.context import upload_pdf
 from ..llm.costs import cache_stats, cache_summary_line, cost_by_stage
 from ..llm.errors import BudgetExceeded
-from ..models import (Adjudication, Candidate, DatasetSpec, EffectSizeRecord, OrientationVerdict,
-                      OutcomeSources, PaperStatus, Protocol, RunManifest, SourceKind, Source,
-                      StatsSettings, StudyMap, Verdict)
+from ..models import (Adjudication, Candidate, CheckFlag, DatasetSpec, EffectSizeRecord,
+                      OrientationVerdict, OutcomeSources, PaperStatus, Protocol, RunManifest,
+                      SourceKind, Source, StatsSettings, StudyMap, Verdict, VerifierVerdict)
 from ..protocol import load_protocol
 from ..report import (exclusions_table, extraction_table, methods_figure, pool_rows,
                       prisma_flow, provenance_bundle, route_examples, write_html_report,
                       write_outcome_outputs, write_rows)
 from ..stats.meta import MetaResult
-from ..verify.checks import run_checks
+from ..verify.checks import CHECK_SEVERITY, run_checks
 from ..verify.confidence import resolve_cell
 from ..verify.vote import VoteResult, vote_groups
 from .aggregate import AGGREGATED_FLAG, Aggregation, aggregate_one_row_per_paper
@@ -313,6 +314,10 @@ class _CellVerification:
     adjudication: Adjudication | None = None
     orientation: OrientationVerdict | None = None
     reopens: int = 0
+    #: the code-side source rank for this cell, and what it held back from the vote
+    source_rank: list[dict[str, Any]] = field(default_factory=list)
+    held_back: list[str] = field(default_factory=list)
+    reopened_source: str = ""
 
 
 def _cell_candidates(candidates: Sequence[Candidate], dataset_id: str,
@@ -352,6 +357,33 @@ def _winner(candidates: Sequence[Candidate], result: VoteResult | None,
                                        c.candidate_id))[0]
 
 
+def _reopen_on_better_source(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
+                             sources: OutcomeSources, verdicts: Sequence[VerifierVerdict],
+                             cell: Sequence[Candidate]
+                             ) -> tuple[str, list[Candidate]] | None:
+    """Re-extract ONE source a verifier named, when the mapper already had it and nobody read it."""
+    already = {s.figure_id or s.table_id or f"p{s.page}:{s.locator}"
+               for c in cell for s in sources.sources
+               if (c.pixel_provenance or {}).get("figure_id") == s.figure_id and s.figure_id}
+    for verdict in verdicts:
+        named = (verdict.better_source or "").strip()
+        if not named:
+            continue
+        source = match_named_source(named, sources.sources)
+        if source is None:
+            continue
+        marker = source.figure_id or source.table_id or f"p{source.page}:{source.locator}"
+        if marker in already:
+            continue                     # the cell already read it; re-reading buys nothing
+        extra = _extract_cell(ctx, paper, dataset,
+                              sources.model_copy(update={"sources": [source]}),
+                              paper_dir(ctx.out_dir, paper.sha256) / "figures", PaperStatus(
+                                  paper_id=paper.sha256))
+        if extra:
+            return named, list(extra)
+    return None
+
+
 def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                  sources: OutcomeSources, candidates: Sequence[Candidate],
                  all_candidates: Sequence[Candidate], file_id: str,
@@ -362,9 +394,16 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
     cell = vote_candidates(candidates)
     others = vote_candidates([c for c in all_candidates
                               if c.dataset_id != dataset.dataset_id or c.outcome_key != key])
+    # …and of the locations the mapper found, only the best-scoring ones do (P5). Extraction has
+    # already read them all; this decides which readings the VOTE weighs against each other, so a
+    # sentence with no n and no dispersion cannot outvote a figure with SE bars and n printed.
+    ranked = rank_sources(sources.sources, sources)
+    out_rank = [row.to_dict() for row in ranked]
+    cell, held_back = keep_for_vote(cell, ranked)
     n_a, n_b = dataset.group_a.n, dataset.group_b.n
     total_n = (n_a or 0) + (n_b or 0) or None
-    out = _CellVerification(orientation=orientation)
+    out = _CellVerification(orientation=orientation, source_rank=out_rank,
+                            held_back=list(held_back))
 
     flags = run_checks(dataset, key, cell, other_candidates=others, orientation=orientation,
                        total_n=total_n)
@@ -407,6 +446,24 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
             reopen += 1
             out.reopens += 1
 
+    # P5's second half: the verifier's `better_source` answer was written, stored, printed — and
+    # acted on nowhere. It is acted on now, ONCE, and only when it names a location the mapper
+    # already found: a re-open on a page number a model invented would be worse than not looking.
+    reopened = _reopen_on_better_source(ctx, paper, dataset, sources, verifier_verdicts, cell)
+    if reopened is not None:
+        named, extra = reopened
+        out.reopened_source = named
+        out.extra_candidates.extend(extra)
+        cell = [*cell, *vote_candidates(extra)]
+        flags = run_checks(dataset, key, cell, other_candidates=others, orientation=orientation,
+                           total_n=total_n)
+        flags.append(CheckFlag(
+            code="reopened_on_better_source", severity=CHECK_SEVERITY["reopened_on_better_source"],
+            message=(f"a verifier named {named!r} as a better source for this outcome and "
+                     f"extraction was re-opened on it (one hop, once)"),
+            candidate_ids=sorted(c.candidate_id for c in vote_candidates(extra))))
+        votes = vote_groups(cell)
+
     disagreed = any(v.agreement == "disagree" for v in votes.values())
     errors = any(f.severity == "error" for f in flags)
     if disagreed or refuted or errors:
@@ -437,6 +494,7 @@ def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: li
     extra: list[Candidate] = []
     orientations: dict[tuple[str, str], OrientationVerdict] = {}
     adjudications: list[dict[str, Any]] = []
+    source_ranks: dict[str, Any] = {}
     reopens = 0
     for dataset in study.datasets:
         for sources in dataset.outcomes:
@@ -458,6 +516,9 @@ def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: li
             extra.extend(result.extra_candidates)
             verdicts.extend(result.verdicts)
             reopens += result.reopens
+            source_ranks[f"{dataset.dataset_id}|{sources.outcome_key}"] = {
+                "ranked": result.source_rank, "held_back_from_vote": result.held_back,
+                "reopened_on_better_source": result.reopened_source}
             if result.adjudication is not None:
                 adjudications.append(result.adjudication.model_dump(mode="json"))
     candidates.extend(extra)
@@ -467,6 +528,7 @@ def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: li
         "orientation": {f"{k[0]}|{k[1]}": v.model_dump(mode="json")
                         for k, v in orientations.items()},
         "adjudications": adjudications,
+        "source_rank": source_ranks,
         "reopens": reopens})
     status.stages["verify"] = "done"
     return verdicts

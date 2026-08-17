@@ -85,6 +85,7 @@ CHECK_SEVERITY: dict[str, str] = {
     "dispersion_type_conflict": "warn",
     "duplicate_across_outcomes": "warn",
     "figure_n_mismatch": "warn",
+    "reopened_on_better_source": "warn",
     "points_undercount": "warn",
     # --- can it be used at all
     "orientation_unknown": "warn",
