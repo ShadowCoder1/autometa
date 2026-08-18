@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Collection, Iterable, Mapping, Sequence
@@ -982,8 +983,15 @@ def _stamped(options: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return [{**option, "fingerprint": fingerprint(option)} for option in options]
 
 
+#: markup a model sometimes emits inside a free-text field — closing tags, tool-call fragments,
+#: stray parameter wrappers. It is not part of what the model meant to say, and a reviewer being
+#: asked "which ladder was this read against?" should not be shown `</antml_parameter> <parameter
+#: name="axis_read">` in the middle of the answer (nine-paper run, question #15).
+_MARKUP = re.compile(r"</?[A-Za-z_][^>]{0,200}>")
+
+
 def _short(text: str, limit: int) -> str:
-    text = " ".join(str(text or "").split())
+    text = " ".join(_MARKUP.sub(" ", str(text or "")).split())
     return text if len(text) <= limit else text[:limit - 1].rsplit(" ", 1)[0] + "…"
 
 
@@ -999,6 +1007,28 @@ def _distinct_values(valued: Sequence[Mapping[str, Any]]) -> "OrderedDict[float,
     return groups
 
 
+
+def _confirmed_value(options: Sequence[Mapping[str, Any]], verdict: Mapping[str, Any],
+                     unit_suffix: str) -> str:
+    """What a `confirm_value` question is asking about: the value its `yes` option confirms.
+
+    The head option carries it inside its label ("yes — 30.2 degrees is right, …"), which is
+    where `_options` put the run's own resolved reading; the fallbacks are the verdict's mean and
+    then any candidate that named one, so a question is never posed about a number no option
+    offers.
+    """
+    head = next((o for o in options if o.get("key") == "yes"), None)
+    if head is not None:
+        label = str(head.get("label") or "")
+        if label.startswith("yes — ") and " is right" in label:
+            spoken = label[len("yes — "):label.index(" is right")].strip()
+            if spoken and spoken != "this value":
+                return spoken
+    if verdict.get("mean") is not None:
+        return _fmt(float(verdict["mean"])) + unit_suffix
+    return next((str(o["label"]) for o in options if o.get("mean") is not None), "this value")
+
+
 def _prompt(kind: str, label: str, outcome_key: str, where: str, unit: str, x_hint: str,
             options: Sequence[Mapping[str, Any]], verdict: Mapping[str, Any],
             measure: str = "", overruled: Collection[str] = ()) -> str:
@@ -1011,9 +1041,12 @@ def _prompt(kind: str, label: str, outcome_key: str, where: str, unit: str, x_hi
         return (f"Which of these is {who}'s {outcome}{at}{src}{u}? The routes that read it "
                 f"disagree.")
     if kind == "confirm_value":
-        value = next((o["label"] for o in options if o.get("mean") is not None),
-                     (_fmt(float(verdict["mean"])) + u) if verdict.get("mean") is not None
-                     else "this value")
+        # the number the question asks about is the one the `yes` option confirms — the value
+        # this run RESOLVED — never a rival candidate and never the bare words "this value".
+        # `_options` builds the head from `_value_options(...)[0]`; reading it back from the head
+        # keeps the two in step, so the prompt cannot ask "is 30.57 right?" beside a button that
+        # says "yes, 30.2 is right" (nine-paper run, questions #1 and #21).
+        value = _confirmed_value(options, verdict, u)
         return (f"Is {value} {who}'s {outcome}{at}{src}? This cell is held because "
                 f"{_held_because(verdict, overruled)}. Answering yes records that you have "
                 f"checked it, and "

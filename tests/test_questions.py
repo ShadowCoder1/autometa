@@ -1823,3 +1823,36 @@ def test_a_resumed_runs_questions_come_from_the_queue_it_just_built_not_the_stal
     time.sleep(0.02)
     os.utime(run / "manifest.json", None)
     assert len(questions_for_run(run)) == len(explicit)
+
+
+def test_a_confirm_question_asks_about_the_number_its_yes_button_confirms():
+    """#1 of the nine-paper run asked "Is 30.57 degrees right?" beside a button saying
+    "yes — 30.2 degrees is right": the prompt took the first candidate carrying a mean (a rival
+    reading) while the button took the run's resolved value. #21 had no rival at all and asked
+    about "this value". Both come from one place now."""
+    from canopy.review.questions import _confirmed_value
+
+    head = {"key": "yes", "label": "yes — 30.2 degrees is right, I have checked it — this "
+                                   "overrules a confidence score below the acceptance line"}
+    rival = {"key": "v2", "label": "30.57 degrees", "mean": 30.565}
+    assert _confirmed_value([head, rival], {"mean": 30.2}, " degrees") == "30.2 degrees"
+    # no rival, and no resolved mean on the verdict: the button still knows the number
+    only = {"key": "yes", "label": "yes — 15.89 degrees is right, I have checked it"}
+    assert _confirmed_value([only], {}, " degrees") == "15.89 degrees"
+    # nothing anywhere names one: say so rather than inventing
+    assert _confirmed_value([{"key": "yes", "label": "yes — this value is right, I have "
+                                                     "checked it"}], {}, "") == "this value"
+
+
+def test_model_written_text_shown_to_a_reviewer_carries_no_markup():
+    """Question #15 offered "read against </antml_parameter> <parameter name="axis_read">Left
+    y-axis…" — a tool-call fragment the model left in a free-text field, put in front of a person
+    being asked which axis a number was read against."""
+    from canopy.review.questions import _short
+
+    leaked = ('</antml_parameter> <parameter name="axis_read">Left y-axis, printed title '
+              "'relative direction [deg]'")
+    cleaned = _short(leaked, 200)
+    assert "<" not in cleaned and "antml" not in cleaned
+    assert cleaned.startswith("Left y-axis")
+    assert _short("a < b and c > d", 40) == "a < b and c > d"      # plain prose is untouched
