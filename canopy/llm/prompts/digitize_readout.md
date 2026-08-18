@@ -55,4 +55,12 @@ unless the figure itself carries it.
   to `ambiguous`, give your best numbers anyway, and say why in `notes`.
 * `confidence` is your own 0–1 estimate of how well you could resolve the value: 1.0 when the
   datum sits on a labelled gridline, low when the marker is small, overlapping or clipped.
+* `target_visible` — is the panel / series / axis you were asked for actually in this image?
+  Answer `no` if it is not, even when the image contains other readable panels. Do not read a
+  different panel instead. Answer `partial` when only part of it is here — the panel is cut off
+  at the edge of the crop, the series runs out of the image, the axis you need is clipped. A
+  `partial` reading is recorded and does not vote on the value, so give what you can see and say
+  in `target_visible_reason` what is missing; do not stretch it to a `yes`.
+* `calibration_source` — `printed_labels` only if you read the numbers off labels printed in
+  this image; `inferred` if you constructed the scale yourself from anything else.
 * Finish by calling the `submit` tool. Never answer in prose.

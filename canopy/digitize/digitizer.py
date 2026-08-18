@@ -16,12 +16,14 @@ computes an effect size.
 """
 from __future__ import annotations
 
+import re
 import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from ..ingest.pdf import FigureRegion, PaperRecord
+from ..ingest.pdf import (FigureRegion, MIN_PANEL_NUMERIC, PanelRegion, PaperRecord,
+                          caption_panels)
 from ..llm.client import LLMClient
 from ..models import (Candidate, DatasetSpec, DigitizeSettings, DispersionType, Source,
                       SourceKind)
@@ -33,8 +35,9 @@ from .cv import (Axes, Bar, Marker, MIN_BAR_WIDTH_PX, detect_bars, detect_marker
                  snap_horizontal_edge, snap_window_for)
 from .vector import VectorScene, calibrate_from_scene, snap_to_vector, vector_candidates, \
     whisker_ends
-from .vlm import (READOUT_VARIANTS, CoordReadout, FigureView, PROMPT_VERSION, ReadOut,
-                  TargetSpec, coords, overlay_verify, read_out, summarize_tool_calls)
+from .vlm import (CAL_SOURCE_INFERRED, CAL_SOURCE_UNKNOWN, READOUT_VARIANTS, CoordReadout,
+                  FigureView, PROMPT_VERSION, ReadOut, TargetSpec, VISIBLE_NO, VISIBLE_PARTIAL,
+                  VISIBLE_UNKNOWN, coords, overlay_verify, read_out, summarize_tool_calls)
 
 __all__ = ["digitize", "RouteSample", "ReadoutSpec", "DigitizeResult", "ensemble_stats",
            "dual_tolerance", "resolve_arms", "ROUTE_LABELS", "CalibrationChoice",
@@ -828,7 +831,7 @@ CATEGORICAL_GROUPS = "groups"           # the x categories ARE the comparison ar
 CATEGORICAL_CONDITIONS = "conditions"   # the outcome is the average across the categories
 CATEGORICAL_UNRESOLVED = "unknown"      # nothing said which, so nothing may be averaged
 
-_LABEL_JUNK = __import__("re").compile(r"[^a-z0-9]+")
+_LABEL_JUNK = re.compile(r"[^a-z0-9]+")
 #: a label this short matches too much to be evidence of anything ("SD", "n", "A")
 _MIN_LABEL_CHARS = 3
 
@@ -994,7 +997,7 @@ _CAP_MEASURED = ("visible", "drawn", "seen", "measured", "read", "clear", "disti
 _CAP_NOUNS = ("cap", "whisker", "error bar", "errorbar", "arm", "error", "bar")
 _CAP_SIDES = {"up": ("upper", "top", "above", "positive"),
               "down": ("lower", "bottom", "below", "negative")}
-_CLAUSE_SPLIT = __import__("re").compile(r"[,;.\n]")
+_CLAUSE_SPLIT = re.compile(r"[,;.\n]")
 
 
 def _unmeasured_cap_side(text: str) -> str | None:
@@ -1553,7 +1556,7 @@ _AXIS_SIDES = ("left", "right", "top", "bottom")
 _AXIS_ORIENT = {"y": "y", "vertical": "y", "x": "x", "horizontal": "x"}
 #: the printed axis title, which readers quote — everything else they write ("linear", the tick
 #: ladder, pixel positions) is commentary and varies wildly in length between models
-_QUOTED = __import__("re").compile(r"[\"'\u2018\u2019\u201c\u201d]([^\"'\u2018\u2019\u201c\u201d]{3,})"
+_QUOTED = re.compile(r"[\"'\u2018\u2019\u201c\u201d]([^\"'\u2018\u2019\u201c\u201d]{3,})"
                                    r"[\"'\u2018\u2019\u201c\u201d]")
 
 
@@ -1996,7 +1999,7 @@ def _overlay_wanted(verify: bool, policy: str, samples: Sequence[RouteSample], *
         # about which series it belongs to, and no amount of numeric agreement settles that
         return True, ("both groups were described as the same marker, so the marks are checked "
                       "against the picture before the numbers are trusted")
-    if any(s.dropped for s in samples):
+    if any(s.dropped and not s.extra.get(ILLEGIBLE) for s in samples):
         return True, "a route sample was already dropped"
     if any(s.route != "D" and s.snap_conf == 0.0 for s in samples):
         return True, "a pixel route snapped with zero confidence"
@@ -2037,6 +2040,14 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     if (source is not None and source.x_axis_kind == "categorical"
             and not target.collapse_across_x and target.categorical_x != CATEGORICAL_GROUPS):
         return _categorical_unsupported(fig, target, paper, source, dataset, crop, result)
+    # C1 rule 3-4, decided BEFORE any model call: read the panel the map names, not the union of
+    # every panel; and a panel whose own axis ladder is not inside its rect buys NO read-outs.
+    # Paying three models to read numbers off an image that does not contain the numbers is the
+    # exact spend that produced Heuer's `value_outside_axis` flags.
+    fig, panel_info = resolve_panel(fig, target, source)
+    crop = _asset(paper, fig.crop_png)
+    if panel_info.get("uncalibrated"):
+        return _panel_uncalibrated(fig, target, paper, source, dataset, crop, panel_info, result)
     text = caption if caption is not None else (fig.caption or "")
     # the `digitize:` prefix is what `canopy.llm.costs.stage_of` attributes to the
     # digitiser when the run reports where its money went
@@ -2057,12 +2068,20 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
                            sample=spec.sample, view=view,
                            cell_key=f"{key}/D/{spec.variant}{suffix}")
         readouts.append(reading)
-        samples.extend(_samples_from_readout(reading, collapse=target.collapse_across_x,
-                                             target=target))
+        fresh = _samples_from_readout(reading, collapse=target.collapse_across_x, target=target)
+        _mark_illegible(reading, fresh)          # C2: legibility is reported, then acted on
+        samples.extend(fresh)
 
     # --- path D: the first `readouts_min` read-outs
     for spec in plan[:n_min]:
         read(spec)
+    # C2: when a MAJORITY of the readers say the named target is not in this image, that is a
+    # fact about the image and the route abstains — before the pixel routes are paid to measure
+    # the same picture, and without ever adopting the minority reading that produced numbers.
+    seen = legibility(readouts)
+    if seen["abstain"]:
+        return _target_not_visible(fig, target, paper, source, dataset, crop, seen, readouts,
+                                   panel_info, result)
 
     # --- path C: VLM coordinates + CV snap
     primary = models[0] if models else "claude-opus-5"
@@ -2071,14 +2090,18 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     # ladder is one of the witnesses the calibration vote sees
     scene, vec_info = _vector_scene(paper, fig)
     cal_vec = calibrate_from_scene(scene, axis="y") if scene is not None else None
-    choice = _choose_calibration(core, coord, cal_vec, readouts)
+    # C2, filtered ONCE at the point of disqualification: a reading that could not see the target
+    # or built its own ladder is not a witness to anything — not to the value, not to the axis
+    # identity, not to the ladder, not to the unit. See `voting()` for the 31.5 -> 23.64 that
+    # dropping only its samples produced.
+    choice = _choose_calibration(core, coord, cal_vec, voting(readouts))
     cal, cal_source, cal_why = choice.cal, choice.source, choice.why
     pixel_cal = choice.usable_for_pixels
     pixel_samples = _samples_from_coords(coord, core, pixel_cal, cal_source)
     # --- path B: raster CV, matched by the nearest VLM coordinate
     pixel_samples += _samples_from_raster(coord, core, pixel_cal, cal_source)
-    cat_role, cat_role_why = ((_categorical_role(target, readouts)) if target.collapse_across_x
-                              else (CATEGORICAL_CONDITIONS, ""))
+    cat_role, cat_role_why = ((_categorical_role(target, voting(readouts)))
+                              if target.collapse_across_x else (CATEGORICAL_CONDITIONS, ""))
     if target.collapse_across_x and cat_role != CATEGORICAL_GROUPS:
         # a pixel route resolves ONE datum; when the outcome is the mean of every datum on the
         # axis its answer is a different number and must not enter the ensemble. When the x
@@ -2098,7 +2121,8 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     if pixel_cal is None and choice.status == "cal_refuted":
         # the ladder is wrong, so nothing derived from it may set a tolerance; the read-outs'
         # own magnitude is what is left, and it is recorded as such
-        magnitudes = [abs(m) for means in _readout_means(readouts).values() for m in means]
+        magnitudes = [abs(m) for means in _readout_means(voting(readouts)).values()
+                      for m in means]
         axis_range = 2.0 * max(magnitudes) if magnitudes else 0.0
         axis_range_source = "readout_magnitude"
     px_units = abs(pixel_resolution(pixel_cal)) if pixel_cal is not None else 0.0
@@ -2121,8 +2145,30 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
             stop_reason = "every read-out in the plan was spent"
     buy_reason = "; ".join(bought_because) or stop_reason
 
+    # --- C10: a route that came back with a spread and no mean is a PARTIAL read, not a missing
+    # witness. "One family read this" and "two families read it and one came back empty" must
+    # never print the same reason, and the cheapest answer is not to re-price the confidence —
+    # it is to re-ask that one reader for that one group. Exactly one such call is bought.
+    partial_before = _partial_reads(samples)
+    reread: dict[str, Any] = {}
+    if partial_before:
+        reread = _rebuy_partial(partial_before, readouts, samples, read)
+    # ...and a hole the re-read FILLED is no longer a hole. Leaving the entry standing made the
+    # cell print "a second model family returned a spread but no mean for group A" about a family
+    # that had just supplied the mean and was, on the same record, counted among `model_families`
+    # — two provenance facts contradicting each other. The pre-re-read list is kept under its own
+    # name, because what was bought and why is also a fact.
+    partial = _still_partial(partial_before, samples)
+
+    # C2 again, now that every read-out in the plan has been spent: a majority that could not see
+    # the target is the same fact whether it arrives on the second reader or the fourth.
+    seen = legibility(readouts)
+    if seen["abstain"]:
+        return _target_not_visible(fig, target, paper, source, dataset, crop, seen, readouts,
+                                   panel_info, result, coord=coord)
+
     # --- path A: vector-exact (after every read-out, so it sees every tick ladder)
-    samples.extend(_samples_from_vector(scene, vec_info, coord, core, readouts))
+    samples.extend(_samples_from_vector(scene, vec_info, coord, core, voting(readouts)))
     _corroborate_vector_whiskers(samples, px_units)
 
     # --- two readers off two different value axes are not two reads of one number
@@ -2203,6 +2249,11 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
 
     provenance = _base_provenance(fig, core, choice, coord, vec_info, verify_log, target)
     provenance.update(axis_info)
+    provenance["panel"] = panel_info
+    provenance["legibility"] = seen
+    provenance[PARTIAL_READ] = partial
+    provenance["partial_read_before_reread"] = partial_before
+    provenance["partial_read_reread"] = reread
     provenance["series_identity"] = series_info
     provenance["axis_range"] = axis_range
     provenance["axis_range_source"] = axis_range_source
@@ -2211,6 +2262,7 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
         "extra_readouts_bought": bought, "extra_readout_reason": buy_reason,
         "readout_stop_reason": stop_reason,
         "overlay_verify": bool(do_verify), "overlay_verify_reason": verify_reason,
+        "partial_read_rereads": int(bool(reread.get("bought"))),
         "list_regions_offered": view.has_regions}
     # the families that actually answered — `vote.route_key` reads ONE model per candidate and the
     # ensemble has to pick one, so without this the vote cannot tell two families from two prompts.
@@ -2234,7 +2286,7 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
                                    dataset=dataset, core=core, cal=cal, crop=crop,
                                    overlay_path=overlay_path, base=provenance,
                                    axis_range=axis_range, tick_spacing=tick_spacing,
-                                   px_units=px_units, readouts=readouts,
+                                   px_units=px_units, readouts=voting(readouts),
                                    want_uncertainty=want_uncertainty, labels=labels)
     _refuse_identical_collapse(candidates)
     cost = sum(r.cost_usd for r in readouts) + coord.cost_usd + sum(
@@ -2278,7 +2330,7 @@ def _refuse_identical_collapse(candidates: Sequence[Candidate]) -> None:
         cand.pixel_provenance["needs_review_reason"] = reason
 
 
-_X_PX_RE = __import__("re").compile(r"x\s*(?:=|≈|~|of|at)?\s*([0-9]+(?:\.[0-9]+)?)\s*px")
+_X_PX_RE = re.compile(r"x\s*(?:=|≈|~|of|at)?\s*([0-9]+(?:\.[0-9]+)?)\s*px")
 
 
 def _x_pixels(samples: Sequence[RouteSample]) -> list[float]:
@@ -2295,6 +2347,391 @@ def _x_pixels(samples: Sequence[RouteSample]) -> list[float]:
 
 
 CATEGORICAL_UNSUPPORTED = "categorical_x_unsupported"
+PANEL_UNCALIBRATED = "panel_uncalibrated"
+PANEL_NOT_IN_CROP = "panel_not_in_crop"
+#: the map named a panel and ingestion could not hand that panel over on its own. The reading is
+#: taken from whatever rect there is and RECORDED as such — never denied, never an abstention.
+PANEL_NOT_ISOLATED = "panel_not_isolated"
+ONE_READER_BLIND = "one_reader_could_not_see_it"
+PARTIAL_READ = "partial_read"
+#: marks a sample dropped because its READER was disqualified, not because its number was
+#: disputed. The overlay call exists to settle a disagreement between routes about where a datum
+#: sits; "this reader could not see the panel" is not that disagreement, and paying for a picture
+#: of it buys nothing.
+ILLEGIBLE = "illegible"
+
+
+def _reader_id(reading: ReadOut) -> str:
+    name = ":".join(x for x in ("digitize:readout", reading.model, reading.variant) if x)
+    return f"{name}#{reading.sample + 1}" if reading.sample else name
+
+
+def legibility(readouts: Sequence[ReadOut]) -> dict[str, Any]:
+    """What the readers reported about whether the target is IN the picture — a fact, not a note.
+
+    "It is not in this picture" is the one thing a reader can tell us that no amount of averaging
+    can recover, and until now it had nowhere to go but prose. A MAJORITY saying so is a fact
+    about the image: the route abstains and the cell is queued for a human (nothing re-acquires
+    the crop yet), and the minority reading that did produce numbers is never adopted — it read
+    something, but not the thing that was asked for. A minority saying so is a fact about that
+    reader: its samples do not vote, and the cell carries the disagreement.
+
+    A `partial` reader is in neither camp. It is not saying the target is absent, so it is not a
+    `no` vote; and it is not a witness to the value either, because half a panel is not the panel.
+    It is therefore left out of the DENOMINATOR: counted there, every extra half-view of a
+    half-cropped figure would make abstention less likely, which is backwards.
+    """
+    blind = [r for r in readouts if r.target_visible == VISIBLE_NO]
+    partly = [r for r in readouts if r.target_visible == VISIBLE_PARTIAL]
+    inferred = [r for r in readouts if r.calibration_source == CAL_SOURCE_INFERRED]
+    silent = [r for r in readouts if r.target_visible == VISIBLE_UNKNOWN
+              or r.calibration_source == CAL_SOURCE_UNKNOWN]
+    total = len(readouts) - len(partly)
+    majority = bool(blind) and total >= 2 and len(blind) * 2 > total
+    return {
+        "n_readouts": len(readouts),
+        "n_voting": total,
+        "target_not_visible": [_reader_id(r) for r in blind],
+        "target_not_visible_why": [r.target_visible_reason or r.notes for r in blind],
+        "target_partly_visible": [_reader_id(r) for r in partly],
+        "target_partly_visible_why": [r.target_visible_reason or r.notes for r in partly],
+        "calibration_inferred": [_reader_id(r) for r in inferred],
+        "said_nothing": [_reader_id(r) for r in silent],
+        "abstain": majority,
+        ONE_READER_BLIND: bool(blind) and not majority,
+    }
+
+
+def voting(readouts: Sequence[ReadOut]) -> list[ReadOut]:
+    """The read-outs that may witness ANYTHING — the value, the ladder, the axis, the unit.
+
+    C2 says a disqualified reading is dropped before the ensemble, and dropping its SAMPLES is
+    not the same thing as dropping its VOTE. Measured on the synthetic bar figure (truth 31.5,
+    ticks 0..60) with one honest reader and two disqualified ones — a `target_visible: no` reader
+    carrying nothing but a tick ladder, and a `calibration_source: inferred` one — both listing
+    the neighbouring panel's `0,5,...,30`: the ensemble printed **23.64** instead of 31.5, on a
+    ruler chosen by the two readings the rule had already declared non-voting, with the
+    provenance note "2 of 3 read-out tick ladder(s) agree". A reader that read nothing was
+    credited as a witness and moved the printed number by a quarter of its value.
+
+    So the filter is applied ONCE, here, at the point of disqualification, and the filtered list
+    is what every witness function sees. `legibility()` and the cost/provenance sums keep the
+    full list: what a disqualified reader SAID is still a fact about the figure, and its money
+    was still spent.
+
+    `partial` is left in: a reader that could see part of the panel could still read the printed
+    ladder off it, and F10 disqualifies it for the VALUE only.
+    """
+    return [r for r in readouts
+            if r.target_visible != VISIBLE_NO and r.calibration_source != CAL_SOURCE_INFERRED]
+
+
+def _partial_reads(samples: Sequence[RouteSample]) -> list[dict[str, Any]]:
+    """Routes that produced part of a reading and not the rest, named by route and by group.
+
+    Corroboration is credited only from readers that produced THE QUANTITY being corroborated, so
+    a reader that returned `mean=None, error=6.5` corroborates no mean — that rule stands, and it
+    is why Bock's group A scored 0.22 against group B's 0.45 off the very same three readers. The
+    asymmetry it leaves is the defect: the cell reported "only one independent route produced this
+    value", which is what a genuinely single-family cell reports, when in truth a second family
+    read the figure and came back with half an answer. Naming the half-answer is what lets the
+    cheapest fix apply: re-ask that one reader for that one group.
+    """
+    out = []
+    for sample in samples:
+        if sample.route != "D" or sample.dropped:
+            continue
+        if sample.mean is None and sample.error is not None:
+            out.append({"route": sample.extractor_id, "group": sample.group, "missing": "mean",
+                        "has": {"error": sample.error}, "model": sample.model,
+                        "variant": sample.variant, "sample": sample.sample})
+        elif sample.mean is not None and sample.error is None:
+            out.append({"route": sample.extractor_id, "group": sample.group, "missing": "error",
+                        "has": {"mean": sample.mean}, "model": sample.model,
+                        "variant": sample.variant, "sample": sample.sample})
+    return out
+
+
+def _still_partial(partial: Sequence[dict[str, Any]],
+                   samples: Sequence[RouteSample]) -> list[dict[str, Any]]:
+    """The partial reads that are STILL partial once the targeted re-read has come back.
+
+    C10 names the half-answer and buys the missing number back; it never said what happens to the
+    name once the number arrives. What happened was that the cell reported a hole and counted the
+    same family as whole at the same time. The producer owns this contract, so the retraction is
+    made here rather than left for every consumer to guess at: a reader that later supplied the
+    missing quantity for that group is no longer a partial read of it.
+    """
+    out = []
+    for item in partial:
+        want = "mean" if item["missing"] == "mean" else "error"
+        filled = any(s.route == "D" and s.group == item["group"] and not s.dropped
+                     and s.model == item["model"] and s.variant == item["variant"]
+                     and s.sample != item["sample"] and getattr(s, want) is not None
+                     for s in samples)
+        if not filled:
+            out.append(item)
+    return out
+
+
+def _rebuy_partial(partial: Sequence[dict[str, Any]], readouts: Sequence[ReadOut],
+                   samples: Sequence[RouteSample], read) -> dict[str, Any]:
+    """Re-ask ONE reader that came back with half an answer. Exactly one call, ever.
+
+    Re-asking the reader that actually looked is cheaper and better evidence than buying a fresh
+    family: the missing half is the only thing in doubt. It is capped at one call per cell so a
+    figure nobody can read cannot spend the run's budget proving it.
+    """
+    missing_mean = [item for item in partial if item["missing"] == "mean"]
+    if not missing_mean:                          # a missing spread is not a missing witness
+        return {"bought": False, "why": "no route was missing the mean"}
+    first = missing_mean[0]
+    used = {(r.model, r.variant, r.sample) for r in readouts}
+    nxt = max((s for (m, v, s) in used if m == first["model"] and v == first["variant"]),
+              default=0) + 1
+    spec = ReadoutSpec(model=first["model"], variant=first["variant"], sample=nxt)
+    if (spec.model, spec.variant, spec.sample) in used:   # pragma: no cover - defensive
+        return {"bought": False, "why": "that reader has already been re-asked"}
+    read(spec)
+    filled = any(s.route == "D" and s.group == first["group"] and s.model == spec.model
+                 and s.variant == spec.variant and s.sample == spec.sample and s.mean is not None
+                 for s in samples)
+    return {"bought": True, "route": first["route"], "group": first["group"],
+            "spec": spec.to_dict(), "resolved": filled,
+            "why": (f"{first['route']} reported a spread for group {first['group']} and no mean; "
+                    f"the missing half is re-asked of the reader that produced the other half "
+                    f"before this cell goes to a human")}
+
+
+def _mark_illegible(reading: ReadOut, samples: list[RouteSample]) -> None:
+    """A reader that could not see the target, or built its own ladder, does not vote."""
+    if reading.calibration_source == CAL_SOURCE_INFERRED:
+        why = ("this reading's axis was inferred rather than read off printed labels, so its "
+               "numbers are its own construction and cannot corroborate anyone else's")
+    elif reading.target_visible == VISIBLE_NO:
+        why = ("this reader reports the named target is not in this image"
+               + (f" ({reading.target_visible_reason})" if reading.target_visible_reason else ""))
+    elif reading.target_visible == VISIBLE_PARTIAL:
+        why = ("this reader could see only part of the named target, so its value is a reading "
+               "of part of a panel and does not vote"
+               + (f" ({reading.target_visible_reason})" if reading.target_visible_reason else ""))
+    else:
+        return
+    for sample in samples:
+        sample.dropped = True
+        sample.drop_reason = why
+        sample.extra[ILLEGIBLE] = True
+
+#: how a locator names a panel: "Fig. 3a", "Figure 2, panel a", "(b)", "panel B"
+_PANEL_RES = [
+    re.compile(r"\bpanels?\s+\(?([a-h])\b", re.I),
+    # "Fig. 3a" — the letter must be welded to the number. A space between them is prose:
+    # "Fig. 2, a comparison of ..." names no panel, and reading one out of it is the guess this
+    # function exists to refuse.
+    re.compile(r"\bfig(?:ure)?s?\.?\s*s?\d+([a-h])(?![a-z0-9])",
+                             re.I),
+    re.compile(r"\bfig(?:ure)?s?\.?\s*s?\d+\s*[.,]?\s*\(([a-h])\)",
+                             re.I),
+    re.compile(r"[(\[]([a-h])[)\]]", re.I),
+]
+
+
+def panel_named(*texts: str) -> str:
+    """The panel letter a locator names, or "" — the map's own words, never a guess.
+
+    "Fig. 3a", "Figure 2, panel a ('adaptive shift')" and "(b)" all name a panel; "Fig. 1" does
+    not. Nothing is inferred from position: a figure whose panel is not named keeps the whole
+    region, because picking one panel out of three on no evidence is exactly the guess this rule
+    exists to prevent.
+    """
+    for text in texts:
+        for pattern in _PANEL_RES:
+            match = pattern.search(str(text or ""))
+            if match:
+                return match.group(1).lower()
+    return ""
+
+
+def panel_view(fig: FigureRegion, panel: PanelRegion) -> FigureRegion:
+    """`fig` as seen through ONE of its panels: same paper, same page, the panel's own rect.
+
+    Every route downstream works off `fig.bbox` and `fig.crop_png` (the vector scene, the CV pass,
+    the overlay), so handing them a panel-shaped `FigureRegion` is what makes "read panel b" mean
+    the pixels of panel b rather than the union of three panels and three ladders.
+    """
+    from dataclasses import replace
+
+    return replace(fig, id=panel.id, bbox=panel.bbox, crop_png=panel.crop_png,
+                   claude_png=panel.claude_png, crop_dpi=panel.crop_dpi or fig.crop_dpi,
+                   claude_scale=panel.claude_scale, panels=[panel])
+
+
+def resolve_panel(fig: FigureRegion, target: TargetSpec,
+                  source: Source | None) -> tuple[FigureRegion, dict[str, Any]]:
+    """Which image this cell is actually read from, and why. `(figure_or_panel, provenance)`.
+
+    A multi-panel union is 338 pt tall on Heuer 2008 Fig. 2 and carries three different y ladders
+    plus an x ladder; a value read off it can be calibrated with the wrong one, and the digitiser's
+    own record shows that happening (Cressman Fig. 3b, "the bar top measured with the neighbouring
+    panel's ladder"). The panel rect is the smallest unit ingestion can name — not a guarantee of
+    exactly one ladder: Heuer's Fig. 3 resolves to a single "panel" that holds three
+    (['-20','-10','0','10'], ['-60','-40','-20','0'], ['-60','-40','-20','0']), which is why a
+    named panel that could NOT be isolated is recorded rather than described as isolated.
+    """
+    enumerated = list(fig.caption_panels or caption_panels(fig.caption or ""))
+    info: dict[str, Any] = {"figure_id": fig.id, "panel_named": "", "panel_used": "",
+                            "n_panels": len(fig.panels), "text_layer": fig.text_layer,
+                            "caption_enumerates": enumerated}
+    letter = panel_named(target.panel_hint, source.locator if source is not None else "",
+                         target.series_hint)
+    info["panel_named"] = letter
+    if len(fig.panels) <= 1:
+        panel = fig.panels[0] if fig.panels else None
+        if letter:
+            _record_not_isolated(info, fig, letter, enumerated)
+        else:
+            info["panel_why"] = ("nothing names a panel and ingestion found one rect; the region "
+                                 "and the panel are the same rect")
+        if panel is not None and not panel.calibrated:
+            info["uncalibrated"] = True
+            info["panel_used"] = panel.id
+            info["panel_numeric_labels"] = panel.n_numeric
+            info["panel_ladder_labels"] = panel.n_ladder
+        return fig, info
+    if not letter:
+        info["panel_why"] = (f"nothing names a panel of this {len(fig.panels)}-panel figure, so "
+                             f"the whole region is read; a panel picked on no evidence would be a "
+                             f"guess about which axis calibrates the value")
+        return fig, info
+    match = next((p for p in fig.panels if p.letter == letter), None)
+    if match is None:
+        _record_not_isolated(info, fig, letter, enumerated)
+        return fig, info
+    info["panel_used"] = match.id
+    info["panel_numeric_labels"] = match.n_numeric
+    info["panel_ladder_labels"] = match.n_ladder
+    info["panel_why"] = f"the locator names panel {letter!r}, which is its own rect in the figure"
+    if not match.calibrated:
+        info["uncalibrated"] = True
+    return panel_view(fig, match), info
+
+
+def _record_not_isolated(info: dict[str, Any], fig: FigureRegion, letter: str,
+                         enumerated: Sequence[str]) -> None:
+    """C1 rule 3's third clause: a named panel that could not be isolated is a FLAGGED read.
+
+    The rule says "never the multi-panel union" and both it and its acceptance tests assume the
+    decomposition succeeds. On this corpus it fails on the one multi-panel figure that feeds
+    pooled cells — Cressman 2010's Fig. 3 is a single drawing cluster, and its map locators are
+    "Fig. 3a" and "Fig. 3b" — so the code was left with nothing to do about it and DENIED the
+    problem instead, writing "the figure is one panel; the region and the panel are the same
+    rect" over a two-panel figure. That sentence is false, and it is false on the two cells this
+    run pools. Nothing else catches it: a reader handed that union answers `target_visible: yes`
+    (panel b IS in the image) and `calibration_source: printed_labels` (the labels ARE printed),
+    so C2 sees nothing, and the axis-identity nets need the readers to disagree with each other —
+    three readers making the same mistake sail through.
+
+    Refusing the cell would be worse than reading it: the union is readable, and the axis-identity
+    rules already repaired Cressman Fig. 3 once. So the reading is taken and the fact is recorded,
+    with the caption's own enumeration as corroboration where the caption enumerates anything.
+    """
+    n = len(fig.panels)
+    info[PANEL_NOT_ISOLATED] = letter
+    info["needs_review"] = True
+    said = (f"; the caption enumerates {', '.join(enumerated)}" if enumerated else "")
+    found = ([p.letter for p in fig.panels] if n else [])
+    info["panel_why"] = (
+        f"the locator names panel {letter!r} and ingestion could not hand that panel over on its "
+        f"own (it resolved {fig.id} to {n} rect(s) {found}{said}), so the image read is the whole "
+        f"region — which carries every panel's axes, and a value read off it can be scaled with "
+        f"the wrong ladder")
+    info["needs_review_reason"] = info["panel_why"]
+
+
+def _no_value(fig: FigureRegion, target: TargetSpec, paper: PaperRecord, source: Source | None,
+              dataset: DatasetSpec | None, crop: Path, reason: str, provenance: dict[str, Any],
+              result: bool) -> list[Candidate] | DigitizeResult:
+    """One ensemble candidate per group, carrying no number and the reason there is none."""
+    out = [_candidate(None, None, group=group, sample=None, target=target, fig=fig, paper=paper,
+                      dataset=dataset, source=source,
+                      kind=(source.kind if source is not None and source.kind is not None
+                            else SourceKind.figure_line),
+                      mapper_type=(source.error_bar_type if source is not None
+                                   else DispersionType.UNKNOWN),
+                      unit=target.unit_hint,
+                      page=(source.page if source is not None and source.page else fig.page),
+                      locator=(source.locator if source is not None and source.locator
+                               else target.panel_hint or fig.label or fig.id),
+                      crop=crop, overlay_path="", extractor_id="digitize:ensemble", sigma=None,
+                      status="ambiguous", notes=reason, provenance=provenance, call_id="",
+                      model="")
+           for group in GROUPS]
+    if result:
+        return DigitizeResult(candidates=out, samples=[], calibration=None, overlay_path="",
+                              cost_usd=provenance.get("cost_usd", 0.0), provenance=provenance)
+    return out
+
+
+def _panel_uncalibrated(fig: FigureRegion, target: TargetSpec, paper: PaperRecord,
+                        source: Source | None, dataset: DatasetSpec | None, crop: Path,
+                        panel_info: dict[str, Any], result: bool
+                        ) -> list[Candidate] | DigitizeResult:
+    """One ensemble candidate per group saying the named panel carries no ladder of its own.
+
+    `n_ladder` counts the rungs of the longest printed LADDER inside THIS panel's rect — a
+    roughly collinear, value-monotone column, not three bare numbers anywhere in the rect. Fewer
+    than `MIN_PANEL_NUMERIC` and there is no axis to calibrate against: whatever a reader returned
+    would be scaled from a neighbouring panel's ladder, which is a different quantity in the same
+    units. A figure that carries no ladder ANYWHERE (a scanned raster, a setup schematic) never
+    reaches here: the assertion has no premise there and is skipped rather than failed.
+    """
+    named = panel_info.get("panel_used") or fig.id
+    reason = (f"{named} carries a printed ladder of "
+              f"{panel_info.get('panel_ladder_labels', 0)} label(s) inside its own rect, fewer "
+              f"than the {MIN_PANEL_NUMERIC} an axis needs to be calibrated from the figure's "
+              f"own text. A value read here would be scaled with a ladder that belongs "
+              f"to another panel. Re-acquire the crop (the whole page is the fallback) rather "
+              f"than paying a reader for a number the picture cannot support")
+    provenance = {"figure_id": fig.id, "figure_kind": fig.kind, "crop_dpi": fig.crop_dpi,
+                  PANEL_UNCALIBRATED: True, "panel": panel_info, "needs_review": True,
+                  "needs_review_reason": reason, "prompt_version": PROMPT_VERSION,
+                  "readouts_bought": 0}
+    return _no_value(fig, target, paper, source, dataset, crop, reason, provenance, result)
+
+
+def _target_not_visible(fig: FigureRegion, target: TargetSpec, paper: PaperRecord,
+                        source: Source | None, dataset: DatasetSpec | None, crop: Path,
+                        seen: dict[str, Any], readouts: Sequence[ReadOut],
+                        panel_info: dict[str, Any], result: bool,
+                        coord: CoordReadout | None = None,
+                        verify_log: Sequence[dict[str, Any]] = ()
+                        ) -> list[Candidate] | DigitizeResult:
+    """The readers looked and the thing is not there — so the cell re-acquires, it does not guess.
+
+    The alternative is what happened before this rule: two readers say the panel is not in the
+    crop, a third returns numbers off whatever IS in the crop, and the third one's numbers become
+    the cell's value with three error flags attached to them.
+    """
+    who = ", ".join(seen["target_not_visible"])
+    why = "; ".join(x for x in seen["target_not_visible_why"] if x)
+    reason = (f"{len(seen['target_not_visible'])} of {seen['n_readouts']} readers report that the "
+              f"target named for this cell is not in {fig.id}'s image ({who})"
+              + (f": {why}" if why else "")
+              + ". A reading taken from this crop would be of something else, so the crop is "
+                "re-acquired rather than the minority reading adopted")
+    provenance = {"figure_id": fig.id, "figure_kind": fig.kind, "crop_dpi": fig.crop_dpi,
+                  PANEL_NOT_IN_CROP: True, "panel": panel_info, "legibility": seen,
+                  "needs_review": True, "needs_review_reason": reason,
+                  "prompt_version": PROMPT_VERSION, "readouts_bought": len(readouts),
+                  # every call this cell paid for, not only the read-outs. The second legibility
+                  # check runs AFTER `coords()` and after any extra read-out and re-read, and
+                  # reporting only the read-outs there is E10's "reported cost is not incurred
+                  # cost" reintroduced in new code.
+                  "cost_usd": (sum(r.cost_usd for r in readouts)
+                               + (coord.cost_usd if coord is not None else 0.0)
+                               + sum(float(e.get("cost_usd", 0.0)) for e in verify_log)),
+                  "readout_families": sorted({r.model for r in readouts})}
+    return _no_value(fig, target, paper, source, dataset, crop, reason, provenance, result)
 
 
 def _categorical_unsupported(fig: FigureRegion, target: TargetSpec, paper: PaperRecord,
@@ -2565,6 +3002,14 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             reasons.append(
                 "no y calibration could be built for this figure, so nothing independent checked "
                 "that these values lie on the axis they were read from")
+        # C1 rule 3, third clause: the map named a panel, ingestion could not isolate it, and the
+        # value was therefore read off a rect carrying more axes than one. Recorded on the row,
+        # because it is exactly the condition under which a reading can be scaled with the
+        # neighbouring panel's ladder and every route agree about it.
+        not_isolated = (base.get("panel") or {}).get(PANEL_NOT_ISOLATED) or ""
+        if not_isolated:
+            reasons.append((base.get("panel") or {}).get("needs_review_reason")
+                           or f"panel {not_isolated!r} could not be isolated from this figure")
         sides = sorted({s.one_sided for s in with_error if s.one_sided})
         if dispersion_only:
             reasons.append(
@@ -2612,11 +3057,13 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             "resampled_routes": [s.extractor_id for s in live if s.sample > 0],
             "tool_calls": _aggregate_tool_calls(mine),
             "cal_missing": no_calibration,
+            PANEL_NOT_ISOLATED: bool(not_isolated),
             "needs_review": (status == "ambiguous" or dispersion_only or no_calibration
-                             or bool(topology_note)),
+                             or bool(topology_note) or bool(not_isolated)),
             "needs_review_kind": ("mean" if status == "ambiguous"
                                   else ("dispersion" if dispersion_only or topology_note
-                                        else ("calibration" if no_calibration else None))),
+                                        else ("calibration" if no_calibration or not_isolated
+                                              else None))),
             "needs_review_reason": "; ".join(reasons),
             "dropped_samples": [s.to_dict() for s in mine if s.dropped],
         }

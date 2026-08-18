@@ -43,6 +43,73 @@ CAPTION_RE = re.compile(r"^\s*(fig(?:ure)?\.?|figs\.?)\s*(s?\d+[a-z]?)\b", re.I)
 TABLE_CAP_RE = re.compile(r"^\s*table\s+(s?\d+)\b", re.I)
 DOI_RE = re.compile(r"\b(10\.\d{4,9}/[-._;()/:A-Za-z0-9]+)")
 
+#: a word that is a bare number — a tick label, not prose. "3.5", "-10", "1,5" (comma decimal),
+#: "−10" (U+2212, matplotlib's default minus glyph), "–10" (en dash), "20%", "0.3°".
+#: The ASCII-only first cut refused 257 numeric-looking words across the three fixture PDFs and
+#: scored **zero** on any matplotlib-produced axis with negative ticks — and a panel that scores
+#: zero is refused with no read-outs at all. Never a wrong number; a silent hard refusal on the
+#: commonest tick-label encoding in modern figures, so the minus signs and the two unit suffixes
+#: that always ride a tick label are accepted.
+NUMERIC_WORD_RE = re.compile(r"^[+\-−–]?\d+(?:[.,]\d+)?\s*[%°]?$")
+#: how many numeric words, IN A LADDER, a panel needs before we believe its axis is calibrated.
+#: A crop that carries a neighbouring panel's ladder and none of its own cannot be read: the
+#: numbers a reader would use belong to a different set of axes (Heuer 2008 Fig. 2/4/6, where the
+#: named panel was not even in the crop). The count is per panel and never global — a global count
+#: is satisfied by the x-axis labels alone, which calibrate nothing on the value axis.
+MIN_PANEL_NUMERIC = 3
+#: pad on the edges that are not grown to a landmark
+PANEL_PAD = 6.0
+#: how far a panel's LOWER edge may reach past its drawing cluster, when a caption block does not
+#: stop it sooner. The x tick labels and the x-axis title are text, so they sit below the drawing
+#: cluster: on Heuer 2008 the eight x labels of fig02/04/06 sit 0.1-1.4 pt below the crop's own
+#: bottom edge and the axis title 8-13 pt below it, while the caption starts 34-39 pt below —
+#: there is a landmark-shaped gap there, and 6 pt of pad does not reach it.
+PANEL_GROW_DOWN = 24.0
+#: the clearance a grown panel edge keeps from the landmark it grew to (a caption block, the next
+#: panel down). Small, because the landmark is the thing being avoided, not approached.
+LANDMARK_GAP = 1.0
+#: how far to the right of a panel a ladder may sit and still be that panel's. Tick labels sit
+#: ADJACENT to the axis they label — measured on this corpus they are 6-12 pt from the drawing —
+#: so a ladder half a page away is never this panel's, however wide the panel happens to be.
+#: The panel's own width alone was too generous a cap: on a 350 pt panel it permitted a ladder
+#: 350 pt away, which is most of a page.
+RIGHT_LADDER_REACH_PT = 48.0
+#: growth smaller than this is not growth, it is float noise in the PDF's own coordinates. Every
+#: Cressman 2010 figure has a caption `x0` equal to its graphics' `x0` to four decimal places, and
+#: without a floor the "grow to the caption column" rule would move six crops by 0.0004 pt and
+#: cost the byte-identity that proves the rule cannot regress that paper.
+MIN_CAPTION_GROWTH = 1.0
+TEXT_LAYER_PRESENT = "present"
+TEXT_LAYER_NONE = "none"
+#: fraction of the page height at the head and the foot inside which a short text block that
+#: touches no graphic is page furniture (a folio, a running head), not figure text.
+FURNITURE_BAND = 0.10
+FURNITURE_MAX_CHARS = 120
+#: how far apart two neighbouring gaps in one ladder may be before they are two ladders. A tick
+#: ladder is evenly spaced; two panels stacked with descending axes are not, and read as one run
+#: they certified a union on a ladder that is really two (measured: 50,40,30 above 20,10,0 came
+#: back as a six-rung ladder). The tolerance is not 1.0 because a ladder may suppress a label —
+#: Cressman 2010's Fig. 5 prints 120..20 and -20,-40 and leaves the zero off, one gap of exactly
+#: 2.0x — so what is refused is a gap out of scale with its NEIGHBOUR, not a gap out of scale
+#: with a constant.
+LADDER_GAP_RATIO = 3.0
+#: a span whose font is bold. Springer prints the panel letter of a caption in bold and the
+#: English article in roman, which is the only sound way to tell "a Side view of the setup" from
+#: "in a rotated field": measured on Cressman 2010, the caption letters of Fig. 1 and Fig. 3 are
+#: `AdvPTimesB` and every stray article is `AdvPTimes`. Flags are not enough (this publisher sets
+#: flags=4, serif, on both), so the font NAME is read as well.
+BOLD_FONT_RE = re.compile(r"bold|black|heavy|semib|[a-z]B$|[a-z]-B\b|,B(?:old)?$", re.I)
+#: a letter enumerating a panel inside a caption: "a: ...", "(b) ...", "b and c Top view ...",
+#: "a Side view ...". Deliberately BARE — Springer sets its panel letters in bold with no
+#: punctuation at all, so a pattern demanding a bracket or a colon is blind to every caption in
+#: Cressman 2010 ("the a reach training trials and b aftereffect trials"). What stops a bare
+#: letter being read as the English article is the ACCEPTANCE rule in `caption_panels`, not the
+#: pattern: an enumeration counts only when the letters run in order from `a` and there are at
+#: least two of them. Measured on all 12 real captions of the three fixture PDFs: 5 true
+#: positives, 0 false positives (the six captions carrying a stray article "a" stop at one
+#: letter and are rejected).
+CAPTION_PANEL_RE = re.compile(r"(?:^|[\s(\[])\(?\[?([a-h])[)\]]?[:.,;]?(?=\s|$)")
+
 
 @dataclass
 class Bbox:
@@ -66,6 +133,32 @@ class TableRecord:
 
 
 @dataclass
+class PanelRegion:
+    """One panel of a figure: the rect a reader is handed when the map names that panel.
+
+    A multi-panel figure's union carries several value ladders (Heuer 2008 Fig. 2 is 338 pt tall
+    and holds three), so a reading taken off the union can be calibrated with the wrong one. The
+    panel rect is the unit that has exactly one y ladder, and `calibrated` says whether that
+    ladder is actually inside it.
+    """
+
+    id: str                         # "fig02a"
+    letter: str                     # "a" — ordinal position in reading order, or the caption's own
+    bbox: Bbox                      # PDF points, page coords (grown like the region)
+    n_numeric: int                  # numeric words whose centres fall inside THIS panel's rect
+    calibrated: bool                # n_ladder >= MIN_PANEL_NUMERIC, or the region carries no ladder
+    #: the longest LADDER among those words — a roughly collinear, value-monotone column. Three
+    #: bare numbers anywhere in the rect are not an axis: Cressman 2010's Fig. 1 is an
+    #: experimental-setup schematic with no value axis at all and its annotations
+    #: ('1','10','5','30','30','30') certified it as calibrated under a plain count.
+    n_ladder: int = 0
+    crop_png: str = ""              # path (relative to out_dir); == the figure's for a 1-panel figure
+    claude_png: str = ""
+    crop_dpi: float = 0.0
+    claude_scale: float = 1.0
+
+
+@dataclass
 class FigureRegion:
     id: str                         # "fig03" (order of appearance)
     page: int                       # 1-based
@@ -81,6 +174,26 @@ class FigureRegion:
     crop_dpi: float                 # effective DPI of crop_png relative to PDF points
     claude_scale: float             # claude_png px / crop_png px
     confidence: float               # heuristic 0..1 for region correctness
+    #: per-panel sub-rects, in reading order (top-to-bottom, then left-to-right)
+    panels: list[PanelRegion] = field(default_factory=list)
+    #: "none" when the region contains no FIGURE words at all (a scanned/raster figure). Page
+    #: furniture and caption text are not figure words: Bock 2005's two figures are scanned
+    #: rasters supplying two pooled cells, and the only thing between them and a `present` verdict
+    #: was 5.6 pt of white space above a page number.
+    text_layer: str = TEXT_LAYER_PRESENT
+    #: the longest ladder anywhere the reader is handed — the grown region or any panel rect.
+    n_region_ladder: int = 0
+    #: numeric words anywhere the reader is handed. NONE of them means this figure prints no axis
+    #: at all, and the per-panel assertion has no premise: it is SKIPPED rather than failed
+    #: (Bock's two scanned rasters supply two pooled cells). A one-panel figure is exempt for a
+    #: different reason — it cannot be reading off its neighbour's ladder.
+    n_region_numeric: int = 0
+    #: how far the region's left edge was grown to reach the caption block's own column (0.0 when
+    #: the caption already starts at or right of the graphics — every Cressman 2010 figure)
+    caption_growth_pt: float = 0.0
+    #: the panels the CAPTION enumerates ("a: ... b: ... c: ..."), when it enumerates any. Read
+    #: against `panels`, it is the page's own answer to "did ingestion find every panel?"
+    caption_panels: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -124,6 +237,9 @@ class PaperRecord:
             f["bbox"] = Bbox(**f["bbox"])
             if f["native_px"] is not None:
                 f["native_px"] = tuple(f["native_px"])
+            # records written before per-panel sub-rects existed simply have no panels
+            panels = f.get("panels") or []
+            f["panels"] = [PanelRegion(**{**p, "bbox": Bbox(**p["bbox"])}) for p in panels]
         d["figures"] = [FigureRegion(**f) for f in d["figures"]]
         for t in d["tables"]:
             t["bbox"] = Bbox(**t["bbox"])
@@ -272,6 +388,492 @@ def _caption_blocks(page: pymupdf.Page):
     return caps
 
 
+def _words_in(words: list, rect: pymupdf.Rect) -> list[str]:
+    """Every word whose centre lies inside `rect` — how we ask whether a region has a text layer."""
+    return [str(w[4]) for w in words
+            if rect.x0 <= (w[0] + w[2]) / 2.0 <= rect.x1 and rect.y0 <= (w[1] + w[3]) / 2.0 <= rect.y1
+            and str(w[4]).strip()]
+
+
+def _numeric_words(words: list, rect: pymupdf.Rect) -> list[str]:
+    """Bare numbers whose CENTRE lies inside `rect` — the labels that calibrate what is drawn there.
+
+    Centres, not overlaps: a label straddling the edge of a neighbouring panel belongs to that
+    neighbour, and counting it would let one panel's ladder certify another's.
+    """
+    return [m[0] for m in _numeric_marks(words, rect)]
+
+
+def numeric_value(text) -> float | None:
+    """The number a tick label carries, or None — "−12,5°" is -12.5, "block" is nothing."""
+    body = str(text).strip()
+    if not NUMERIC_WORD_RE.match(body):
+        return None
+    body = body.rstrip("%°").strip().replace("−", "-").replace("–", "-").replace(",", ".")
+    try:
+        return float(body)
+    except ValueError:                                    # pragma: no cover - regex guarantees it
+        return None
+
+
+def _numeric_marks(words: list, rect: pymupdf.Rect) -> list[tuple]:
+    """(text, x0, x1, y-centre, value) for every numeric word whose centre lies inside `rect`."""
+    out = []
+    for w in words:
+        value = numeric_value(w[4])
+        if value is None:
+            continue
+        cx, cy = (w[0] + w[2]) / 2.0, (w[1] + w[3]) / 2.0
+        if rect.x0 <= cx <= rect.x1 and rect.y0 <= cy <= rect.y1:
+            out.append((str(w[4]).strip(), float(w[0]), float(w[2]), cy, value))
+    return out
+
+
+def _evenly_spaced(run: list[tuple]) -> list[tuple]:
+    """The longest stretch of `run` whose rungs are evenly spaced down the page.
+
+    A tick ladder is evenly spaced; two ladders stacked one above the other are not, and the
+    monotone test alone cannot tell them apart when both descend — measured, `50,40,30` printed
+    above `20,10,0` came back as one six-rung ladder, on exactly the union `n_ladder` exists to
+    discriminate. The comparison is between NEIGHBOURING gaps rather than against a constant, so
+    a ladder that suppresses one label (Cressman 2010 Fig. 5 leaves its zero off, one gap of
+    exactly 2.0x) survives while a panel break (10x and up) does not.
+    """
+    if len(run) < 3:
+        return run
+    gaps = [run[i + 1][3] - run[i][3] for i in range(len(run) - 1)]
+    cuts = [0]
+    for i in range(1, len(gaps)):
+        lo, hi = sorted((gaps[i - 1], gaps[i]))
+        if lo <= 0 or hi > LADDER_GAP_RATIO * lo:
+            cuts.append(i)
+    cuts.append(len(gaps))
+    best: list[tuple] = []
+    for start, end in zip(cuts, cuts[1:]):
+        stretch = run[start:end + 1]
+        if len(stretch) > len(best):
+            best = stretch
+    return best
+
+
+def _monotone_run(column: list[tuple]) -> list[tuple]:
+    """The longest run of consecutive entries (already in y order) that is monotone in value AND
+    evenly spaced — the two things that make a column of numbers one axis rather than two."""
+    best: list[tuple] = []
+    run: list[tuple] = []
+
+    def close() -> None:
+        nonlocal best
+        even = _evenly_spaced(run)
+        if len(even) > len(best):
+            best = even
+
+    for mark in column:
+        if not run:
+            run = [mark]
+        elif mark[4] == run[-1][4]:                       # a repeat is not a step of a ladder
+            close()
+            run = [mark]
+        elif len(run) == 1 or (mark[4] > run[-1][4]) == (run[-1][4] > run[-2][4]):
+            run.append(mark)
+        else:
+            close()
+            run = [run[-1], mark]
+    close()
+    return best
+
+
+def _tick_ladder(words: list, rect: pymupdf.Rect) -> list[str]:
+    """The longest LADDER of numeric words inside `rect`: a column, in order of value.
+
+    "Three bare numbers anywhere in the rect" is not evidence that a panel carries its own value
+    axis. Measured: Cressman 2010 Fig. 1 is an experimental-setup schematic with no value axis at
+    all, and its diagram annotations ('1','10','5','30','30','30') certified it. What a value axis
+    looks like on the page is a stack of numbers at one x, running in one direction — right- or
+    centre-aligned, so the words' x RANGES overlap even where their centres do not. An x-axis
+    ladder is a row, not a column, and is correctly worth nothing here: it calibrates the axis
+    nobody is reading a value off.
+    """
+    return [m[0] for m in _ladder_marks(words, rect)]
+
+
+def _ladder_marks(words: list, rect: pymupdf.Rect) -> list[tuple]:
+    """`_tick_ladder`'s rungs as marks, so a caller can ask WHERE the ladder it found sits."""
+    marks = _numeric_marks(words, rect)
+    best: list[tuple] = []
+    for anchor in marks:
+        column = sorted((m for m in marks if not (m[2] < anchor[1] or anchor[2] < m[1])),
+                        key=lambda m: m[3])
+        run = _monotone_run(column)
+        if len(run) > len(best):
+            best = run
+    return best
+
+
+def _in_rects(word, rects: list[pymupdf.Rect]) -> bool:
+    cx, cy = (word[0] + word[2]) / 2.0, (word[1] + word[3]) / 2.0
+    return any(r.x0 <= cx <= r.x1 and r.y0 <= cy <= r.y1 for r in rects)
+
+
+def _page_furniture(page: pymupdf.Page, graphics: list[pymupdf.Rect]) -> list[pymupdf.Rect]:
+    """The page's own running heads and folios — text that is ON the page, not IN the figure.
+
+    The raster exemption used to hang on "not one word whose centre is inside the region", and on
+    Bock 2005 the only thing between that and buying ZERO read-outs on two pooled cells was 5.6 pt
+    of white space above the page number ('261' on p3, '262' on p4). A page number is not evidence
+    that a scanned figure has a text layer. Furniture is defined by where it sits and what it
+    touches, never by what it says: a short block in the head or foot band that overlaps none of
+    the page's graphics.
+    """
+    top, bottom = FURNITURE_BAND * page.rect.height, page.rect.height * (1.0 - FURNITURE_BAND)
+    out = []
+    for b in page.get_text("blocks"):
+        if b[6] != 0:
+            continue
+        txt = _norm_ws(b[4])
+        if not txt or len(txt) > FURNITURE_MAX_CHARS:
+            continue
+        r = pymupdf.Rect(b[:4])
+        if not (r.y1 <= top or r.y0 >= bottom):
+            continue
+        if any(_overlaps(r, g) for g in graphics):
+            continue
+        out.append(r)
+    return out
+
+
+def _in_order(letters: list[str]) -> list[str]:
+    """`letters` if they are a run from `a` with at least two of them, else []."""
+    if len(letters) < 2:
+        return []
+    return letters if letters == [chr(ord("a") + i) for i in range(len(letters))] else []
+
+
+def _bold_letters(page: pymupdf.Page, cap_rect: pymupdf.Rect) -> list[str]:
+    """The single letters a caption prints in BOLD, in order — the publisher's own enumeration.
+
+    Springer sets the panel letter bold and the English article roman, and that is the only
+    sound way to tell "a Side view of the setup" from "in a rotated field" without fitting a
+    pattern to one paper's prose. Measured on Cressman 2010: Fig. 1 gives a, b, c and Fig. 3
+    gives a, b, while every stray article in the same captions is roman and every caption that
+    enumerates nothing gives []. Journals that punctuate instead ("a: ... b: ...", Heuer 2008)
+    are read from the text by `caption_panels`, which needs no bold at all.
+    """
+    best, seen = None, []
+    for block in page.get_text("dict")["blocks"]:
+        if block.get("type") != 0:
+            continue
+        bx = block["bbox"]
+        d = abs(bx[0] - cap_rect.x0) + abs(bx[1] - cap_rect.y0)
+        if best is None or d < best[0]:
+            best = (d, block)
+    if best is None or best[0] > 2.0:
+        return []
+    bold_chars = total_chars = 0
+    for line in best[1]["lines"]:
+        for span in line["spans"]:
+            text = str(span.get("text") or "").strip()
+            bold = bool(int(span.get("flags") or 0) & 16) or bool(
+                BOLD_FONT_RE.search(str(span.get("font") or "")))
+            total_chars += len(text)
+            if bold:
+                bold_chars += len(text)
+            if bold and len(text) == 1 and text.lower() in "abcdefgh" and text.lower() not in seen:
+                seen.append(text.lower())
+    # the same majority test the text path applies to punctuation, applied to weight: bold is
+    # evidence only where it is SELECTIVE. A publisher that sets whole captions bold marks
+    # nothing by it, and taking the letters out of such a caption is the very guess the
+    # marker-majority rule exists to refuse ("Reaching in a rotated field; b denotes …", all
+    # bold, would otherwise come back as a two-panel enumeration).
+    if total_chars and bold_chars * 2 >= total_chars:
+        return []
+    return seen
+
+
+def _other_page_content(candidates: list[dict], text_blocks: list[pymupdf.Rect],
+                        caps: list, group: dict, union: pymupdf.Rect) -> list[pymupdf.Rect]:
+    """Everything on this page that belongs to something OTHER than this figure.
+
+    What bounds a panel's growth cannot be the figure's own idea of itself: the caption block is
+    routinely wider than the graphic it captions, and on a two-column page the space to the right
+    of a column figure belongs to the next column, not to the figure. So the page's other
+    graphics, the other captions and any text block outside this figure's own column are all
+    obstacles, and a panel edge stops at the nearest of them.
+
+    A block sitting within `PANEL_GROW_DOWN` of the region's own edges is NOT an obstacle — that
+    is the same landmark distance the bottom edge uses for "text that belongs to this panel", and
+    it is where a panel's own tick labels and axis titles live. Beyond it, the page is somebody
+    else's.
+    """
+    own = {id(r) for r in group["rects"]}
+    near = pymupdf.Rect(union.x0 - PANEL_GROW_DOWN, union.y0 - PANEL_GROW_DOWN,
+                        union.x1 + PANEL_GROW_DOWN, union.y1 + PANEL_GROW_DOWN)
+    out = [c["rect"] for c in candidates if id(c["rect"]) not in own]
+    out += [cap[0] for cap in caps if id(cap) != id(group["cap"])]
+    out += [r for r in text_blocks if not _overlaps(r, near)]
+    return out
+
+
+def caption_panels(caption: str, bold: list[str] | None = None) -> list[str]:
+    """The panels a caption ENUMERATES, or [] — never a guess off a bare English article.
+
+    Two independent kinds of evidence, because journals enumerate in two ways:
+
+    * **bold** — the publisher marked the letters itself. Passed in by the ingester, which is the
+      only place the PDF's spans exist. This is what reads Cressman 2010, whose captions
+      enumerate with no punctuation at all ("a Side view of the experimental setup").
+    * **punctuation** — "a: ... b: ...", "(a) ... (b)", "Panel a, panel b, ...". Read from the
+      text alone, and accepted only when MORE of the letters carry an enumeration mark than not:
+      an enumeration is punctuated and prose is not. Without that half, "e.g. the a and b
+      conditions, with c." and "Reaching in a rotated field; b denotes the baseline." both parse
+      as three- and two-panel enumerations, which is a guess off English articles.
+
+    Either way the letters must run in order from `a` and there must be at least two of them.
+    """
+    marked = unmarked = 0
+    seen: list[str] = []
+    for m in CAPTION_PANEL_RE.finditer(_norm_ws(caption)):
+        letter = m.group(1).lower()
+        if letter in seen:
+            continue
+        seen.append(letter)
+        if m.group(0).rstrip()[-1:] in ")]:.,;":
+            marked += 1
+        else:
+            unmarked += 1
+    from_bold = _in_order(list(bold or []))
+    if from_bold:
+        return from_bold
+    return _in_order(seen) if marked >= unmarked and marked else []
+
+
+def _panel_letters(enumerated: list[str], n: int) -> list[str]:
+    """One letter per panel, in reading order.
+
+    Panel letters are NOT a growth target: verified on Heuer 2008, `a)`/`b)`/`c)` sit 34-39 pt left
+    of the cluster union while caption and axis-title contamination begins at 26 pt, so no uniform
+    pad captures the letters and excludes the caption. Identity therefore comes from ordinal
+    position within the caption's own cluster list, matched against the enumeration the caption
+    itself prints ("a: ... b: ... c: ..."). That is deterministic and needs no OCR of the letter.
+    """
+    seen = list(enumerated)
+    alphabet = [chr(ord("a") + i) for i in range(n)]
+    if len(seen) >= n and seen[:n] == alphabet:      # the caption enumerates them in order
+        return seen[:n]
+    return alphabet
+
+
+def _panel_left(rect: pymupdf.Rect, siblings: list[pymupdf.Rect],
+                cap_x0: float | None) -> float:
+    """How far left this panel may reach — to a landmark, and never over its neighbour.
+
+    Growing EVERY panel's left edge to the caption column is what made side-by-side layouts
+    collapse into their own union: the right-hand panel's rect then swallowed the left-hand one
+    whole, `_overlapping` fired, and the "per-panel" assertion was evaluated on a rect holding
+    two ladders — which is exactly the global count the decision withdrew, reached by another
+    road. Measured with the first cut: a two-column figure gave 1 panel with 10 numeric words,
+    a 2x2 grid gave 1. The landmark for an inner column is the nearest neighbour's right edge
+    (the gap between two panels is where the right one's tick labels live); only the leftmost
+    column has the caption's own `x0` as its landmark.
+    """
+    left_of = [s for s in siblings if s.x0 < rect.x0 and s.y1 > rect.y0 and s.y0 < rect.y1]
+    if left_of:
+        # x-RANGE, never strict non-overlap: one point of x-overlap between two side-by-side
+        # clusters — an error-bar cap, a tick, a shared frame line — used to make the neighbour
+        # invisible, and the right-hand panel then grew to the caption column and swallowed the
+        # left-hand one whole. Measured: with a 1 pt overlap the right panel's rect became
+        # (48..486) and the assertion certified it on the LEFT panel's ladder, while
+        # `_overlapping` (0.6 % of the smaller area) did not fire either. A neighbour is a
+        # cluster that starts to my left; the landmark is its right edge, clamped inside mine.
+        return min(rect.x0 - LANDMARK_GAP, max(s.x1 for s in left_of))
+    if cap_x0 is not None and rect.x0 - cap_x0 >= MIN_CAPTION_GROWTH:
+        return cap_x0
+    return rect.x0 - PANEL_PAD
+
+
+def _panel_right(rect: pymupdf.Rect, siblings: list[pymupdf.Rect],
+                 obstacles: list[pymupdf.Rect], cap_x1: float | None,
+                 region_x1: float) -> float:
+    """The mirror of `_panel_left`, spent only on a panel whose ladder came back EMPTY.
+
+    A ladder printed to the RIGHT of its plot area — a secondary axis, a right-labelled member of
+    a pair (`digitizer.py` records that Cressman 2010's Fig. 3b itself "carries a left y-axis in
+    degrees and a right one in per cent") — is 8 pt outside a 6 pt pad, and the panel is then
+    refused with zero read-outs although it is perfectly readable. Never a wrong number; a lost
+    cell, of the same class as the ASCII-only minus.
+
+    It is bounded by EVERYTHING ELSE ON THE PAGE, never by the caption. Bounded by the caption
+    alone it was the first rule in this area that could reach outside the figure it describes,
+    and the thing it reaches for is a ladder: on a page whose caption is wider than its figure —
+    Heuer's own fig03 and fig05 overhang by 26 pt, and a full-width caption over a column figure
+    is the ordinary two-column case — the retry crossed into the next column and certified the
+    panel on a FOREIGN ladder (measured: a neighbouring figure's `500,400,300,200,100`, and a
+    numbered list's `1,2,3,4,5`, both accepted as "panel b's own axis" on a rect spanning the
+    whole page). That is worse than the lost cell N3 fixed: it is a wrong-ladder certification,
+    the exact hazard the per-panel assertion exists for, and it defeats `panel_uncalibrated` at
+    the same time.
+
+    So the edge stops at the nearest thing to its right that belongs to something else — another
+    figure's cluster, another caption, a body-text block outside this figure's own column — and
+    the caption's `x1` is only the fallback when the page carries nothing there at all. It is
+    still spent only on a panel whose ladder came back EMPTY, so it cannot make a calibrated
+    panel worse, and `_panels_of` refuses the ladder it finds if it sits further away than a tick
+    label ever sits (`RIGHT_LADDER_REACH_PT`, or the panel's own width where that is smaller).
+    """
+    def blocks(rects: list[pymupdf.Rect]) -> list[float]:
+        return [r.x0 - LANDMARK_GAP for r in rects
+                if r.x0 >= rect.x1 and r.y1 > rect.y0 and r.y0 < rect.y1]
+
+    edge = region_x1 if cap_x1 is None else max(region_x1, cap_x1)
+    bounds = [edge] + blocks([s for s in siblings if s.x1 > rect.x1]) + blocks(list(obstacles))
+    return max(rect.x1 + PANEL_PAD, min(bounds))
+
+
+def _panel_bottom(rect: pymupdf.Rect, siblings: list[pymupdf.Rect],
+                  cap_y0: float | None) -> float:
+    """How far down this panel may reach — to the caption block, never into the panel below.
+
+    The caption block is a landmark on the BOTTOM as much as on the left, and the decision's own
+    argument ("a real thing on the page; a pad in points is not") was never carried to this edge.
+    It matters on precisely the figures C1 exists to repair: Heuer 2008's eight x tick labels sit
+    0.1-1.4 pt below the crop and its x-axis title 8-13 pt below, with the caption a further
+    20-25 pt down — and the target of two of those cells is a POSITION ON THAT X AXIS.
+    The region rect is deliberately not moved: that would move Cressman's crops and destroy the
+    byte-identity that proves this rule cannot regress the paper supplying two pooled cells.
+    """
+    if cap_y0 is not None and cap_y0 > rect.y1:
+        bottom = min(cap_y0 - LANDMARK_GAP, rect.y1 + PANEL_GROW_DOWN)
+    else:
+        bottom = rect.y1 + PANEL_PAD
+    below = [s.y0 for s in siblings if s.y0 >= rect.y1 and s.x1 > rect.x0 and s.x0 < rect.x1]
+    if below:
+        bottom = min(bottom, min(below) - LANDMARK_GAP)
+    return max(bottom, rect.y1)
+
+
+def _panels_of(rects: list[pymupdf.Rect], cap: pymupdf.Rect | None, words: list,
+               obstacles: list[pymupdf.Rect] = ()) -> list[dict]:
+    """Per-panel sub-rects for one caption's graphics, in reading order, each with its own ladder.
+
+    Growth is ASYMMETRIC and to LANDMARKS, not by a constant: left to the nearest neighbour's
+    right edge or (for the leftmost column) the caption block's own `x0`, down to the caption
+    block or the next panel, a 6 pt pad on what is left. Re-measuring Heuer 2008 showed the pad
+    each panel needs to reach its own tick ladder is 16/16/16, 17/13/16 and 20/11/15 pt on three
+    figures — so no single constant tuned on one page generalises, and the 12 pt an earlier draft
+    prescribed is insufficient on all three.
+    """
+    order = sorted(rects, key=_reading_order_index)
+    if _overlapping(order):
+        # Panels partition a figure; they do not sit on top of each other. When the CLUSTERS
+        # overlap (a raster placement under its own vector overlay, an inset, a shared legend
+        # box) the split is an artefact of how the graphics were emitted, not a panel structure,
+        # and splitting on it would hand a reader an inset instead of the panel it asked for.
+        # The question is asked of the clusters the page drew, never of the grown rects: growth
+        # is our doing, and deciding "these are not panels" on rects we grew ourselves is how
+        # every side-by-side figure collapsed into its union.
+        whole = order[0]
+        for rect in order[1:]:
+            whole = _union(whole, rect)
+        return _panels_of([whole], cap, words, obstacles)
+    cap_x0 = float(cap.x0) if cap is not None else None
+    cap_x1 = float(cap.x1) if cap is not None else None
+    cap_y0 = float(cap.y0) if cap is not None else None
+    region_x1 = max(r.x1 for r in order)
+    out = []
+    for rect in order:
+        left = _panel_left(rect, order, cap_x0)
+        bottom = _panel_bottom(rect, order, cap_y0)
+        sub = pymupdf.Rect(left, rect.y0 - PANEL_PAD, rect.x1 + PANEL_PAD, bottom)
+        ladder = _tick_ladder(words, sub)
+        if not ladder:
+            # the left growth found no ladder: look to the right, at the same kind of landmark
+            wide = pymupdf.Rect(left, sub.y0,
+                                _panel_right(rect, order, list(obstacles), cap_x1, region_x1),
+                                bottom)
+            found = _ladder_marks(words, wide)
+            # …and a ladder that sits further from this panel than a tick label ever sits — or
+            # than the panel is itself wide, on a narrow one — is not this panel's ladder,
+            # whatever the page did or did not put between them
+            reach = sub.x1 + min(sub.x1 - sub.x0, RIGHT_LADDER_REACH_PT)
+            if found and max((m[1] + m[2]) / 2.0 for m in found) <= reach:
+                sub, ladder = wide, [m[0] for m in found]
+        out.append(dict(rect=sub, n_numeric=len(_numeric_words(words, sub)),
+                        n_ladder=len(ladder),
+                        calibrated=len(ladder) >= MIN_PANEL_NUMERIC))
+    return out
+
+
+def _overlapping(rects: list[pymupdf.Rect]) -> bool:
+    """True when any two of the page's own graphic clusters share a fifth of the smaller's area."""
+    for i, ra in enumerate(rects):
+        for rb in rects[i + 1:]:
+            w = min(ra.x1, rb.x1) - max(ra.x0, rb.x0)
+            h = min(ra.y1, rb.y1) - max(ra.y0, rb.y0)
+            if w <= 0 or h <= 0:
+                continue
+            smaller = min(ra.width * ra.height, rb.width * rb.height)
+            if smaller > 0 and (w * h) / smaller > 0.2:
+                return True
+    return False
+
+
+def _whole_region_panel(rect: pymupdf.Rect, words: list) -> list[dict]:
+    """A region nobody split into panels is one panel: itself.
+
+    Used for the two GUESSED region kinds — a `caption_only` rect proposed above a caption that
+    received no graphics (`confidence 0.3`) and a `loose` graphic with no caption at all (`0.4`).
+    They do not get the one-panel exemption a real figure gets: a rect the ingester only guessed
+    at must not be recorded as calibrated because nobody split it. Only a ladder, or the absence
+    of any number to build one from, certifies it.
+    """
+    ladder = _tick_ladder(words, rect)
+    numeric = _numeric_words(words, rect)
+    return [dict(rect=pymupdf.Rect(rect), letter="a", n_numeric=len(numeric),
+                 n_ladder=len(ladder),
+                 calibrated=len(ladder) >= MIN_PANEL_NUMERIC or not numeric)]
+
+
+def _enforce_contiguity(candidates: list[dict], choice: dict, ranked: dict) -> None:
+    """M2: the graphics merged under one caption must be CONTIGUOUS in reading order.
+
+    Without a distance cap, one caption whose score dips (a "Fig. 4 (cont.)" header, a body
+    sentence that outscores nothing) can otherwise reach past a neighbouring figure and pull
+    two unrelated sets of axes into one region — the union would then carry two different
+    ladders with no way to tell them apart. Interleaving is the signal: if another caption's
+    graphic sits BETWEEN two of mine in reading order, mine are two figures, not two panels.
+    The stragglers fall back to their own next-best caption, or become loose.
+    """
+    banned: dict[int, set[int]] = {}
+    # Bounded by the number of (graphic, caption) pairs there ARE to ban, not by the number of
+    # graphics: one pass bans a pair per broken caption, and a single graphic can need as many
+    # bans as it has plausible captions. With more captions than candidates the old bound could
+    # exit still non-contiguous, silently.
+    for _ in range(sum(len(ranked.get(id(c)) or ()) for c in candidates) + 1):
+        order = sorted((c for c in candidates if choice[id(c)][0] is not None),
+                       key=lambda c: _reading_order_index(c["rect"]))
+        by_cap: dict[int, list[int]] = {}
+        for i, c in enumerate(order):
+            by_cap.setdefault(id(choice[id(c)][0]), []).append(i)
+        broken = [(cap_id, pos) for cap_id, pos in by_cap.items()
+                  if len(pos) > 1 and pos[-1] - pos[0] + 1 != len(pos)]
+        if not broken:
+            return
+        for cap_id, pos in broken:
+            run_end = 0                          # keep the first contiguous run, re-home the rest
+            while run_end + 1 < len(pos) and pos[run_end + 1] == pos[run_end] + 1:
+                run_end += 1
+            for i in pos[run_end + 1:]:
+                c = order[i]
+                out = banned.setdefault(id(c), set())
+                out.add(cap_id)
+                alt = [t for t in ranked[id(c)] if id(t[0]) not in out]
+                choice[id(c)] = alt[0][:2] if alt else (None, None)
+
+
+def _reading_order_index(rect: pymupdf.Rect) -> tuple[float, float]:
+    return (round(rect.y0 / 10.0), rect.x0)
+
+
 def _figure_regions(page: pymupdf.Page, page_no: int) -> list[dict]:
     """Deterministic figure-region proposals. Candidate graphics = raster image placements + clusters of vector
     drawings; each candidate is attached to the best-scoring nearby caption (real captions beat body sentences like
@@ -315,7 +917,15 @@ def _figure_regions(page: pymupdf.Page, page_no: int) -> list[dict]:
             if horiz > 0.3 * min(r.width, cap_rect.width):
                 below = cap_rect.y0 - r.y1          # caption below graphic (usual)
                 above = r.y0 - cap_rect.y1          # caption above graphic (some journals)
-                if -0.3 * r.height <= below <= 260:
+                # NO distance cap below the graphic. A 260 pt cap threw away the top panel of
+                # every tall multi-panel figure (Heuer 2008 Fig. 2's panel a sits 296.2 pt above
+                # its caption, and Fig. 4 and Fig. 6 the same): the cluster was assigned no
+                # caption, became "loose", and was dropped, so the crop the map named "panel a"
+                # did not contain panel a. What keeps a far caption honest is not a constant, it
+                # is the two guards below: a graphic takes the NEAREST caption of the best band
+                # (so a caption of its own always wins), and a merged region's graphics must be
+                # contiguous in reading order (so two figures on one page cannot merge).
+                if -0.3 * r.height <= below:
                     dist, rel = max(below, 0), "below"
                 elif -0.3 * cap_rect.height <= above <= 60:
                     dist, rel = max(above, 0) + 30, "above"
@@ -368,6 +978,7 @@ def _figure_regions(page: pymupdf.Page, page_no: int) -> list[dict]:
                     if rel == "above":
                         alt = [t for t in ranked[id(c)] if id(t[0]) != cap_id]
                         choice[id(c)] = alt[0][:2] if alt else (None, None)
+        _enforce_contiguity(candidates, choice, ranked)
         return {k: v[0] for k, v in choice.items()}
 
     assignment = assign_captions()
@@ -382,6 +993,15 @@ def _figure_regions(page: pymupdf.Page, page_no: int) -> list[dict]:
         g = groups.setdefault(key, dict(rects=[], kinds=set(), n_img=0, n_draw=0, cap=cap))
         g["rects"].append(c["rect"]); g["kinds"].add(c["kind"])
         g["n_img"] += int(c["kind"] == "raster"); g["n_draw"] += c["n_draw"]
+    all_words = page.get_text("words")
+    text_blocks = [pymupdf.Rect(b[:4]) for b in page.get_text("blocks")
+                   if b[6] == 0 and _norm_ws(b[4])]
+    # page furniture and caption prose are not figure text, and letting them answer "does this
+    # region carry a text layer / a ladder?" is how a page number came within 5.6 pt of buying
+    # zero read-outs on Bock's two pooled cells
+    furniture = _page_furniture(page, [c["rect"] for c in candidates])
+    prose = furniture + [cap[0] for cap in caps]
+    words = [w for w in all_words if not _in_rects(w, prose)]
     regions = []
     for g in groups.values():
         union = g["rects"][0]
@@ -390,8 +1010,48 @@ def _figure_regions(page: pymupdf.Page, page_no: int) -> list[dict]:
         cap_rect, cap_txt, label, score = g["cap"]
         kind = "raster" if g["kinds"] == {"raster"} else "vector" if g["kinds"] == {"vector"} else "mixed"
         npx = native.get((round(union.x0), round(union.y0))) if (kind == "raster" and g["n_img"] == 1) else None
-        regions.append(dict(bbox=union, caption=cap_txt, label=label, kind=kind, n_images=g["n_img"],
-                            n_drawings=g["n_draw"], native_px=npx, confidence=min(0.95, 0.55 + 0.4 * score)))
+        # growth is decided on the caption column alone, NOT on text found in the ungrown union —
+        # that is the very rect C1 proved does not contain the ladder. A clean vector plot whose
+        # only text is its axis labels then got no growth, was labelled `text_layer: none`, and
+        # was swept into the raster exemption with an empty crop. Measured on all 14 real
+        # figures: `union.x0 - caption.x0` is <= 0.0012 pt on every Cressman and Bock figure, so
+        # dropping the gate is a no-op there and the byte-identity proof is untouched.
+        grown, growth = union, 0.0
+        if union.x0 - cap_rect.x0 >= MIN_CAPTION_GROWTH:
+            # grow to a LANDMARK — the caption block's own column — not by a constant
+            grown = pymupdf.Rect(cap_rect.x0, union.y0, union.x1, union.y1)
+            growth = float(union.x0 - cap_rect.x0)
+        panels = _panels_of(g["rects"], cap_rect, words,
+                            _other_page_content(candidates, text_blocks, caps, g, union))
+        # every question about this region's text is asked of what the READER IS HANDED — the
+        # grown region and the panel rects — never of the raw cluster union, which on Heuer's
+        # fig02/04/06 holds none of the tick labels at all (they sit 46-51 pt to its left).
+        rects = [grown] + [p["rect"] for p in panels]
+        has_text = any(_words_in(words, r) for r in rects)
+        n_region_ladder = max(len(_tick_ladder(words, r)) for r in rects)
+        n_region_numeric = max(len(_numeric_words(words, r)) for r in rects)
+        if n_region_ladder < MIN_PANEL_NUMERIC or len(panels) <= 1:
+            # The exemption, and it is about a LADDER rather than about numerals. The premise the
+            # per-panel assertion needs is "some panel here owns an axis"; where the figure prints
+            # no axis at all there is nothing for a panel to own a share of, and a scanned figure
+            # is readable while its words are not (Bock 2005's two rasters supply two pooled
+            # cells). Keying it on "any numeric word" re-created exactly the fragility F6 was
+            # raised for: a single stray numeral on a two-panel raster — a scale bar's "10", an
+            # inset label, whatever the OCR layer happens to carry — refused the whole figure and
+            # bought zero read-outs. A ONE-panel figure is exempt for its own reason: it cannot be
+            # reading off its neighbour's ladder, which is the whole hazard here.
+            for panel in panels:
+                panel["calibrated"] = True
+        enumerated = caption_panels(cap_txt, bold=_bold_letters(page, cap_rect))
+        for panel, letter in zip(panels, _panel_letters(enumerated, len(panels))):
+            panel["letter"] = letter
+        regions.append(dict(bbox=grown, caption=cap_txt, label=label, kind=kind, n_images=g["n_img"],
+                            n_drawings=g["n_draw"], native_px=npx, panels=panels,
+                            text_layer=TEXT_LAYER_PRESENT if has_text else TEXT_LAYER_NONE,
+                            n_region_ladder=n_region_ladder,
+                            n_region_numeric=n_region_numeric, caption_panels=enumerated,
+                            caption_growth_pt=round(growth, 4),
+                            confidence=min(0.95, 0.55 + 0.4 * score)))
     # real captions that received no graphics: propose the area above the caption (low confidence)
     matched = {id(g["cap"]) for g in groups.values()}
     for cap in caps:
@@ -406,7 +1066,13 @@ def _figure_regions(page: pymupdf.Page, page_no: int) -> list[dict]:
         r = pymupdf.Rect(cap_rect.x0, max(top, cap_rect.y0 - 320), cap_rect.x1, cap_rect.y0)
         if r.height > 40:
             regions.append(dict(bbox=r, caption=cap_txt, label=label, kind="caption_only", n_images=0,
-                                n_drawings=0, native_px=None, confidence=0.3))
+                                n_drawings=0, native_px=None, confidence=0.3,
+                                panels=_whole_region_panel(r, words), caption_growth_pt=0.0,
+                                n_region_ladder=len(_tick_ladder(words, r)),
+                                n_region_numeric=len(_numeric_words(words, r)),
+                                caption_panels=caption_panels(cap_txt,
+                                                              bold=_bold_letters(page, cap_rect)),
+                                text_layer=TEXT_LAYER_PRESENT if _words_in(words, r) else TEXT_LAYER_NONE))
     for c in loose:   # graphics without any caption nearby: keep if large (caption may be on the next page)
         r = c["rect"]
         if r.width * r.height <= 0.08 * W * H:
@@ -416,7 +1082,11 @@ def _figure_regions(page: pymupdf.Page, page_no: int) -> list[dict]:
         if c["kind"] == "vector" and c["n_draw"] / (r.width * r.height / 1e4) < 1.0:
             continue                             # a few page-wide rules and boxes, not a chart (sparse line art)
         regions.append(dict(bbox=r, caption="", label="", kind=c["kind"], n_images=int(c["kind"] == "raster"),
-                                n_drawings=c["n_draw"], native_px=native.get((round(r.x0), round(r.y0))), confidence=0.4))
+                                n_drawings=c["n_draw"], native_px=native.get((round(r.x0), round(r.y0))),
+                                confidence=0.4, panels=_whole_region_panel(r, words), caption_growth_pt=0.0,
+                                n_region_ladder=len(_tick_ladder(words, r)),
+                                n_region_numeric=len(_numeric_words(words, r)), caption_panels=[],
+                                text_layer=TEXT_LAYER_PRESENT if _words_in(words, r) else TEXT_LAYER_NONE))
     regions.sort(key=lambda d: (d["bbox"].y0, d["bbox"].x0))
     return regions
 
@@ -444,6 +1114,46 @@ def _tables(page: pymupdf.Page, page_no: int) -> list[TableRecord]:
                 best, cap = d, ct
         out.append(TableRecord(id=f"p{page_no}t{i+1}", page=page_no, bbox=Bbox.from_rect(r), caption=cap, rows=rows))
     return out
+
+
+def _render_panels(page: pymupdf.Page, out: Path, fid: str, reg: dict, dpi: float,
+                   clip: pymupdf.Rect, crop_rel: str, claude_rel: str,
+                   claude_scale: float) -> list[PanelRegion]:
+    """One image per panel, so a reader asked for panel b is never handed three panels' ladders.
+
+    A single-panel figure re-uses the figure's own crop byte-for-byte: there is nothing to split,
+    and rendering a second, slightly different image of the same thing would change what every
+    downstream route sees for no gain.
+    """
+    proposed = reg.get("panels") or []
+    if len(proposed) <= 1:
+        letter = (proposed[0]["letter"] if proposed else "a")
+        n_numeric = int(proposed[0]["n_numeric"]) if proposed else 0
+        n_ladder = int(proposed[0].get("n_ladder", 0)) if proposed else 0
+        calibrated = bool(proposed[0]["calibrated"]) if proposed else True
+        return [PanelRegion(id=f"{fid}{letter}", letter=letter, bbox=Bbox.from_rect(clip),
+                            n_numeric=n_numeric, n_ladder=n_ladder, calibrated=calibrated,
+                            crop_png=crop_rel, claude_png=claude_rel, crop_dpi=dpi,
+                            claude_scale=claude_scale)]
+    out_panels: list[PanelRegion] = []
+    for panel in proposed:
+        rect = panel["rect"]
+        sub = pymupdf.Rect(max(0, rect.x0), max(0, rect.y0),
+                           min(page.rect.width, rect.x1), min(page.rect.height, rect.y1))
+        pid = f"{fid}{panel['letter']}"
+        pix = page.get_pixmap(dpi=dpi, clip=sub, alpha=False)
+        image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        rel = f"figures/{pid}.png"
+        image.save(out / rel, optimize=True)
+        prep = prepare_for_claude(image)
+        claude = f"figures/{pid}.claude.png"
+        prep.image.save(out / claude, optimize=True)
+        out_panels.append(PanelRegion(id=pid, letter=panel["letter"], bbox=Bbox.from_rect(sub),
+                                      n_numeric=int(panel["n_numeric"]),
+                                      n_ladder=int(panel.get("n_ladder", 0)),
+                                      calibrated=bool(panel["calibrated"]), crop_png=rel,
+                                      claude_png=claude, crop_dpi=dpi, claude_scale=prep.scale))
+    return out_panels
 
 
 # ----------------------------------------------------------------------------- main entry
@@ -502,10 +1212,16 @@ def ingest_pdf(path: str | Path, out_dir: str | Path, page_dpi: int = PAGE_DPI, 
             prep = prepare_for_claude(crop)
             claude_rel = f"figures/{fid}.claude.png"
             prep.image.save(out / claude_rel, optimize=True)
+            panels = _render_panels(page, out, fid, reg, dpi, clip, crop_rel, claude_rel, prep.scale)
             figures.append(FigureRegion(id=fid, page=n, bbox=Bbox.from_rect(clip), caption=reg["caption"], label=reg["label"],
                                         kind=reg["kind"], n_images=reg["n_images"], n_drawings=reg["n_drawings"],
                                         native_px=reg["native_px"], crop_png=crop_rel, claude_png=claude_rel,
-                                        crop_dpi=dpi, claude_scale=prep.scale, confidence=reg["confidence"]))
+                                        crop_dpi=dpi, claude_scale=prep.scale, confidence=reg["confidence"],
+                                        panels=panels, text_layer=reg.get("text_layer", TEXT_LAYER_PRESENT),
+                                        n_region_ladder=int(reg.get("n_region_ladder", 0)),
+                                        n_region_numeric=int(reg.get("n_region_numeric", 0)),
+                                        caption_panels=list(reg.get("caption_panels") or []),
+                                        caption_growth_pt=float(reg.get("caption_growth_pt", 0.0))))
     first_text = doc[0].get_text() if len(doc) else ""
     has_text = total_chars > 200 * max(1, len(doc)) * 0.2
     if not has_text:

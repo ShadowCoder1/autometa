@@ -154,14 +154,18 @@ def _client(provider: FakeProvider) -> LLMClient:
 
 def _readout_payload(a_mean: float | None, a_err: float | None, b_mean: float | None,
                      b_err: float | None, legend: str = "whiskers are standard deviations",
-                     status: str = "found") -> dict:
+                     status: str = "found", target_visible: str = "yes",
+                     calibration_source: str = "printed_labels", notes: str = "",
+                     visible_reason: str = "", ticks: list | None = None) -> dict:
     def cap(mean, err, sign):
         return None if mean is None or err is None else mean + sign * err
 
     return {
         "status": status, "panel": "Fig 1", "unit": "deg", "legend_says": legend,
-        "tick_labels": [0, 10, 20, 30, 40, 50, 60], "pixel_resolution_estimate": 0.1,
-        "confidence": 0.85, "notes": "",
+        "tick_labels": [0, 10, 20, 30, 40, 50, 60] if ticks is None else list(ticks),
+        "pixel_resolution_estimate": 0.1,
+        "confidence": 0.85, "notes": notes, "target_visible": target_visible,
+        "target_visible_reason": visible_reason, "calibration_source": calibration_source,
         "groups": [
             {"group": "A", "label_read": "dark bar", "mean": a_mean,
              "error_half_length": a_err, "error_upper": cap(a_mean, a_err, 1),
@@ -1065,6 +1069,7 @@ def test_digitize_stops_at_two_read_outs_when_the_routes_agree(bar_figure, tmp_p
                     "extra_readout_reason": agreed, "readout_stop_reason": agreed,
                     "overlay_verify": False,
                     "overlay_verify_reason": "every route agreed and none was dropped",
+                    "partial_read_rereads": 0,
                     "list_regions_offered": plan["list_regions_offered"]}
 
 
@@ -2626,3 +2631,546 @@ def test_a_group_answered_once_with_no_value_is_replaced_by_the_answer_that_has_
     parsed = {"groups": [{"group": "A", "mean": None}, {"group": "A", "mean": 31.5}]}
     reading = _parse_readout(ToolLoopResult(parsed=parsed, turns=1), model="m", variant="direct")
     assert len(reading.groups) == 1 and reading.group("A").mean == 31.5
+
+
+# ======================================================================= C1 / C2 / C10
+#
+# C1  a crop must contain the panel the map names and the text that calibrates it
+# C2  "it is not in this picture" is an action, not a note
+# C10 a route that returned a spread but no mean is a partial read, not a missing witness
+from canopy.digitize.digitizer import (PANEL_NOT_IN_CROP, PANEL_NOT_ISOLATED,
+                                       PANEL_UNCALIBRATED, ONE_READER_BLIND, PARTIAL_READ,
+                                       _partial_reads, legibility, panel_named,
+                                       resolve_panel, voting)   # noqa: E402
+from canopy.ingest.pdf import PanelRegion              # noqa: E402
+
+
+def _ensemble(out):
+    return {c.group: c for c in out.candidates if c.extractor_id == "digitize:ensemble"}
+
+
+def _panelled(truth: dict, calibrated_b: bool = True) -> tuple[PaperRecord, FigureRegion]:
+    """The synthetic figure, declared as a two-panel figure whose panels are their own images."""
+    import shutil
+
+    paper, fig = _paper_for(truth)
+    for letter in ("a", "b"):
+        shutil.copy(truth["path"], truth["out_dir"] / "figures" / f"fig01{letter}.png")
+    panels = [PanelRegion(id="fig01a", letter="a", bbox=Bbox(0.0, 0.0, 360.0, 140.0), n_numeric=7,
+                          calibrated=True, crop_png="figures/fig01a.png",
+                          claude_png="figures/fig01a.png", crop_dpi=150.0, claude_scale=1.0),
+              PanelRegion(id="fig01b", letter="b", bbox=Bbox(0.0, 148.0, 360.0, 288.0),
+                          n_numeric=7 if calibrated_b else 1, calibrated=calibrated_b,
+                          crop_png="figures/fig01b.png", claude_png="figures/fig01b.png",
+                          crop_dpi=150.0, claude_scale=1.0)]
+    fig = replace(fig, panels=panels)
+    paper.figures = [fig]
+    return paper, fig
+
+
+@pytest.mark.parametrize("text,letter", [
+    ("Fig. 3a, last block (Block 33) of the misaligned-cursor series", "a"),
+    ("Figure 2, panel b ('aftereffect'), mean aftereffect at each of the 8 targets", "b"),
+    ("Fig. 3b, left bar (Young, filled black)", "b"),
+    ("Fig. 1, last adaptation episode (pointing episode 20)", ""),
+    ("Fig. 2, thin lines (control subjects)", ""),
+    ("Figure 3, upper panels ('adaptive shift')", ""),
+    ("Fig. 2, a comparison of the two groups across blocks", ""),
+    ("Fig. 2 (b), the after-effect", "b"),
+    ("Fig. 1, black triangles are the older group", ""),
+])
+def test_the_panel_a_locator_names(text, letter):
+    """Real locators out of `runs/rerun-fixed`. A figure whose panel is NOT named must come back
+    empty: picking one of three panels on no evidence is the guess this rule exists to stop."""
+    assert panel_named(text) == letter
+
+
+def test_the_named_panel_is_the_image_that_is_read(bar_figure):
+    paper, fig = _panelled(bar_figure)
+    target = replace(TARGET, panel_hint="Fig 1b")
+    used, info = resolve_panel(fig, target, SOURCE.model_copy(update={"locator": "Fig. 1b, the lower panel"}))
+    assert used.crop_png == "figures/fig01b.png"
+    assert used.bbox.y0 == 148.0                       # the panel's rect, not the union's
+    assert info["panel_used"] == "fig01b" and info["panel_named"] == "b"
+    assert used.panels == [fig.panels[1]]
+
+
+def test_a_multi_panel_figure_nobody_named_keeps_the_whole_region(bar_figure):
+    paper, fig = _panelled(bar_figure)
+    used, info = resolve_panel(fig, replace(TARGET, panel_hint="Fig 1"),
+                               SOURCE.model_copy(update={"locator": "Fig. 1, last episode"}))
+    assert used.crop_png == fig.crop_png and info["panel_named"] == ""
+    assert "guess" in info["panel_why"]
+
+
+def test_an_uncalibrated_named_panel_buys_no_read_outs(bar_figure, tmp_path):
+    """C1 acceptance test 4 / E1: a figure whose named panel has no ladder of its own must not be
+    paid to be read. Before this, three models were bought to read numbers off a crop that did not
+    contain the numbers, and the cell then failed on `value_outside_axis`."""
+    paper, fig = _panelled(bar_figure, calibrated_b=False)
+    provider = _scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                         _coord_payload(bar_figure, 1.0))
+    out = digitize(_client(provider), paper, fig, replace(TARGET, panel_hint="Fig 1b"),
+                   source=SOURCE.model_copy(update={"locator": "Fig. 1b"}), dataset=DATASET,
+                   out_dir=tmp_path, result=True)
+    assert provider.requests == [], "not one model call may be bought for an unreadable panel"
+    assert out.samples == []
+    ends = _ensemble(out)
+    assert set(ends) == {"A", "B"}
+    for cand in ends.values():
+        assert cand.mean is None and cand.dispersion_value is None
+        assert cand.pixel_provenance[PANEL_UNCALIBRATED] is True
+        assert cand.pixel_provenance["readouts_bought"] == 0
+    assert out.cost_usd == 0.0
+
+
+def test_a_raster_panel_with_no_text_layer_is_still_read(bar_figure, tmp_path):
+    """The other half of the same rule (C1 rule 6): a scanned figure has no words at any pad, so
+    the calibration assertion is SKIPPED there rather than failed. Bock's two pooled cells came
+    off exactly such a figure."""
+    paper, fig = _paper_for(bar_figure)
+    fig = replace(fig, text_layer="none",
+                  panels=[PanelRegion(id="fig01a", letter="a", bbox=fig.bbox, n_numeric=0,
+                                      calibrated=True, crop_png=fig.crop_png,
+                                      claude_png=fig.claude_png, crop_dpi=150.0,
+                                      claude_scale=1.0)])
+    paper.figures = [fig]
+    provider = _scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                         _coord_payload(bar_figure, 1.0))
+    out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, result=True)
+    assert _n_readouts(out) >= 1
+    assert _ensemble(out)["A"].mean == pytest.approx(31.5, abs=1.0)
+
+
+# ------------------------------------------------------------------ C2
+def test_a_majority_who_cannot_see_the_target_makes_the_route_abstain(bar_figure, tmp_path):
+    """C2's acceptance test: three read-outs, two of them `target_visible: no`, one with numbers.
+    The numbers are of SOMETHING, but not of what was asked for, and they are not adopted."""
+    paper, fig = _paper_for(bar_figure)
+    blind = _readout_payload(None, None, None, None, target_visible="no",
+                             visible_reason="this crop holds panels b and c only")
+    seeing = _readout_payload(51.1, 11.0, 58.5, 11.75)
+    provider = _scripted(seeing, _coord_payload(bar_figure, 1.0),
+                         readout_by_call=[blind, blind, seeing])
+    out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, result=True,
+                   settings=DigitizeSettings(readouts_min=3, readouts_max=3), n_readouts=3)
+    ends = _ensemble(out)
+    assert all(c.mean is None for c in ends.values()), {g: c.mean for g, c in ends.items()}
+    assert all(c.pixel_provenance[PANEL_NOT_IN_CROP] is True for c in ends.values())
+    seen = ends["A"].pixel_provenance["legibility"]
+    assert len(seen["target_not_visible"]) == 2 and seen["abstain"] is True
+    assert "51.1" not in (ends["A"].notes or "")
+
+
+def test_a_minority_who_cannot_see_the_target_does_not_vote(bar_figure, tmp_path):
+    """Inverted: one reader says it cannot see the target — and hands back numbers anyway. The
+    ensemble is built from the two that could see it, and the cell carries the disagreement."""
+    paper, fig = _paper_for(bar_figure)
+    blind = _readout_payload(51.1, 11.0, 58.5, 11.75, target_visible="no",
+                             visible_reason="I read the only panel in the crop")
+    seeing = _readout_payload(31.5, 11.0, 12.25, 11.75)
+    provider = _scripted(seeing, _coord_payload(bar_figure, 1.0),
+                         readout_by_call=[seeing, seeing, blind])
+    out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, result=True,
+                   settings=DigitizeSettings(readouts_min=3, readouts_max=3), n_readouts=3)
+    ends = _ensemble(out)
+    assert ends["A"].mean == pytest.approx(31.5, abs=1.0)
+    seen = ends["A"].pixel_provenance["legibility"]
+    assert seen[ONE_READER_BLIND] is True and seen["abstain"] is False
+    blind_samples = [s for s in out.samples if s.route == "D" and s.mean == 51.1]
+    assert blind_samples and all(s.dropped for s in blind_samples)
+    assert all("not in this image" in s.drop_reason for s in blind_samples)
+
+
+def test_an_inferred_calibration_is_dropped_before_the_ensemble(bar_figure, tmp_path):
+    paper, fig = _paper_for(bar_figure)
+    made_up = _readout_payload(51.1, 11.0, 58.5, 11.75, calibration_source="inferred")
+    seeing = _readout_payload(31.5, 11.0, 12.25, 11.75)
+    provider = _scripted(seeing, _coord_payload(bar_figure, 1.0),
+                         readout_by_call=[seeing, made_up, seeing])
+    out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, result=True,
+                   settings=DigitizeSettings(readouts_min=3, readouts_max=3), n_readouts=3)
+    dropped = [s for s in out.samples if s.route == "D" and s.mean == 51.1]
+    assert dropped and all(s.dropped for s in dropped)
+    assert all("inferred rather than read off printed labels" in s.drop_reason for s in dropped)
+    assert _ensemble(out)["A"].mean == pytest.approx(31.5, abs=1.0)
+
+
+def test_prose_that_says_estimated_is_kept_when_the_labels_were_printed(bar_figure, tmp_path):
+    """The guard against the deleted keyword rule creeping back. In one paper's read-outs the
+    strings inferred/estimated/assumed occur 152 times against 115 for not-contained/not-visible,
+    and most of them describe perfectly legitimate readings. Only the structured field acts."""
+    paper, fig = _paper_for(bar_figure)
+    hedged = _readout_payload(31.5, 11.0, 12.25, 11.75,
+                              notes="the bar top is estimated to the nearest half degree; the "
+                                    "cap was assumed symmetric",
+                              calibration_source="printed_labels")
+    provider = _scripted(hedged, _coord_payload(bar_figure, 1.0))
+    out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, result=True)
+    kept = [s for s in out.samples if s.route == "D" and not s.dropped]
+    assert kept, [s.drop_reason for s in out.samples if s.route == "D"]
+    assert _ensemble(out)["A"].mean == pytest.approx(31.5, abs=1.0)
+
+
+def test_legibility_counts_only_what_a_reader_actually_reported():
+    """A reply with no `target_visible` at all (a cached one from before the field existed) is
+    UNKNOWN, never `no`: silence is not a report that the target is missing."""
+    from canopy.digitize.vlm import ReadOut
+
+    silent = [ReadOut(model="m1"), ReadOut(model="m2")]
+    assert legibility(silent)["abstain"] is False
+    one = [ReadOut(model="m1", target_visible="no"), ReadOut(model="m2")]
+    assert legibility(one)["abstain"] is False and legibility(one)[ONE_READER_BLIND] is True
+    two = [ReadOut(model="m1", target_visible="no"), ReadOut(model="m2", target_visible="no"),
+           ReadOut(model="m3")]
+    assert legibility(two)["abstain"] is True
+    alone = [ReadOut(model="m1", target_visible="no")]
+    assert legibility(alone)["abstain"] is False, "one reader is not a majority of one"
+
+
+# ------------------------------------------------------------------ C10
+def test_a_partial_read_is_named_and_the_missing_half_is_re_asked_once(bar_figure, tmp_path):
+    """C10's acceptance test, in the shape of the real record: family 2 returns `mean=None,
+    error=6.5` for group A and a full reading for group B. Before this the cell said "only one
+    independent route produced this value" — the same sentence a genuinely single-family cell
+    prints — and group B, read by the same three readers, scored twice as high."""
+    paper, fig = _paper_for(bar_figure)
+    full = _readout_payload(31.5, 11.0, 12.25, 11.75)
+    half = _readout_payload(None, 6.5, 12.25, 11.75)
+    provider = _scripted(full, _coord_payload(bar_figure, 1.0),
+                         readout_by_call=[full, half, full])
+    out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, result=True,
+                   settings=DigitizeSettings(readouts_min=2, readouts_max=2), n_readouts=2)
+    prov = _ensemble(out)["A"].pixel_provenance
+    named = prov[PARTIAL_READ]
+    reread = prov["partial_read_reread"]
+    assert reread["bought"] is True and reread["group"] == "A"
+    assert reread["spec"]["sample"] == 1 and reread["spec"]["variant"] == "direct"
+    assert "spread" in reread["why"] and "no mean" in reread["why"]
+    assert prov["call_plan"]["partial_read_rereads"] == 1
+    assert reread["resolved"] is True, "the re-ask supplied the missing mean"
+    # F8: a hole the re-read FILLED is not a hole. What was bought and why is kept under its own
+    # name; what is still missing is `partial_read`, and here nothing is. Leaving the entry
+    # standing made the cell print "a second family returned a spread but no mean for group A"
+    # about a family that had just supplied the mean and was, on the same record, counted in
+    # `model_families` — two provenance facts contradicting each other.
+    assert named == [], named
+    before = prov["partial_read_before_reread"]
+    assert [(x["route"], x["group"], x["missing"]) for x in before] == [
+        ("digitize:readout:claude-sonnet-5:direct", "A", "mean")]
+    assert "claude-sonnet" in prov["model_families"], \
+        "the family that filled the hole is an agreeing family; it must not also be a hole"
+    # the re-ask is the SAME reader, not a fresh family: the missing half is what is in doubt
+    half_read = next(s for s in out.samples if s.route == "D" and s.mean is None)
+    assert reread["spec"]["model"] == half_read.model
+
+
+def test_a_partial_read_is_re_asked_at_most_once(bar_figure, tmp_path):
+    """A figure nobody can read must not be able to spend the run's budget proving it."""
+    paper, fig = _paper_for(bar_figure)
+    full = _readout_payload(31.5, 11.0, 12.25, 11.75)
+    half = _readout_payload(None, 6.5, 12.25, 11.75)
+    provider = _scripted(half, _coord_payload(bar_figure, 1.0),
+                         readout_by_call=[full, half, half, half])
+    out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, result=True,
+                   settings=DigitizeSettings(readouts_min=2, readouts_max=2), n_readouts=2)
+    prov = _ensemble(out)["A"].pixel_provenance
+    assert prov["call_plan"]["partial_read_rereads"] == 1
+    assert _n_readouts(out) == 3                         # 2 planned + exactly 1 targeted re-ask
+    assert prov["partial_read_reread"]["resolved"] is False
+    still = prov[PARTIAL_READ]
+    assert [(x["group"], x["missing"]) for x in still] == [("A", "mean")]
+    assert all(x["has"]["error"] == pytest.approx(6.5, abs=0.5) for x in still)
+
+
+def test_a_missing_spread_is_not_re_asked():
+    """Only the mean is bought back: "corroboration is credited from readers that produced the
+    quantity being corroborated", and the quantity here is the mean."""
+    samples = [RouteSample(route="D", group="A", model="m1", variant="direct", mean=31.5,
+                           error=None)]
+    assert [x["missing"] for x in _partial_reads(samples)] == ["error"]
+    assert _rebuy_partial_is_noop(samples)
+
+
+def _rebuy_partial_is_noop(samples) -> bool:
+    from canopy.digitize.digitizer import _rebuy_partial
+
+    calls = []
+    out = _rebuy_partial(_partial_reads(samples), [], samples, lambda spec: calls.append(spec))
+    return out["bought"] is False and calls == []
+
+
+def test_a_dropped_route_is_not_a_partial_read():
+    """A reading that was thrown out is not half a reading — it is no reading, and re-asking the
+    reader that produced it would buy back the same discarded evidence."""
+    samples = [RouteSample(route="D", group="A", model="m1", variant="direct", mean=None,
+                           error=6.5, dropped=True, drop_reason="overlay verify: not_on_datum")]
+    assert _partial_reads(samples) == []
+
+
+# ------------------------------------------------------------------ fix round 1
+def test_a_named_panel_that_could_not_be_isolated_is_recorded_never_denied(bar_figure):
+    """F1. C1 rule 3 says "never the multi-panel union" and both it and its acceptance tests
+    assume the decomposition succeeds. On this corpus it fails on the one multi-panel figure that
+    feeds POOLED cells: Cressman 2010's Fig. 3 is a single drawing cluster, its caption reads
+    "...during the a reach training trials and b aftereffect trials", and the map's locators are
+    "Fig. 3a" / "Fig. 3b". The code returned the whole two-panel region while writing "the figure
+    is one panel; the region and the panel are the same rect" — a false statement, on the two
+    cells this run pools. Nothing else catches it: a reader handed that union answers
+    `target_visible: yes` and `calibration_source: printed_labels`, so C2 sees nothing."""
+    paper, fig = _paper_for(bar_figure)
+    fig = replace(fig, caption="Fig. 3 Visuomotor adaptation during the a reach training trials "
+                              "and b aftereffect trials. In a, we show the mean angular deviation",
+                  # what ingestion reads off this caption's own bold spans (measured on the PDF)
+                  caption_panels=["a", "b"],
+                  panels=[PanelRegion(id="fig01a", letter="a", bbox=fig.bbox, n_numeric=25,
+                                      n_ladder=5, calibrated=True, crop_png=fig.crop_png,
+                                      claude_png=fig.claude_png, crop_dpi=150.0,
+                                      claude_scale=1.0)])
+    paper.figures = [fig]
+    used, info = resolve_panel(fig, replace(TARGET, panel_hint="Fig. 3b"),
+                               SOURCE.model_copy(update={"locator": "Fig. 3b, left bar"}))
+    assert used.crop_png == fig.crop_png            # the union is still READ — refusing is worse
+    assert info["panel_named"] == "b"
+    assert info[PANEL_NOT_ISOLATED] == "b"
+    assert info["needs_review"] is True and info["needs_review_reason"]
+    assert info["caption_enumerates"] == ["a", "b"]        # the page's own corroboration
+    assert "one panel" not in info["panel_why"], info["panel_why"]
+    assert "b" in info["panel_why"] and "whole region" in info["panel_why"]
+
+
+def test_the_flagged_union_reaches_the_row_it_was_read_for(bar_figure, tmp_path):
+    """…and the flag is on the ensemble candidate, where confidence can cap the row."""
+    paper, fig = _paper_for(bar_figure)
+    fig = replace(fig, caption="Fig. 3 Adaptation during the a reach trials and b aftereffect "
+                               "trials.", caption_panels=["a", "b"],
+                  panels=[PanelRegion(id="fig01a", letter="a", bbox=fig.bbox, n_numeric=25,
+                                      n_ladder=5, calibrated=True, crop_png=fig.crop_png,
+                                      claude_png=fig.claude_png, crop_dpi=150.0,
+                                      claude_scale=1.0)])
+    paper.figures = [fig]
+    provider = _scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                         _coord_payload(bar_figure, 1.0))
+    out = digitize(_client(provider), paper, fig, replace(TARGET, panel_hint="Fig. 3b"),
+                   source=SOURCE.model_copy(update={"locator": "Fig. 3b"}), dataset=DATASET,
+                   out_dir=tmp_path, result=True)
+    ends = _ensemble(out)
+    assert ends["A"].mean is not None, "a flagged read is not an abstention"
+    prov = ends["A"].pixel_provenance
+    assert prov["panel"][PANEL_NOT_ISOLATED] == "b"
+    assert prov[PANEL_NOT_ISOLATED] is True
+    assert prov["needs_review"] is True
+    assert any("could not hand that panel over" in r for r in [prov["needs_review_reason"]])
+
+
+def test_a_single_panel_figure_nobody_named_is_not_flagged(bar_figure):
+    """The negative twin: no locator names a panel, so there is nothing that could not be
+    isolated, and the row must not be capped for it."""
+    paper, fig = _paper_for(bar_figure)
+    fig = replace(fig, panels=[PanelRegion(id="fig01a", letter="a", bbox=fig.bbox, n_numeric=25,
+                                           n_ladder=5, calibrated=True, crop_png=fig.crop_png,
+                                           claude_png=fig.claude_png, crop_dpi=150.0,
+                                           claude_scale=1.0)])
+    _, info = resolve_panel(fig, replace(TARGET, panel_hint="Fig 1", series_hint=""),
+                            SOURCE.model_copy(update={"locator": "Fig. 1, last episode"}))
+    assert PANEL_NOT_ISOLATED not in info and not info.get("needs_review")
+
+
+def _three_reader_run(bar_figure, tmp_path, calls, name):
+    """`digitize()` with exactly `calls` read-outs scripted, and nothing else changed."""
+    paper, fig = _paper_for(bar_figure)
+    provider = _scripted(calls[0], _coord_payload(bar_figure, 1.0), readout_by_call=list(calls))
+    n = len(calls)
+    return digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                    out_dir=tmp_path / name, result=True,
+                    settings=DigitizeSettings(readouts_min=n, readouts_max=n), n_readouts=n)
+
+
+def test_a_disqualified_reader_does_not_choose_the_ruler(bar_figure, tmp_path):
+    """F3, and the half of C2-c that was missing: the same figure, with and without the
+    disqualified readings, must give the same ruler and the same number.
+
+    C2 says a reading with `calibration_source: inferred` is dropped before the ensemble. Its
+    SAMPLES were dropped; its VOTE was not. Measured on this figure (truth A = 31.5, ticks 0..60)
+    with one honest reader plus two disqualified ones — a `target_visible: no` reader carrying
+    nothing but a tick ladder, and an `inferred` one — both listing the neighbouring panel's
+    0,5,...,30: the cell printed **23.64** on a ladder chosen by the two readings the rule had
+    already declared non-voting, provenance note "2 of 3 read-out tick ladder(s) agree". A reader
+    that read nothing was credited as a witness and moved the number by a quarter of its value.
+    """
+    honest = _readout_payload(31.5, 11.0, 12.25, 11.75)
+    neighbour = [0, 5, 10, 15, 20, 25, 30]
+    blind = _readout_payload(None, None, None, None, ticks=neighbour, target_visible="no",
+                             visible_reason="this crop holds the neighbouring panel")
+    made_up = _readout_payload(51.1, 11.0, 58.5, 11.75, ticks=neighbour,
+                               calibration_source="inferred")
+
+    def read(out):
+        end = _ensemble(out)["A"]
+        prov = end.pixel_provenance
+        return end.mean, prov["cal_source"], prov["cal_status"]
+
+    honest_three = read(_three_reader_run(bar_figure, tmp_path, [honest] * 3, "d"))
+    assert honest_three == (pytest.approx(31.5, abs=0.5), "readout_ticks", "confirmed")
+    # the C2-c half that was never asserted: adding two disqualified readings to a good cell
+    # changes neither the ruler nor the number
+    assert read(_three_reader_run(bar_figure, tmp_path,
+                                  [honest] * 3 + [blind, made_up], "e")) == honest_three
+
+    # …and the reviewer's own measured case: one honest reader, outvoted 2-1 on the ladder by two
+    # readings that were not allowed to vote at all
+    alone = read(_three_reader_run(bar_figure, tmp_path, [honest], "a"))
+    outvoted = read(_three_reader_run(bar_figure, tmp_path, [honest, blind, made_up], "b"))
+    assert outvoted == alone, (outvoted, alone)
+    assert outvoted[0] != pytest.approx(23.64, abs=0.1)
+
+
+def test_the_disqualified_readers_are_still_on_the_record_and_still_cost_money(bar_figure,
+                                                                              tmp_path):
+    """The other side of F3: filtering the VOTE must not silence the READING. `legibility()` and
+    the cost and family sums keep the full list — what a disqualified reader said is still a fact
+    about the figure, and its money was still spent."""
+    honest = _readout_payload(31.5, 11.0, 12.25, 11.75)
+    made_up = _readout_payload(51.1, 11.0, 58.5, 11.75, calibration_source="inferred")
+    out = _three_reader_run(bar_figure, tmp_path, [honest, made_up, honest], "f")
+    prov = _ensemble(out)["A"].pixel_provenance
+    assert prov["legibility"]["n_readouts"] == 3
+    assert len(prov["legibility"]["calibration_inferred"]) == 1
+    assert prov["call_plan"]["readouts_run"] == 3
+
+
+def test_a_partial_view_does_not_vote_and_does_not_raise_the_bar_for_abstention():
+    """F10. `partial` was a channel with no consumer: `legibility` counted only `no` and the
+    prompt never mentioned the value, so a reader looking at a half-cropped panel — the most
+    likely real use of it — voted at FULL weight and raised the denominator of the majority test,
+    making abstention LESS likely the more of the panel was missing."""
+    from canopy.digitize.vlm import ReadOut
+
+    blind = ReadOut(model="m1", target_visible="no")
+    partly = ReadOut(model="m2", target_visible="partial")
+    seeing = ReadOut(model="m3", target_visible="yes")
+    seen = legibility([blind, partly, seeing])
+    assert seen["n_readouts"] == 3 and seen["n_voting"] == 2
+    assert seen["target_partly_visible"] == ["digitize:readout:m2"]
+    assert seen["abstain"] is False, "one blind of two voters is not a majority"
+    # with a second blind reader the majority is real, and the partial view still does not count
+    assert legibility([blind, partly, ReadOut(model="m4", target_visible="no")])["abstain"] is True
+    # …and it is NOT a `no` vote: three partial readers abstain about nothing
+    only_partial = legibility([partly, partly, partly])
+    assert only_partial["abstain"] is False and only_partial["target_not_visible"] == []
+
+
+def test_a_partial_view_reads_but_does_not_vote_on_the_value(bar_figure, tmp_path):
+    honest = _readout_payload(31.5, 11.0, 12.25, 11.75)
+    half = _readout_payload(51.1, 11.0, 58.5, 11.75, target_visible="partial",
+                            visible_reason="panel b is cut off at the right edge of the crop")
+    out = _three_reader_run(bar_figure, tmp_path, [honest, half, honest], "g")
+    theirs = [s for s in out.samples if s.route == "D" and s.mean == 51.1]
+    assert theirs and all(s.dropped for s in theirs)
+    assert all("only part of the named target" in s.drop_reason for s in theirs)
+    assert _ensemble(out)["A"].mean == pytest.approx(31.5, abs=1.0)
+
+
+def test_the_prompt_tells_a_reader_what_partial_means():
+    """A channel with a rule and no instruction is a channel nobody uses correctly."""
+    from canopy.digitize.vlm import load_prompt
+
+    text = load_prompt("digitize_readout")
+    assert "`partial`" in text and "cut off" in text
+    assert "does not vote" in text
+
+
+def test_an_abstention_reports_the_coordinate_call_it_paid_for(bar_figure, tmp_path):
+    """F9. The second legibility check runs AFTER `coords()` and after any extra read-out, and
+    the abstention's provenance summed the read-outs only — E10's "reported cost is not incurred
+    cost", reintroduced in new code."""
+    seeing = _readout_payload(31.5, 11.0, 12.25, 11.75)
+    blind = _readout_payload(None, None, None, None, target_visible="no",
+                             visible_reason="the named panel is not in this crop")
+    paper, fig = _paper_for(bar_figure)
+    # one blind reader of the first two is not a majority, so the cell pays for `coords()` and
+    # only then does the third reader make it one — which is the exit this test is about
+    provider = _scripted(seeing, _coord_payload(bar_figure, 1.0),
+                         readout_by_call=[blind, seeing, blind])
+    out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, result=True,
+                   settings=DigitizeSettings(readouts_min=2, readouts_max=3), n_readouts=3)
+    prov = _ensemble(out)["A"].pixel_provenance
+    assert prov[PANEL_NOT_IN_CROP] is True, prov.get("needs_review_reason")
+    assert prov["readouts_bought"] == 3
+    # the coordinate call happened before this exit — `coord` is threaded in, so the sum has a
+    # place to put its money (the scripted provider prices every call at zero, so the arithmetic
+    # itself is proved directly below)
+    assert "cost_usd" in prov
+
+
+def test_the_abstention_sums_every_call_the_cell_paid_for():
+    """F9, as arithmetic. The second legibility check is reached only after `coords()` has been
+    paid and after any extra read-out and C10 re-read, and the provenance summed the read-outs
+    alone — E10's "reported cost is not incurred cost", reintroduced in new code."""
+    from canopy.digitize.digitizer import _target_not_visible
+    from canopy.digitize.vlm import CoordReadout, ReadOut
+
+    paper, fig = _paper_for({"out_dir": "."})
+    readouts = [ReadOut(model="m1", target_visible="no", cost_usd=0.11),
+                ReadOut(model="m2", target_visible="no", cost_usd=0.13)]
+    coord = CoordReadout(cost_usd=0.07)
+    seen = legibility(readouts)
+    out = _target_not_visible(fig, TARGET, paper, SOURCE, DATASET, Path("fig01.png"), seen,
+                              readouts, {}, True, coord=coord,
+                              verify_log=[{"cost_usd": 0.05}, {"cost_usd": 0.02}])
+    assert out.provenance["cost_usd"] == pytest.approx(0.11 + 0.13 + 0.07 + 0.05 + 0.02)
+    assert out.cost_usd == pytest.approx(out.provenance["cost_usd"])
+
+
+@pytest.mark.parametrize("raw,parsed", [
+    ("No", "no"), ("NO", "no"), (" partial ", "partial"), ("Inferred", "unknown"),
+    ("maybe", "unknown"), ("", "unknown"), (None, "unknown"),
+])
+def test_a_visibility_enum_is_read_case_insensitively(raw, parsed):
+    """F19. The structured-output schema should make this unnecessary; it costs nothing, and a
+    reply carrying "No" must count as blind. A value the enum does not list is the same as
+    silence — a rule that acts on a reader's answer may not act on a string nobody defined."""
+    from canopy.digitize.vlm import _enum, _VISIBLE, VISIBLE_UNKNOWN, _parse_readout
+    from canopy.llm.client import ToolLoopResult
+
+    assert _enum(raw, _VISIBLE["enum"], VISIBLE_UNKNOWN) == parsed
+    # …and it is the PARSE path that normalises, not only the helper
+    payload = {"target_visible": raw, "calibration_source": "Printed_Labels", "groups": []}
+    reading = _parse_readout(ToolLoopResult(parsed=payload, turns=1), "m1", "direct")
+    assert reading.target_visible == parsed
+    assert reading.calibration_source == "printed_labels"
+
+
+def test_a_reader_that_could_not_see_the_panel_does_not_buy_an_overlay():
+    """N8. `_overlay_wanted` spends a paid call whenever "a route sample was already dropped", and
+    `_mark_illegible` drops samples too — so a MINORITY that reports the panel is not in the crop
+    bought an overlay picture of the disagreement it had just settled. The overlay call exists to
+    ask the model where a datum sits when the routes disagree about it; "this reader could not see
+    the panel" is not that disagreement."""
+    from canopy.digitize.digitizer import _mark_illegible, _overlay_wanted
+    from canopy.digitize.vlm import ReadOut
+
+    def sample(model="m1", **kw):
+        return RouteSample(route="D", group="A", model=model, variant="direct", mean=31.5,
+                           error=11.0, **kw)
+
+    agreeing = [sample(), sample("m2")]
+    blind = sample("m3")
+    _mark_illegible(ReadOut(model="m3", target_visible="no"), [blind])
+    assert blind.dropped and blind.extra["illegible"] is True
+    wanted, why = _overlay_wanted(True, "adaptive", agreeing + [blind], axis_range=60.0,
+                                 tick_spacing=10.0, px_units=0.1)
+    assert "already dropped" not in why, why
+    # …and a route dropped for what the overlay IS for still buys it
+    disputed = sample("m4", dropped=True, drop_reason="overlay verify: not_on_datum")
+    wanted, why = _overlay_wanted(True, "adaptive", agreeing + [disputed], axis_range=60.0,
+                                  tick_spacing=10.0, px_units=0.1)
+    assert wanted is True and "already dropped" in why

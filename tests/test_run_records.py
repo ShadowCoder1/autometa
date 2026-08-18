@@ -507,3 +507,240 @@ def test_an_evicted_reader_is_kept_when_it_is_the_only_one_a_group_has():
     assert samples[2].dropped is False
     assert "no other reading" in samples[2].notes
     assert info["axis_dropped_samples"] == []
+
+
+# --------------------------------------------------------------------------- C10: a partial read
+#
+# `runs/rerun-fixed/papers/b511dbb76fa6` — Bock 2005, dataset d1, the after-effect. Three readers
+# read the figure; for group A one of them came back with a spread and no mean, and the cell then
+# reported "only one independent route produced this value" — the same sentence a genuinely
+# single-family cell prints. Group B, read by the same three, scored twice as high. The trimmed
+# record is `tests/fixtures/runs/bock_aftereffect/extract.json`.
+def _bock_aftereffect(group: str) -> list[dict]:
+    return [c for c in _record("bock_aftereffect")
+            if c["group"] == group and c["extractor_id"] != "digitize:ensemble"]
+
+
+def _samples_of(candidates: list[dict]) -> list:
+    from canopy.digitize.digitizer import RouteSample
+
+    out = []
+    for cand in candidates:
+        model = cand["extractor_id"].split(":")[2]
+        variant = cand["extractor_id"].split(":")[3]
+        out.append(RouteSample(route="D", group=cand["group"], model=model, variant=variant,
+                               mean=cand["mean"], error=cand["dispersion_value"],
+                               status=cand["status"]))
+    return out
+
+
+def test_the_bock_record_holds_the_partial_read_c10_is_for():
+    """The record itself, before any rule: sonnet read the after-effect figure, gave group B a
+    full answer and group A a spread with no mean."""
+    a = {c["extractor_id"]: (c["mean"], c["dispersion_value"]) for c in _bock_aftereffect("A")}
+    b = {c["extractor_id"]: (c["mean"], c["dispersion_value"]) for c in _bock_aftereffect("B")}
+    assert a["digitize:readout:claude-sonnet-5:direct"] == (None, 6.5)
+    assert b["digitize:readout:claude-sonnet-5:direct"] == (-27.0, 7.0)
+    assert len(a) == len(b) == 3                    # the same three readers on both groups
+
+
+def test_the_partial_read_is_named_by_route_and_group():
+    """C10 (a): the reader that produced half an answer is named — route AND group — so the cell
+    can say "two families read it and one came back empty" instead of "one family read this"."""
+    from canopy.digitize.digitizer import _partial_reads
+
+    named = _partial_reads(_samples_of(_bock_aftereffect("A")))
+    assert [(x["route"], x["group"], x["missing"]) for x in named] == [
+        ("digitize:readout:claude-sonnet-5:direct", "A", "mean")]
+    assert named[0]["has"]["error"] == 6.5
+    assert named[0]["model"] == "claude-sonnet-5"   # who to re-ask, not just that someone failed
+    assert _partial_reads(_samples_of(_bock_aftereffect("B"))) == []
+
+
+def test_the_partial_read_does_not_credit_the_empty_reader_as_a_witness():
+    """The other half of the rule, and the one that must not be undone: a reader that produced no
+    mean corroborates no mean. C10 buys the missing number back; it never counts the absence as
+    agreement."""
+    from canopy.digitize.digitizer import model_families
+
+    samples = _samples_of(_bock_aftereffect("A"))
+    # `digitize()` counts families over the samples that produced a value, and this is the reason:
+    # the sonnet reader is present, it answered, and it has no mean for A. Counting it here would
+    # credit an abstention as agreement and pool group A on one reader.
+    assert sorted(model_families([s for s in samples if s.usable])) == ["claude-opus"]
+    assert sorted(model_families(samples)) == ["claude-opus", "claude-sonnet"]
+    assert sorted(model_families([s for s in _samples_of(_bock_aftereffect("B"))
+                                  if s.usable])) == ["claude-opus", "claude-sonnet"]
+
+
+def _ensemble_cell(group: str, partial: list[dict], *, families: list[str]):
+    """One `digitize:ensemble` candidate for `group`, carrying a real `partial_read` list.
+
+    Built from the Bock record's own readings — `partial` comes out of `_partial_reads` over the
+    real per-reader candidates, so nothing here invents the half-answer the rule is about.
+    """
+    from canopy.models import Candidate, DispersionType
+
+    return Candidate(
+        candidate_id=f"ens-{group}", dataset_id="b511dbb76fa6:d1", outcome_key="aftereffect",
+        group=group, kind="group_stats", status="found", extractor_id="digitize:ensemble",
+        source_kind="figure_bar", mean=-22.4, dispersion_value=8.3,
+        dispersion_type=DispersionType.SD, n=12, locator="Fig. 1",
+        pixel_provenance={"partial_read": partial, "model_families": families})
+
+
+def _single_route_vote(candidate):
+    from canopy.verify.vote import RouteValue, VoteResult
+
+    return VoteResult(
+        group=candidate.group, agreement="single", mean=candidate.mean,
+        dispersion_value=candidate.dispersion_value, n=candidate.n, method="single",
+        agreeing_ids=[candidate.candidate_id],
+        routes=[RouteValue(route_key="figure/claude-opus", value=candidate.mean,
+                           candidate_ids=[candidate.candidate_id])])
+
+
+#: the sentence a genuinely single-family cell prints, in full — the thing C10 (b) says a partial
+#: read must NOT print
+SINGLE_FAMILY_LINE = "only one independent route produced this value"
+
+
+def test_a_reader_that_came_back_without_a_mean_is_not_reported_as_a_missing_family():
+    """C10 (b): Bock d1 aftereffect group A.
+
+    Three readers read the figure; `claude-sonnet-5` returned `mean=None, error=6.5` for group A
+    and a full reading for group B. The cell printed the same sentence a cell no second family
+    ever looked at prints, which points a reviewer at the wrong repair: there IS a second family,
+    it answered, and one number is missing from its answer.
+    """
+    from canopy.digitize.digitizer import _partial_reads
+    from canopy.verify.confidence import confidence
+
+    partial = _partial_reads(_samples_of(_bock_aftereffect("A")))
+    assert [(x["group"], x["missing"]) for x in partial] == [("A", "mean")]   # the real record
+
+    cand = _ensemble_cell("A", partial, families=["claude-opus"])
+    _, _, reasons = confidence(_single_route_vote(cand), candidates=[cand])
+    assert "a second model family read this figure and returned a spread but no mean for group A" \
+        in " ".join(reasons)
+    assert "claude-sonnet-5" in " ".join(reasons)          # WHICH reader to re-ask
+    assert SINGLE_FAMILY_LINE not in " ".join(reasons)
+    # exactly one reason line carries it, and it is the partial-read line — `next()` over a
+    # mis-bound `or` used to stand here, and `assert line` on its result can never fail
+    named = [r for r in reasons if "no mean" in r]
+    assert len(named) == 1, reasons
+
+
+def test_a_figure_with_no_whisker_to_read_still_prints_the_single_family_reason():
+    """The other half, and the reason the rule is keyed on `missing == "mean"`.
+
+    Cressman d1 aftereffect is a scatter of individual subjects: five routes read a mean and no
+    error bar, because there is no error bar drawn. Keying the distinct reason on "a partial read
+    exists" would tell a reviewer a second family came back empty about the MEAN on a pooled cell
+    where every reader produced one.
+    """
+    from canopy.verify.confidence import confidence
+
+    no_whisker = [{"route": f"digitize:readout:claude-sonnet-5:direct#{i}", "group": "A",
+                   "missing": "error", "has": {"mean": 17.4}, "model": "claude-sonnet-5",
+                   "variant": "direct", "sample": i} for i in range(5)]
+    cand = _ensemble_cell("A", no_whisker, families=["claude-opus"])
+    _, _, reasons = confidence(_single_route_vote(cand), candidates=[cand])
+    assert SINGLE_FAMILY_LINE in " ".join(reasons)
+    assert "no mean" not in " ".join(reasons)
+
+
+def test_the_partial_read_of_another_group_does_not_speak_for_this_one():
+    """Group B of the same cell was read in full by both families. A `partial_read` entry naming
+    group A must not change what group B's cell says about itself."""
+    from canopy.digitize.digitizer import _partial_reads
+    from canopy.verify.confidence import confidence
+
+    partial = _partial_reads(_samples_of(_bock_aftereffect("A")))
+    cand = _ensemble_cell("B", partial, families=["claude-opus", "claude-sonnet"])
+    _, _, reasons = confidence(_single_route_vote(cand), candidates=[cand])
+    assert "no mean" not in " ".join(reasons)
+
+
+# --------------------------------------------------------------------------- C1/C2: Heuer d1 late
+#
+# `runs/rerun-fixed/papers/3570e4ce2a9c` — Heuer & Hegele 2008, dataset d1, late adaptation, read
+# off "Figure 2, panel a". The crop the run sent held 2 words and 0 numeric words, and panel a was
+# not in it at all: the caption sat 296.2 pt below the panel and the 260 pt gate dropped it. Two
+# readers said so in prose and returned nothing; the third returned numbers off the panels that
+# WERE in the crop. Those numbers became the cell's candidates.
+def _heuer_late(group: str) -> list[dict]:
+    return [c for c in _record("heuer_late")
+            if c["group"] == group and c["extractor_id"].startswith("digitize:readout")]
+
+
+def test_the_heuer_record_shows_two_readers_saying_the_panel_is_not_there():
+    """The evidence C2 turns into an action — today it exists only as free text."""
+    notes = {c["extractor_id"]: c["notes"] for c in _heuer_late("A")}
+    absent = [k for k, v in notes.items() if "not contained" in v or "not visible" in v]
+    assert sorted(absent) == ["digitize:readout:claude-opus-5:direct",
+                              "digitize:readout:claude-opus-5:ticks_first"]
+    assert all(c["mean"] is None for c in _heuer_late("A") if c["extractor_id"] in absent)
+    lone = next(c for c in _heuer_late("A") if c["extractor_id"] not in absent)
+    assert lone["mean"] == 51.125
+    assert "inferred calibration" in lone["notes"]      # it built its own ladder, and says so
+    ensemble = next(c for c in _record("heuer_late")
+                    if c["group"] == "A" and c["extractor_id"] == "digitize:ensemble")
+    assert ensemble["mean"] == 51.125, "the minority reading IS the cell today"
+
+
+def test_the_two_structured_fields_the_record_dictates_make_this_cell_abstain():
+    """C2, replayed on the real reading. The enums are reconstructed from each reader's OWN
+    sentence — "Panel 2a is not contained in this crop" is `target_visible: no`, "y-values
+    estimated using inferred calibration" is `calibration_source: inferred` — which is the whole
+    argument for having the enums: the sentences are already there and nothing can act on them.
+    Either rule alone removes 51.125 from this cell; together they leave nothing to pool."""
+    from canopy.digitize.digitizer import _mark_illegible, legibility
+    from canopy.digitize.digitizer import RouteSample
+    from canopy.digitize.vlm import ReadOut
+
+    readouts, samples = [], []
+    for cand in _heuer_late("A"):
+        note = cand["notes"]
+        visible = "no" if ("not contained" in note or "not visible" in note) else "yes"
+        cal = "inferred" if "inferred calibration" in note else "printed_labels"
+        model = cand["extractor_id"].split(":")[2]
+        variant = cand["extractor_id"].split(":")[3]
+        reading = ReadOut(model=model, variant=variant, target_visible=visible,
+                          calibration_source=cal, notes=note)
+        mine = [RouteSample(route="D", group="A", model=model, variant=variant,
+                            mean=cand["mean"], error=cand["dispersion_value"], notes=note)]
+        _mark_illegible(reading, mine)
+        readouts.append(reading)
+        samples.extend(mine)
+    seen = legibility(readouts)
+    assert seen["abstain"] is True and len(seen["target_not_visible"]) == 2
+    assert seen["calibration_inferred"] == ["digitize:readout:claude-sonnet-5:direct"]
+    kept = [s for s in samples if not s.dropped]
+    assert kept == [], "51.125 was the only number here and it is not the cell's answer"
+
+
+def test_the_deleted_keyword_rule_would_have_been_a_mass_abstain_switch():
+    """Why C2 gates on the enum and not on prose.
+
+    The decision's argument rests on a count over the WHOLE of this paper's extract —
+    inferred/estimated/assumed 152 times against 115 for not-contained/not-visible — which this
+    trimmed fixture cannot check: it holds the two cells the C2 tests need and, in them, the two
+    families of phrase occur equally often. So the fixture's real counts are asserted here and
+    the 152/115 claim is left where it can be checked, in the decision. What the fixture DOES
+    prove is the thing the rule turns on: prose that says "estimated" off a printed ladder is a
+    legitimate reading and survives."""
+    import re
+
+    raw = (RECORDS / "heuer_late" / "extract.json").read_text()
+    hedge = len(re.findall(r"inferr|estimated|assumed", raw, re.I))
+    absent = len(re.findall(r"not contained|not visible", raw, re.I))
+    assert (hedge, absent) == (4, 4), (hedge, absent)
+    from canopy.digitize.digitizer import _mark_illegible, RouteSample
+    from canopy.digitize.vlm import ReadOut
+
+    honest = ReadOut(model="m1", target_visible="yes", calibration_source="printed_labels",
+                     notes="bar top estimated to the nearest half degree; caps assumed symmetric")
+    mine = [RouteSample(route="D", group="A", model="m1", mean=31.5, error=11.0)]
+    _mark_illegible(honest, mine)
+    assert not mine[0].dropped, "prose is not evidence; the structured field is"

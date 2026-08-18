@@ -37,13 +37,19 @@ from .cv import (Axes, TickLabels, detect_bars, detect_markers, find_axes, find_
 from .overlay import draw_overlay
 
 __all__ = ["PROMPT_VERSION", "TargetSpec", "FigureView", "GroupReadOut", "PointRead",
+           "VISIBLE_UNKNOWN", "VISIBLE_YES", "VISIBLE_NO", "VISIBLE_PARTIAL",
+           "CAL_SOURCE_UNKNOWN", "CAL_SOURCE_PRINTED", "CAL_SOURCE_INFERRED",
            "ReadOut", "TickCoord",
            "GroupCoords", "CoordReadout", "Mismatch", "OverlayVerdict", "read_out", "coords",
            "overlay_verify", "load_prompt", "render_prompt", "READOUT_SCHEMA", "COORDS_SCHEMA",
            "OVERLAY_SCHEMA", "READOUT_VARIANTS", "MAX_ZOOM", "MAX_READOUT_TOOL_CALLS"]
 
-#: bump when a prompt or a schema changes (fixtures are content-addressed, so they follow anyway)
-PROMPT_VERSION = "digitize/2"
+#: bump when a prompt or a schema changes (fixtures are content-addressed, so they follow anyway).
+#: `digitize/3`: the read-out contract gained `target_visible` and `calibration_source` as required
+#: answers (C1/C2), and `digitize_readout.md` now explains both. The schema change had already
+#: invalidated the on-disk read-out cache, so this costs nothing beyond saying so on the record —
+#: a provenance entry stamped `digitize/2` was answered by a model that was never asked them.
+PROMPT_VERSION = "digitize/3"
 #: read-out variants; each is a `digitize_readout_<name>.md` delta appended to the base prompt.
 #: Order matters: `_readout_plan` fills a figure's samples from distinct (model, variant) pairs in
 #: this order, and only re-samples an already-used pair once every pair is spent.
@@ -171,6 +177,27 @@ class TargetSpec:
 
 # ----------------------------------------------------------------------------- schemas
 _STATUS = {"type": "string", "enum": ["found", "not_on_these_pages", "ambiguous"]}
+#: Whether the thing the reader was ASKED for is in the picture in front of it. A structured
+#: field, never prose: the strings "inferred/estimated/assumed" appear 152 times in one paper's
+#: read-outs against 115 for "not contained/not visible", and most of them describe entirely
+#: legitimate readings, so a keyword scan is a mass-abstain switch. The reader's own enum is the
+#: only honest channel for "it is not in this picture".
+_VISIBLE = {"type": "string", "enum": ["yes", "no", "partial", "unknown"]}
+VISIBLE_YES = "yes"
+VISIBLE_NO = "no"
+#: the reader can see only part of what it was asked for — the panel is cut at the crop's edge,
+#: the series runs off the image. It is NOT a `no` vote (nothing says the target is absent) and it
+#: is not a vote either: a value read off half a panel is a reading of half a panel. It therefore
+#: does not vote on the value and does not sit in the denominator of the majority test, where it
+#: would make abstention LESS likely the more of the panel was missing.
+VISIBLE_PARTIAL = "partial"
+#: Where the numbers on this reading's axis came from. `inferred` means the reader built its own
+#: ladder; such a reading is dropped before the ensemble, however confident its prose sounds.
+_CAL_SOURCE = {"type": "string", "enum": ["printed_labels", "inferred", "unknown"]}
+CAL_SOURCE_PRINTED = "printed_labels"
+CAL_SOURCE_INFERRED = "inferred"
+VISIBLE_UNKNOWN = "unknown"          # a reply that predates the field, or one that omitted it
+CAL_SOURCE_UNKNOWN = "unknown"
 _GROUP = {"type": "string", "enum": ["A", "B", "unknown"]}
 _NUM = {"type": ["number", "null"]}
 
@@ -183,6 +210,10 @@ def _obj(properties: dict[str, Any]) -> dict[str, Any]:
 READOUT_SCHEMA = _obj({
     "status": _STATUS,
     "panel": {"type": "string"},
+    #: "is the panel/series/axis I was asked for actually in this image?" — an action, not a note
+    "target_visible": _VISIBLE,
+    "target_visible_reason": {"type": "string"},
+    "calibration_source": _CAL_SOURCE,
     "unit": {"type": "string"},
     #: WHICH value axis these numbers came off. A panel with a left-hand axis in degrees and a
     #: right-hand one in per cent (Cressman 2010 Fig. 3b) gives two readers two different correct
@@ -303,6 +334,11 @@ class ReadOut:
     axis_read: str = ""                          # which value axis the numbers came off
     axis_direction_note: str = ""                # the axis' sign convention, when the ticks lack one
     panel: str = ""
+    #: yes | no | partial | unknown — whether the named target is in the image at all
+    target_visible: str = VISIBLE_UNKNOWN
+    target_visible_reason: str = ""
+    #: printed_labels | inferred | unknown — where this reading's ladder came from
+    calibration_source: str = CAL_SOURCE_UNKNOWN
     confidence: float = 0.0
     notes: str = ""
     model: str = ""
@@ -660,6 +696,17 @@ def _number(value: Any) -> float | None:
     return parse_number(str(value))
 
 
+def _enum(value: Any, allowed: list[str], default: str) -> str:
+    """One of `allowed`, case- and space-insensitively, or `default`.
+
+    The structured-output schema should make this unnecessary; it costs nothing and a reply
+    carrying `"No"` must count as blind. A value the enum does not list is the same as silence —
+    a rule that acts on a reader's answer may not act on a string nobody defined.
+    """
+    text = str(value or "").strip().lower()
+    return text if text in allowed else default
+
+
 # ----------------------------------------------------------------------------- path D
 def _submit_tool(schema: dict[str, Any], description: str) -> dict[str, Any]:
     return {"name": "submit", "description": description, "strict": True, "input_schema": schema}
@@ -774,6 +821,12 @@ def _parse_readout(result: ToolLoopResult, model: str, variant: str,
         legend_says=str(data.get("legend_says") or ""), tick_labels=ticks,
         pixel_resolution_estimate=_number(data.get("pixel_resolution_estimate")),
         unit=str(data.get("unit") or ""), panel=str(data.get("panel") or ""),
+        # absent (a cached reply from before the field existed) is UNKNOWN, never "no": the rule
+        # acts on what a reader said, and silence is not a report that the target is missing
+        target_visible=_enum(data.get("target_visible"), _VISIBLE["enum"], VISIBLE_UNKNOWN),
+        target_visible_reason=str(data.get("target_visible_reason") or ""),
+        calibration_source=_enum(data.get("calibration_source"), _CAL_SOURCE["enum"],
+                                 CAL_SOURCE_UNKNOWN),
         axis_read=str(data.get("axis_read") or ""),
         axis_direction_note=str(data.get("axis_direction_note") or ""),
         confidence=float(_number(data.get("confidence")) or 0.0),
