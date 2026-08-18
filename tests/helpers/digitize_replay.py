@@ -24,8 +24,11 @@ def readout(model: str, variant: str, groups: Sequence[dict[str, Any]], *,
     """One model's reading of a figure.
 
     Each entry of `groups` is `{"group", "label_read", "x_read", "points", "mean",
-    "error_half_length"}`, where `points` is a list of `(x_label, mean, error_half_length)` —
-    the shape `digitize_readout.md` asks a reader for on a categorical x axis.
+    "error_half_length", "error_upper", "error_lower", "error_sides"}`, where `points` is a list
+    of `(x_label, mean, error_half_length)` — the shape `digitize_readout.md` asks a reader for
+    on a categorical x axis. Every field a reader states about the SERIES is settable, because
+    what the digitiser may take from the series and what it must take from one point is exactly
+    what these tests are about.
     """
     rows: list[GroupReadOut] = []
     for spec in groups:
@@ -34,6 +37,8 @@ def readout(model: str, variant: str, groups: Sequence[dict[str, Any]], *,
             label_read=str(spec.get("label_read", "")),
             mean=spec.get("mean"),
             error_half_length=spec.get("error_half_length"),
+            error_upper=spec.get("error_upper"),
+            error_lower=spec.get("error_lower"),
             error_sides=str(spec.get("error_sides", "unknown")),
             x_read=str(spec.get("x_read", "")),
             points=[PointRead(x_label=str(x), mean=m, error_half_length=e)

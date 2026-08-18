@@ -860,6 +860,10 @@ CATEGORICAL_UNRESOLVED = "unknown"      # nothing said which, so nothing may be 
 #: locator saying so is not a locator naming a category.
 POSITIONAL_X_PHRASES = ("left side of the x axis", "left-most", "leftmost", "first", "last",
                         "right-most", "rightmost")
+#: …matched on WORD boundaries. As a bare substring test, `last` fires inside "plasticity",
+#: "lastly" and "elastic", and a locator that names no position at all reads as one.
+_POSITIONAL_RE = re.compile(r"\b(?:" + "|".join(re.escape(p) for p in POSITIONAL_X_PHRASES)
+                            + r")\b")
 #: the category a locator quotes or brackets: `'without strategy'`, `"block 20"`, `(pre-test)`
 _LOCATOR_PHRASE = re.compile(r"'([^']{2,60})'|\"([^\"]{2,60})\"|\(([^()]{2,60})\)")
 _WORD_RE = re.compile(r"[a-z0-9]+")
@@ -905,9 +909,10 @@ def _locator_category(locator: str, readings: Sequence[Any]) -> str:
 
     A position is only a category once it lands on one. "The left-most point" beside readers who
     all say they read "every point on the x axis" names no category at all: taking their word for
-    it there would turn an eight-point series into a point read, which is the opposite mistake to
-    the one D3 exists to fix. So when the readers listed categories, the position has to match one
-    of them; only a reading that listed none is taken at its word.
+    it there would turn a series mean into a point read, which is the opposite mistake to the one
+    D3 exists to fix. So the position has to match a category some reader actually listed — and a
+    reading that listed NO categories is not the exception to that rule but its plainest case: it
+    has said nothing about where its mean sits, so nothing here can say the mean is a point.
     """
     if not str(locator or "").strip():
         return ""
@@ -918,11 +923,11 @@ def _locator_category(locator: str, readings: Sequence[Any]) -> str:
         for label in labels:
             if _labels_are_the_same(phrase, label):
                 return label
-    if not any(phrase in str(locator).lower() for phrase in POSITIONAL_X_PHRASES):
+    if not _POSITIONAL_RE.search(str(locator).lower()):
         return ""
     agreed = _agreed_x_read(readings)
     if not agreed or not labels:
-        return agreed
+        return ""
     return next((label for label in labels if _labels_are_the_same(agreed, label)), "")
 
 
@@ -952,9 +957,15 @@ def _series_names_its_group(label_read: Any, own: Sequence[str], other: Sequence
 
 
 def _locatable_point(row: Any, category: str) -> bool:
-    """Can this series' value be pinned to the named category, without picking one of several?"""
+    """Can this series' value be pinned to the named category, without picking one of several?
+
+    A reading that listed no points cannot: its `mean` is what the read-out prompt asks to be the
+    series as a whole, and calling that the point at a category another READER listed is how the
+    two halves of the predicate come apart. The category and the point at it are asked of one
+    reading or of none.
+    """
     if not row.points:
-        return row.mean is not None      # the reader gave one number and said where it read it
+        return False
     if len(row.points) == 1:
         return True
     return len([p for p in row.points if _labels_are_the_same(p.x_label, category)]) == 1
@@ -1136,6 +1147,14 @@ def _row_at_locator_category(row: Any, category: str) -> Any:
     picks the point out is which condition was asked for. A reader that came back with exactly
     one point came back with that one, and `mean` — which the read-out prompt asks to be the
     series as a whole — is used only when no point can be matched.
+
+    A point PICKED OUT of a series brings only its own dispersion. `error_half_length`,
+    `error_upper` and `error_lower` are the reader's statements about the SERIES: reporting them
+    beside one category's mean makes the whole series' spread the band at that category, and
+    `abs(error_upper - mean)` downstream — computed after the mean was swapped — is the distance
+    from one category's cap to another category's mean, a number that is nowhere in the reading.
+    The error is not a footnote: it sets this study's SE and therefore its weight in the pooled
+    estimate. So the honest state is a mean with no spread, which the resolver already holds.
     """
     from dataclasses import replace as _replace
 
@@ -1145,10 +1164,13 @@ def _row_at_locator_category(row: Any, category: str) -> Any:
     chosen = mine[0] if len(mine) == 1 else (row.points[0] if len(row.points) == 1 else None)
     if chosen is None or chosen.mean is None:
         return row
+    picked_out = len(row.points) > 1
     return _replace(row, mean=chosen.mean,
                     error_half_length=(chosen.error_half_length
                                        if chosen.error_half_length is not None
-                                       else row.error_half_length))
+                                       else (None if picked_out else row.error_half_length)),
+                    error_upper=(None if picked_out else row.error_upper),
+                    error_lower=(None if picked_out else row.error_lower))
 
 
 def _collapse_points(row: Any) -> tuple[float | None, float | None, int]:

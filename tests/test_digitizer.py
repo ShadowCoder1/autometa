@@ -2388,6 +2388,75 @@ def test_point_at_category_keeps_pixel_routes(bar_figure, tmp_path):
     assert pixels and all(not s.dropped and not s.drop_reason for s in pixels)
 
 
+def _multi_point(*, error_half_length=None, error_upper=None, error_lower=None, mean=None):
+    """One reading of a MULTI-point series, with the locator naming the second category.
+
+    The half of D3 no other test reaches: `_row_at_locator_category` picks one point out of a
+    series, and everything the reader said about the SERIES — its half-length, its caps, its own
+    `mean` — is then a statement about a different quantity.
+    """
+    from tests.helpers.digitize_replay import readout, target
+
+    points = [("block 1", 1.0, None), ("block 20", 3.0, None)]
+    t = target(group_a_label="older adults", group_b_label="younger adults",
+               collapse_across_x=True)
+    r = readout("claude-opus-5", "direct", [
+        {"group": g, "label_read": label, "x_read": "blocks 1 and 20", "points": points,
+         "mean": mean, "error_half_length": error_half_length,
+         "error_upper": error_upper, "error_lower": error_lower}
+        for g, label in (("A", "open circles (older adults)"),
+                         ("B", "filled circles (younger adults)"))])
+    return t, [r]
+
+
+def test_a_point_picked_out_of_a_series_does_not_borrow_the_series_half_length():
+    """The reader's `error_half_length` is the whole series' spread, and the value is one point
+    of it. Reporting it as the band at block 20 sets this study's SE — and therefore its weight
+    in the pooled estimate — from a number the figure does not contain there."""
+    from tests.helpers.digitize_replay import samples_for
+
+    t, rs = _multi_point(error_half_length=9.9)
+    s = {x.group: x for x in samples_for(rs, t, locator="Fig 1, at 'block 20', open circles")}
+    assert s["A"].mean == pytest.approx(3.0)
+    assert s["A"].error is None, "a mean with no spread is the honest state, and the resolver holds it"
+
+
+def test_a_point_picked_out_of_a_series_does_not_borrow_the_series_caps():
+    """Worse than borrowing: `abs(error_upper - mean)` is computed AFTER the mean was swapped, so
+    the half-length becomes the distance from one category's cap to another category's mean — a
+    number that appears nowhere in the reading."""
+    from tests.helpers.digitize_replay import samples_for
+
+    t, rs = _multi_point(error_upper=9.0, mean=5.0)
+    s = {x.group: x for x in samples_for(rs, t, locator="Fig 1, at 'block 20', open circles")}
+    assert s["A"].mean == pytest.approx(3.0)
+    assert s["A"].error is None
+
+
+def test_a_positional_locator_names_nothing_when_no_reader_listed_a_category():
+    """"Unresolved stays unresolved". A reading that listed no categories says nothing about
+    where its mean sits, so a positional phrase beside it names no category — and the series
+    mean must not come back relabelled as a point read. The middle locator is the other half:
+    `last` inside "p-last-icity" is not a position, which is why the phrases are matched on word
+    boundaries and not as bare substrings."""
+    from canopy.digitize import digitizer as dz
+    from tests.helpers.digitize_replay import readout, samples_for, target
+
+    t = target(group_a_label="older adults", group_b_label="younger adults",
+               collapse_across_x=True)
+    r = readout("claude-opus-5", "direct", [
+        {"group": "A", "label_read": "open circles (older adults)",
+         "x_read": "all eight target directions", "points": [], "mean": -27.0},
+        {"group": "B", "label_read": "filled circles (younger adults)",
+         "x_read": "all eight target directions", "points": [], "mean": -12.0}])
+    for locator in ("Fig 2, panel a, the first of the two panels",
+                    "Fig 3, the plasticity index, solid line",
+                    "Fig 3, panel a, solid line"):
+        role, why = dz._categorical_role(t, [r], locator=locator)
+        assert role == dz.CATEGORICAL_UNRESOLVED, f"{locator!r}: {why}"
+        assert samples_for([r], t, locator=locator)[0].mean is None, locator
+
+
 def test_absent_status_names_the_real_drop_cause():
     from canopy.digitize import digitizer as dz
 

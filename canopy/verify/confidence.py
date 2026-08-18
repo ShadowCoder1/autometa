@@ -128,9 +128,10 @@ CAPPING_FLAGS: frozenset[str] = frozenset({
     #: approximated: a declared transformation whose spread is not the paper's own
     "collapsed_across_x",
     #: …and its opposite number (D3): the value is the ONE point at the x category the source
-    #: names, so the spread IS the paper's own band and nothing was approximated — what is thin
-    #: here is corroboration, because a series with one point in the frame has no neighbouring
-    #: point to agree with it. A reviewer should see the figure; the number is not in question.
+    #: names, so nothing was averaged and nothing approximated — whatever spread it carries is
+    #: the paper's own band at that category, or there is none. What is thin here is
+    #: corroboration: a series with one point in the frame has no neighbouring point to agree
+    #: with it. A reviewer should see the figure; the number itself is not in question.
     "categorical_point_read",
     #: extraction was re-opened on a source the verifier named, so a model chose the location
     "reopened_on_better_source",
