@@ -1,0 +1,744 @@
+{
+ "verdicts": [
+  {
+   "dataset_id": "5039533c85ef:d1",
+   "outcome_key": "late_adaptation",
+   "group": "A",
+   "agreement": "single",
+   "agreeing_ids": [
+    "5039533c85ef:d1:late_adaptation:A:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 5.0,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "The paper never prints a numeric degree value for the final (Block 33) hand-deviation during the misaligned reach-training trials for either group. The only quantitative statements about this phase are statistical test results (e.g., 'RM-ANOVA revealed no differences between the two groups with respect to hand deviations achieved across the blocks of learning trials (Group: F(1, 17) = 2.523, P = 0.131...)') and qualitative descriptions ('hand deviations began to saturate...for the older subjects, there was no difference in hand deviations from block 10 and on'). The actual mean (31.4°) and SE (1.9°) for the elderly group at Block 33 exist only as a digitized read-off of Fig. 3a, which the extraction's own notes admit could not be cleanly isolated from the whole two-panel figure (a and b) and carries digitization uncertainty exceeding tolerance. Without a printed number or table to check against, the specific value cannot be confirmed or refuted.",
+   "verifiers": [
+    {
+     "candidate_id": "5039533c85ef:d1:late_adaptation:A:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "The paper never prints a numeric degree value for the final (Block 33) hand-deviation during the misaligned reach-training trials for either group. The only quantitative statements about this phase are statistical test results (e.g., 'RM-ANOVA revealed no differences between the two groups with respect to hand deviations achieved across the blocks of learning trials (Group: F(1, 17) = 2.523, P = 0.131...)') and qualitative descriptions ('hand deviations began to saturate...for the older subjects, there was no difference in hand deviations from block 10 and on'). The actual mean (31.4°) and SE (1.9°) for the elderly group at Block 33 exist only as a digitized read-off of Fig. 3a, which the extraction's own notes admit could not be cleanly isolated from the whole two-panel figure (a and b) and carries digitization uncertainty exceeding tolerance. Without a printed number or table to check against, the specific value cannot be confirmed or refuted.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "",
+     "checked": [
+      "wrong_panel",
+      "wrong_group",
+      "se_vs_sd",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "e58198b96737bb9a6469b23872963f1e7aa97c41a6130f349c86be1f1a29c934",
+     "notes": "Fig. 3a caption confirms error bars are SEM ('Error bars reflect standard error of the mean'), consistent with the candidate's SE dispersion type, but no block-specific numeric values are printed in the text for the misaligned reach-training series. The closest printed quantitative summary is the aftereffect result ('subjects reached 18.0° more left of the target following reach training with a misaligned cursor'), but this is a different measure (no-cursor aftereffect, not the in-perturbation late-adaptation hand deviation) and is collapsed across both groups (t(17)<1, no group difference), so it cannot serve as a validated alternative for Group A's late-adaptation value. The reader's own notes flag that the figure locator resolved only to the whole Fig. 3 region rather than panel 'a' specifically, raising genuine risk that axis scaling or panel identity was confused during digitization.; did not report checking: wrong_time_window, baseline_vs_post, units, subgroup"
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "error half-lengths span 0.3388, over the 0.19 tolerance (max of 10% of 1.9 and half a pixel = 0.03456); the locator names panel 'a' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']; the caption enumerates a, b), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder; the routes agree about the mean and disagree about the error half-length (1.9, 1.9, 2.239); the median of the 3 route(s) that supplied one is used and its own uncertainty is widened to 0.1694 (whisker drawn on one side only: down); 2 route(s) read this whisker as drawn on one side only (down) and 1 read two arms — they disagree about the shape of the bar, not only about its length, so the half-length they were medianed into is a value neither of them reported",
+     "candidate_ids": [
+      "5039533c85ef:d1:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "the locator names panel 'a' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']; the caption enumerates a, b), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder",
+     "candidate_ids": [
+      "5039533c85ef:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "metric_mixed_across_outcomes",
+     "severity": "info",
+     "message": "this paper's outcomes are read on different analysis metrics (baseline_corrected, endpoint, percent_of_perturbation) — legitimate when the outcomes really are different quantities, worth a look when they are not",
+     "candidate_ids": [
+      "5039533c85ef:d1:aftereffect:A:digitize:ensemble",
+      "5039533c85ef:d1:aftereffect:A:digitize:ensemble",
+      "5039533c85ef:d1:aftereffect:B:digitize:ensemble",
+      "5039533c85ef:d1:aftereffect:B:digitize:ensemble",
+      "5039533c85ef:d1:late_adaptation:A:digitize:ensemble",
+      "5039533c85ef:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.29,
+   "confidence_margin": 0.16,
+   "nearest_boundary": "accept_with_note",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "only one independent route produced this value, so it cannot be accepted by vote",
+    "the verifier could not settle it either way (-0.05)",
+    "notes (metric_mixed_across_outcomes) -0.01",
+    "warnings (panel_not_isolated) -0.08, which orders this cell in the review queue but cannot withhold it",
+    "panel_not_isolated caps this cell at 0.70: the named panel could not be isolated from its neighbours; the reading was made on the whole figure and is capped below automatic acceptance",
+    "the caps above stop at 0.29: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "1 of the digitizer's 1 measurement path(s) read both groups with a usable spread, so the effect this figure implies is corroborated by nothing — one path cannot agree with another",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "margin 0.1600 misses accept_with_note (0.45)",
+    "score 0.29 is below 0.45"
+   ],
+   "needs_human": true,
+   "n": 9,
+   "mean": 31.4,
+   "dispersion_value": 1.9,
+   "dispersion_type": "SE",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "deg",
+   "sigma": 0.14825999999999684,
+   "mad": 0.0,
+   "analysis_metric": "endpoint",
+   "route": "figure",
+   "candidate_ids": [
+    "5039533c85ef:d1:late_adaptation:A:digitize:ensemble"
+   ],
+   "higher_is_better": true,
+   "orientation_evidence": "claude-opus-5: The measure is the angular deviation of the hand at peak velocity while reaching with the 30\\Cbecause the cursor is rotated 30\\u00b0 CW, deviating the hand further CCW/left of the target is precisely what compensates for the distortion; the paper states deviations increased with the increasing distortion 'in order to guide the rotated cursor to the target in a more direct path', so a larger value reflects more adaptation (more of the construct), and higher is therefore more of what the review measures. As to which group was higher on this raw measure, the paper reports no group difference and does not state which group's deviations were larger (only that older subjects' deviations saturated slightly earlier), so the direction is unknown from the text. | claude-sonnet-5: During the rotated-cursor reach-training trials, the hand deviation angle reflects how far subjects moved their hand away from the straight target vector in order to counteract the 30° CW cursor rotation. The paper explicitly describes this leftward deviation as increasing as adaptation proceeds ('deviations of the hand from the target vector gradually increased in magnitude... as expected with the increased distortion in order to guide the rotated cursor to the target in a more direct path'), so a larger raw deviation value corresponds to more compensatory adaptation (higher_more_construct), making higher values better for this adaptation-type measure. The paper reports the RM-ANOVA found no significant difference between young and older groups on this measure across the learning blocks, so it does not state which group had the numerically greater deviation at late blocks; hence direction_stated_in_text is unknown.; Hand deviations were defined as the angular difference between a reference vector joining the center home position and the target and the vector joining the center home position and the position of the reaching hand at peak velocity (PV).; However, hand deviations did increase over blocks of trials as expected with the increased distortion in order to guide the rotated cursor to the target in a more direct path (F(32, 544) = 45.261, P\\u00030.001).; RM-ANOVA revealed no differences between the two groups with respect to hand deviations achieved across the blocks of learning trials (Group: F(1, 17) = 2.523, P = 0.131, Trial Block 9 Group: F(32, 544) = 1.077, P = 0.357).; Specifically, both groups of subjects adapted their reaches at a similar rate and to the same extent across all reaching trials.; both groups of subjects began to reach so that their hand was left of the target... deviations of the hand from the target vector gradually increased in magnitude over the first 10–13 blocks of trials as the magnitude of the distortion was increased; RM-ANOVA revealed no differences between the two groups with respect to hand deviations achieved across the blocks of learning trials (Group: F(1, 17) = 2.523, P = 0.131, Trial Block × Group: F(32, 544) = 1.077, P = 0.357)",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "5039533c85ef:d1",
+   "outcome_key": "late_adaptation",
+   "group": "B",
+   "agreement": "single",
+   "agreeing_ids": [
+    "5039533c85ef:d1:late_adaptation:B:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 5.0,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "The paper never prints a numeric value for the terminal-block hand deviation during the misaligned reach-training trials. Fig. 3a only shows a plot of 'Mean Hand Deviation Angles at Peak Velocity (deg)' over 33 blocks, with the caption stating 'Error bars reflect standard error of the mean' but no accompanying table of values. The text discusses saturation blocks (e.g., 'hand deviations saturated for the young subjects by Block 13...After this subjects reached with similar trajectories throughout the rest of the training trials') but gives no degree value for Block 33 specifically, nor any SE. Because the number 33.35° (SE 3.35, n=10) is a pixel-based digitization of a figure that has no printed ground truth, and because the extraction notes explicitly flag a risk of conflating Fig. 3a's y-axis with Fig. 3b's different scale (deg vs %), I cannot confirm this exact value nor find text that contradicts it outright.",
+   "verifiers": [
+    {
+     "candidate_id": "5039533c85ef:d1:late_adaptation:B:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "The paper never prints a numeric value for the terminal-block hand deviation during the misaligned reach-training trials. Fig. 3a only shows a plot of 'Mean Hand Deviation Angles at Peak Velocity (deg)' over 33 blocks, with the caption stating 'Error bars reflect standard error of the mean' but no accompanying table of values. The text discusses saturation blocks (e.g., 'hand deviations saturated for the young subjects by Block 13...After this subjects reached with similar trajectories throughout the rest of the training trials') but gives no degree value for Block 33 specifically, nor any SE. Because the number 33.35° (SE 3.35, n=10) is a pixel-based digitization of a figure that has no printed ground truth, and because the extraction notes explicitly flag a risk of conflating Fig. 3a's y-axis with Fig. 3b's different scale (deg vs %), I cannot confirm this exact value nor find text that contradicts it outright.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "",
+     "checked": [
+      "wrong_panel",
+      "se_vs_sd",
+      "units",
+      "subgroup",
+      "transcription",
+      "wrong_time_window"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "57040756766a1cf9b19078fe8a63e97ddc6fb75ac5d8d04387e04bcb5336ad79",
+     "notes": "The only quantitative statement close to this outcome is the aftereffect measure (no-cursor reaches after misaligned training minus after aligned training), reported as 'On average, all subjects reached 18.0° more left of the target following reach training with a misaligned cursor' (p.7-8) with 'no differences between the two age groups with respect to the extent of visuomotor adaptation achieved (t(17)<1)'. This is a distinct construct (post-training aftereffect without cursor) rather than the late-block angular deviation during the still-perturbed reaching trials, so it cannot substitute as an alt value. Fig. 3a itself remains the only place this specific quantity (late-block deviation with cursor present) is depicted, but only graphically, with no digits printed, and the reader's own note raises legitimate concern about panel/axis conflation during digitization (panel a spans -5° to 45° while panel b spans 0-30° and 0-100%).; did not report checking: wrong_group, baseline_vs_post"
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "error half-lengths span 0.3388, over the 0.19 tolerance (max of 10% of 1.9 and half a pixel = 0.03456); the locator names panel 'a' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']; the caption enumerates a, b), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder; the routes agree about the mean and disagree about the error half-length (1.9, 1.9, 2.239); the median of the 3 route(s) that supplied one is used and its own uncertainty is widened to 0.1694 (whisker drawn on one side only: down); 2 route(s) read this whisker as drawn on one side only (down) and 1 read two arms — they disagree about the shape of the bar, not only about its length, so the half-length they were medianed into is a value neither of them reported",
+     "candidate_ids": [
+      "5039533c85ef:d1:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "the locator names panel 'a' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']; the caption enumerates a, b), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder",
+     "candidate_ids": [
+      "5039533c85ef:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "metric_mixed_across_outcomes",
+     "severity": "info",
+     "message": "this paper's outcomes are read on different analysis metrics (baseline_corrected, endpoint, percent_of_perturbation) — legitimate when the outcomes really are different quantities, worth a look when they are not",
+     "candidate_ids": [
+      "5039533c85ef:d1:aftereffect:A:digitize:ensemble",
+      "5039533c85ef:d1:aftereffect:A:digitize:ensemble",
+      "5039533c85ef:d1:aftereffect:B:digitize:ensemble",
+      "5039533c85ef:d1:aftereffect:B:digitize:ensemble",
+      "5039533c85ef:d1:late_adaptation:A:digitize:ensemble",
+      "5039533c85ef:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.29,
+   "confidence_margin": 0.16,
+   "nearest_boundary": "accept_with_note",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "only one independent route produced this value, so it cannot be accepted by vote",
+    "the verifier could not settle it either way (-0.05)",
+    "notes (metric_mixed_across_outcomes) -0.01",
+    "warnings (panel_not_isolated) -0.08, which orders this cell in the review queue but cannot withhold it",
+    "panel_not_isolated caps this cell at 0.70: the named panel could not be isolated from its neighbours; the reading was made on the whole figure and is capped below automatic acceptance",
+    "the caps above stop at 0.29: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "1 of the digitizer's 1 measurement path(s) read both groups with a usable spread, so the effect this figure implies is corroborated by nothing — one path cannot agree with another",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "margin 0.1600 misses accept_with_note (0.45)",
+    "score 0.29 is below 0.45"
+   ],
+   "needs_human": true,
+   "n": 10,
+   "mean": 33.349999999999994,
+   "dispersion_value": 3.3499999999999996,
+   "dispersion_type": "SE",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "deg",
+   "sigma": 0.07413000000000106,
+   "mad": 0.0,
+   "analysis_metric": "endpoint",
+   "route": "figure",
+   "candidate_ids": [
+    "5039533c85ef:d1:late_adaptation:B:digitize:ensemble"
+   ],
+   "higher_is_better": true,
+   "orientation_evidence": "claude-opus-5: The measure is the angular deviation of the hand at peak velocity while reaching with the 30\\Cbecause the cursor is rotated 30\\u00b0 CW, deviating the hand further CCW/left of the target is precisely what compensates for the distortion; the paper states deviations increased with the increasing distortion 'in order to guide the rotated cursor to the target in a more direct path', so a larger value reflects more adaptation (more of the construct), and higher is therefore more of what the review measures. As to which group was higher on this raw measure, the paper reports no group difference and does not state which group's deviations were larger (only that older subjects' deviations saturated slightly earlier), so the direction is unknown from the text. | claude-sonnet-5: During the rotated-cursor reach-training trials, the hand deviation angle reflects how far subjects moved their hand away from the straight target vector in order to counteract the 30° CW cursor rotation. The paper explicitly describes this leftward deviation as increasing as adaptation proceeds ('deviations of the hand from the target vector gradually increased in magnitude... as expected with the increased distortion in order to guide the rotated cursor to the target in a more direct path'), so a larger raw deviation value corresponds to more compensatory adaptation (higher_more_construct), making higher values better for this adaptation-type measure. The paper reports the RM-ANOVA found no significant difference between young and older groups on this measure across the learning blocks, so it does not state which group had the numerically greater deviation at late blocks; hence direction_stated_in_text is unknown.; Hand deviations were defined as the angular difference between a reference vector joining the center home position and the target and the vector joining the center home position and the position of the reaching hand at peak velocity (PV).; However, hand deviations did increase over blocks of trials as expected with the increased distortion in order to guide the rotated cursor to the target in a more direct path (F(32, 544) = 45.261, P\\u00030.001).; RM-ANOVA revealed no differences between the two groups with respect to hand deviations achieved across the blocks of learning trials (Group: F(1, 17) = 2.523, P = 0.131, Trial Block 9 Group: F(32, 544) = 1.077, P = 0.357).; Specifically, both groups of subjects adapted their reaches at a similar rate and to the same extent across all reaching trials.; both groups of subjects began to reach so that their hand was left of the target... deviations of the hand from the target vector gradually increased in magnitude over the first 10–13 blocks of trials as the magnitude of the distortion was increased; RM-ANOVA revealed no differences between the two groups with respect to hand deviations achieved across the blocks of learning trials (Group: F(1, 17) = 2.523, P = 0.131, Trial Block × Group: F(32, 544) = 1.077, P = 0.357)",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "5039533c85ef:d1",
+   "outcome_key": "aftereffect",
+   "group": "A",
+   "agreement": "single",
+   "agreeing_ids": [
+    "5039533c85ef:d1:aftereffect:A:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 5.0,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "The text of the paper only reports a combined (young+older) aftereffect figure: 'On average, all subjects reached 18.0° more left of the target following reach training with a misaligned cursor. Analysis revealed no differences between the two age groups with respect to the extent of visuomotor adaptation achieved (t(17) < 1).' No group-specific numeric values (mean or SE) for the older group's aftereffect are printed anywhere in the running text, tables, or results section. The only place a group-specific value could come from is Fig. 3b, a bar graph with the caption 'Error bars reflect standard error of the mean,' which confirms the dispersion type is SE if the bar was read correctly, but the actual bar height and error-bar length are not given as numbers in the text, so the specific 17.5°/2.95° values cannot be verified or falsified from the printed material. The reader's own notes flag that panel resolution for Fig. 3b was unreliable (ingestion only resolved panel 'a', so the whole multi-panel image, including panel a's very different y-axis scale, may have been used) and that the measured error-bar half-length exceeds the stated tolerance, both of which raise concrete doubt about the fidelity of the digitization without settling the question either way.",
+   "verifiers": [
+    {
+     "candidate_id": "5039533c85ef:d1:aftereffect:A:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "The text of the paper only reports a combined (young+older) aftereffect figure: 'On average, all subjects reached 18.0° more left of the target following reach training with a misaligned cursor. Analysis revealed no differences between the two age groups with respect to the extent of visuomotor adaptation achieved (t(17) < 1).' No group-specific numeric values (mean or SE) for the older group's aftereffect are printed anywhere in the running text, tables, or results section. The only place a group-specific value could come from is Fig. 3b, a bar graph with the caption 'Error bars reflect standard error of the mean,' which confirms the dispersion type is SE if the bar was read correctly, but the actual bar height and error-bar length are not given as numbers in the text, so the specific 17.5°/2.95° values cannot be verified or falsified from the printed material. The reader's own notes flag that panel resolution for Fig. 3b was unreliable (ingestion only resolved panel 'a', so the whole multi-panel image, including panel a's very different y-axis scale, may have been used) and that the measured error-bar half-length exceeds the stated tolerance, both of which raise concrete doubt about the fidelity of the digitization without settling the question either way.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "On average, all subjects reached 18.0° more left of the target following reach training with a misaligned cursor. Analysis revealed no differences between the two age groups with respect to the extent of visuomotor adaptation achieved (t(17) < 1).",
+     "better_source": "No table or in-text numeric breakdown by group exists for the aftereffect measure; Fig. 3b (page 6) is the only source, and it is a bar graph without printed values, so this candidate's figure-based origin is already the best (and only) available source, though the panel-targeting reliability is questionable per digitization notes. (page 6)",
+     "checked": [
+      "wrong_group",
+      "wrong_panel",
+      "se_vs_sd",
+      "units",
+      "baseline_vs_post"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "54f8ac3ac3990f2ef51cf6ce9e3f5b307f2b28bff30345418c45802ccbdf8e71",
+     "notes": "The paper explicitly states only the pooled/combined mean aftereffect (18.0°, t(17)<1 for group comparison) and never decomposes this into separate elderly vs young numeric means or SEs in the text. Fig. 3b's caption confirms error bars are SEM, consistent with the dispersion type claimed, but the specific magnitude (17.5° mean, 2.95° SE) cannot be confirmed against any printed digit. Given the reader's own admission of panel-resolution ambiguity and error-bar tolerance overage, the candidate value should be treated as unverified rather than confirmed or refuted outright.; did not report checking: wrong_time_window, subgroup, transcription"
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "metric_mixed",
+     "severity": "warn",
+     "message": "this outcome's values mix analysis metrics (baseline_corrected, percent_of_perturbation), which are not the same quantity",
+     "candidate_ids": [
+      "5039533c85ef:d1:aftereffect:A:digitize:ensemble",
+      "5039533c85ef:d1:aftereffect:A:digitize:ensemble",
+      "5039533c85ef:d1:aftereffect:B:digitize:ensemble",
+      "5039533c85ef:d1:aftereffect:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "error half-lengths span 0.3176, over the 0.295 tolerance (max of 10% of 2.95 and half a pixel = 0.02108); the locator names panel 'b' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']; the caption enumerates a, b), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder; the routes agree about the mean and disagree about the error half-length (2.8, 2.9, 3, 3.118); the median of the 4 route(s) that supplied one is used and its own uncertainty is widened to 0.1588 (whisker drawn on one side only: up)",
+     "candidate_ids": [
+      "5039533c85ef:d1:aftereffect:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "the locator names panel 'b' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']; the caption enumerates a, b), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder",
+     "candidate_ids": [
+      "5039533c85ef:d1:aftereffect:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "the locator names panel 'b' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']; the caption enumerates a, b), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder",
+     "candidate_ids": [
+      "5039533c85ef:d1:aftereffect:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "the locator names panel 'b' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']; the caption enumerates a, b), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder",
+     "candidate_ids": [
+      "5039533c85ef:d1:aftereffect:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "metric_mixed_across_outcomes",
+     "severity": "info",
+     "message": "this paper's outcomes are read on different analysis metrics (baseline_corrected, endpoint, percent_of_perturbation) — legitimate when the outcomes really are different quantities, worth a look when they are not",
+     "candidate_ids": [
+      "5039533c85ef:d1:aftereffect:A:digitize:ensemble",
+      "5039533c85ef:d1:aftereffect:A:digitize:ensemble",
+      "5039533c85ef:d1:aftereffect:B:digitize:ensemble",
+      "5039533c85ef:d1:aftereffect:B:digitize:ensemble",
+      "5039533c85ef:d1:late_adaptation:A:digitize:ensemble",
+      "5039533c85ef:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "unit_other_expression",
+     "severity": "info",
+     "message": "some readings are in ['% of distortion'] where the outcome is recorded in 'degrees (and % of the 30° distortion introduced)'; the vote keeps the recorded unit and sets the others aside as another expression of the same quantity",
+     "candidate_ids": [
+      "5039533c85ef:d1:aftereffect:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "accept_with_note",
+   "confidence_score": 0.45,
+   "confidence_margin": 0.0,
+   "nearest_boundary": "accept_with_note",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "one route, but 2 independent model families read it and agreed (claude-opus, claude-sonnet) — a second family is a different failure mode, which is what agreement is for (+0.25)",
+    "the verifier could not settle it either way (-0.05)",
+    "warnings (metric_mixed) -0.08",
+    "notes (metric_mixed_across_outcomes, unit_other_expression) -0.02",
+    "warnings (panel_not_isolated) -0.08, which orders this cell in the review queue but cannot withhold it",
+    "panel_not_isolated caps this cell at 0.70: the named panel could not be isolated from its neighbours; the reading was made on the whole figure and is capped below automatic acceptance",
+    "the caps above stop at 0.45: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "decided_by_a_hair: margin 0.0000 clears accept_with_note (0.45) — this cell is inside 0.03 of the line that decided it, so which side it landed on is not a finding about the paper"
+   ],
+   "needs_human": false,
+   "n": 9,
+   "mean": 17.5,
+   "dispersion_value": 2.95,
+   "dispersion_type": "SE",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "deg",
+   "sigma": 0.04216620013192172,
+   "mad": 0.0,
+   "analysis_metric": "unknown",
+   "route": "figure",
+   "candidate_ids": [
+    "5039533c85ef:d1:aftereffect:A:digitize:ensemble"
+   ],
+   "higher_is_better": true,
+   "orientation_evidence": "claude-opus-5: The measure is the baseline-corrected angular hand deviation on no-cursor reaches, plotted as \"Aftereffects at Peak Velocity (deg)\" and as a percentage of the 30° distortion, with the axis labelled \"CCW/Left of Target\". A larger value therefore means the hand deviated further in the direction opposite the rotation, i.e. more implicit adaptation/recalibration — more of the construct, so higher is more of what the review measures. As for group direction, the paper explicitly reports no difference between age groups (t(17) < 1) and gives only the pooled mean of 18.0°; it never states which group's aftereffect was larger, so direction_stated_in_text is unknown. | claude-sonnet-5: The aftereffect is defined as hand deviation on no-cursor reaches after removing the misaligned cursor, expressed as a difference from aligned-cursor baseline; larger deviation reflects more adaptation/recalibration retained (larger magnitude = more construct), consistent with the review's direction hint. The paper explicitly states there was no significant difference between young and older subjects on this measure (t(17)<1), so it does not report which group's raw value was numerically greater or state a directional difference in text.; These trials were included to establish that subjects had adapted their reaches in response to the misaligned cursor on the second testing day (i.e. exhibited aftereffects).; Aftereffects are presented taking performance on reaches completed after reaching with an aligned cursor as baseline, such that hand deviations achieved on the no cursor reaching trials after reaching with an aligned cursor were subtracted from corresponding hand deviations achieved after reaching with a misaligned cursor.; On average, all subjects reached 18.0 more left of the target following reach training with a misaligned cursor. Analysis revealed no differences between the two age groups with respect to the extent of visuomotor adaptation achieved (t(17) \\1).; Results are shown in degrees and as a percentage of the distortion introduced during reach training trials.; On average, all subjects reached 18.0° more left of the target following reach training with a misaligned cursor.; Analysis revealed no differences between the two age groups with respect to the extent of visuomotor adaptation achieved (t(17) <1).; Aftereffects at Peak Velocity (deg)",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "5039533c85ef:d1",
+   "outcome_key": "aftereffect",
+   "group": "B",
+   "agreement": "single",
+   "agreeing_ids": [
+    "5039533c85ef:d1:aftereffect:B:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 5.0,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "The text only gives a pooled aftereffect value across both groups: 'On average, all subjects reached 18.0° more left of the target following reach training with a misaligned cursor. Analysis revealed no differences between the two age groups with respect to the extent of visuomotor adaptation achieved (t(17) <1).' No separate numeric mean for the young group alone is printed anywhere in the text, tables, or figure caption. Fig. 3b shows separate bars for young (black) and elderly (white) subjects but does not print numeric values on the bars, so the claimed value of 18.47° for the young group specifically cannot be confirmed against any printed number. The reader's own notes also flag that panel b could not be isolated from panel a during digitization, raising doubt about whether the correct bar/axis was even measured.",
+   "verifiers": [
+    {
+     "candidate_id": "5039533c85ef:d1:aftereffect:B:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "The text only gives a pooled aftereffect value across both groups: 'On average, all subjects reached 18.0° more left of the target following reach training with a misaligned cursor. Analysis revealed no differences between the two age groups with respect to the extent of visuomotor adaptation achieved (t(17) <1).' No separate numeric mean for the young group alone is printed anywhere in the text, tables, or figure caption. Fig. 3b shows separate bars for young (black) and elderly (white) subjects but does not print numeric values on the bars, so the claimed value of 18.47° for the young group specifically cannot be confirmed against any printed number. The reader's own notes also flag that panel b could not be isolated from panel a during digitization, raising doubt about whether the correct bar/axis was even measured.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "Page 7 (Results, 'Reaching performance') states the pooled aftereffect: 'On average, all subjects reached 18.0° more left of the target following reach training with a misaligned cursor.' This is the only place a numeric aftereffect value is printed in text, but it is a combined (both groups) figure, not group-specific, so it cannot substitute for a young-only value either. (page 7)",
+     "checked": [
+      "wrong_group",
+      "wrong_panel",
+      "se_vs_sd",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "89ab0e9e8d513f844847683e198718caccf17201d248408cbd056fb32df17697",
+     "notes": "Fig. 3b (page 6) is captioned with 'Error bars reflect standard error of the mean,' supporting that dispersion type SE is plausible if a group-specific bar height were digitized, but no printed numeric mean or SE value exists for the young group's aftereffect alone. The only quantitative aftereffect statistic given is the pooled 18.0° figure and a non-significant t-test (t(17)<1) comparing groups, with no group means reported numerically.; did not report checking: wrong_time_window, baseline_vs_post, units"
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "metric_mixed",
+     "severity": "warn",
+     "message": "this outcome's values mix analysis metrics (baseline_corrected, percent_of_perturbation), which are not the same quantity",
+     "candidate_ids": [
+      "5039533c85ef:d1:aftereffect:A:digitize:ensemble",
+      "5039533c85ef:d1:aftereffect:A:digitize:ensemble",
+      "5039533c85ef:d1:aftereffect:B:digitize:ensemble",
+      "5039533c85ef:d1:aftereffect:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "error half-lengths span 0.3176, over the 0.295 tolerance (max of 10% of 2.95 and half a pixel = 0.02108); the locator names panel 'b' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']; the caption enumerates a, b), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder; the routes agree about the mean and disagree about the error half-length (2.8, 2.9, 3, 3.118); the median of the 4 route(s) that supplied one is used and its own uncertainty is widened to 0.1588 (whisker drawn on one side only: up)",
+     "candidate_ids": [
+      "5039533c85ef:d1:aftereffect:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "the locator names panel 'b' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']; the caption enumerates a, b), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder",
+     "candidate_ids": [
+      "5039533c85ef:d1:aftereffect:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "the locator names panel 'b' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']; the caption enumerates a, b), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder",
+     "candidate_ids": [
+      "5039533c85ef:d1:aftereffect:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "the locator names panel 'b' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']; the caption enumerates a, b), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder",
+     "candidate_ids": [
+      "5039533c85ef:d1:aftereffect:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "metric_mixed_across_outcomes",
+     "severity": "info",
+     "message": "this paper's outcomes are read on different analysis metrics (baseline_corrected, endpoint, percent_of_perturbation) — legitimate when the outcomes really are different quantities, worth a look when they are not",
+     "candidate_ids": [
+      "5039533c85ef:d1:aftereffect:A:digitize:ensemble",
+      "5039533c85ef:d1:aftereffect:A:digitize:ensemble",
+      "5039533c85ef:d1:aftereffect:B:digitize:ensemble",
+      "5039533c85ef:d1:aftereffect:B:digitize:ensemble",
+      "5039533c85ef:d1:late_adaptation:A:digitize:ensemble",
+      "5039533c85ef:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "unit_other_expression",
+     "severity": "info",
+     "message": "some readings are in ['% of distortion'] where the outcome is recorded in 'degrees (and % of the 30° distortion introduced)'; the vote keeps the recorded unit and sets the others aside as another expression of the same quantity",
+     "candidate_ids": [
+      "5039533c85ef:d1:aftereffect:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "accept_with_note",
+   "confidence_score": 0.45,
+   "confidence_margin": 0.0,
+   "nearest_boundary": "accept_with_note",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "one route, but 2 independent model families read it and agreed (claude-opus, claude-sonnet) — a second family is a different failure mode, which is what agreement is for (+0.25)",
+    "the verifier could not settle it either way (-0.05)",
+    "warnings (metric_mixed) -0.08",
+    "notes (metric_mixed_across_outcomes, unit_other_expression) -0.02",
+    "warnings (panel_not_isolated) -0.08, which orders this cell in the review queue but cannot withhold it",
+    "panel_not_isolated caps this cell at 0.70: the named panel could not be isolated from its neighbours; the reading was made on the whole figure and is capped below automatic acceptance",
+    "the caps above stop at 0.45: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "decided_by_a_hair: margin 0.0000 clears accept_with_note (0.45) — this cell is inside 0.03 of the line that decided it, so which side it landed on is not a finding about the paper"
+   ],
+   "needs_human": false,
+   "n": 10,
+   "mean": 18.471415016723824,
+   "dispersion_value": 3.017902221152104,
+   "dispersion_type": "SE",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "deg",
+   "sigma": 0.04216620013192172,
+   "mad": 0.0,
+   "analysis_metric": "unknown",
+   "route": "figure",
+   "candidate_ids": [
+    "5039533c85ef:d1:aftereffect:B:digitize:ensemble"
+   ],
+   "higher_is_better": true,
+   "orientation_evidence": "claude-opus-5: The measure is the baseline-corrected angular hand deviation on no-cursor reaches, plotted as \"Aftereffects at Peak Velocity (deg)\" and as a percentage of the 30° distortion, with the axis labelled \"CCW/Left of Target\". A larger value therefore means the hand deviated further in the direction opposite the rotation, i.e. more implicit adaptation/recalibration — more of the construct, so higher is more of what the review measures. As for group direction, the paper explicitly reports no difference between age groups (t(17) < 1) and gives only the pooled mean of 18.0°; it never states which group's aftereffect was larger, so direction_stated_in_text is unknown. | claude-sonnet-5: The aftereffect is defined as hand deviation on no-cursor reaches after removing the misaligned cursor, expressed as a difference from aligned-cursor baseline; larger deviation reflects more adaptation/recalibration retained (larger magnitude = more construct), consistent with the review's direction hint. The paper explicitly states there was no significant difference between young and older subjects on this measure (t(17)<1), so it does not report which group's raw value was numerically greater or state a directional difference in text.; These trials were included to establish that subjects had adapted their reaches in response to the misaligned cursor on the second testing day (i.e. exhibited aftereffects).; Aftereffects are presented taking performance on reaches completed after reaching with an aligned cursor as baseline, such that hand deviations achieved on the no cursor reaching trials after reaching with an aligned cursor were subtracted from corresponding hand deviations achieved after reaching with a misaligned cursor.; On average, all subjects reached 18.0 more left of the target following reach training with a misaligned cursor. Analysis revealed no differences between the two age groups with respect to the extent of visuomotor adaptation achieved (t(17) \\1).; Results are shown in degrees and as a percentage of the distortion introduced during reach training trials.; On average, all subjects reached 18.0° more left of the target following reach training with a misaligned cursor.; Analysis revealed no differences between the two age groups with respect to the extent of visuomotor adaptation achieved (t(17) <1).; Aftereffects at Peak Velocity (deg)",
+   "overridden_by_human": false,
+   "override_justification": ""
+  }
+ ],
+ "extra_candidates": [],
+ "orientation": {
+  "late_adaptation|Mean angular deviation of the hand at peak velocity while reaching with the misaligned (30° CW rotated) cursor": {
+   "outcome_key": "late_adaptation",
+   "measure_name": "Mean angular deviation of the hand at peak velocity while reaching with the misaligned (30° CW rotated) cursor",
+   "dataset_id": "5039533c85ef:d1",
+   "higher_is_better": true,
+   "raw_value_semantics": "higher_more_construct",
+   "raw_value_semantics_by_model": {
+    "claude-opus-5": "higher_more_construct",
+    "claude-sonnet-5": "higher_more_construct"
+   },
+   "direction_stated_in_text": "unknown",
+   "quotes": [
+    "Hand deviations were defined as the angular difference between a reference vector joining the center home position and the target and the vector joining the center home position and the position of the reaching hand at peak velocity (PV).",
+    "However, hand deviations did increase over blocks of trials as expected with the increased distortion in order to guide the rotated cursor to the target in a more direct path (F(32, 544) = 45.261, P\\u00030.001).",
+    "RM-ANOVA revealed no differences between the two groups with respect to hand deviations achieved across the blocks of learning trials (Group: F(1, 17) = 2.523, P = 0.131, Trial Block 9 Group: F(32, 544) = 1.077, P = 0.357).",
+    "Specifically, both groups of subjects adapted their reaches at a similar rate and to the same extent across all reaching trials.",
+    "both groups of subjects began to reach so that their hand was left of the target... deviations of the hand from the target vector gradually increased in magnitude over the first 10–13 blocks of trials as the magnitude of the distortion was increased",
+    "RM-ANOVA revealed no differences between the two groups with respect to hand deviations achieved across the blocks of learning trials (Group: F(1, 17) = 2.523, P = 0.131, Trial Block × Group: F(32, 544) = 1.077, P = 0.357)"
+   ],
+   "reason": "claude-opus-5: The measure is the angular deviation of the hand at peak velocity while reaching with the 30\\Cbecause the cursor is rotated 30\\u00b0 CW, deviating the hand further CCW/left of the target is precisely what compensates for the distortion; the paper states deviations increased with the increasing distortion 'in order to guide the rotated cursor to the target in a more direct path', so a larger value reflects more adaptation (more of the construct), and higher is therefore more of what the review measures. As to which group was higher on this raw measure, the paper reports no group difference and does not state which group's deviations were larger (only that older subjects' deviations saturated slightly earlier), so the direction is unknown from the text. | claude-sonnet-5: During the rotated-cursor reach-training trials, the hand deviation angle reflects how far subjects moved their hand away from the straight target vector in order to counteract the 30° CW cursor rotation. The paper explicitly describes this leftward deviation as increasing as adaptation proceeds ('deviations of the hand from the target vector gradually increased in magnitude... as expected with the increased distortion in order to guide the rotated cursor to the target in a more direct path'), so a larger raw deviation value corresponds to more compensatory adaptation (higher_more_construct), making higher values better for this adaptation-type measure. The paper reports the RM-ANOVA found no significant difference between young and older groups on this measure across the learning blocks, so it does not state which group had the numerically greater deviation at late blocks; hence direction_stated_in_text is unknown.",
+   "agreed": true,
+   "needs_human": false,
+   "third_read": false,
+   "runs": [
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": true,
+     "raw_value_semantics": "higher_more_construct",
+     "direction_stated_in_text": "unknown",
+     "quotes": [
+      "Hand deviations were defined as the angular difference between a reference vector joining the center home position and the target and the vector joining the center home position and the position of the reaching hand at peak velocity (PV).",
+      "However, hand deviations did increase over blocks of trials as expected with the increased distortion in order to guide the rotated cursor to the target in a more direct path (F(32, 544) = 45.261, P\\u00030.001).",
+      "RM-ANOVA revealed no differences between the two groups with respect to hand deviations achieved across the blocks of learning trials (Group: F(1, 17) = 2.523, P = 0.131, Trial Block 9 Group: F(32, 544) = 1.077, P = 0.357).",
+      "Specifically, both groups of subjects adapted their reaches at a similar rate and to the same extent across all reaching trials."
+     ],
+     "reason": "The measure is the angular deviation of the hand at peak velocity while reaching with the 30\\Cbecause the cursor is rotated 30\\u00b0 CW, deviating the hand further CCW/left of the target is precisely what compensates for the distortion; the paper states deviations increased with the increasing distortion 'in order to guide the rotated cursor to the target in a more direct path', so a larger value reflects more adaptation (more of the construct), and higher is therefore more of what the review measures. As to which group was higher on this raw measure, the paper reports no group difference and does not state which group's deviations were larger (only that older subjects' deviations saturated slightly earlier), so the direction is unknown from the text.",
+     "model": "claude-opus-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "9a1867835ef0d83f66442768d885e704d8f48fdb1d828b3d656d55d7338dc2b6"
+    },
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": true,
+     "raw_value_semantics": "higher_more_construct",
+     "direction_stated_in_text": "unknown",
+     "quotes": [
+      "Hand deviations were defined as the angular difference between a reference vector joining the center home position and the target and the vector joining the center home position and the position of the reaching hand at peak velocity (PV).",
+      "both groups of subjects began to reach so that their hand was left of the target... deviations of the hand from the target vector gradually increased in magnitude over the first 10–13 blocks of trials as the magnitude of the distortion was increased",
+      "RM-ANOVA revealed no differences between the two groups with respect to hand deviations achieved across the blocks of learning trials (Group: F(1, 17) = 2.523, P = 0.131, Trial Block × Group: F(32, 544) = 1.077, P = 0.357)"
+     ],
+     "reason": "During the rotated-cursor reach-training trials, the hand deviation angle reflects how far subjects moved their hand away from the straight target vector in order to counteract the 30° CW cursor rotation. The paper explicitly describes this leftward deviation as increasing as adaptation proceeds ('deviations of the hand from the target vector gradually increased in magnitude... as expected with the increased distortion in order to guide the rotated cursor to the target in a more direct path'), so a larger raw deviation value corresponds to more compensatory adaptation (higher_more_construct), making higher values better for this adaptation-type measure. The paper reports the RM-ANOVA found no significant difference between young and older groups on this measure across the learning blocks, so it does not state which group had the numerically greater deviation at late blocks; hence direction_stated_in_text is unknown.",
+     "model": "claude-sonnet-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "4e897f102da3c197c2f46693b80d12a79c0a5c9306c11004d12ba751f6fc6453"
+    }
+   ],
+   "llm_call_ids": [
+    "9a1867835ef0d83f66442768d885e704d8f48fdb1d828b3d656d55d7338dc2b6",
+    "4e897f102da3c197c2f46693b80d12a79c0a5c9306c11004d12ba751f6fc6453"
+   ],
+   "notes": "means check: ran — every reader that stated a direction was checked against the resolved raw means A = 31.4 and B = 33.349999999999994"
+  },
+  "aftereffect|Mean hand deviation at peak velocity on no-cursor (aftereffect) reaches, expressed in degrees and as a percentage of the 30° distortion": {
+   "outcome_key": "aftereffect",
+   "measure_name": "Mean hand deviation at peak velocity on no-cursor (aftereffect) reaches, expressed in degrees and as a percentage of the 30° distortion",
+   "dataset_id": "5039533c85ef:d1",
+   "higher_is_better": true,
+   "raw_value_semantics": "higher_more_construct",
+   "raw_value_semantics_by_model": {
+    "claude-opus-5": "higher_more_construct",
+    "claude-sonnet-5": "higher_more_construct"
+   },
+   "direction_stated_in_text": "unknown",
+   "quotes": [
+    "These trials were included to establish that subjects had adapted their reaches in response to the misaligned cursor on the second testing day (i.e. exhibited aftereffects).",
+    "Aftereffects are presented taking performance on reaches completed after reaching with an aligned cursor as baseline, such that hand deviations achieved on the no cursor reaching trials after reaching with an aligned cursor were subtracted from corresponding hand deviations achieved after reaching with a misaligned cursor.",
+    "On average, all subjects reached 18.0 more left of the target following reach training with a misaligned cursor. Analysis revealed no differences between the two age groups with respect to the extent of visuomotor adaptation achieved (t(17) \\1).",
+    "Results are shown in degrees and as a percentage of the distortion introduced during reach training trials.",
+    "On average, all subjects reached 18.0° more left of the target following reach training with a misaligned cursor.",
+    "Analysis revealed no differences between the two age groups with respect to the extent of visuomotor adaptation achieved (t(17) <1).",
+    "Aftereffects at Peak Velocity (deg)"
+   ],
+   "reason": "claude-opus-5: The measure is the baseline-corrected angular hand deviation on no-cursor reaches, plotted as \"Aftereffects at Peak Velocity (deg)\" and as a percentage of the 30° distortion, with the axis labelled \"CCW/Left of Target\". A larger value therefore means the hand deviated further in the direction opposite the rotation, i.e. more implicit adaptation/recalibration — more of the construct, so higher is more of what the review measures. As for group direction, the paper explicitly reports no difference between age groups (t(17) < 1) and gives only the pooled mean of 18.0°; it never states which group's aftereffect was larger, so direction_stated_in_text is unknown. | claude-sonnet-5: The aftereffect is defined as hand deviation on no-cursor reaches after removing the misaligned cursor, expressed as a difference from aligned-cursor baseline; larger deviation reflects more adaptation/recalibration retained (larger magnitude = more construct), consistent with the review's direction hint. The paper explicitly states there was no significant difference between young and older subjects on this measure (t(17)<1), so it does not report which group's raw value was numerically greater or state a directional difference in text.",
+   "agreed": true,
+   "needs_human": false,
+   "third_read": false,
+   "runs": [
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": true,
+     "raw_value_semantics": "higher_more_construct",
+     "direction_stated_in_text": "unknown",
+     "quotes": [
+      "These trials were included to establish that subjects had adapted their reaches in response to the misaligned cursor on the second testing day (i.e. exhibited aftereffects).",
+      "Aftereffects are presented taking performance on reaches completed after reaching with an aligned cursor as baseline, such that hand deviations achieved on the no cursor reaching trials after reaching with an aligned cursor were subtracted from corresponding hand deviations achieved after reaching with a misaligned cursor.",
+      "On average, all subjects reached 18.0 more left of the target following reach training with a misaligned cursor. Analysis revealed no differences between the two age groups with respect to the extent of visuomotor adaptation achieved (t(17) \\1).",
+      "Results are shown in degrees and as a percentage of the distortion introduced during reach training trials."
+     ],
+     "reason": "The measure is the baseline-corrected angular hand deviation on no-cursor reaches, plotted as \"Aftereffects at Peak Velocity (deg)\" and as a percentage of the 30° distortion, with the axis labelled \"CCW/Left of Target\". A larger value therefore means the hand deviated further in the direction opposite the rotation, i.e. more implicit adaptation/recalibration — more of the construct, so higher is more of what the review measures. As for group direction, the paper explicitly reports no difference between age groups (t(17) < 1) and gives only the pooled mean of 18.0°; it never states which group's aftereffect was larger, so direction_stated_in_text is unknown.",
+     "model": "claude-opus-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "a442c6bb77a32463c56b351c356fad7036380c342ecdf7ad1888e333ad5c3102"
+    },
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": true,
+     "raw_value_semantics": "higher_more_construct",
+     "direction_stated_in_text": "unknown",
+     "quotes": [
+      "On average, all subjects reached 18.0° more left of the target following reach training with a misaligned cursor.",
+      "Analysis revealed no differences between the two age groups with respect to the extent of visuomotor adaptation achieved (t(17) <1).",
+      "Aftereffects at Peak Velocity (deg)"
+     ],
+     "reason": "The aftereffect is defined as hand deviation on no-cursor reaches after removing the misaligned cursor, expressed as a difference from aligned-cursor baseline; larger deviation reflects more adaptation/recalibration retained (larger magnitude = more construct), consistent with the review's direction hint. The paper explicitly states there was no significant difference between young and older subjects on this measure (t(17)<1), so it does not report which group's raw value was numerically greater or state a directional difference in text.",
+     "model": "claude-sonnet-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "d9e25b242d510de5a2a63ce7cd0b727fe82906098e409179991644d7460623df"
+    }
+   ],
+   "llm_call_ids": [
+    "a442c6bb77a32463c56b351c356fad7036380c342ecdf7ad1888e333ad5c3102",
+    "d9e25b242d510de5a2a63ce7cd0b727fe82906098e409179991644d7460623df"
+   ],
+   "notes": "means check: ran — every reader that stated a direction was checked against the resolved raw means A = 17.5 and B = 18.471415016723824"
+  }
+ },
+ "adjudications": [],
+ "source_rank": {
+  "5039533c85ef:d1|late_adaptation": {
+   "ranked": [
+    {
+     "locator": "Fig. 3a, last block (Block 33) of the misaligned series: filled black squares (young) and open white squares (elderly)",
+     "page": 6,
+     "figure_id": "fig03",
+     "table_id": null,
+     "kind": "figure_line",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries SE error bars",
+      "measures the outcome's own metric (endpoint)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    },
+    {
+     "locator": "Results, Reaching performance paragraph",
+     "page": 7,
+     "figure_id": null,
+     "table_id": null,
+     "kind": "test_statistic",
+     "score": 2,
+     "has_dispersion": false,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "measures the outcome's own metric (endpoint)"
+     ],
+     "losing_reasons": [
+      "scored 2 against the best source's 5",
+      "no dispersion was determined here, so a value read from it cannot become an effect size on its own",
+      "no group size is printed with it"
+     ]
+    }
+   ],
+   "held_back_from_vote": [
+    "5039533c85ef:d1:late_adaptation:-:stats:claude-opus-5#0 (from Results, Reaching performance paragraph): scored 2 against the best source's 5; no dispersion was determined here, so a value read from it cannot become an effect size on its own; no group size is printed with it",
+    "5039533c85ef:d1:late_adaptation:-:stats:claude-opus-5#1 (from Results, Reaching performance paragraph): scored 2 against the best source's 5; no dispersion was determined here, so a value read from it cannot become an effect size on its own; no group size is printed with it",
+    "5039533c85ef:d1:late_adaptation:-:stats:claude-opus-5#2 (from Results, Reaching performance paragraph): scored 2 against the best source's 5; no dispersion was determined here, so a value read from it cannot become an effect size on its own; no group size is printed with it"
+   ],
+   "reopened_on_better_source": ""
+  },
+  "5039533c85ef:d1|aftereffect": {
+   "ranked": [
+    {
+     "locator": "Fig. 3b, left y axis \"Aftereffects at Peak Velocity (deg)\": black bar (Young) and white bar (Elderly)",
+     "page": 6,
+     "figure_id": "fig03",
+     "table_id": null,
+     "kind": "figure_bar",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries SE error bars",
+      "measures the outcome's own metric (baseline_corrected)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    },
+    {
+     "locator": "Fig. 3b, right y axis \"Aftereffects at Peak Velocity (%)\": same black (Young) and white (Elderly) bars read against the percentage axis",
+     "page": 6,
+     "figure_id": "fig03",
+     "table_id": null,
+     "kind": "figure_bar",
+     "score": 3,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": false,
+     "reasons": [
+      "carries SE error bars"
+     ],
+     "losing_reasons": [
+      "scored 3 against the best source's 5",
+      "measures percent_of_perturbation, where this outcome is baseline_corrected",
+      "no group size is printed with it"
+     ]
+    }
+   ],
+   "held_back_from_vote": [],
+   "reopened_on_better_source": ""
+  }
+ },
+ "reopens": 0
+}

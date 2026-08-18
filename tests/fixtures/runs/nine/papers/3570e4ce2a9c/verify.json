@@ -1,0 +1,1721 @@
+{
+ "verdicts": [
+  {
+   "dataset_id": "3570e4ce2a9c:d1",
+   "outcome_key": "late_adaptation",
+   "group": "A",
+   "agreement": "single",
+   "agreeing_ids": [
+    "3570e4ce2a9c:d1:late_adaptation:A:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 5.0,
+   "needs_third_candidate": false,
+   "verifier_verdict": "refuted",
+   "verifier_reason": "The candidate takes a single point (one target direction) from Figure 2a for the older group, but the outcome asks for the block‑average adaptive shift (average across all eight target directions) as reported by the paper's own ANOVA. The text states: 'Averaged across target directions, the adaptive shifts were significantly different from zero both for the younger, F(1, 38) = 106.8, p < .01, and for the older participants, F(1, 38) = 48.1, p < .01' — i.e., the authors themselves define and test the averaged (across‑direction) adaptive shift, not a single target‑direction value. The digitized point (-27.0°, SE≈4.7) corresponds to one of the eight per‑direction means shown in Fig. 2a, not to this averaged quantity, so it represents a subgroup (single target direction) rather than the overall late‑adaptation measure the outcome definition calls for.",
+   "verifiers": [
+    {
+     "candidate_id": "3570e4ce2a9c:d1:late_adaptation:A:digitize:ensemble",
+     "verdict": "refuted",
+     "reason": "The candidate takes a single point (one target direction) from Figure 2a for the older group, but the outcome asks for the block‑average adaptive shift (average across all eight target directions) as reported by the paper's own ANOVA. The text states: 'Averaged across target directions, the adaptive shifts were significantly different from zero both for the younger, F(1, 38) = 106.8, p < .01, and for the older participants, F(1, 38) = 48.1, p < .01' — i.e., the authors themselves define and test the averaged (across‑direction) adaptive shift, not a single target‑direction value. The digitized point (-27.0°, SE≈4.7) corresponds to one of the eight per‑direction means shown in Fig. 2a, not to this averaged quantity, so it represents a subgroup (single target direction) rather than the overall late‑adaptation measure the outcome definition calls for.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": 20,
+     "alt_page": 5,
+     "alt_quote": "Averaged across target directions, the adaptive shifts were significantly different from zero both for the younger, F(1, 38) = 106.8, p < .01, and for the older participants, F(1, 38) = 48.1, p < .01.",
+     "better_source": "The paper reports only the F-statistic for the across-direction average adaptive shift for the older group (no explicit numeric mean/SE is printed for this averaged quantity); Figure 2a itself only shows per-target-direction points with SE bars, so no single better numeric source exists for the requested block average. (page 5)",
+     "checked": [
+      "subgroup",
+      "wrong_panel",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "wrong_time_window",
+      "wrong_group",
+      "units",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "16b951af8af6a5d581a1a4511945a87f093fdd709b7ad44db35720f566c7a61b",
+     "notes": "The reading is a legitimate digitization of one of the eight per-direction data points in Fig. 2a (open circles = older group, per figure legend conventions used elsewhere in the paper), but it does not equal the averaged (block) adaptive shift that the late_adaptation definition specifies. Because individual per-direction numeric values are never printed in the text, the exact digits (-27.0, SE 4.71) cannot be independently verified against printed text, but the choice of a single-direction point instead of the across-direction average is a clear mismatch with the requested outcome measure."
+    },
+    {
+     "candidate_id": "3570e4ce2a9c:d1:late_adaptation:A:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "The reading is a digitisation of Figure 2a, and the paper never prints a numeric value for the older group's adaptive shift. The text only says \"The mean adaptive shifts are shown in Figure 2a, and they were stronger for the younger than for the older participants\" and reports the ANOVA (\"a significant main effect of age, F(1, 38) 5.7, p .05\"; older shift vs zero \"F(1, 38) 48.1, p .01\"). I could not refute the panel or group assignment: Figure 2a is indeed 'adaptive shift' in open-loop posttest with cued presence of the rotation, open circles are 'old', its ordinate spans -50 to 0, and the older curve lies clearly above (less negative than) the younger curve, so -27.0 deg is in the right band for the old group and could not be the young group (whose points sit near -38 to -46), nor panel b (aftereffect, axis -20 to 0) or panel c (explicit shift, older near 0 to -20). What cannot be settled is the exact value and, more importantly, the dispersion: the caption states only \"For all means, standard errors are shown\", i.e. per-target-direction error bars, whereas the candidate reports a single SE (4.71) for the average across the eight target directions — a quantity the paper never plots or prints. Hence neither confirmed nor refuted.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "Yes — for the same dataset the paper prints, in text, the alternative late-adaptation measure (b) as an exact number instead of a figure: \"Initial direction errors were 42.3° and 18.9° in the first and last block of practice for younger participants. For older participants, they were 53.6° and 27.7°.\" That gives the older group's last-block-of-practice initial direction error (27.7°) directly, without digitisation, although no dispersion or n-specific SD is printed with it (and note that the PDF text extraction of this article systematically drops minus signs, e.g. pretest errors printed as \"2.9, 4.3\" are described in the same sentence as negative, so the sign of 27.7° must be taken from the figure/context). (page 4)",
+     "checked": [
+      "wrong_group",
+      "wrong_panel",
+      "wrong_time_window",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "units",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 1,
+     "model": "claude-opus-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "35684f38427a3bf4db0ef68053d252ce075028a3ddd0c29bc28d65906b42b441",
+     "notes": "Traps assessed: wrong_group — refutation attempt failed, -27.0 matches the open-circle 'old' trace, not the filled 'young' trace; wrong_panel — failed, value is out of range for panel b and atypical for panel c; wrong_time_window — the candidate uses the open-loop posttest with cued rotation, which the outcome brief explicitly lists as acceptable measure (a) for late adaptation, so no violation, but the strictly 'end of perturbation block' reading would be the last practice block initial direction error (27.7° older, 18.9° younger, p. 4); baseline_vs_post — correct, the plotted quantity is the posttest-pretest difference (\"the differences are designated as adaptive shifts\"), matching change_from_baseline; units — degrees ('relative direction [deg]'), consistent; se_vs_sd — the bar type is SE per the caption, but its scope is per target direction, not the across-direction mean the candidate reports, so 4.71 cannot be verified; subgroup — the reading is the whole older group (n=20), not the explicit-knowledge subgroups of Figure 3 (mean explicit shifts -37.3°/1.4°), so no subgroup error; transcription — no printed digits exist to compare against.; re-open 1 of 2"
+    }
+   ],
+   "reopens": 1,
+   "adjudicated": true,
+   "adjudication_rationale": "The two candidates were both digitisations of Figure 2a (adaptive shifts by target direction), and the paper prints no numeric value anywhere for those figure points; the text only reports F statistics for the age effect ('a significant main effect of age, F(1, 38) 5.7, p .05') and for the averaged shifts against zero. Because every value I keep must be quotable, I cannot adopt the figure-derived means, and both were flagged (collapsed_across_x, series_marker_mismatch) and refuted/called ambiguous by verifiers. The paper does print, verbatim, the alternative late-adaptation measure listed for this cell — the error of initial direction in the last block of closed-loop practice with the 75° rotation: 18.9° (younger) and 27.7° (older), from the sentence pair in the Experiment 1a Results 'Practice' paragraph. These are true block-level values inside the perturbation window and are internally comparable (same measure, same block, same n = 20 per group, from the Participants paragraph: 'The younger participants, 10 men and 10 women, were 20–29 years old'; 'The older participants, 10 men and 10 women, were 51–65 years old'). No SD, SE or CI is printed for them.; Read directly from the text. The only late-adaptation value the paper actually prints for Experiment 1a is the initial direction error in the LAST block of closed-loop practice with the 75° CCW rotation: 27.7° for the older participants. This matches the measurement window (end of the initial perturbation block, perturbation still applied) and is an error-like measure (smaller = better adaptation). The candidate value (-27.0°, SE 4.71) is a digitisation of Figure 2a; the paper prints no number for Figure 2a, so it cannot be quoted, and the digitiser/verifier flags indicate it is a single target-direction point with an unresolved open/filled marker. No SD or SE is printed for the practice-block initial direction errors (only F values are given), so dispersion is left null.",
+   "flags": [
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 8 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "3570e4ce2a9c:d1:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 8 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "3570e4ce2a9c:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A's datum, so nothing here can say whether the two series are the right way round; group A was described as an OPEN marker, but every marker the pixel pass found is filled (blob, circle, triangle)",
+     "candidate_ids": [
+      "3570e4ce2a9c:d1:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A's datum, so nothing here can say whether the two series are the right way round; group A was described as an OPEN marker, but every marker the pixel pass found is filled (blob, circle, triangle)",
+     "candidate_ids": [
+      "3570e4ce2a9c:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.45,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "one route, but 2 independent model families read it and agreed (claude-opus, claude-sonnet) — a second family is a different failure mode, which is what agreement is for (+0.25)",
+    "a verifier refuted this reading — a human decides",
+    "warnings (collapsed_across_x, series_marker_mismatch) -0.16, which orders this cell in the review queue but cannot withhold it",
+    "the adjudicator asked for a human",
+    "adjudicated cells are capped at 0.70",
+    "collapsed_across_x, series_marker_mismatch caps this cell at 0.70: this is an average across a categorical axis and its dispersion is an approximation, not the paper's own; the reader's description of this series and the markers the pixel pass found do not line up, so which series this number was measured on rests on the reader's words alone",
+    "the caps above stop at 0.45: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "the digitizer's measurement paths imply effects that differ by 0.101 (limit 0.1), so how this picture was measured changes the answer",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "this cell was held by the evidence, not by its score, so the score is not compared with any boundary: the bucket was not decided by the score"
+   ],
+   "needs_human": true,
+   "n": 20,
+   "mean": 27.7,
+   "dispersion_value": null,
+   "dispersion_type": "NONE",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "deg",
+   "sigma": 0.10192874999999947,
+   "mad": 0.0,
+   "analysis_metric": "change_from_baseline",
+   "route": "adjudicated",
+   "candidate_ids": [],
+   "higher_is_better": false,
+   "orientation_evidence": "claude-opus-5: The adaptive shift is a signed posttest–pretest change in final movement direction, expressed as 'relative direction [deg]'; a shift of −75° would fully compensate the 75° CCW rotation, so the negative direction is the adaptive direction and the sign carries the meaning (signed_direction). Because compensation is in the negative direction, a larger (less negative / closer to zero or positive) raw value means LESS adaptation, so for this review's construct lower raw values indicate more adaptation. The paper states the shifts 'were stronger for the younger than for the older participants' (Figure 2a shows young ≈ −40°, old ≈ −25 to −30°), i.e. on the raw signed scale the older group's values are the higher (less negative) ones. | claude-sonnet-5: The adaptive shift is a posttest-minus-pretest difference whose sign indicates compensation for the 75° CCW rotation (a shift of −75° would fully compensate it). Thus the raw number's meaning depends on its sign: more negative values indicate more adaptation/compensation, so this is a signed-direction measure rather than a simple 'more construct' or 'more error' scale. Because greater compensation corresponds to a more negative (i.e., numerically lower) value, higher_is_better is 'lower'. The text states adaptive shifts 'were stronger for the younger than for the older participants,' meaning the younger group's shifts were more negative (further from zero), so on the raw numeric scale the older group (Group A) had the higher (less negative) value.; For the open-loop posttest with cued presence of the visuomotor rotation, the differences are designated as adaptive shifts. An adaptive shift of 75° would compensate the visuomotor rotation of 75°.; The mean adaptive shifts are shown in Figure 2a, and they were stronger for the younger than for the older participants.; the differences are designated as adaptive shifts; a: Mean adaptive shifts in open-loop tests with cued presence of the visuomotor rotation ... relative direction [deg] -50 -40 -30 -20 -10 0; An adaptive shift of 75° would compensate the visuomotor rotation of 75°.; A two-way ANOVA, with age as the between-participant factor and target direction as the within-participant factor, revealed only a significant main effect of age, F(1, 38) 5.7, p .05.",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "3570e4ce2a9c:d1",
+   "outcome_key": "late_adaptation",
+   "group": "B",
+   "agreement": "single",
+   "agreeing_ids": [
+    "3570e4ce2a9c:d1:late_adaptation:B:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 5.0,
+   "needs_third_candidate": false,
+   "verifier_verdict": "refuted",
+   "verifier_reason": "The candidate value (-40.275° with SE 4.75, n=20) is digitized from a single target-direction data point (327°/313°) in Figure 2a, not from the block average that the outcome definition prioritizes. The paper never prints a per-direction numeric value for the young group's adaptive shift in the text; it only reports the omnibus test averaged across target directions (\"Averaged across target directions, the adaptive shifts were significantly different from zero both for the younger, F(1, 38) = 106.8, p < .01\"), with no accompanying mean or SE printed as a number. Reading one of eight target-direction points from the figure as if it were the overall late-adaptation value confuses a single condition/column of Figure 2a with the required block-averaged summary. Moreover, the paper explicitly supplies a genuine block-average measure for the alternative candidate outcome (initial direction error in the last practice block): \"Initial direction errors were 42.3° and 18.9° in the first and last block of practice for younger participants.\" This 18.9° value is the properly averaged, textually printed late-adaptation figure for the younger group, which the digitized figure-point reading does not represent.",
+   "verifiers": [
+    {
+     "candidate_id": "3570e4ce2a9c:d1:late_adaptation:B:digitize:ensemble",
+     "verdict": "refuted",
+     "reason": "The candidate value (-40.275° with SE 4.75, n=20) is digitized from a single target-direction data point (327°/313°) in Figure 2a, not from the block average that the outcome definition prioritizes. The paper never prints a per-direction numeric value for the young group's adaptive shift in the text; it only reports the omnibus test averaged across target directions (\"Averaged across target directions, the adaptive shifts were significantly different from zero both for the younger, F(1, 38) = 106.8, p < .01\"), with no accompanying mean or SE printed as a number. Reading one of eight target-direction points from the figure as if it were the overall late-adaptation value confuses a single condition/column of Figure 2a with the required block-averaged summary. Moreover, the paper explicitly supplies a genuine block-average measure for the alternative candidate outcome (initial direction error in the last practice block): \"Initial direction errors were 42.3° and 18.9° in the first and last block of practice for younger participants.\" This 18.9° value is the properly averaged, textually printed late-adaptation figure for the younger group, which the digitized figure-point reading does not represent.",
+     "alt_mean": 18.9,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "NONE",
+     "alt_n": 20,
+     "alt_page": 4,
+     "alt_quote": "Initial direction errors were 42.3° and 18.9° in the first and last block of practice for younger participants. For older participants, they were 53.6° and 27.7°.",
+     "better_source": "Yes — the text on page 4 reports the last-block initial direction error (a genuine block average) for both age groups, which better matches the 'block average' requirement of the late_adaptation outcome than a single digitized target-direction point from Figure 2a. (page 4)",
+     "checked": [
+      "wrong_panel",
+      "subgroup",
+      "se_vs_sd"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "42faeebdd18d0f158d27c854019d9247353791ce9bf541e5c48ac92074d241b5",
+     "notes": "Figure 2a shows the posttest–pretest adaptive shift broken down by the eight practice target directions, with the caption stating 'For all means, standard errors are shown,' so the dispersion type in the figure is indeed SE — but no specific per-direction numeric mean/SE is printed in the article text, only the omnibus significance test averaged across directions. The candidate's mean/SE were derived purely by image digitization of one direction's data point, which does not correspond to the paper's own block-averaged report of late adaptation.; did not report checking: wrong_group, wrong_time_window, baseline_vs_post, units, transcription"
+    },
+    {
+     "candidate_id": "3570e4ce2a9c:d1:late_adaptation:B:digitize:ensemble",
+     "verdict": "not_run",
+     "reason": "the verifier's answer was cut off at its output limit twice and could not be read (response hit max_tokens=8000 twice (request req_011CeAHYmfWNqWe1VjReqC5H)); no verdict was produced, so this candidate is unverified — which is not evidence against it",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "",
+     "checked": [],
+     "reopen": 0,
+     "model": "",
+     "prompt_version": "",
+     "llm_call_id": "",
+     "notes": ""
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": true,
+   "adjudication_rationale": "The two candidates were both digitisations of Figure 2a (adaptive shifts by target direction), and the paper prints no numeric value anywhere for those figure points; the text only reports F statistics for the age effect ('a significant main effect of age, F(1, 38) 5.7, p .05') and for the averaged shifts against zero. Because every value I keep must be quotable, I cannot adopt the figure-derived means, and both were flagged (collapsed_across_x, series_marker_mismatch) and refuted/called ambiguous by verifiers. The paper does print, verbatim, the alternative late-adaptation measure listed for this cell — the error of initial direction in the last block of closed-loop practice with the 75° rotation: 18.9° (younger) and 27.7° (older), from the sentence pair in the Experiment 1a Results 'Practice' paragraph. These are true block-level values inside the perturbation window and are internally comparable (same measure, same block, same n = 20 per group, from the Participants paragraph: 'The younger participants, 10 men and 10 women, were 20–29 years old'; 'The older participants, 10 men and 10 women, were 51–65 years old'). No SD, SE or CI is printed for them.; Read directly from the text, same sentence pair: 18.9° is the younger group's initial direction error in the last block of practice with the 75° CCW rotation. This is the printed, quotable late-adaptation value; the candidate -40.275° (SE 4.75) is a Figure 2a digitisation with no printed counterpart and was refuted for being a single target-direction point rather than an average. No dispersion is printed for these block means.",
+   "flags": [
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 8 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "3570e4ce2a9c:d1:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 8 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "3570e4ce2a9c:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A's datum, so nothing here can say whether the two series are the right way round; group A was described as an OPEN marker, but every marker the pixel pass found is filled (blob, circle, triangle)",
+     "candidate_ids": [
+      "3570e4ce2a9c:d1:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A's datum, so nothing here can say whether the two series are the right way round; group A was described as an OPEN marker, but every marker the pixel pass found is filled (blob, circle, triangle)",
+     "candidate_ids": [
+      "3570e4ce2a9c:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.35,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "only one independent route produced this value, so it cannot be accepted by vote",
+    "a verifier refuted this reading — a human decides",
+    "a verifier for this cell could not be run, so this reading is unverified rather than doubted and the score is unchanged (0.00): the verifier's answer was cut off at its output limit twice and could not be read (response hit max_tokens=8000 twice (request req_011CeAHYmfWNqWe1VjReqC5H)); no verdict was produced, so this candidate is unverified — which is not evidence against it",
+    "warnings (collapsed_across_x, series_marker_mismatch) -0.16, which orders this cell in the review queue but cannot withhold it",
+    "the adjudicator asked for a human",
+    "adjudicated cells are capped at 0.70",
+    "collapsed_across_x, series_marker_mismatch caps this cell at 0.70: this is an average across a categorical axis and its dispersion is an approximation, not the paper's own; the reader's description of this series and the markers the pixel pass found do not line up, so which series this number was measured on rests on the reader's words alone",
+    "the caps above stop at 0.35: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "the digitizer's measurement paths imply effects that differ by 0.101 (limit 0.1), so how this picture was measured changes the answer",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "this cell was held by the evidence, not by its score, so the score is not compared with any boundary: the bucket was not decided by the score"
+   ],
+   "needs_human": true,
+   "n": 20,
+   "mean": 18.9,
+   "dispersion_value": null,
+   "dispersion_type": "NONE",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "deg",
+   "sigma": 0.10000000000000002,
+   "mad": 0.0,
+   "analysis_metric": "change_from_baseline",
+   "route": "adjudicated",
+   "candidate_ids": [],
+   "higher_is_better": false,
+   "orientation_evidence": "claude-opus-5: The adaptive shift is a signed posttest–pretest change in final movement direction, expressed as 'relative direction [deg]'; a shift of −75° would fully compensate the 75° CCW rotation, so the negative direction is the adaptive direction and the sign carries the meaning (signed_direction). Because compensation is in the negative direction, a larger (less negative / closer to zero or positive) raw value means LESS adaptation, so for this review's construct lower raw values indicate more adaptation. The paper states the shifts 'were stronger for the younger than for the older participants' (Figure 2a shows young ≈ −40°, old ≈ −25 to −30°), i.e. on the raw signed scale the older group's values are the higher (less negative) ones. | claude-sonnet-5: The adaptive shift is a posttest-minus-pretest difference whose sign indicates compensation for the 75° CCW rotation (a shift of −75° would fully compensate it). Thus the raw number's meaning depends on its sign: more negative values indicate more adaptation/compensation, so this is a signed-direction measure rather than a simple 'more construct' or 'more error' scale. Because greater compensation corresponds to a more negative (i.e., numerically lower) value, higher_is_better is 'lower'. The text states adaptive shifts 'were stronger for the younger than for the older participants,' meaning the younger group's shifts were more negative (further from zero), so on the raw numeric scale the older group (Group A) had the higher (less negative) value.; For the open-loop posttest with cued presence of the visuomotor rotation, the differences are designated as adaptive shifts. An adaptive shift of 75° would compensate the visuomotor rotation of 75°.; The mean adaptive shifts are shown in Figure 2a, and they were stronger for the younger than for the older participants.; the differences are designated as adaptive shifts; a: Mean adaptive shifts in open-loop tests with cued presence of the visuomotor rotation ... relative direction [deg] -50 -40 -30 -20 -10 0; An adaptive shift of 75° would compensate the visuomotor rotation of 75°.; A two-way ANOVA, with age as the between-participant factor and target direction as the within-participant factor, revealed only a significant main effect of age, F(1, 38) 5.7, p .05.",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "3570e4ce2a9c:d1",
+   "outcome_key": "aftereffect",
+   "group": "A",
+   "agreement": "single",
+   "agreeing_ids": [
+    "3570e4ce2a9c:d1:aftereffect:A:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 2.5,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "The paper never prints a numeric mean (or SE) for the aftereffect averaged across the eight target directions in Experiment 1a; it only reports the pattern qualitatively (\"There was only a small difference between the two age groups, with slightly stronger aftereffects of the older participants\") and gives significance tests, not raw means: \"the aftereffects were significantly different from zero both for the younger, F(1, 38) = 57.4, p < .01, and for the older participants, F(1, 38) = 97.4, p < .01.\" The only place this quantity appears is graphically in Figure 2b (\"b: mean aftereffects in open-loop tests with cued absence of the visuomotor rotation … For all means, standard errors are shown.\"), so the -13.18°/SE 2.23° figure can only be checked by re-digitizing the plot, which the extractor's own uncertainty note flags as unstable (error-bar half-lengths of 1.988 vs 2.469, exceeding the stated tolerance). I cannot find any printed number in the text that either matches or contradicts this specific value, so I can neither confirm nor refute it with confidence.",
+   "verifiers": [
+    {
+     "candidate_id": "3570e4ce2a9c:d1:aftereffect:A:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "The paper never prints a numeric mean (or SE) for the aftereffect averaged across the eight target directions in Experiment 1a; it only reports the pattern qualitatively (\"There was only a small difference between the two age groups, with slightly stronger aftereffects of the older participants\") and gives significance tests, not raw means: \"the aftereffects were significantly different from zero both for the younger, F(1, 38) = 57.4, p < .01, and for the older participants, F(1, 38) = 97.4, p < .01.\" The only place this quantity appears is graphically in Figure 2b (\"b: mean aftereffects in open-loop tests with cued absence of the visuomotor rotation … For all means, standard errors are shown.\"), so the -13.18°/SE 2.23° figure can only be checked by re-digitizing the plot, which the extractor's own uncertainty note flags as unstable (error-bar half-lengths of 1.988 vs 2.469, exceeding the stated tolerance). I cannot find any printed number in the text that either matches or contradicts this specific value, so I can neither confirm nor refute it with confidence.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "NONE",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "",
+     "checked": [
+      "wrong_group",
+      "wrong_time_window",
+      "wrong_panel",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "units",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "89f61bd3850f150a0ed639e692e8fd7621cdeb210a9088cb7f564732cd68d3d3",
+     "notes": "Panel/group/window assignment (Figure 2b, older group, posttest-minus-pretest open-loop test with cued absence of rotation) is consistent with the paper's description, and the dispersion type (SE) matches the figure caption 'For all means, standard errors are shown.' However, no table or in-text sentence gives an explicit numeric mean/SE for the aftereffect averaged across target directions for either age group in Experiment 1a — only the qualitative statement about 'slightly stronger aftereffects of the older participants' and the two F-tests against zero. The reading is therefore a pure figure-digitization with no independent textual value to corroborate or contradict it, and the extractor's own note about inconsistent error-bar estimates (0.4812 vs 0.2228 tolerance) further undermines confidence in the precise SE reported."
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 8 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "3570e4ce2a9c:d1:aftereffect:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 8 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "3570e4ce2a9c:d1:aftereffect:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "orientation_unknown",
+     "severity": "warn",
+     "message": "nobody has established the direction of this measure (does a larger raw value mean more of the construct?), so the sign of any effect size is undecided",
+     "candidate_ids": []
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round; group A was described as an OPEN marker, but every marker the pixel pass found is filled (blob, circle, triangle)",
+     "candidate_ids": [
+      "3570e4ce2a9c:d1:aftereffect:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round; group A was described as an OPEN marker, but every marker the pixel pass found is filled (blob, circle, triangle)",
+     "candidate_ids": [
+      "3570e4ce2a9c:d1:aftereffect:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.45,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "one route, but 2 independent model families read it and agreed (claude-opus, claude-sonnet) — a second family is a different failure mode, which is what agreement is for (+0.25)",
+    "the verifier could not settle it either way (-0.05)",
+    "warnings (orientation_unknown) -0.08",
+    "warnings (collapsed_across_x, series_marker_mismatch) -0.16, which orders this cell in the review queue but cannot withhold it",
+    "the direction of this measure is unresolved, so the sign of any effect size built on it is undecided",
+    "collapsed_across_x, series_marker_mismatch caps this cell at 0.70: this is an average across a categorical axis and its dispersion is an approximation, not the paper's own; the reader's description of this series and the markers the pixel pass found do not line up, so which series this number was measured on rests on the reader's words alone",
+    "the caps above stop at 0.45: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "1 of the digitizer's 1 measurement path(s) read both groups with a usable spread, so the effect this figure implies is corroborated by nothing — one path cannot agree with another",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "this cell was held by the evidence, not by its score, so the score is not compared with any boundary: the bucket was not decided by the score"
+   ],
+   "needs_human": true,
+   "n": 20,
+   "mean": -13.18125,
+   "dispersion_value": 2.228125,
+   "dispersion_type": "SE",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "deg",
+   "sigma": 0.04074924594899909,
+   "mad": 0.0,
+   "analysis_metric": "change_from_baseline",
+   "route": "figure",
+   "candidate_ids": [
+    "3570e4ce2a9c:d1:aftereffect:A:digitize:ensemble"
+   ],
+   "higher_is_better": null,
+   "orientation_evidence": "claude-opus-5: The aftereffect is a signed posttest−pretest change in final movement direction, plotted on an axis running from −20 to 0 deg in Experiment 1a (75° CCW rotation; compensatory shifts are negative). Thus the sign carries the direction, and a larger (i.e., less negative, closer to zero) raw value means a SMALLER aftereffect, whereas more negative values mean more implicit recalibration — so higher raw value = less of the review's construct. The paper states the older participants had 'slightly stronger aftereffects' (non-significant, F(1,38)=2.6, p>.10), i.e., more negative raw values, so on the raw scale the younger group (Group B) had the higher (less negative) values. | claude-sonnet-5: The aftereffect is a posttest–pretest difference in movement direction that is plotted as a negative value (relative direction in degrees, e.g., Figure 2b shows negative values for both groups). The magnitude of this negative deviation reflects the strength of implicit recalibration (a more negative value indicates a stronger aftereffect), so the raw sign itself does not directly indicate more or less construct—only the magnitude does, making this a signed-direction measure. The paper describes the difference only in terms of relative magnitude ('slightly stronger aftereffects of the older participants') rather than explicitly stating which group had the numerically higher (less negative) raw value, so the raw-value comparison direction cannot be determined from the text with confidence.; For the open-loop posttest with cued absence of the visuomotor rotation, the posttest–pretest difference of final directions of hand movements was an aftereffect measure.; There was only a small difference between the two age groups, with slightly stronger aftereffects of the older participants and a stronger aftereffect for oblique than for frontoparallel and sagittal directions.; aftereffect relative direction [deg] -20 -15 -10 -5 0; An adaptive shift of 75° would compensate the visuomotor rotation of 75°.; There was only a small difference between the two age groups, with slightly stronger aftereffects of the older participants and a stronger aftereffect for oblique than for fronto-parallel and sagittal directions.; Averaged across target directions, the aftereffects were significantly different from zero both for the younger, F(1, 38) = 57.4, p .01, and for the older participants, F(1, 38) = 97.4, p .01.",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "3570e4ce2a9c:d1",
+   "outcome_key": "aftereffect",
+   "group": "B",
+   "agreement": "single",
+   "agreeing_ids": [
+    "3570e4ce2a9c:d1:aftereffect:B:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 2.5,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "The paper never prints a numeric mean or SE for the younger group's aftereffect; it only reports the group comparison as an F-test: 'The main effect of age failed to approach statistical significance, F(1, 38) = 2.6, p < .10' and states the aftereffects 'were significantly different from zero both for the younger, F(1, 38) = 57.4, p < .01, and for the older participants, F(1, 38) = 97.4, p < .01.' The only place a per-direction/aggregate mean could come from is Figure 2b ('mean aftereffects...shown separately for younger and older participants...For all means, standard errors are shown'), but no digit values are printed there—only the graphical points. Thus the candidate's specific mean (-10.14°) and SE (2.38°) are a digitization/estimate from the figure, not a value the paper states in text, and cannot be independently verified or refuted from the printed content.",
+   "verifiers": [
+    {
+     "candidate_id": "3570e4ce2a9c:d1:aftereffect:B:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "The paper never prints a numeric mean or SE for the younger group's aftereffect; it only reports the group comparison as an F-test: 'The main effect of age failed to approach statistical significance, F(1, 38) = 2.6, p < .10' and states the aftereffects 'were significantly different from zero both for the younger, F(1, 38) = 57.4, p < .01, and for the older participants, F(1, 38) = 97.4, p < .01.' The only place a per-direction/aggregate mean could come from is Figure 2b ('mean aftereffects...shown separately for younger and older participants...For all means, standard errors are shown'), but no digit values are printed there—only the graphical points. Thus the candidate's specific mean (-10.14°) and SE (2.38°) are a digitization/estimate from the figure, not a value the paper states in text, and cannot be independently verified or refuted from the printed content.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "",
+     "checked": [
+      "wrong_panel",
+      "wrong_time_window",
+      "baseline_vs_post",
+      "se_vs_sd",
+      "subgroup",
+      "units"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "9f55a81b1f3ac8624044e4fd4364eb6326a18a73867e072bdc5a0479d5d36e25",
+     "notes": "Figure 2b (p.5) is indeed the correct panel/measure (posttest–pretest difference in the open-loop test with cued absence of the rotation, Experiment 1a), and the caption confirms error bars are SEs, consistent with the candidate's dispersion type. However, no table or in-text sentence gives the exact per-group numeric mean/SE averaged across the 8 target directions, so the specific digitized values cannot be confirmed or refuted with certainty—only the qualitative claim that aftereffects did not differ reliably by age (F(1,38)=2.6, p>.10) and were slightly larger for older participants is textually supported.; did not report checking: wrong_group, transcription"
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 8 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "3570e4ce2a9c:d1:aftereffect:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 8 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "3570e4ce2a9c:d1:aftereffect:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "orientation_unknown",
+     "severity": "warn",
+     "message": "nobody has established the direction of this measure (does a larger raw value mean more of the construct?), so the sign of any effect size is undecided",
+     "candidate_ids": []
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round; group A was described as an OPEN marker, but every marker the pixel pass found is filled (blob, circle, triangle)",
+     "candidate_ids": [
+      "3570e4ce2a9c:d1:aftereffect:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round; group A was described as an OPEN marker, but every marker the pixel pass found is filled (blob, circle, triangle)",
+     "candidate_ids": [
+      "3570e4ce2a9c:d1:aftereffect:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.45,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "one route, but 2 independent model families read it and agreed (claude-opus, claude-sonnet) — a second family is a different failure mode, which is what agreement is for (+0.25)",
+    "the verifier could not settle it either way (-0.05)",
+    "warnings (orientation_unknown) -0.08",
+    "warnings (collapsed_across_x, series_marker_mismatch) -0.16, which orders this cell in the review queue but cannot withhold it",
+    "the direction of this measure is unresolved, so the sign of any effect size built on it is undecided",
+    "collapsed_across_x, series_marker_mismatch caps this cell at 0.70: this is an average across a categorical axis and its dispersion is an approximation, not the paper's own; the reader's description of this series and the markers the pixel pass found do not line up, so which series this number was measured on rests on the reader's words alone",
+    "the caps above stop at 0.45: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "1 of the digitizer's 1 measurement path(s) read both groups with a usable spread, so the effect this figure implies is corroborated by nothing — one path cannot agree with another",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "this cell was held by the evidence, not by its score, so the score is not compared with any boundary: the bucket was not decided by the score"
+   ],
+   "needs_human": true,
+   "n": 20,
+   "mean": -10.14375,
+   "dispersion_value": 2.378125,
+   "dispersion_type": "SE",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "deg",
+   "sigma": 0.04074924594899909,
+   "mad": 0.0,
+   "analysis_metric": "change_from_baseline",
+   "route": "figure",
+   "candidate_ids": [
+    "3570e4ce2a9c:d1:aftereffect:B:digitize:ensemble"
+   ],
+   "higher_is_better": null,
+   "orientation_evidence": "claude-opus-5: The aftereffect is a signed posttest−pretest change in final movement direction, plotted on an axis running from −20 to 0 deg in Experiment 1a (75° CCW rotation; compensatory shifts are negative). Thus the sign carries the direction, and a larger (i.e., less negative, closer to zero) raw value means a SMALLER aftereffect, whereas more negative values mean more implicit recalibration — so higher raw value = less of the review's construct. The paper states the older participants had 'slightly stronger aftereffects' (non-significant, F(1,38)=2.6, p>.10), i.e., more negative raw values, so on the raw scale the younger group (Group B) had the higher (less negative) values. | claude-sonnet-5: The aftereffect is a posttest–pretest difference in movement direction that is plotted as a negative value (relative direction in degrees, e.g., Figure 2b shows negative values for both groups). The magnitude of this negative deviation reflects the strength of implicit recalibration (a more negative value indicates a stronger aftereffect), so the raw sign itself does not directly indicate more or less construct—only the magnitude does, making this a signed-direction measure. The paper describes the difference only in terms of relative magnitude ('slightly stronger aftereffects of the older participants') rather than explicitly stating which group had the numerically higher (less negative) raw value, so the raw-value comparison direction cannot be determined from the text with confidence.; For the open-loop posttest with cued absence of the visuomotor rotation, the posttest–pretest difference of final directions of hand movements was an aftereffect measure.; There was only a small difference between the two age groups, with slightly stronger aftereffects of the older participants and a stronger aftereffect for oblique than for frontoparallel and sagittal directions.; aftereffect relative direction [deg] -20 -15 -10 -5 0; An adaptive shift of 75° would compensate the visuomotor rotation of 75°.; There was only a small difference between the two age groups, with slightly stronger aftereffects of the older participants and a stronger aftereffect for oblique than for fronto-parallel and sagittal directions.; Averaged across target directions, the aftereffects were significantly different from zero both for the younger, F(1, 38) = 57.4, p .01, and for the older participants, F(1, 38) = 97.4, p .01.",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "3570e4ce2a9c:d2",
+   "outcome_key": "late_adaptation",
+   "group": "A",
+   "agreement": "agree",
+   "agreeing_ids": [
+    "3570e4ce2a9c:d2:late_adaptation:A:text:narrative_first:claude-sonnet-5#0",
+    "3570e4ce2a9c:d2:late_adaptation:A:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "figure_tolerance",
+   "vote_tolerance": 2.5,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "The digits, sign and group label check out: page 10 prints verbatim \"For the older participants, it was 3.7°, 6.4°, and 5.2° for the target amplitudes of 30 mm, 60 mm, and 90 mm, respectively, and for the younger participants, it was 8.2°, 7.0°, and 6.9°\" (the negative signs are lost in the OCR but the paragraph is about negative adaptive shifts), so this is the older group, Experiment 2, adaptive shift in the open-loop posttest with cued 30° rotation, i.e. a post-minus-pretest change. What cannot be settled is whether it is the right cell for 'late adaptation'. These three numbers are marginal means for the between-factor breakdown of the significant Target Amplitude x Age interaction, i.e. each is collapsed across all FIVE test target directions (0°, 45°, 90°, 135°, 180°), of which only 0° was practised. The paper itself states that \"the adaptive shift was restricted to the practiced direction and adjacent target directions\" and that the shifts \"amounted to about 15° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction\". So -6.4° is a direction-averaged value that strongly dilutes the adapted state at the practised target, whereas the practised-condition value (~ -13° for older, read from Figure 6a) is never printed numerically per age group. The paper prints no age-group-specific overall adaptive shift and no dispersion for -6.4°, so neither confirmation nor refutation is possible from the text: the reading is a genuine printed number, but it is a partial marginal (60 mm amplitude x all directions), not an overall late-adaptation mean.",
+   "verifiers": [
+    {
+     "candidate_id": "3570e4ce2a9c:d2:late_adaptation:A:text:narrative_first:claude-sonnet-5#0",
+     "verdict": "ambiguous",
+     "reason": "The digits, sign and group label check out: page 10 prints verbatim \"For the older participants, it was 3.7°, 6.4°, and 5.2° for the target amplitudes of 30 mm, 60 mm, and 90 mm, respectively, and for the younger participants, it was 8.2°, 7.0°, and 6.9°\" (the negative signs are lost in the OCR but the paragraph is about negative adaptive shifts), so this is the older group, Experiment 2, adaptive shift in the open-loop posttest with cued 30° rotation, i.e. a post-minus-pretest change. What cannot be settled is whether it is the right cell for 'late adaptation'. These three numbers are marginal means for the between-factor breakdown of the significant Target Amplitude x Age interaction, i.e. each is collapsed across all FIVE test target directions (0°, 45°, 90°, 135°, 180°), of which only 0° was practised. The paper itself states that \"the adaptive shift was restricted to the practiced direction and adjacent target directions\" and that the shifts \"amounted to about 15° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction\". So -6.4° is a direction-averaged value that strongly dilutes the adapted state at the practised target, whereas the practised-condition value (~ -13° for older, read from Figure 6a) is never printed numerically per age group. The paper prints no age-group-specific overall adaptive shift and no dispersion for -6.4°, so neither confirmation nor refutation is possible from the text: the reading is a genuine printed number, but it is a partial marginal (60 mm amplitude x all directions), not an overall late-adaptation mean.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "NONE",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "Figure 6a (page 10/11): 'Mean adaptive shifts in open-loop tests with cued presence of the visuomotor rotation ... shown separately for younger and older participants (Experiment 2). For all means. standard errors are shown.' This panel gives the group-specific adaptive shift at the practised target direction (0°) with SE bars, which matches the outcome window more directly than the amplitude-marginal text value; the accompanying text only gives the age-collapsed statement 'They amounted to about 15° at the target direction used during practice (0°)'. (page 10)",
+     "checked": [
+      "wrong_group",
+      "wrong_time_window",
+      "wrong_panel",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "units",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-opus-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "28d592bcad04304d57333b6ef35311a27b8b9e8d4ea4e00b667f33cde5e4fd67",
+     "notes": "Traps ruled out: wrong_group (sentence explicitly says 'For the older participants'), transcription (-6.4 is the middle of the three printed values, 60 mm), units (deg, relative direction), baseline_vs_post (adaptive shift is defined as posttest-pretest, so it is a change score as recorded), se_vs_sd (no dispersion was claimed, so no SE/SD confusion). Trap that bites: subgroup/wrong_panel - the value is a marginal mean for one target amplitude collapsed over five target directions, four of which were never practised, and the ANOVA reported 'no effect of age' for adaptive shift, so this number should not be treated as the group's overall late-adaptation level. Also note the paper analysed individual medians, not means, in Experiment 2."
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": true,
+   "adjudication_rationale": "For Experiment 2 the paper reports the adaptive shift (open-loop posttest−pretest with cued presence of the 30° CCW rotation) only in two forms: (i) Figure 6a, means ± standard errors as a function of target direction, from which no number is printed; and (ii) the text sentence giving the age × amplitude marginal means, which is the only place where group-specific digits appear ('For the older participants, it was −3.7°, −6.4°, and −5.2° … and for the younger participants, it was −8.2°, −7.0°, and −6.9°'). The paper's other overall statements are not group-specific ('They amounted to about −15° at the target direction used during practice (0°)'; 'Initial direction errors declined across practice blocks from 15.8° to 8.4°. There was no difference between the two age groups.'). I therefore kept the printed 60 mm values, 60 mm being the practiced amplitude, and rejected the digitised figure means because they are not printed and cannot be quoted, and because averaging across the five plotted target directions is exactly the operation the pipeline forbids me to perform. I did not compute any average across the three amplitudes.; The only group-specific adaptive-shift numbers printed anywhere in Experiment 2 are these three per-amplitude marginal means; I kept the 60 mm value because 60 mm is the amplitude used during practice ('Only a single target (0° direction, 60 mm amplitude) was presented', p. 9). No dispersion is printed with this sentence, so dispersion is NONE (Figure 6a shows standard errors only per target direction, which cannot be transcribed as a number). n = 18 is taken from the Participants paragraph on p. 9 ('The older participants, 9 men and 9 women, were 49–65 years old'). Caveat driving needs_human: this value is averaged across all five test target directions (including directions where the shift is ~0), the paper's own overall statement is only non-group-specific ('They amounted to about −15° at the target direction used during practice (0°)'), and the figure-digitisation route read −4.79° for this group, i.e. a materially different value that reverses the size of the age gap.",
+   "flags": [
+    {
+     "code": "axis_conflict",
+     "severity": "warn",
+     "message": "the readers of this figure answered off different value axes; the ensemble kept \"left y-axis, 'relative direction [deg]', linear, printed ticks 0, -5, -10, -15 at y = 135.5, 291.5, 447.5, 603.5 px (31.2 px per degree)\" and dropped digitize:readout:claude-opus-5:ticks_first",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "axis_conflict",
+     "severity": "warn",
+     "message": "the readers of this figure answered off different value axes; the ensemble kept \"left y-axis, 'relative direction [deg]', linear, printed ticks 0, -5, -10, -15 at y = 135.5, 291.5, 447.5, 603.5 px (31.2 px per degree)\" and dropped digitize:readout:claude-opus-5:ticks_first",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 5 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 5 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "dispersion_missing",
+     "severity": "warn",
+     "message": "this value carries no dispersion of any kind",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:A:text:narrative_first:claude-sonnet-5#0"
+     ]
+    },
+    {
+     "code": "dispersion_missing",
+     "severity": "warn",
+     "message": "this value carries no dispersion of any kind",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:B:text:narrative_first:claude-sonnet-5#1"
+     ]
+    },
+    {
+     "code": "n_missing",
+     "severity": "warn",
+     "message": "no group size was transcribed with this value",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:A:text:narrative_first:claude-sonnet-5#0"
+     ]
+    },
+    {
+     "code": "n_missing",
+     "severity": "warn",
+     "message": "no group size was transcribed with this value",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:B:text:narrative_first:claude-sonnet-5#1"
+     ]
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round; group A was described as an OPEN marker, but every marker the pixel pass found is filled (blob, circle)",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round; group A was described as an OPEN marker, but every marker the pixel pass found is filled (blob, circle)",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.45,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "source kind text (+0.40)",
+    "2 independent routes agree within 2.5 (+0.25)",
+    "every quote behind this value is printed in the paper (+0.15)",
+    "the verifier could not settle it either way (-0.05)",
+    "the routes are 13% apart around the value (-0.05)",
+    "warnings (dispersion_missing, n_missing) -0.16",
+    "axis_conflict (-0.08) — a human decides: the readers answered off different value axes and only one of them was pooled, so which ladder this number is on rests on a majority. Agreement about a number never establishes that it is the right number, so this is not something a score can settle",
+    "warnings (collapsed_across_x, series_marker_mismatch) -0.16, which orders this cell in the review queue but cannot withhold it",
+    "the adjudicator asked for a human",
+    "adjudicated cells are capped at 0.70",
+    "collapsed_across_x, series_marker_mismatch caps this cell at 0.70: this is an average across a categorical axis and its dispersion is an approximation, not the paper's own; the reader's description of this series and the markers the pixel pass found do not line up, so which series this number was measured on rests on the reader's words alone",
+    "the caps above stop at 0.45: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "this cell was held by the evidence, not by its score, so the score is not compared with any boundary: the bucket was not decided by the score"
+   ],
+   "needs_human": true,
+   "n": 18,
+   "mean": -6.4,
+   "dispersion_value": null,
+   "dispersion_type": "NONE",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "deg",
+   "sigma": 0.0320227133751309,
+   "mad": 0.8050000000000002,
+   "analysis_metric": "change_from_baseline",
+   "route": "adjudicated",
+   "candidate_ids": [
+    "3570e4ce2a9c:d2:late_adaptation:A:text:narrative_first:claude-sonnet-5#0"
+   ],
+   "higher_is_better": false,
+   "orientation_evidence": "claude-opus-5: The adaptive shift is a signed posttest–pretest change in movement direction expressed relative to target direction; the paper states that a shift of −30° would fully compensate the 30° CCW rotation (the PDF text extraction drops the minus signs, but the figure axis runs from −15 to 0 and the printed means are negative). Thus more negative values = more adaptation, and a larger (less negative / nearer zero) raw value means LESS of the construct 'late adaptation'. On the raw signed scale the older group's values are numerically higher (nearer zero: −3.7, −6.4, −5.2) than the younger group's (−8.2, −7.0, −6.9), although the paper reports no significant effect of age. | claude-sonnet-5: The adaptive‑shift measure is defined so that a negative value in the direction opposite the rotation reflects compensation (a shift of −30° would fully compensate a 30° rotation); values near zero mean no adaptation. Thus the raw sign carries the direction of compensation and larger (more negative) magnitude means more adaptation, while a raw value closer to zero (less negative, i.e. numerically higher) means less adaptation — this is a signed measure, not a simple higher‑is‑more‑construct or higher‑is‑error scale. Consequently a lower (more negative) raw value corresponds to more of the construct (late adaptation), so higher_is_better is 'lower'. The paper's own ANOVA for this measure explicitly reports 'no effect of age' for the overall adaptive‑shift analysis (Figure 6a), so the text does not establish which group's raw value was higher; the only numeric group comparison available is for a secondary amplitude breakdown, which is noted as not the primary measurement location, so overall the paper does not clearly state which group had the higher raw score for the late‑adaptation measure itself.; An adaptive shift of 30° would compensate the visuomotor rotation of 30° at the practiced target direction.; The mean adaptive shifts are shown in Figure 6a. They amounted to about 15° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction.; For the older participants, it was 3.7°, 6.4°, and 5.2° for the target amplitudes of 30 mm, 60 mm, and 90 mm, respectively, and for the younger participants, it was 8.2°, 7.0°, and 6.9°.; An ANOVA, with age and gender as the between-participant factors and target direction and target amplitude as the within-participant factors, revealed a significant main effect of target direction, F(4, 132) 14.3, p .01, and no effect of age.; An adaptive shift of −30° would compensate the visuomotor rotation of 30° at the practiced target direction.; The mean adaptive shifts are shown in Figure 6a. They amounted to about −15° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction.; An ANOVA, with age and gender as the between-participant factors and target direction and target amplitude as the within-participant factors, revealed a significant main effect of target direction, F(4, 132) = 14.3, p < .01, and no effect of age.; For the older participants, it was −3.7°, −6.4°, and −5.2° for the target amplitudes of 30 mm, 60 mm, and 90 mm, respectively, and for the younger participants, it was −8.2°, −7.0°, and −6.9°.",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "3570e4ce2a9c:d2",
+   "outcome_key": "late_adaptation",
+   "group": "B",
+   "agreement": "agree",
+   "agreeing_ids": [
+    "3570e4ce2a9c:d2:late_adaptation:B:text:narrative_first:claude-sonnet-5#1",
+    "3570e4ce2a9c:d2:late_adaptation:B:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "figure_tolerance",
+   "vote_tolerance": 2.5,
+   "needs_third_candidate": false,
+   "verifier_verdict": "refuted",
+   "verifier_reason": "The digits are transcribed correctly and do belong to the younger group, but they are not a group-level measure of late adaptation. The sentence quoted is the amplitude breakdown of the adaptive shift: \"Even though the adaptive shift was restricted to the practiced direction and adjacent target directions, it was not restricted to the practiced amplitude. For the older participants, it was 3.7, 6.4, and 5.2 for the target amplitudes of 30 mm, 60 mm, and 90 mm, respectively, and for the younger participants, it was 8.2, 7.0, and 6.9.\" These are marginal means for one of three target amplitudes, each collapsed across all five tested target directions (0, 45, 90, 135, 180), i.e. including the unpracticed directions where the paper explicitly states the shift \"approached almost zero as the target direction in the test deviated from the practice direction.\" The paper's own statement of the size of the adaptive shift in this experiment is \"They amounted to about 15 at the target direction used during practice (0)\" (p. 10), and the per-group values at the practiced direction are given only graphically in Figure 6a. So 7.0 is an amplitude-restricted, direction-diluted subset value, roughly half the magnitude of the adaptation the paper reports at the practiced target, and it is not the overall younger-group adaptive shift (no such single value is printed). Checks that passed: group is indeed \"younger participants\" (not older, not combined); the phase is the open-loop posttest with cued presence of the 30 rotation, i.e. the correct adapted measure, not baseline/pretest; sign and units (deg, change from pretest) match; no dispersion was attached to the sentence, so no SE/SD confusion arises.",
+   "verifiers": [
+    {
+     "candidate_id": "3570e4ce2a9c:d2:late_adaptation:B:text:narrative_first:claude-sonnet-5#1",
+     "verdict": "refuted",
+     "reason": "The digits are transcribed correctly and do belong to the younger group, but they are not a group-level measure of late adaptation. The sentence quoted is the amplitude breakdown of the adaptive shift: \"Even though the adaptive shift was restricted to the practiced direction and adjacent target directions, it was not restricted to the practiced amplitude. For the older participants, it was 3.7, 6.4, and 5.2 for the target amplitudes of 30 mm, 60 mm, and 90 mm, respectively, and for the younger participants, it was 8.2, 7.0, and 6.9.\" These are marginal means for one of three target amplitudes, each collapsed across all five tested target directions (0, 45, 90, 135, 180), i.e. including the unpracticed directions where the paper explicitly states the shift \"approached almost zero as the target direction in the test deviated from the practice direction.\" The paper's own statement of the size of the adaptive shift in this experiment is \"They amounted to about 15 at the target direction used during practice (0)\" (p. 10), and the per-group values at the practiced direction are given only graphically in Figure 6a. So 7.0 is an amplitude-restricted, direction-diluted subset value, roughly half the magnitude of the adaptation the paper reports at the practiced target, and it is not the overall younger-group adaptive shift (no such single value is printed). Checks that passed: group is indeed \"younger participants\" (not older, not combined); the phase is the open-loop posttest with cued presence of the 30 rotation, i.e. the correct adapted measure, not baseline/pretest; sign and units (deg, change from pretest) match; no dispersion was attached to the sentence, so no SE/SD confusion arises.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "NONE",
+     "alt_n": null,
+     "alt_page": 10,
+     "alt_quote": "The mean adaptive shifts are shown in Figure 6a. They amounted to about 15 at the target direction used during practice (0) and approached almost zero as the target direction in the test deviated from the practice direction.",
+     "better_source": "Figure 6a (Experiment 2), which plots mean adaptive shifts with standard errors separately for younger and older participants as a function of target direction, is the only place giving a group-specific adapted value at the practiced target direction (~ -16 deg for young, ~ -13 deg for old, read graphically); the accompanying text prints the collapsed magnitude 'about -15' but without separating age groups. (page 10)",
+     "checked": [
+      "wrong_group",
+      "wrong_time_window",
+      "wrong_panel",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "units",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-opus-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "5ecbb511c9ee58cab51ec37e1b411893a3c1e2a79370caac5773fc5c9965ecd4",
+     "notes": "No table reports Experiment 2 adaptive shifts numerically; Tables 1 and 2 contain only control variables (mental rotation, Digit Symbol, motor battery). The closed-loop practice measure for Exp 2 is printed only pooled across age: 'Initial direction errors declined across practice blocks from 15.8 to 8.4. There was no difference between the two age groups' (p. 10), so no group-specific last-block practice value exists either. Consequently any group-specific late-adaptation value for Experiment 2 must be read off Figure 6a rather than taken from the amplitude breakdown sentence."
+    },
+    {
+     "candidate_id": "3570e4ce2a9c:d2:late_adaptation:B:text:narrative_first:claude-sonnet-5#1",
+     "verdict": "confirmed",
+     "reason": "The paper prints exactly this figure for the younger group, in the adaptive-shift (posttest−pretest, open-loop test with cued presence of the 30° rotation) analysis of Experiment 2: \"Even though the adaptive shift was restricted to the practiced direction and adjacent target directions, it was not restricted to the practiced amplitude. For the older participants, it was 3.7°, 6.4°, and 5.2° for the target amplitudes of 30 mm, 60 mm, and 90 mm, respectively, and for the younger participants, it was 8.2°, 7.0°, and 6.9°.\" (p. 10, with the signs printed as negative in the original: −8.2°, −7.0°, −6.9°). The ordering fixes −7.0° as the 60 mm (practiced) amplitude value for the younger participants, i.e. Group B, from the posttest with the rotation still cued — the correct phase for late adaptation — and no ± value accompanies the sentence, so the candidate's NONE dispersion is right. Checks for group swap (the older values are −3.7/−6.4/−5.2, clearly different), for the aftereffect panel (Figure 6b, \"about −8° at the target direction used during practice\"), for the explicit-shift panel (Figure 6c), and for the pretest values (−2.9°, −6.7°, −2.5°, 2.9°, −2.3°) all fail to dislodge it. Caveat recorded in notes: this is a marginal mean for one target amplitude, collapsed across all five target directions (including unpracticed ones), not a single overall grand mean.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "NONE",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "",
+     "checked": [
+      "wrong_group",
+      "wrong_time_window",
+      "wrong_panel",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "units",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 1,
+     "model": "claude-opus-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "71e6d741e51f4dae1f55e09b807d392c5867dbbf258c74e8a6f2a782fa80e582",
+     "notes": "Transcription, sign, group, panel and phase all verified against p. 10. Two residual concerns that the paper does not resolve: (1) the −7.0° is the marginal mean for the 60 mm amplitude collapsed across all five target directions, so it mixes the practiced 0° direction (where Figure 6a shows roughly −16° for the young) with unpracticed directions where the shift approaches zero; the text's only direction-specific statement, \"They amounted to about 15° at the target direction used during practice (0°)\", is collapsed across age groups and therefore cannot be assigned to Group B. (2) No overall grand mean per age group is printed for adaptive shift in Experiment 2, and no table reports these values, so Figure 6a (means with standard errors, p. 10) remains the only per-direction source and it is graphical; nothing in the paper is a strictly better printed source for the younger group's adaptive shift than the sentence quoted. n for Group B is printed on p. 9 (\"The younger participants, 8 men and 11 women, were 20–30 years old\"), i.e. 19, but no n accompanies the −7.0° sentence itself.; re-open 1 of 2"
+    }
+   ],
+   "reopens": 1,
+   "adjudicated": true,
+   "adjudication_rationale": "For Experiment 2 the paper reports the adaptive shift (open-loop posttest−pretest with cued presence of the 30° CCW rotation) only in two forms: (i) Figure 6a, means ± standard errors as a function of target direction, from which no number is printed; and (ii) the text sentence giving the age × amplitude marginal means, which is the only place where group-specific digits appear ('For the older participants, it was −3.7°, −6.4°, and −5.2° … and for the younger participants, it was −8.2°, −7.0°, and −6.9°'). The paper's other overall statements are not group-specific ('They amounted to about −15° at the target direction used during practice (0°)'; 'Initial direction errors declined across practice blocks from 15.8° to 8.4°. There was no difference between the two age groups.'). I therefore kept the printed 60 mm values, 60 mm being the practiced amplitude, and rejected the digitised figure means because they are not printed and cannot be quoted, and because averaging across the five plotted target directions is exactly the operation the pipeline forbids me to perform. I did not compute any average across the three amplitudes.; Same printed sentence, younger group, 60 mm (practiced) amplitude value. No dispersion is printed with the sentence, hence NONE; n = 19 from the Participants paragraph on p. 9 ('The younger participants, 8 men and 11 women, were 20–30 years old'). One verifier refuted this datum on the ground that it is an amplitude-marginal rather than an overall group mean — that objection is correct in substance, but the paper prints no overall per-group adaptive shift, so this is the closest quotable value; the figure route read −7.65° for this group.",
+   "flags": [
+    {
+     "code": "axis_conflict",
+     "severity": "warn",
+     "message": "the readers of this figure answered off different value axes; the ensemble kept \"left y-axis, 'relative direction [deg]', linear, printed ticks 0, -5, -10, -15 at y = 135.5, 291.5, 447.5, 603.5 px (31.2 px per degree)\" and dropped digitize:readout:claude-opus-5:ticks_first",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "axis_conflict",
+     "severity": "warn",
+     "message": "the readers of this figure answered off different value axes; the ensemble kept \"left y-axis, 'relative direction [deg]', linear, printed ticks 0, -5, -10, -15 at y = 135.5, 291.5, 447.5, 603.5 px (31.2 px per degree)\" and dropped digitize:readout:claude-opus-5:ticks_first",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 5 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 5 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "dispersion_missing",
+     "severity": "warn",
+     "message": "this value carries no dispersion of any kind",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:A:text:narrative_first:claude-sonnet-5#0"
+     ]
+    },
+    {
+     "code": "dispersion_missing",
+     "severity": "warn",
+     "message": "this value carries no dispersion of any kind",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:B:text:narrative_first:claude-sonnet-5#1"
+     ]
+    },
+    {
+     "code": "n_missing",
+     "severity": "warn",
+     "message": "no group size was transcribed with this value",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:A:text:narrative_first:claude-sonnet-5#0"
+     ]
+    },
+    {
+     "code": "n_missing",
+     "severity": "warn",
+     "message": "no group size was transcribed with this value",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:B:text:narrative_first:claude-sonnet-5#1"
+     ]
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round; group A was described as an OPEN marker, but every marker the pixel pass found is filled (blob, circle)",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round; group A was described as an OPEN marker, but every marker the pixel pass found is filled (blob, circle)",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.45,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "source kind text (+0.40)",
+    "2 independent routes agree within 2.5 (+0.25)",
+    "every quote behind this value is printed in the paper (+0.15)",
+    "a verifier refuted this reading — a human decides",
+    "warnings (dispersion_missing, n_missing) -0.16",
+    "axis_conflict (-0.08) — a human decides: the readers answered off different value axes and only one of them was pooled, so which ladder this number is on rests on a majority. Agreement about a number never establishes that it is the right number, so this is not something a score can settle",
+    "warnings (collapsed_across_x, series_marker_mismatch) -0.16, which orders this cell in the review queue but cannot withhold it",
+    "the adjudicator asked for a human",
+    "adjudicated cells are capped at 0.70",
+    "collapsed_across_x, series_marker_mismatch caps this cell at 0.70: this is an average across a categorical axis and its dispersion is an approximation, not the paper's own; the reader's description of this series and the markers the pixel pass found do not line up, so which series this number was measured on rests on the reader's words alone",
+    "the caps above stop at 0.45: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "this cell was held by the evidence, not by its score, so the score is not compared with any boundary: the bucket was not decided by the score"
+   ],
+   "needs_human": true,
+   "n": 19,
+   "mean": -7.0,
+   "dispersion_value": null,
+   "dispersion_type": "NONE",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "deg",
+   "sigma": 0.0320227133751309,
+   "mad": 0.3250000000000002,
+   "analysis_metric": "change_from_baseline",
+   "route": "adjudicated",
+   "candidate_ids": [
+    "3570e4ce2a9c:d2:late_adaptation:B:text:narrative_first:claude-sonnet-5#1"
+   ],
+   "higher_is_better": false,
+   "orientation_evidence": "claude-opus-5: The adaptive shift is a signed posttest–pretest change in movement direction expressed relative to target direction; the paper states that a shift of −30° would fully compensate the 30° CCW rotation (the PDF text extraction drops the minus signs, but the figure axis runs from −15 to 0 and the printed means are negative). Thus more negative values = more adaptation, and a larger (less negative / nearer zero) raw value means LESS of the construct 'late adaptation'. On the raw signed scale the older group's values are numerically higher (nearer zero: −3.7, −6.4, −5.2) than the younger group's (−8.2, −7.0, −6.9), although the paper reports no significant effect of age. | claude-sonnet-5: The adaptive‑shift measure is defined so that a negative value in the direction opposite the rotation reflects compensation (a shift of −30° would fully compensate a 30° rotation); values near zero mean no adaptation. Thus the raw sign carries the direction of compensation and larger (more negative) magnitude means more adaptation, while a raw value closer to zero (less negative, i.e. numerically higher) means less adaptation — this is a signed measure, not a simple higher‑is‑more‑construct or higher‑is‑error scale. Consequently a lower (more negative) raw value corresponds to more of the construct (late adaptation), so higher_is_better is 'lower'. The paper's own ANOVA for this measure explicitly reports 'no effect of age' for the overall adaptive‑shift analysis (Figure 6a), so the text does not establish which group's raw value was higher; the only numeric group comparison available is for a secondary amplitude breakdown, which is noted as not the primary measurement location, so overall the paper does not clearly state which group had the higher raw score for the late‑adaptation measure itself.; An adaptive shift of 30° would compensate the visuomotor rotation of 30° at the practiced target direction.; The mean adaptive shifts are shown in Figure 6a. They amounted to about 15° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction.; For the older participants, it was 3.7°, 6.4°, and 5.2° for the target amplitudes of 30 mm, 60 mm, and 90 mm, respectively, and for the younger participants, it was 8.2°, 7.0°, and 6.9°.; An ANOVA, with age and gender as the between-participant factors and target direction and target amplitude as the within-participant factors, revealed a significant main effect of target direction, F(4, 132) 14.3, p .01, and no effect of age.; An adaptive shift of −30° would compensate the visuomotor rotation of 30° at the practiced target direction.; The mean adaptive shifts are shown in Figure 6a. They amounted to about −15° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction.; An ANOVA, with age and gender as the between-participant factors and target direction and target amplitude as the within-participant factors, revealed a significant main effect of target direction, F(4, 132) = 14.3, p < .01, and no effect of age.; For the older participants, it was −3.7°, −6.4°, and −5.2° for the target amplitudes of 30 mm, 60 mm, and 90 mm, respectively, and for the younger participants, it was −8.2°, −7.0°, and −6.9°.",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "3570e4ce2a9c:d2",
+   "outcome_key": "aftereffect",
+   "group": "A",
+   "agreement": "single",
+   "agreeing_ids": [
+    "3570e4ce2a9c:d2:aftereffect:A:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 1.0,
+   "needs_third_candidate": false,
+   "verifier_verdict": "refuted",
+   "verifier_reason": "The candidate treats -1.719° as the older‑group aftereffect value, but the paper's text describes the aftereffect pattern in Figure 6b explicitly: at the practiced target direction (0°) the aftereffect was about -8°, and it 'approached almost zero as the target direction in the test deviated from the practice direction.' The text also states that neither the size of the aftereffect nor its decline across target directions depended on age (no age split is reported numerically). A value of only -1.7° is inconsistent with the ~-8° magnitude reported for the practiced direction, indicating the digitized point was taken from a non-practiced target direction (where the curve approaches zero) rather than the direction that defines the aftereffect measurement window (the practiced 0° direction, i.e., the 'first available measure of that phase'). No exact per-group numeric value or SE is printed anywhere in the text for this measure; only the approximate combined-group figure ('about 8°') and F-statistics are given, so a precise dispersion or an age-specific point value cannot be confirmed from prose.",
+   "verifiers": [
+    {
+     "candidate_id": "3570e4ce2a9c:d2:aftereffect:A:digitize:ensemble",
+     "verdict": "refuted",
+     "reason": "The candidate treats -1.719° as the older‑group aftereffect value, but the paper's text describes the aftereffect pattern in Figure 6b explicitly: at the practiced target direction (0°) the aftereffect was about -8°, and it 'approached almost zero as the target direction in the test deviated from the practice direction.' The text also states that neither the size of the aftereffect nor its decline across target directions depended on age (no age split is reported numerically). A value of only -1.7° is inconsistent with the ~-8° magnitude reported for the practiced direction, indicating the digitized point was taken from a non-practiced target direction (where the curve approaches zero) rather than the direction that defines the aftereffect measurement window (the practiced 0° direction, i.e., the 'first available measure of that phase'). No exact per-group numeric value or SE is printed anywhere in the text for this measure; only the approximate combined-group figure ('about 8°') and F-statistics are given, so a precise dispersion or an age-specific point value cannot be confirmed from prose.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "NONE",
+     "alt_n": null,
+     "alt_page": 11,
+     "alt_quote": "The mean aftereffect (see Figure 6b) amounted to about 8° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction. The effect of target direction was significant, F(4, 132) = 15.2, p < .01, and neither the size of the aftereffect nor its decline across target directions depended on age.",
+     "better_source": "",
+     "checked": [
+      "wrong_time_window",
+      "subgroup",
+      "wrong_panel",
+      "se_vs_sd"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "7b7534cd1db9a7f7a817291b2f89b5a7d99a80b8dae5b330bc71f9e3e7fb6887",
+     "notes": "The paper never prints an exact numeric aftereffect value or SE for the older group alone; the only quantitative anchor is the approximate '-8°' at the practiced (0°) direction for the pooled sample, and the ANOVA reports only F-statistics, not group means/SEs. The extracted -1.719°/SE=1.231 appears to be read from a point away from the practiced direction (where the curve nears zero), and the reader's own notes flag large digitization disagreement (0.242 vs 0.123 tolerance), further undermining confidence in this specific value.; did not report checking: wrong_group, baseline_vs_post, units, transcription"
+    },
+    {
+     "candidate_id": "3570e4ce2a9c:d2:aftereffect:A:digitize:ensemble",
+     "verdict": "refuted",
+     "reason": "The candidate reports the Experiment 2 older-group aftereffect as −1.72°, but no such value appears anywhere in the paper, and the only aftereffect magnitude the paper actually prints for Experiment 2 contradicts it: \"The mean aftereffect (see Figure 6b) amounted to about 8° [i.e. −8°] at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction\" (p. 11). Figure 6b is a target-direction function with five points per group; the digitised −1.72° matches none of the individual plotted points (old: ≈−7 to −8° at 0°, ≈−2° at 45°, ≈+2° at 90°, ≈0° at 135°, ≈+1° at 180°) and instead behaves like an average across all five directions, i.e. an aggregate that mixes the practiced direction with directions where the paper states the aftereffect \"approached almost zero\" — dilution that is not the quantity the paper reports. The paper also explicitly denies any group-specific aftereffect value being resolvable: \"neither the size of the aftereffect nor its decline across target directions depended on age\" (p. 11), so no printed older-group mean or SE exists to support the ±1.231 either; the reader's own notes flag the two digitising routes disagreeing on the error half-length (1.11 vs 1.352), well beyond tolerance. Dispersion TYPE is at least correct in kind — \"For all means. standard errors are shown\" (Figure 6 caption, p. 10) — but it is attached to a mean the paper never prints.",
+     "alt_mean": -8.0,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "NONE",
+     "alt_n": null,
+     "alt_page": 11,
+     "alt_quote": "The mean aftereffect (see Figure 6b) amounted to about 8° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction. The effect of target direction was significant, F(4, 132)  15.2, p  .01, and neither the size of the aftereffect nor its decline across target directions depended on age.",
+     "better_source": "Page 11 running text gives the only printed aftereffect magnitude for Experiment 2 (\"about 8°\" at the practiced target direction of 0°, with no age difference); it is more direct than digitising Figure 6b, although it is approximate and not broken down by age group. No table of aftereffect means/SDs exists for Experiment 2 anywhere in the paper (Tables 1 and 2 contain only control-variable screening tests). (page 11)",
+     "checked": [
+      "wrong_group",
+      "wrong_panel",
+      "wrong_time_window",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "units",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 1,
+     "model": "claude-opus-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "42e8cd1b4c2e490aa955d023b640ba2607078da0b6abab4d5b0a346766a72831",
+     "notes": "Caveats on the alt_ fields: the −8° I quote is (a) approximate (\"about\"), (b) specific to the practiced target direction 0°, and (c) not separated by age group — the paper states the aftereffect did not depend on age, so this figure applies to both younger and older participants rather than to Group A alone. I therefore left alt_dispersion_value/alt_n null rather than invent a group-specific SE or attach n = 18 to a pooled value. If the extraction pipeline wants a direction-averaged aftereffect for Experiment 2, the paper simply does not print one, and Figure 6b's five-point functions cannot be collapsed into a single group mean without computation, which I have not done.; re-open 1 of 2"
+    },
+    {
+     "candidate_id": "3570e4ce2a9c:d2:aftereffect:A:digitize:ensemble",
+     "verdict": "refuted",
+     "reason": "The candidate is a digitised average of the OLD-group curve across all five test target directions of Figure 6b (0, 45, 90, 135, 180°). That aggregation is not the quantity the paper reports as the aftereffect, and it is contradicted by the paper's own printed summary of that very panel: \"The mean aftereffect (see Figure 6b) amounted to about 8° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction\" (p. 200; the minus signs are lost in the text layer, the panel plots it as about −8°). Because practice in Experiment 2 used a single target (0° direction, 60 mm), and because the aftereffect generalises only locally, averaging in the far directions — where Figure 6b shows values near zero and even an inverted, positive aftereffect around 90° (\"about 2\" deg) — dilutes the measure and yields ≈−1.7° instead of the ≈−8° the paper states for the aftereffect. In addition, no age-specific aftereffect mean is printed anywhere for Experiment 2 (\"neither the size of the aftereffect nor its decline across target directions depended on age\"), so a group-A-specific value of −1.719 ± 1.231 cannot be grounded in the text, and pooling the per-direction standard errors from the panel does not produce a legitimate SE for a cross-direction mean. Checks that came out clean: the panel is indeed the aftereffect panel (Figure 6b, \"mean aftereffects in open-loop tests with cued absence of the visuomotor rotation\"), open circles are indeed \"old\" per the Figure 6a legend, the error bars are indeed standard errors (\"For all means. standard errors are shown\"), the values are indeed posttest−pretest changes in degrees, and the phase is indeed the post-rotation open-loop test with cued absence of the rotation.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "NONE",
+     "alt_n": null,
+     "alt_page": 10,
+     "alt_quote": "The mean aftereffect (see Figure 6b) amounted to about 8° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction. The effect of target direction was significant, F(4, 132)  15.2, p  .01, and neither the size of the aftereffect nor its decline across target directions depended on age.",
+     "better_source": "Text of Experiment 2 Results, \"Tests\" section (p. 200 of the article; PDF page 11 of this file), which prints the aftereffect magnitude at the practiced target direction (about −8°) directly, although only collapsed across age groups; no table or text in the paper prints a separate older-group aftereffect mean or its dispersion for Experiment 2, so any age-specific value must remain a figure estimate at the practiced direction (0°) rather than a cross-direction average. (page 11)",
+     "checked": [
+      "wrong_group",
+      "wrong_time_window",
+      "wrong_panel",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "units",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 2,
+     "model": "claude-opus-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "1c10103f537c5e3aef896308ffc9bd00fac985ea5561a8df0d02745d486146bd",
+     "notes": "No printed group-specific number exists for Experiment 2 aftereffects, hence alt_mean is left null rather than guessed; the only printed value (\"about 8°\", i.e. −8°) is approximate and pooled over age. If a figure reading must be used, it should be taken at the practiced target direction (0°), where Figure 6b places both age curves near −7 to −8°, not averaged over directions that include the inverted positive aftereffect near 90°. Also note the two lost minus signs in the PDF text layer (\"about 8°\", \"2\", etc.) — the plotted axis in Figure 6b runs from −8 to +4 deg.; re-open 2 of 2"
+    }
+   ],
+   "reopens": 2,
+   "adjudicated": true,
+   "adjudication_rationale": "The outcome asked for is the Experiment 2 aftereffect (open-loop posttest with cued absence of the 30° rotation), separately for older and younger participants. The paper reports this only graphically (Figure 6b) and, in text, only as a single age-collapsed approximation: 'The mean aftereffect (see Figure 6b) amounted to about 8° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction', adding that 'neither the size of the aftereffect nor its decline across target directions depended on age.' No group means and no numeric dispersions are printed. The two candidates are figure digitisations averaged across all five test target directions; both were refuted by verifiers because that average is not the quantity the paper describes (near-zero away from 0°, about -8° at 0°), and the digitiser itself flagged marker/series-orientation problems (it could not confirm which curve is old vs young, and the sign-mismatch flag reflects that the collapsed averages reverse the expected relation). Since I cannot quote any group-specific value, and cannot compute or re-digitise one, both groups are left null and sent to a human.; For Experiment 2 the paper prints no numeric aftereffect for the older group separately: the only printed aftereffect magnitude is 'about 8°' (i.e. -8°) at the practiced target direction, and it is explicitly collapsed across age ('neither the size of the aftereffect nor its decline across target directions depended on age'). No dispersion is printed anywhere (Figure 6 states only 'standard errors are shown'). The candidate's -1.719° is a digitised average of the open-circle curve across all five target directions of Figure 6b; it has no printed counterpart, and it conflicts with the paper's own description of that panel (about -8° at 0°, near zero away from 0°), so I cannot quote it. Numbers left null.",
+   "flags": [
+    {
+     "code": "sign_mismatch",
+     "severity": "error",
+     "message": "the paper states b greater on this measure, but the extracted means say A = -1.7190000000000003 and B = -2.42",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:aftereffect:A:digitize:ensemble",
+      "3570e4ce2a9c:d2:aftereffect:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 5 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:aftereffect:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 5 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:aftereffect:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "orientation_unknown",
+     "severity": "warn",
+     "message": "nobody has established the direction of this measure (does a larger raw value mean more of the construct?), so the sign of any effect size is undecided",
+     "candidate_ids": []
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round; group A was described as an OPEN marker, but every marker the pixel pass found is filled (blob, circle)",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:aftereffect:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round; group A was described as an OPEN marker, but every marker the pixel pass found is filled (blob, circle)",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:aftereffect:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.45,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "one route, but 2 independent model families read it and agreed (claude-opus, claude-sonnet) — a second family is a different failure mode, which is what agreement is for (+0.25)",
+    "a verifier refuted this reading — a human decides",
+    "consistency errors stand: sign_mismatch",
+    "warnings (orientation_unknown) -0.08",
+    "warnings (collapsed_across_x, series_marker_mismatch) -0.16, which orders this cell in the review queue but cannot withhold it",
+    "the direction of this measure is unresolved, so the sign of any effect size built on it is undecided",
+    "the adjudicator asked for a human",
+    "adjudicated cells are capped at 0.70",
+    "collapsed_across_x, series_marker_mismatch caps this cell at 0.70: this is an average across a categorical axis and its dispersion is an approximation, not the paper's own; the reader's description of this series and the markers the pixel pass found do not line up, so which series this number was measured on rests on the reader's words alone",
+    "the caps above stop at 0.45: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "1 of the digitizer's 1 measurement path(s) read both groups with a usable spread, so the effect this figure implies is corroborated by nothing — one path cannot agree with another",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "this cell was held by the evidence, not by its score, so the score is not compared with any boundary: the bucket was not decided by the score"
+   ],
+   "needs_human": true,
+   "n": 18,
+   "mean": -1.7190000000000003,
+   "dispersion_value": 1.2309999999999999,
+   "dispersion_type": "SE",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "deg",
+   "sigma": 0.019811218592720104,
+   "mad": 0.0,
+   "analysis_metric": "change_from_baseline",
+   "route": "figure",
+   "candidate_ids": [
+    "3570e4ce2a9c:d2:aftereffect:A:digitize:ensemble"
+   ],
+   "higher_is_better": null,
+   "orientation_evidence": "claude-opus-5: The aftereffect is a signed posttest−pretest change in final movement direction, plotted on an axis running from −20 to 0 deg in Experiment 1a (75° CCW rotation; compensatory shifts are negative). Thus the sign carries the direction, and a larger (i.e., less negative, closer to zero) raw value means a SMALLER aftereffect, whereas more negative values mean more implicit recalibration — so higher raw value = less of the review's construct. The paper states the older participants had 'slightly stronger aftereffects' (non-significant, F(1,38)=2.6, p>.10), i.e., more negative raw values, so on the raw scale the younger group (Group B) had the higher (less negative) values. | claude-sonnet-5: The aftereffect is a posttest–pretest difference in movement direction that is plotted as a negative value (relative direction in degrees, e.g., Figure 2b shows negative values for both groups). The magnitude of this negative deviation reflects the strength of implicit recalibration (a more negative value indicates a stronger aftereffect), so the raw sign itself does not directly indicate more or less construct—only the magnitude does, making this a signed-direction measure. The paper describes the difference only in terms of relative magnitude ('slightly stronger aftereffects of the older participants') rather than explicitly stating which group had the numerically higher (less negative) raw value, so the raw-value comparison direction cannot be determined from the text with confidence.; For the open-loop posttest with cued absence of the visuomotor rotation, the posttest–pretest difference of final directions of hand movements was an aftereffect measure.; There was only a small difference between the two age groups, with slightly stronger aftereffects of the older participants and a stronger aftereffect for oblique than for frontoparallel and sagittal directions.; aftereffect relative direction [deg] -20 -15 -10 -5 0; An adaptive shift of 75° would compensate the visuomotor rotation of 75°.; There was only a small difference between the two age groups, with slightly stronger aftereffects of the older participants and a stronger aftereffect for oblique than for fronto-parallel and sagittal directions.; Averaged across target directions, the aftereffects were significantly different from zero both for the younger, F(1, 38) = 57.4, p .01, and for the older participants, F(1, 38) = 97.4, p .01.",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "3570e4ce2a9c:d2",
+   "outcome_key": "aftereffect",
+   "group": "B",
+   "agreement": "single",
+   "agreeing_ids": [
+    "3570e4ce2a9c:d2:aftereffect:B:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 1.0,
+   "needs_third_candidate": false,
+   "verifier_verdict": "refuted",
+   "verifier_reason": "The paper's text gives an explicit approximate value for the aftereffect at the practiced target direction (0°), which is the direction that anchors the 'aftereffect' outcome for this dataset: \"The mean aftereffect (see Figure 6b) amounted to about −8° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction... neither the size of the aftereffect nor its decline across target directions depended on age.\" This directly contradicts the candidate's digitized value of −2.42° for the younger group. The candidate's number (~−2.42°, close to zero) is far more consistent with one of the non-practiced, peripheral target directions (where the paper states the aftereffect 'approached almost zero') than with the practice-direction (0°) value that the paper singles out as the relevant summary aftereffect (~−8°), and which the text states does not differ by age. Because the outcome definition calls for the primary/'first available' aftereffect measure of the post-learning phase, and the paper's own narrative anchors this to the 0° condition, the extracted value appears to have been read from the wrong target-direction data point in Figure 6b rather than the practice-direction point that the text discusses as 'the' aftereffect.",
+   "verifiers": [
+    {
+     "candidate_id": "3570e4ce2a9c:d2:aftereffect:B:digitize:ensemble",
+     "verdict": "refuted",
+     "reason": "The paper's text gives an explicit approximate value for the aftereffect at the practiced target direction (0°), which is the direction that anchors the 'aftereffect' outcome for this dataset: \"The mean aftereffect (see Figure 6b) amounted to about −8° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction... neither the size of the aftereffect nor its decline across target directions depended on age.\" This directly contradicts the candidate's digitized value of −2.42° for the younger group. The candidate's number (~−2.42°, close to zero) is far more consistent with one of the non-practiced, peripheral target directions (where the paper states the aftereffect 'approached almost zero') than with the practice-direction (0°) value that the paper singles out as the relevant summary aftereffect (~−8°), and which the text states does not differ by age. Because the outcome definition calls for the primary/'first available' aftereffect measure of the post-learning phase, and the paper's own narrative anchors this to the 0° condition, the extracted value appears to have been read from the wrong target-direction data point in Figure 6b rather than the practice-direction point that the text discusses as 'the' aftereffect.",
+     "alt_mean": -8.0,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": 11,
+     "alt_quote": "The mean aftereffect (see Figure 6b) amounted to about −8° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction.",
+     "better_source": "The text on page 11 gives an explicit approximate value ('about −8°') for the aftereffect at the practiced target direction, which is more directly tied to the paper's own definition of the reported aftereffect than any single digitized point from Figure 6b; no exact printed number or SE exists for any individual target direction, so the figure remains the only source for per-direction values but the text anchors which direction is the primary one. (page 11)",
+     "checked": [
+      "wrong_group",
+      "wrong_time_window",
+      "wrong_panel",
+      "se_vs_sd",
+      "subgroup"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "264a8a5736dc016ae9d2723cf4eb657c834873835605ae051d022fd7d070beb3",
+     "notes": "The paper never prints an exact numeric value (with SE) for the aftereffect at any specific target direction for either age group; all such values must be read from Figure 6b, which explicitly shows standard errors as bars but not printed digits. The reader's own notes indicate high uncertainty and disagreement among digitization routes (1.19, 1.316, 1.332) for the SE, and no target-direction is specified in the candidate metadata, making it impossible to confirm this point corresponds to the practice-direction value the paper discusses. Given the qualitative description that the aftereffect is ~−8° at 0° and near zero elsewhere, a value of −2.42° is inconsistent with the practiced-direction summary that the outcome's measurement-window definition privileges, supporting refutation rather than confirmation of this exact value as 'the' aftereffect for this dataset outcome key.; did not report checking: baseline_vs_post, units, transcription"
+    },
+    {
+     "candidate_id": "3570e4ce2a9c:d2:aftereffect:B:digitize:ensemble",
+     "verdict": "refuted",
+     "reason": "Panel b of Figure 6 and the group assignment (filled = young) are correct, and the caption confirms error bars are standard errors (\"For all means. standard errors are shown\"), but the extracted mean of -2.42° is an average collapsed across all five test target directions, which the paper explicitly states is NOT the aftereffect: \"The mean aftereffect (see Figure 6b) amounted to about 8° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction\" (p. 11; the sign is negative, printed as -8° in the running text of p. 10-11). Since practice in Experiment 2 used only the single 0° target and the adaptation/aftereffect generalises only narrowly (\"Implicit knowledge, as revealed by adaptive shifts and aftereffects in open-loop tests, does not generalize across all target directions but only across a small range around the direction used during practice\", p. 11), averaging the ~-7° value at 0° together with the near-zero and even positive values at 90°-180° produces a diluted number that the paper never prints and that misstates the size of the aftereffect. Moreover the paper reports no age-group split for this quantity (\"neither the size of the aftereffect nor its decline across target directions depended on age\"), so the only printed aftereffect magnitude (~-8° at 0°) is not group-specific.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "NONE",
+     "alt_n": null,
+     "alt_page": 11,
+     "alt_quote": "The mean aftereffect (see Figure 6b) amounted to about 8° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction. The effect of target direction was significant, F(4, 132) 15.2, p .01, and neither the size of the aftereffect nor its decline across target directions depended on age.",
+     "better_source": "Running text of Experiment 2 Results (Tests), which prints the aftereffect magnitude at the practiced target direction (\"about 8°\", i.e. -8°) directly rather than requiring digitisation of Figure 6b; note, however, that this printed value is not broken down by age group and no SD/SE or n-specific dispersion is printed for it. (page 11)",
+     "checked": [
+      "wrong_group",
+      "wrong_time_window",
+      "wrong_panel",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "units",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 1,
+     "model": "claude-opus-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "d48ff04eb1a26d916fb93285c9007e55ec534acd525c1f9584c18bbc0f08a915",
+     "notes": "Group/panel identification (young = filled circles, panel b = aftereffect, cued absence of the 30° CCW rotation, posttest-pretest difference) is correct, and SE is the right dispersion type per the figure caption; the fatal problem is the aggregation across target directions (0-180°) when only 0° was practised, giving -2.42° instead of the ~-7 to -8° aftereffect at the practised direction. The paper prints only individual-median-based means in figures for the five directions, so no exact young-group numeric value or SE is available in text; do not substitute a computed number.; re-open 1 of 2"
+    },
+    {
+     "candidate_id": "3570e4ce2a9c:d2:aftereffect:B:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "Experiment 2 contains no printed numeric aftereffect for the younger group, so the candidate's -2.42° can be neither confirmed nor refuted from the text. The only printed anchor is collapsed across age: \"The mean aftereffect (see Figure 6b) amounted to about 8 [-8]° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction. The effect of target direction was significant, F(4, 132) 15.2, p .01, and neither the size of the aftereffect nor its decline across target directions depended on age\" (p. 11). The candidate figure reading is evidently an average of the young (filled-circle) points across all five target directions (0, 45, 90, 135, 180°), a mixture in which the sizeable aftereffect at 0° (~-7 to -8°) is diluted by the near-zero values at 135/180° and the *positive* value at 90° (~+1.8°); the paper itself does use direction-averaged aftereffect means elsewhere (Exp 1a/1b, \"Averaged across target directions, the aftereffects were...\"), so the aggregation is defensible but the resulting number is nowhere printed. Panel identity checks out (panel b is labelled \"aftereffect\", it is the open-loop test with cued absence of the rotation, i.e. post-minus-pre change from baseline), group and n check out (\"The younger participants, 8 men and 11 women, were 20-30 years old\"; 19 analysed), units are degrees of relative direction, and the dispersion type is right in kind because the caption states \"For all means. standard errors are shown.\" What is missing is any printed young-only value (mean or SE) for the Experiment 2 aftereffect, and the reader's own routes disagreed on the error half-length (1.19, 1.316, 1.332), so the SE is not settled either.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "NONE",
+     "alt_n": null,
+     "alt_page": 11,
+     "alt_quote": "The mean aftereffect (see Figure 6b) amounted to about 8° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction. The effect of target direction was significant, F(4, 132) 15.2, p .01, and neither the size of the aftereffect nor its decline across target directions depended on age.",
+     "better_source": "Page 11 text gives the only printed aftereffect magnitude for Experiment 2 (\"about -8° at the target direction used during practice (0°)\"), but it is collapsed across age groups and has no dispersion, so it cannot replace a group-specific figure reading; no table reports Experiment 2 aftereffects. (page 11)",
+     "checked": [
+      "wrong_group",
+      "wrong_time_window",
+      "wrong_panel",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "units",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 2,
+     "model": "claude-opus-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "ab2089bd43148591089f465172efef97bc1b80a8c019e26111ea91c1d9965304",
+     "notes": "Traps ruled out: panel b is indeed the cued-absence open-loop posttest (aftereffect), not panel a (adaptive shift) or c (explicit shift); the sign convention is negative for a CCW 30° rotation, consistent with the -8° printed for 0°; filled circles are 'young' per the Figure 6 legend, so the group label is right; n=19 matches the Participants paragraph on p. 9; the caption states standard errors, so SE is the correct dispersion type. The unresolved issue is purely that no young-only Experiment 2 aftereffect value (nor a direction-averaged one) is printed anywhere, and averaging the five direction-specific points mixes a large aftereffect at 0° with a positive value at 90°.; re-open 2 of 2"
+    }
+   ],
+   "reopens": 2,
+   "adjudicated": true,
+   "adjudication_rationale": "The outcome asked for is the Experiment 2 aftereffect (open-loop posttest with cued absence of the 30° rotation), separately for older and younger participants. The paper reports this only graphically (Figure 6b) and, in text, only as a single age-collapsed approximation: 'The mean aftereffect (see Figure 6b) amounted to about 8° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction', adding that 'neither the size of the aftereffect nor its decline across target directions depended on age.' No group means and no numeric dispersions are printed. The two candidates are figure digitisations averaged across all five test target directions; both were refuted by verifiers because that average is not the quantity the paper describes (near-zero away from 0°, about -8° at 0°), and the digitiser itself flagged marker/series-orientation problems (it could not confirm which curve is old vs young, and the sign-mismatch flag reflects that the collapsed averages reverse the expected relation). Since I cannot quote any group-specific value, and cannot compute or re-digitise one, both groups are left null and sent to a human.; Same situation as group A: no younger-group aftereffect mean or dispersion is printed for Experiment 2. The single printed value ('about 8°' at the practiced direction) is collapsed across both age groups and carries no spread. The candidate's -2.42° is a figure-digitised average across all five target directions of Figure 6b, which the paper's own text contradicts as a description of the aftereffect, and it cannot be quoted. Numbers left null.",
+   "flags": [
+    {
+     "code": "sign_mismatch",
+     "severity": "error",
+     "message": "the paper states b greater on this measure, but the extracted means say A = -1.7190000000000003 and B = -2.42",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:aftereffect:A:digitize:ensemble",
+      "3570e4ce2a9c:d2:aftereffect:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 5 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:aftereffect:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 5 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:aftereffect:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "orientation_unknown",
+     "severity": "warn",
+     "message": "nobody has established the direction of this measure (does a larger raw value mean more of the construct?), so the sign of any effect size is undecided",
+     "candidate_ids": []
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round; group A was described as an OPEN marker, but every marker the pixel pass found is filled (blob, circle)",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:aftereffect:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round; group A was described as an OPEN marker, but every marker the pixel pass found is filled (blob, circle)",
+     "candidate_ids": [
+      "3570e4ce2a9c:d2:aftereffect:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.45,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "one route, but 2 independent model families read it and agreed (claude-opus, claude-sonnet) — a second family is a different failure mode, which is what agreement is for (+0.25)",
+    "a verifier refuted this reading — a human decides",
+    "consistency errors stand: sign_mismatch",
+    "warnings (orientation_unknown) -0.08",
+    "warnings (collapsed_across_x, series_marker_mismatch) -0.16, which orders this cell in the review queue but cannot withhold it",
+    "the direction of this measure is unresolved, so the sign of any effect size built on it is undecided",
+    "the adjudicator asked for a human",
+    "adjudicated cells are capped at 0.70",
+    "collapsed_across_x, series_marker_mismatch caps this cell at 0.70: this is an average across a categorical axis and its dispersion is an approximation, not the paper's own; the reader's description of this series and the markers the pixel pass found do not line up, so which series this number was measured on rests on the reader's words alone",
+    "the caps above stop at 0.45: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "1 of the digitizer's 1 measurement path(s) read both groups with a usable spread, so the effect this figure implies is corroborated by nothing — one path cannot agree with another",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "this cell was held by the evidence, not by its score, so the score is not compared with any boundary: the bucket was not decided by the score"
+   ],
+   "needs_human": true,
+   "n": 19,
+   "mean": -2.42,
+   "dispersion_value": 1.316,
+   "dispersion_type": "SE",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "deg",
+   "sigma": 0.019811218592720104,
+   "mad": 0.0,
+   "analysis_metric": "change_from_baseline",
+   "route": "figure",
+   "candidate_ids": [
+    "3570e4ce2a9c:d2:aftereffect:B:digitize:ensemble"
+   ],
+   "higher_is_better": null,
+   "orientation_evidence": "claude-opus-5: The aftereffect is a signed posttest−pretest change in final movement direction, plotted on an axis running from −20 to 0 deg in Experiment 1a (75° CCW rotation; compensatory shifts are negative). Thus the sign carries the direction, and a larger (i.e., less negative, closer to zero) raw value means a SMALLER aftereffect, whereas more negative values mean more implicit recalibration — so higher raw value = less of the review's construct. The paper states the older participants had 'slightly stronger aftereffects' (non-significant, F(1,38)=2.6, p>.10), i.e., more negative raw values, so on the raw scale the younger group (Group B) had the higher (less negative) values. | claude-sonnet-5: The aftereffect is a posttest–pretest difference in movement direction that is plotted as a negative value (relative direction in degrees, e.g., Figure 2b shows negative values for both groups). The magnitude of this negative deviation reflects the strength of implicit recalibration (a more negative value indicates a stronger aftereffect), so the raw sign itself does not directly indicate more or less construct—only the magnitude does, making this a signed-direction measure. The paper describes the difference only in terms of relative magnitude ('slightly stronger aftereffects of the older participants') rather than explicitly stating which group had the numerically higher (less negative) raw value, so the raw-value comparison direction cannot be determined from the text with confidence.; For the open-loop posttest with cued absence of the visuomotor rotation, the posttest–pretest difference of final directions of hand movements was an aftereffect measure.; There was only a small difference between the two age groups, with slightly stronger aftereffects of the older participants and a stronger aftereffect for oblique than for frontoparallel and sagittal directions.; aftereffect relative direction [deg] -20 -15 -10 -5 0; An adaptive shift of 75° would compensate the visuomotor rotation of 75°.; There was only a small difference between the two age groups, with slightly stronger aftereffects of the older participants and a stronger aftereffect for oblique than for fronto-parallel and sagittal directions.; Averaged across target directions, the aftereffects were significantly different from zero both for the younger, F(1, 38) = 57.4, p .01, and for the older participants, F(1, 38) = 97.4, p .01.",
+   "overridden_by_human": false,
+   "override_justification": ""
+  }
+ ],
+ "extra_candidates": [],
+ "orientation": {
+  "late_adaptation|Two candidate measures: (a) adaptive shift = posttest−pretest difference of final movement direction in the open-loop test with cued presence of the 75° rotation; (b) error of initial direction in the last block of closed-loop practice with the rotation": {
+   "outcome_key": "late_adaptation",
+   "measure_name": "Two candidate measures: (a) adaptive shift = posttest−pretest difference of final movement direction in the open-loop test with cued presence of the 75° rotation; (b) error of initial direction in the last block of closed-loop practice with the rotation",
+   "dataset_id": "3570e4ce2a9c:d1",
+   "higher_is_better": false,
+   "raw_value_semantics": "signed_direction",
+   "raw_value_semantics_by_model": {
+    "claude-opus-5": "signed_direction",
+    "claude-sonnet-5": "signed_direction"
+   },
+   "direction_stated_in_text": "a_greater",
+   "quotes": [
+    "For the open-loop posttest with cued presence of the visuomotor rotation, the differences are designated as adaptive shifts. An adaptive shift of 75° would compensate the visuomotor rotation of 75°.",
+    "The mean adaptive shifts are shown in Figure 2a, and they were stronger for the younger than for the older participants.",
+    "the differences are designated as adaptive shifts",
+    "a: Mean adaptive shifts in open-loop tests with cued presence of the visuomotor rotation ... relative direction [deg] -50 -40 -30 -20 -10 0",
+    "An adaptive shift of 75° would compensate the visuomotor rotation of 75°.",
+    "A two-way ANOVA, with age as the between-participant factor and target direction as the within-participant factor, revealed only a significant main effect of age, F(1, 38) 5.7, p .05."
+   ],
+   "reason": "claude-opus-5: The adaptive shift is a signed posttest–pretest change in final movement direction, expressed as 'relative direction [deg]'; a shift of −75° would fully compensate the 75° CCW rotation, so the negative direction is the adaptive direction and the sign carries the meaning (signed_direction). Because compensation is in the negative direction, a larger (less negative / closer to zero or positive) raw value means LESS adaptation, so for this review's construct lower raw values indicate more adaptation. The paper states the shifts 'were stronger for the younger than for the older participants' (Figure 2a shows young ≈ −40°, old ≈ −25 to −30°), i.e. on the raw signed scale the older group's values are the higher (less negative) ones. | claude-sonnet-5: The adaptive shift is a posttest-minus-pretest difference whose sign indicates compensation for the 75° CCW rotation (a shift of −75° would fully compensate it). Thus the raw number's meaning depends on its sign: more negative values indicate more adaptation/compensation, so this is a signed-direction measure rather than a simple 'more construct' or 'more error' scale. Because greater compensation corresponds to a more negative (i.e., numerically lower) value, higher_is_better is 'lower'. The text states adaptive shifts 'were stronger for the younger than for the older participants,' meaning the younger group's shifts were more negative (further from zero), so on the raw numeric scale the older group (Group A) had the higher (less negative) value.",
+   "agreed": true,
+   "needs_human": false,
+   "third_read": false,
+   "runs": [
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": false,
+     "raw_value_semantics": "signed_direction",
+     "direction_stated_in_text": "a_greater",
+     "quotes": [
+      "For the open-loop posttest with cued presence of the visuomotor rotation, the differences are designated as adaptive shifts. An adaptive shift of 75° would compensate the visuomotor rotation of 75°.",
+      "The mean adaptive shifts are shown in Figure 2a, and they were stronger for the younger than for the older participants.",
+      "the differences are designated as adaptive shifts",
+      "a: Mean adaptive shifts in open-loop tests with cued presence of the visuomotor rotation ... relative direction [deg] -50 -40 -30 -20 -10 0"
+     ],
+     "reason": "The adaptive shift is a signed posttest–pretest change in final movement direction, expressed as 'relative direction [deg]'; a shift of −75° would fully compensate the 75° CCW rotation, so the negative direction is the adaptive direction and the sign carries the meaning (signed_direction). Because compensation is in the negative direction, a larger (less negative / closer to zero or positive) raw value means LESS adaptation, so for this review's construct lower raw values indicate more adaptation. The paper states the shifts 'were stronger for the younger than for the older participants' (Figure 2a shows young ≈ −40°, old ≈ −25 to −30°), i.e. on the raw signed scale the older group's values are the higher (less negative) ones.",
+     "model": "claude-opus-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "1fd5a4b0be5cd90b2edd55a2c1c29508fb2351f01839ad2f39bc1a042720f6eb"
+    },
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": false,
+     "raw_value_semantics": "signed_direction",
+     "direction_stated_in_text": "a_greater",
+     "quotes": [
+      "An adaptive shift of 75° would compensate the visuomotor rotation of 75°.",
+      "The mean adaptive shifts are shown in Figure 2a, and they were stronger for the younger than for the older participants.",
+      "A two-way ANOVA, with age as the between-participant factor and target direction as the within-participant factor, revealed only a significant main effect of age, F(1, 38) 5.7, p .05."
+     ],
+     "reason": "The adaptive shift is a posttest-minus-pretest difference whose sign indicates compensation for the 75° CCW rotation (a shift of −75° would fully compensate it). Thus the raw number's meaning depends on its sign: more negative values indicate more adaptation/compensation, so this is a signed-direction measure rather than a simple 'more construct' or 'more error' scale. Because greater compensation corresponds to a more negative (i.e., numerically lower) value, higher_is_better is 'lower'. The text states adaptive shifts 'were stronger for the younger than for the older participants,' meaning the younger group's shifts were more negative (further from zero), so on the raw numeric scale the older group (Group A) had the higher (less negative) value.",
+     "model": "claude-sonnet-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "a2ef109bc238d6dd01a94063a8e4f534820f23ef9f21173acf2e913110e6d9a8"
+    }
+   ],
+   "llm_call_ids": [
+    "1fd5a4b0be5cd90b2edd55a2c1c29508fb2351f01839ad2f39bc1a042720f6eb",
+    "a2ef109bc238d6dd01a94063a8e4f534820f23ef9f21173acf2e913110e6d9a8"
+   ],
+   "notes": "means check: disputed — which series is which is disputed (series_marker_mismatch), so no reader was checked against means that may be the other group's"
+  },
+  "aftereffect|Aftereffect = posttest−pretest difference of final movement direction in the open-loop test with cued ABSENCE of the visuomotor rotation": {
+   "outcome_key": "aftereffect",
+   "measure_name": "Aftereffect = posttest−pretest difference of final movement direction in the open-loop test with cued ABSENCE of the visuomotor rotation",
+   "dataset_id": "3570e4ce2a9c:d1",
+   "higher_is_better": null,
+   "raw_value_semantics": "signed_direction",
+   "raw_value_semantics_by_model": {
+    "claude-opus-5": "signed_direction",
+    "claude-sonnet-5": "signed_direction"
+   },
+   "direction_stated_in_text": "b_greater",
+   "quotes": [
+    "For the open-loop posttest with cued absence of the visuomotor rotation, the posttest–pretest difference of final directions of hand movements was an aftereffect measure.",
+    "There was only a small difference between the two age groups, with slightly stronger aftereffects of the older participants and a stronger aftereffect for oblique than for frontoparallel and sagittal directions.",
+    "aftereffect relative direction [deg] -20 -15 -10 -5 0",
+    "An adaptive shift of 75° would compensate the visuomotor rotation of 75°.",
+    "There was only a small difference between the two age groups, with slightly stronger aftereffects of the older participants and a stronger aftereffect for oblique than for fronto-parallel and sagittal directions.",
+    "Averaged across target directions, the aftereffects were significantly different from zero both for the younger, F(1, 38) = 57.4, p .01, and for the older participants, F(1, 38) = 97.4, p .01."
+   ],
+   "reason": "claude-opus-5: The aftereffect is a signed posttest−pretest change in final movement direction, plotted on an axis running from −20 to 0 deg in Experiment 1a (75° CCW rotation; compensatory shifts are negative). Thus the sign carries the direction, and a larger (i.e., less negative, closer to zero) raw value means a SMALLER aftereffect, whereas more negative values mean more implicit recalibration — so higher raw value = less of the review's construct. The paper states the older participants had 'slightly stronger aftereffects' (non-significant, F(1,38)=2.6, p>.10), i.e., more negative raw values, so on the raw scale the younger group (Group B) had the higher (less negative) values. | claude-sonnet-5: The aftereffect is a posttest–pretest difference in movement direction that is plotted as a negative value (relative direction in degrees, e.g., Figure 2b shows negative values for both groups). The magnitude of this negative deviation reflects the strength of implicit recalibration (a more negative value indicates a stronger aftereffect), so the raw sign itself does not directly indicate more or less construct—only the magnitude does, making this a signed-direction measure. The paper describes the difference only in terms of relative magnitude ('slightly stronger aftereffects of the older participants') rather than explicitly stating which group had the numerically higher (less negative) raw value, so the raw-value comparison direction cannot be determined from the text with confidence.",
+   "agreed": false,
+   "needs_human": true,
+   "third_read": false,
+   "runs": [
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": false,
+     "raw_value_semantics": "signed_direction",
+     "direction_stated_in_text": "b_greater",
+     "quotes": [
+      "For the open-loop posttest with cued absence of the visuomotor rotation, the posttest–pretest difference of final directions of hand movements was an aftereffect measure.",
+      "There was only a small difference between the two age groups, with slightly stronger aftereffects of the older participants and a stronger aftereffect for oblique than for frontoparallel and sagittal directions.",
+      "aftereffect relative direction [deg] -20 -15 -10 -5 0",
+      "An adaptive shift of 75° would compensate the visuomotor rotation of 75°."
+     ],
+     "reason": "The aftereffect is a signed posttest−pretest change in final movement direction, plotted on an axis running from −20 to 0 deg in Experiment 1a (75° CCW rotation; compensatory shifts are negative). Thus the sign carries the direction, and a larger (i.e., less negative, closer to zero) raw value means a SMALLER aftereffect, whereas more negative values mean more implicit recalibration — so higher raw value = less of the review's construct. The paper states the older participants had 'slightly stronger aftereffects' (non-significant, F(1,38)=2.6, p>.10), i.e., more negative raw values, so on the raw scale the younger group (Group B) had the higher (less negative) values.",
+     "model": "claude-opus-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "1b06f31d7169c050f7509e888835495ac3e12a303d91516229cd75cbb60631b5"
+    },
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": null,
+     "raw_value_semantics": "signed_direction",
+     "direction_stated_in_text": "unknown",
+     "quotes": [
+      "For the open-loop posttest with cued absence of the visuomotor rotation, the posttest–pretest difference of final directions of hand movements was an aftereffect measure.",
+      "There was only a small difference between the two age groups, with slightly stronger aftereffects of the older participants and a stronger aftereffect for oblique than for fronto-parallel and sagittal directions.",
+      "Averaged across target directions, the aftereffects were significantly different from zero both for the younger, F(1, 38) = 57.4, p .01, and for the older participants, F(1, 38) = 97.4, p .01."
+     ],
+     "reason": "The aftereffect is a posttest–pretest difference in movement direction that is plotted as a negative value (relative direction in degrees, e.g., Figure 2b shows negative values for both groups). The magnitude of this negative deviation reflects the strength of implicit recalibration (a more negative value indicates a stronger aftereffect), so the raw sign itself does not directly indicate more or less construct—only the magnitude does, making this a signed-direction measure. The paper describes the difference only in terms of relative magnitude ('slightly stronger aftereffects of the older participants') rather than explicitly stating which group had the numerically higher (less negative) raw value, so the raw-value comparison direction cannot be determined from the text with confidence.",
+     "model": "claude-sonnet-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "09f00ab3a2e8e51cfd1ab45d57123ad089458846cdbfab7a3099efcef6b99bae"
+    }
+   ],
+   "llm_call_ids": [
+    "1b06f31d7169c050f7509e888835495ac3e12a303d91516229cd75cbb60631b5",
+    "09f00ab3a2e8e51cfd1ab45d57123ad089458846cdbfab7a3099efcef6b99bae"
+   ],
+   "notes": "means check: disputed — which series is which is disputed (series_marker_mismatch), so no reader was checked against means that may be the other group's; only claude-opus-5 named a direction and the other reader abstained; one reader never decides the direction of a measure on its own"
+  },
+  "late_adaptation|Two candidate measures: (a) adaptive shift = posttest−pretest difference of final movement direction in the open-loop test with cued presence of the 30° rotation; (b) error of initial direction in the last block of closed-loop practice": {
+   "outcome_key": "late_adaptation",
+   "measure_name": "Two candidate measures: (a) adaptive shift = posttest−pretest difference of final movement direction in the open-loop test with cued presence of the 30° rotation; (b) error of initial direction in the last block of closed-loop practice",
+   "dataset_id": "3570e4ce2a9c:d2",
+   "higher_is_better": false,
+   "raw_value_semantics": "signed_direction",
+   "raw_value_semantics_by_model": {
+    "claude-opus-5": "signed_direction",
+    "claude-sonnet-5": "signed_direction"
+   },
+   "direction_stated_in_text": "a_greater",
+   "quotes": [
+    "An adaptive shift of 30° would compensate the visuomotor rotation of 30° at the practiced target direction.",
+    "The mean adaptive shifts are shown in Figure 6a. They amounted to about 15° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction.",
+    "For the older participants, it was 3.7°, 6.4°, and 5.2° for the target amplitudes of 30 mm, 60 mm, and 90 mm, respectively, and for the younger participants, it was 8.2°, 7.0°, and 6.9°.",
+    "An ANOVA, with age and gender as the between-participant factors and target direction and target amplitude as the within-participant factors, revealed a significant main effect of target direction, F(4, 132) 14.3, p .01, and no effect of age.",
+    "An adaptive shift of −30° would compensate the visuomotor rotation of 30° at the practiced target direction.",
+    "The mean adaptive shifts are shown in Figure 6a. They amounted to about −15° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction.",
+    "An ANOVA, with age and gender as the between-participant factors and target direction and target amplitude as the within-participant factors, revealed a significant main effect of target direction, F(4, 132) = 14.3, p < .01, and no effect of age.",
+    "For the older participants, it was −3.7°, −6.4°, and −5.2° for the target amplitudes of 30 mm, 60 mm, and 90 mm, respectively, and for the younger participants, it was −8.2°, −7.0°, and −6.9°."
+   ],
+   "reason": "claude-opus-5: The adaptive shift is a signed posttest–pretest change in movement direction expressed relative to target direction; the paper states that a shift of −30° would fully compensate the 30° CCW rotation (the PDF text extraction drops the minus signs, but the figure axis runs from −15 to 0 and the printed means are negative). Thus more negative values = more adaptation, and a larger (less negative / nearer zero) raw value means LESS of the construct 'late adaptation'. On the raw signed scale the older group's values are numerically higher (nearer zero: −3.7, −6.4, −5.2) than the younger group's (−8.2, −7.0, −6.9), although the paper reports no significant effect of age. | claude-sonnet-5: The adaptive‑shift measure is defined so that a negative value in the direction opposite the rotation reflects compensation (a shift of −30° would fully compensate a 30° rotation); values near zero mean no adaptation. Thus the raw sign carries the direction of compensation and larger (more negative) magnitude means more adaptation, while a raw value closer to zero (less negative, i.e. numerically higher) means less adaptation — this is a signed measure, not a simple higher‑is‑more‑construct or higher‑is‑error scale. Consequently a lower (more negative) raw value corresponds to more of the construct (late adaptation), so higher_is_better is 'lower'. The paper's own ANOVA for this measure explicitly reports 'no effect of age' for the overall adaptive‑shift analysis (Figure 6a), so the text does not establish which group's raw value was higher; the only numeric group comparison available is for a secondary amplitude breakdown, which is noted as not the primary measurement location, so overall the paper does not clearly state which group had the higher raw score for the late‑adaptation measure itself.",
+   "agreed": true,
+   "needs_human": false,
+   "third_read": false,
+   "runs": [
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": false,
+     "raw_value_semantics": "signed_direction",
+     "direction_stated_in_text": "a_greater",
+     "quotes": [
+      "An adaptive shift of 30° would compensate the visuomotor rotation of 30° at the practiced target direction.",
+      "The mean adaptive shifts are shown in Figure 6a. They amounted to about 15° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction.",
+      "For the older participants, it was 3.7°, 6.4°, and 5.2° for the target amplitudes of 30 mm, 60 mm, and 90 mm, respectively, and for the younger participants, it was 8.2°, 7.0°, and 6.9°.",
+      "An ANOVA, with age and gender as the between-participant factors and target direction and target amplitude as the within-participant factors, revealed a significant main effect of target direction, F(4, 132) 14.3, p .01, and no effect of age."
+     ],
+     "reason": "The adaptive shift is a signed posttest–pretest change in movement direction expressed relative to target direction; the paper states that a shift of −30° would fully compensate the 30° CCW rotation (the PDF text extraction drops the minus signs, but the figure axis runs from −15 to 0 and the printed means are negative). Thus more negative values = more adaptation, and a larger (less negative / nearer zero) raw value means LESS of the construct 'late adaptation'. On the raw signed scale the older group's values are numerically higher (nearer zero: −3.7, −6.4, −5.2) than the younger group's (−8.2, −7.0, −6.9), although the paper reports no significant effect of age.",
+     "model": "claude-opus-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "01c5c0dc39820efe3cb113641dd9e4e9c2911fa35b66404550afbae9c0ce0fb3"
+    },
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": false,
+     "raw_value_semantics": "signed_direction",
+     "direction_stated_in_text": "unknown",
+     "quotes": [
+      "An adaptive shift of −30° would compensate the visuomotor rotation of 30° at the practiced target direction.",
+      "The mean adaptive shifts are shown in Figure 6a. They amounted to about −15° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction.",
+      "An ANOVA, with age and gender as the between-participant factors and target direction and target amplitude as the within-participant factors, revealed a significant main effect of target direction, F(4, 132) = 14.3, p < .01, and no effect of age.",
+      "For the older participants, it was −3.7°, −6.4°, and −5.2° for the target amplitudes of 30 mm, 60 mm, and 90 mm, respectively, and for the younger participants, it was −8.2°, −7.0°, and −6.9°."
+     ],
+     "reason": "The adaptive‑shift measure is defined so that a negative value in the direction opposite the rotation reflects compensation (a shift of −30° would fully compensate a 30° rotation); values near zero mean no adaptation. Thus the raw sign carries the direction of compensation and larger (more negative) magnitude means more adaptation, while a raw value closer to zero (less negative, i.e. numerically higher) means less adaptation — this is a signed measure, not a simple higher‑is‑more‑construct or higher‑is‑error scale. Consequently a lower (more negative) raw value corresponds to more of the construct (late adaptation), so higher_is_better is 'lower'. The paper's own ANOVA for this measure explicitly reports 'no effect of age' for the overall adaptive‑shift analysis (Figure 6a), so the text does not establish which group's raw value was higher; the only numeric group comparison available is for a secondary amplitude breakdown, which is noted as not the primary measurement location, so overall the paper does not clearly state which group had the higher raw score for the late‑adaptation measure itself.",
+     "model": "claude-sonnet-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "8e8e817dc13b619a7006a6916b65d0ce5045eac4cced5c37962c4748ccd2ffec"
+    }
+   ],
+   "llm_call_ids": [
+    "01c5c0dc39820efe3cb113641dd9e4e9c2911fa35b66404550afbae9c0ce0fb3",
+    "8e8e817dc13b619a7006a6916b65d0ce5045eac4cced5c37962c4748ccd2ffec"
+   ],
+   "notes": "means check: disputed — which series is which is disputed (axis_conflict, series_marker_mismatch), so no reader was checked against means that may be the other group's"
+  }
+ },
+ "adjudications": [
+  {
+   "dataset_id": "3570e4ce2a9c:d1",
+   "outcome_key": "late_adaptation",
+   "groups": [
+    {
+     "group": "A",
+     "n": 20,
+     "mean": 27.7,
+     "dispersion_value": null,
+     "dispersion_type": "NONE",
+     "unit": "deg",
+     "quote": "Initial direction errors were 42.3° and 18.9° in the first and last block of practice for younger participants. For older participants, they were 53.6° and 27.7°.",
+     "page": 4,
+     "locator": "Results, 'Practice' paragraph 1 (journal p. 193)",
+     "grounded": true,
+     "grounding_similarity": 1.0,
+     "chosen_candidate_ids": [],
+     "reason": "Read directly from the text. The only late-adaptation value the paper actually prints for Experiment 1a is the initial direction error in the LAST block of closed-loop practice with the 75° CCW rotation: 27.7° for the older participants. This matches the measurement window (end of the initial perturbation block, perturbation still applied) and is an error-like measure (smaller = better adaptation). The candidate value (-27.0°, SE 4.71) is a digitisation of Figure 2a; the paper prints no number for Figure 2a, so it cannot be quoted, and the digitiser/verifier flags indicate it is a single target-direction point with an unresolved open/filled marker. No SD or SE is printed for the practice-block initial direction errors (only F values are given), so dispersion is left null.",
+     "needs_human": false
+    },
+    {
+     "group": "B",
+     "n": 20,
+     "mean": 18.9,
+     "dispersion_value": null,
+     "dispersion_type": "NONE",
+     "unit": "deg",
+     "quote": "Initial direction errors were 42.3° and 18.9° in the first and last block of practice for younger participants. For older participants, they were 53.6° and 27.7°.",
+     "page": 4,
+     "locator": "Results, 'Practice' paragraph 1 (journal p. 193)",
+     "grounded": true,
+     "grounding_similarity": 1.0,
+     "chosen_candidate_ids": [],
+     "reason": "Read directly from the text, same sentence pair: 18.9° is the younger group's initial direction error in the last block of practice with the 75° CCW rotation. This is the printed, quotable late-adaptation value; the candidate -40.275° (SE 4.75) is a Figure 2a digitisation with no printed counterpart and was refuted for being a single target-direction point rather than an average. No dispersion is printed for these block means.",
+     "needs_human": false
+    }
+   ],
+   "rationale": "The two candidates were both digitisations of Figure 2a (adaptive shifts by target direction), and the paper prints no numeric value anywhere for those figure points; the text only reports F statistics for the age effect ('a significant main effect of age, F(1, 38) 5.7, p .05') and for the averaged shifts against zero. Because every value I keep must be quotable, I cannot adopt the figure-derived means, and both were flagged (collapsed_across_x, series_marker_mismatch) and refuted/called ambiguous by verifiers. The paper does print, verbatim, the alternative late-adaptation measure listed for this cell — the error of initial direction in the last block of closed-loop practice with the 75° rotation: 18.9° (younger) and 27.7° (older), from the sentence pair in the Experiment 1a Results 'Practice' paragraph. These are true block-level values inside the perturbation window and are internally comparable (same measure, same block, same n = 20 per group, from the Participants paragraph: 'The younger participants, 10 men and 10 women, were 20–29 years old'; 'The older participants, 10 men and 10 women, were 51–65 years old'). No SD, SE or CI is printed for them.",
+   "needs_human": true,
+   "chosen_candidate_ids": [],
+   "model": "claude-opus-5",
+   "prompt_version": "adjudicator/1@d3c814eb",
+   "llm_call_id": "0467b973d3cedc6f9f0239e5d13c3822ad4fc4708e4cc31fbdd2a86fece68186",
+   "notes": "Human attention is warranted for the dispersion, not the means: the paper reports no SD/SE for the practice-block initial direction errors (only F values), so no spread can be recorded without computing one, which is forbidden here. Figure 2a does show standard errors ('For all means, standard errors are shown'), but only per target direction for the adaptive-shift measure — a different measure from the one I could quote, and not an averaged spread — so mixing that dispersion with these means would not be comparable. A human should decide whether to (i) accept the quotable initial-direction-error means with no dispersion, or (ii) commission a proper digitisation of Figure 2a averaged across all eight target directions with an appropriate across-direction spread. Sign convention caveat: the PDF text layer strips minus signs in places (e.g. Experiment 1b's negative errors appear unsigned), but for the 75° CCW rotation of Experiment 1a the practice initial direction errors are positive, consistent with the negative values reported for the 75° CW rotation in Experiment 1b."
+  },
+  {
+   "dataset_id": "3570e4ce2a9c:d2",
+   "outcome_key": "late_adaptation",
+   "groups": [
+    {
+     "group": "A",
+     "n": 18,
+     "mean": -6.4,
+     "dispersion_value": null,
+     "dispersion_type": "NONE",
+     "unit": "deg",
+     "quote": "For the older participants, it was −3.7°, −6.4°, and −5.2° for the target amplitudes of 30 mm, 60 mm, and 90 mm, respectively, and for the younger participants, it was −8.2°, −7.0°, and −6.9°.",
+     "page": 10,
+     "locator": "Results, 'Tests' section, sentence on target amplitude",
+     "grounded": true,
+     "grounding_similarity": 0.9688,
+     "chosen_candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:A:text:narrative_first:claude-sonnet-5#0"
+     ],
+     "reason": "The only group-specific adaptive-shift numbers printed anywhere in Experiment 2 are these three per-amplitude marginal means; I kept the 60 mm value because 60 mm is the amplitude used during practice ('Only a single target (0° direction, 60 mm amplitude) was presented', p. 9). No dispersion is printed with this sentence, so dispersion is NONE (Figure 6a shows standard errors only per target direction, which cannot be transcribed as a number). n = 18 is taken from the Participants paragraph on p. 9 ('The older participants, 9 men and 9 women, were 49–65 years old'). Caveat driving needs_human: this value is averaged across all five test target directions (including directions where the shift is ~0), the paper's own overall statement is only non-group-specific ('They amounted to about −15° at the target direction used during practice (0°)'), and the figure-digitisation route read −4.79° for this group, i.e. a materially different value that reverses the size of the age gap.",
+     "needs_human": true
+    },
+    {
+     "group": "B",
+     "n": 19,
+     "mean": -7.0,
+     "dispersion_value": null,
+     "dispersion_type": "NONE",
+     "unit": "deg",
+     "quote": "For the older participants, it was −3.7°, −6.4°, and −5.2° for the target amplitudes of 30 mm, 60 mm, and 90 mm, respectively, and for the younger participants, it was −8.2°, −7.0°, and −6.9°.",
+     "page": 10,
+     "locator": "Results, 'Tests' section, sentence on target amplitude",
+     "grounded": true,
+     "grounding_similarity": 0.9688,
+     "chosen_candidate_ids": [
+      "3570e4ce2a9c:d2:late_adaptation:B:text:narrative_first:claude-sonnet-5#1"
+     ],
+     "reason": "Same printed sentence, younger group, 60 mm (practiced) amplitude value. No dispersion is printed with the sentence, hence NONE; n = 19 from the Participants paragraph on p. 9 ('The younger participants, 8 men and 11 women, were 20–30 years old'). One verifier refuted this datum on the ground that it is an amplitude-marginal rather than an overall group mean — that objection is correct in substance, but the paper prints no overall per-group adaptive shift, so this is the closest quotable value; the figure route read −7.65° for this group.",
+     "needs_human": true
+    }
+   ],
+   "rationale": "For Experiment 2 the paper reports the adaptive shift (open-loop posttest−pretest with cued presence of the 30° CCW rotation) only in two forms: (i) Figure 6a, means ± standard errors as a function of target direction, from which no number is printed; and (ii) the text sentence giving the age × amplitude marginal means, which is the only place where group-specific digits appear ('For the older participants, it was −3.7°, −6.4°, and −5.2° … and for the younger participants, it was −8.2°, −7.0°, and −6.9°'). The paper's other overall statements are not group-specific ('They amounted to about −15° at the target direction used during practice (0°)'; 'Initial direction errors declined across practice blocks from 15.8° to 8.4°. There was no difference between the two age groups.'). I therefore kept the printed 60 mm values, 60 mm being the practiced amplitude, and rejected the digitised figure means because they are not printed and cannot be quoted, and because averaging across the five plotted target directions is exactly the operation the pipeline forbids me to perform. I did not compute any average across the three amplitudes.",
+   "needs_human": true,
+   "chosen_candidate_ids": [
+    "3570e4ce2a9c:d2:late_adaptation:A:text:narrative_first:claude-sonnet-5#0",
+    "3570e4ce2a9c:d2:late_adaptation:B:text:narrative_first:claude-sonnet-5#1"
+   ],
+   "model": "claude-opus-5",
+   "prompt_version": "adjudicator/1@d3c814eb",
+   "llm_call_id": "deb6ed06c3b40e70f0570eb4d1220021831fcbabf9b69bbb9495a6880a789efe",
+   "notes": "Send to a human: (1) no overall per-group adaptive shift is printed for Experiment 2, so any single number requires choosing among three amplitude-marginal means (older −3.7/−6.4/−5.2; younger −8.2/−7.0/−6.9) — a choice that changes the sign and size of the age contrast; (2) no dispersion of any kind is printed in text, and the only spreads (Figure 6a standard errors) are per target direction, not for the collapsed mean; (3) the figure-digitisation route (older −4.79 ± 2.67 SE, younger −7.65 ± 2.57 SE) disagrees with the kept text values for group A and carries flagged problems (axis conflict, collapsed_across_x with mean_of_point_sd, unresolved open/filled marker identity, so the series could even be swapped); (4) note the paper explicitly reports 'no effect of age' on the adaptive shift in Experiment 2, so a large extracted age difference here would contradict the source."
+  },
+  {
+   "dataset_id": "3570e4ce2a9c:d2",
+   "outcome_key": "aftereffect",
+   "groups": [
+    {
+     "group": "A",
+     "n": 18,
+     "mean": null,
+     "dispersion_value": null,
+     "dispersion_type": "UNKNOWN",
+     "unit": "deg",
+     "quote": "The mean aftereffect (see Figure 6b) amounted to about 8° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction. The effect of target direction was significant, F(4, 132)  15.2, p  .01, and neither the size of the aftereffect nor its decline across target directions depended on age.",
+     "page": 11,
+     "locator": "Experiment 2, Results, 'Tests' paragraph (first paragraph of p. 200 text)",
+     "grounded": null,
+     "grounding_similarity": null,
+     "chosen_candidate_ids": [],
+     "reason": "For Experiment 2 the paper prints no numeric aftereffect for the older group separately: the only printed aftereffect magnitude is 'about 8°' (i.e. -8°) at the practiced target direction, and it is explicitly collapsed across age ('neither the size of the aftereffect nor its decline across target directions depended on age'). No dispersion is printed anywhere (Figure 6 states only 'standard errors are shown'). The candidate's -1.719° is a digitised average of the open-circle curve across all five target directions of Figure 6b; it has no printed counterpart, and it conflicts with the paper's own description of that panel (about -8° at 0°, near zero away from 0°), so I cannot quote it. Numbers left null.",
+     "needs_human": true
+    },
+    {
+     "group": "B",
+     "n": 19,
+     "mean": null,
+     "dispersion_value": null,
+     "dispersion_type": "UNKNOWN",
+     "unit": "deg",
+     "quote": "The mean aftereffect (see Figure 6b) amounted to about 8° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction. The effect of target direction was significant, F(4, 132)  15.2, p  .01, and neither the size of the aftereffect nor its decline across target directions depended on age.",
+     "page": 11,
+     "locator": "Experiment 2, Results, 'Tests' paragraph (first paragraph of p. 200 text)",
+     "grounded": null,
+     "grounding_similarity": null,
+     "chosen_candidate_ids": [],
+     "reason": "Same situation as group A: no younger-group aftereffect mean or dispersion is printed for Experiment 2. The single printed value ('about 8°' at the practiced direction) is collapsed across both age groups and carries no spread. The candidate's -2.42° is a figure-digitised average across all five target directions of Figure 6b, which the paper's own text contradicts as a description of the aftereffect, and it cannot be quoted. Numbers left null.",
+     "needs_human": true
+    }
+   ],
+   "rationale": "The outcome asked for is the Experiment 2 aftereffect (open-loop posttest with cued absence of the 30° rotation), separately for older and younger participants. The paper reports this only graphically (Figure 6b) and, in text, only as a single age-collapsed approximation: 'The mean aftereffect (see Figure 6b) amounted to about 8° at the target direction used during practice (0°) and approached almost zero as the target direction in the test deviated from the practice direction', adding that 'neither the size of the aftereffect nor its decline across target directions depended on age.' No group means and no numeric dispersions are printed. The two candidates are figure digitisations averaged across all five test target directions; both were refuted by verifiers because that average is not the quantity the paper describes (near-zero away from 0°, about -8° at 0°), and the digitiser itself flagged marker/series-orientation problems (it could not confirm which curve is old vs young, and the sign-mismatch flag reflects that the collapsed averages reverse the expected relation). Since I cannot quote any group-specific value, and cannot compute or re-digitise one, both groups are left null and sent to a human.",
+   "needs_human": true,
+   "chosen_candidate_ids": [],
+   "model": "claude-opus-5",
+   "prompt_version": "adjudicator/1@d3c814eb",
+   "llm_call_id": "9acd1febb26393530730d3b3031a923c3af7befd290473e343ad17e92beab93b",
+   "notes": "If a human wants a usable pair for this cell, the defensible source is Figure 6b on PDF page 10 (panel b, 'aftereffect'; filled circles = young, open circles = old; error bars are standard errors per the caption 'For all means. standard errors are shown'), read at the practiced target direction of 0° only — the paper's own anchor is 'about 8°' (plotted negative) at 0°. Note also that the figure's y-axis in panel b spans -8 to +4 deg, so the digitised collapsed averages near -1.7/-2.4 deg are dominated by the near-zero and positive points at 45–180°, which is why they cannot be reconciled with the text. Marker/series identity must be re-checked before any age contrast is trusted; the paper reports no reliable age effect on aftereffects in Experiment 2."
+  }
+ ],
+ "source_rank": {
+  "3570e4ce2a9c:d1|late_adaptation": {
+   "ranked": [
+    {
+     "locator": "Figure 2, panel a ('adaptive shift'), filled circles = young, open circles = old, at each of the 8 target directions (0, 45, 90, 135, 180, 227, 270, 313°)",
+     "page": 5,
+     "figure_id": "fig02",
+     "table_id": null,
+     "kind": "figure_points",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries SE error bars",
+      "measures the outcome's own metric (change_from_baseline)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    }
+   ],
+   "held_back_from_vote": [],
+   "reopened_on_better_source": ""
+  },
+  "3570e4ce2a9c:d1|aftereffect": {
+   "ranked": [
+    {
+     "locator": "Figure 2, panel b ('aftereffect'), filled circles = young, open circles = old, at each of the 8 target directions",
+     "page": 5,
+     "figure_id": "fig02",
+     "table_id": null,
+     "kind": "figure_points",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries SE error bars",
+      "measures the outcome's own metric (change_from_baseline)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    }
+   ],
+   "held_back_from_vote": [],
+   "reopened_on_better_source": ""
+  },
+  "3570e4ce2a9c:d2|late_adaptation": {
+   "ranked": [
+    {
+     "locator": "Figure 6, panel a ('adaptive shift'), filled circles = young, open circles = old, at target directions 0, 45, 90, 135, 180°",
+     "page": 10,
+     "figure_id": "fig06",
+     "table_id": null,
+     "kind": "figure_points",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries SE error bars",
+      "measures the outcome's own metric (change_from_baseline)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    },
+    {
+     "locator": "Results, 'Tests' section, sentence on target amplitude",
+     "page": 10,
+     "figure_id": null,
+     "table_id": null,
+     "kind": "unknown",
+     "score": 3,
+     "has_dispersion": false,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "measures the outcome's own metric (change_from_baseline)",
+      "the values themselves are printed"
+     ],
+     "losing_reasons": [
+      "scored 3 against the best source's 5",
+      "no dispersion was determined here, so a value read from it cannot become an effect size on its own",
+      "no group size is printed with it"
+     ]
+    }
+   ],
+   "held_back_from_vote": [],
+   "reopened_on_better_source": ""
+  },
+  "3570e4ce2a9c:d2|aftereffect": {
+   "ranked": [
+    {
+     "locator": "Figure 6, panel b ('aftereffect'), filled circles = young, open circles = old, at target directions 0, 45, 90, 135, 180°",
+     "page": 10,
+     "figure_id": "fig06",
+     "table_id": null,
+     "kind": "figure_points",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries SE error bars",
+      "measures the outcome's own metric (change_from_baseline)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    }
+   ],
+   "held_back_from_vote": [],
+   "reopened_on_better_source": ""
+  }
+ },
+ "reopens": 7
+}

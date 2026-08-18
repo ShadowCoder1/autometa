@@ -1,0 +1,1327 @@
+{
+ "verdicts": [
+  {
+   "dataset_id": "592b3b55a318:d1",
+   "outcome_key": "late_adaptation",
+   "group": "A",
+   "agreement": "single",
+   "agreeing_ids": [
+    "592b3b55a318:d1:late_adaptation:A:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 0.5,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "The paper never prints a numeric mean or SE for the standardized IDE score during late-exposure of the sudden-rotation condition. The only quantitative statements about this comparison are statistical test outputs: 'a significant age effect during Step adaptation was found for standardized RMSE scores (χ2 = 4.811, df = 1, P < 0.05). However, whereas Figure 3 shows a trend toward a larger mean standardized IDE score in the aged group, this did not approach statistical significance (χ2 = 0.884, df = 1, P = 0.347)' (p.58). No mean, SD, SE, or n-specific value for IDE_STD at late-exposure is given in the text or in Table 1 (which only encodes qualitative Y>E/Y=E relations, p.60). The candidate's mean (0.9) and dispersion (0.5, SE) are read purely from digitizing Figure 3's top-left panel (Sudden, IDE_STD) near the '90' trial-block tick; the figure caption confirms error bars there are 'standard errors' (p.58, Fig. 3 caption: 'Trial block means, standard errors, and fitted curves...'), so the dispersion TYPE label (SE) is plausible, but the actual numeric height of the gray (Aged) symbol and its error bar at the final exposure block cannot be confirmed from the printed text — it can only be assessed by eye from the plotted curve, which is not something this verification can certify as exactly 0.9 ± 0.5. Thus I cannot confirm the specific digitized values are correct, nor can I point to a contradicting printed number to refute them.",
+   "verifiers": [
+    {
+     "candidate_id": "592b3b55a318:d1:late_adaptation:A:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "The paper never prints a numeric mean or SE for the standardized IDE score during late-exposure of the sudden-rotation condition. The only quantitative statements about this comparison are statistical test outputs: 'a significant age effect during Step adaptation was found for standardized RMSE scores (χ2 = 4.811, df = 1, P < 0.05). However, whereas Figure 3 shows a trend toward a larger mean standardized IDE score in the aged group, this did not approach statistical significance (χ2 = 0.884, df = 1, P = 0.347)' (p.58). No mean, SD, SE, or n-specific value for IDE_STD at late-exposure is given in the text or in Table 1 (which only encodes qualitative Y>E/Y=E relations, p.60). The candidate's mean (0.9) and dispersion (0.5, SE) are read purely from digitizing Figure 3's top-left panel (Sudden, IDE_STD) near the '90' trial-block tick; the figure caption confirms error bars there are 'standard errors' (p.58, Fig. 3 caption: 'Trial block means, standard errors, and fitted curves...'), so the dispersion TYPE label (SE) is plausible, but the actual numeric height of the gray (Aged) symbol and its error bar at the final exposure block cannot be confirmed from the printed text — it can only be assessed by eye from the plotted curve, which is not something this verification can certify as exactly 0.9 ± 0.5. Thus I cannot confirm the specific digitized values are correct, nor can I point to a contradicting printed number to refute them.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "",
+     "checked": [
+      "wrong_group",
+      "wrong_time_window",
+      "wrong_panel",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "877cc40afd6000ecd11f4082b2ab323a533a48a05e6adae2b498e2d2e65d4202",
+     "notes": "Table 1 (p.60) only reports qualitative relations (e.g., 'Y = E' for Buch et al. sudden aftereffects) and does not give late-exposure IDE means. The Results/Discussion text (pp.57-58) reports only chi-square and p-values for the age comparison of late-exposure IDE and RMSE, never the mean or SE magnitudes themselves. Figure 3 (p.58) is therefore the only source for this quantity, but it is a plotted time series with no accompanying data table, so any specific digitized mean/SE pair is inherently unverifiable against printed text; verdict is ambiguous rather than confirmed or refuted.; did not report checking: units"
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": true,
+   "adjudication_rationale": "The requested outcome (late-exposure standardized IDE under the sudden 90° rotation, per group) appears in this paper only as plotted trial-block means with standard errors in Figure 3; no numeric mean or dispersion for either age group is printed in the text, in Table 1, or in any figure caption. Figure 4 prints only aftereffect (post-exposure) IDE/RMSE bars, which are a different measurement window. The text's only numbers for this window are rank-based test statistics (χ² = 4.811, P < 0.05 for RMSE; χ² = 0.884, df = 1, P = 0.347 for IDE), which describe the comparison but supply no group values, and the candidate test-statistic extraction is not a group mean at all. The two group-level candidates are both figure digitisations, and the pipeline itself flagged an axis-calibration error for both ('the readers' tick labels dispute EVERY ladder — the axis these numbers are in is unsettled'), with the routes also disagreeing on the error-bar half-length. Because I cannot quote any printed mean and the only available numbers rest on a disputed calibration, I keep no numeric values and send both groups to a human.; The paper never prints a numeric group mean or dispersion for the standardized IDE score at late exposure in the sudden (step) condition. The only quantitative statements about this comparison are Kruskal-Wallis outputs ('a significant age effect during Step adaptation was found for standardized RMSE scores (2 = 4.811, df = 1, P < 0.05). However, whereas Figure 3 shows a trend toward a larger mean standardized IDE score in the aged group, this did not approach statistical significance (2 = 0.884, df = 1, P = 0.347)'), which give no means. The only candidate value (0.9 ± 0.5) comes from digitising Fig. 3, and its axis calibration was flagged as disputed (the ladder used carries none of the reported tick values), so it cannot be trusted or quoted. Reported n = 5 is supported by the Methods ('Ten healthy elderly participants ... Both age groups were equally divided at random into two subgroups').",
+   "flags": [
+    {
+     "code": "calibration_disputed",
+     "severity": "error",
+     "message": "the ladder fig03 was read against (cv_ocr) carries none of the tick values the readers report for this axis — it is a ladder of another axis of the crop, and it was used anyway because nothing better was built (only the cv_ocr ladder calibrates this axis; no read-out tick ladder could be paired with the detected tick marks; the readers' tick labels [-6.0, -4.0, -2.0, 0.0, 2.0, 4.0, 6.0] dispute EVERY ladder, including this one — the axis these numbers are in is unsettled)",
+     "candidate_ids": [
+      "592b3b55a318:d1:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "calibration_disputed",
+     "severity": "error",
+     "message": "the ladder fig03 was read against (cv_ocr) carries none of the tick values the readers report for this axis — it is a ladder of another axis of the crop, and it was used anyway because nothing better was built (only the cv_ocr ladder calibrates this axis; no read-out tick ladder could be paired with the detected tick marks; the readers' tick labels [-6.0, -4.0, -2.0, 0.0, 2.0, 4.0, 6.0] dispute EVERY ladder, including this one — the axis these numbers are in is unsettled)",
+     "candidate_ids": [
+      "592b3b55a318:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "unit_mismatch",
+     "severity": "warn",
+     "message": "values were transcribed in 'standardized score (z)', but the map recorded this outcome in 'standardized score (z-score of IDE in degrees, relative to pre-exposure mean/SD)'",
+     "candidate_ids": [
+      "592b3b55a318:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.47,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "one route, but 2 independent model families read it and agreed (claude-opus, claude-sonnet) — a second family is a different failure mode, which is what agreement is for (+0.25)",
+    "the verifier could not settle it either way (-0.05)",
+    "consistency errors stand: calibration_disputed",
+    "warnings (unit_mismatch) -0.08",
+    "the adjudicator asked for a human",
+    "adjudicated cells are capped at 0.70",
+    "1 of the digitizer's 1 measurement path(s) read both groups with a usable spread, so the effect this figure implies is corroborated by nothing — one path cannot agree with another",
+    "the digitisation uncertainty is 13% of the sampling error (limit 10%)",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "this cell was held by the evidence, not by its score, so the score is not compared with any boundary: the bucket was not decided by the score"
+   ],
+   "needs_human": true,
+   "n": 5,
+   "mean": 0.9,
+   "dispersion_value": 0.5,
+   "dispersion_type": "SE",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "standardized score (z)",
+   "sigma": 0.002967359050445103,
+   "mad": 0.0,
+   "analysis_metric": "baseline_corrected",
+   "route": "figure",
+   "candidate_ids": [
+    "592b3b55a318:d1:late_adaptation:A:digitize:ensemble"
+   ],
+   "higher_is_better": false,
+   "orientation_evidence": "claude-opus-5: IDE is defined as the angular difference (error) between the initial movement direction and the target direction, standardized against pre-exposure; larger values therefore mean greater directional error, i.e., less adaptation, so lower is better for the late-adaptation construct. For the sudden condition at late exposure, the paper's own wording reports 'a trend toward a larger mean standardized IDE score in the aged group' (Group A) than the young, although the difference was not statistically significant (and is elsewhere described as 'similar IDE scores'). | claude-sonnet-5: IDE is defined as the angular deviation of the initial movement direction from the target direction, i.e., an error measure—larger values indicate greater directional error and thus less adaptation to the visuomotor rotation, so lower values indicate more/better adaptation. For the sudden rotation condition (final/late-exposure level), the paper explicitly states a trend toward a larger mean standardized IDE score in the aged group compared to young, though this difference did not reach statistical significance.; The initial directional error (IDE, in degrees) was calculated as the angular difference between this vector and a vector extending from the starting (home) position to the target.; IDE can be considered to represent the planning of the initial direction of movement, and thus, the current state of the internal model of the rotated environment.; The standardized score (z-score) for an item indicates how far and in what direction that item deviates from its distribution's mean, expressed in units of its distribution's standard deviation.; However, whereas Figure 3 shows a trend toward a larger mean standardized IDE score in the aged group, this did not approach statistical significance (2 = 0.884, df = 1, P = 0.347), perhaps due to the large directional variability.; the aged subjects showed higher standardized RMSE scores (but similar IDE scores) in the sudden task than the controls; we used the Kruskal-Wallis test to compare the means of the trial-blocks during the adaptation to the 90° rotation (e.g., late-exposure); Figure 3 shows a trend toward a larger mean standardized IDE score in the aged group, this did not approach statistical significance (χ2 = 0.884, df = 1, P = 0.347)",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "592b3b55a318:d1",
+   "outcome_key": "late_adaptation",
+   "group": "B",
+   "agreement": "single",
+   "agreeing_ids": [
+    "592b3b55a318:d1:late_adaptation:B:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 0.5,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "The paper never prints a numeric value (mean or SE) for the late-exposure standardized IDE score of either group under the sudden rotation. The only quantitative statement about this comparison is: 'a significant age effect during Step adaptation was found for standardized RMSE scores (χ² = 4.811, df = 1, P < 0.05). However, whereas Figure 3 shows a trend toward a larger mean standardized IDE score in the aged group, this did not approach statistical significance (χ² = 0.884, df = 1, P = 0.347)' (p.58). This tells us the *direction* (aged > young for IDE at late-exposure) but gives no mean or SE for the Young group. Figure 3's caption only says 'Trial block means, standard errors, and fitted curves' (p.58) without printing the actual values; the reported 0.38 ± 0.45 is purely a digitized reading off the plotted curve, not a value the paper states. I cannot verify or refute the specific digit values (0.38, 0.45) against any textual or tabular source, so the claim is neither confirmed nor contradicted by the text.",
+   "verifiers": [
+    {
+     "candidate_id": "592b3b55a318:d1:late_adaptation:B:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "The paper never prints a numeric value (mean or SE) for the late-exposure standardized IDE score of either group under the sudden rotation. The only quantitative statement about this comparison is: 'a significant age effect during Step adaptation was found for standardized RMSE scores (χ² = 4.811, df = 1, P < 0.05). However, whereas Figure 3 shows a trend toward a larger mean standardized IDE score in the aged group, this did not approach statistical significance (χ² = 0.884, df = 1, P = 0.347)' (p.58). This tells us the *direction* (aged > young for IDE at late-exposure) but gives no mean or SE for the Young group. Figure 3's caption only says 'Trial block means, standard errors, and fitted curves' (p.58) without printing the actual values; the reported 0.38 ± 0.45 is purely a digitized reading off the plotted curve, not a value the paper states. I cannot verify or refute the specific digit values (0.38, 0.45) against any textual or tabular source, so the claim is neither confirmed nor contradicted by the text.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "",
+     "checked": [
+      "wrong_group",
+      "wrong_time_window",
+      "wrong_panel",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "units",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "745baf4fab2b9465f3cf41b030c6273d486fd82e5608ce28d09da7e9fc7cb149",
+     "notes": "No table or in-text numeric value exists for late-exposure standardized IDE scores by group under sudden rotation; only the Kruskal-Wallis chi-square/p-values (χ²=0.884, df=1, P=0.347 for IDE; χ²=4.811, df=1, P<0.05 for RMSE) are given (p.58, 'Final Level of Adaptation' section). Figure 3 (p.58) is the only place these values appear graphically, and the caption confirms error bars are standard errors ('Trial block means, standard errors, and fitted curves...'), consistent with the candidate's claimed SE dispersion type, but the exact digitized mean (0.38) and SE (0.45) cannot be checked against any printed number. Table 1 (p.60) only gives qualitative Y>E/Y=E summaries, not means, so there is no better textual source for the exact figure than the figure itself."
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": true,
+   "adjudication_rationale": "The requested outcome (late-exposure standardized IDE under the sudden 90° rotation, per group) appears in this paper only as plotted trial-block means with standard errors in Figure 3; no numeric mean or dispersion for either age group is printed in the text, in Table 1, or in any figure caption. Figure 4 prints only aftereffect (post-exposure) IDE/RMSE bars, which are a different measurement window. The text's only numbers for this window are rank-based test statistics (χ² = 4.811, P < 0.05 for RMSE; χ² = 0.884, df = 1, P = 0.347 for IDE), which describe the comparison but supply no group values, and the candidate test-statistic extraction is not a group mean at all. The two group-level candidates are both figure digitisations, and the pipeline itself flagged an axis-calibration error for both ('the readers' tick labels dispute EVERY ladder — the axis these numbers are in is unsettled'), with the routes also disagreeing on the error-bar half-length. Because I cannot quote any printed mean and the only available numbers rest on a disputed calibration, I keep no numeric values and send both groups to a human.; Same situation as group A: the young group's late-exposure standardized IDE mean and error are shown only as symbols in Fig. 3 and are never printed numerically. The candidate value (0.38 ± 0.45) is a figure digitisation whose axis calibration was flagged as disputed, so it is not a quotable value. Reported n = 5 follows from 'ten healthy young controls ... Both age groups were equally divided at random into two subgroups'.",
+   "flags": [
+    {
+     "code": "calibration_disputed",
+     "severity": "error",
+     "message": "the ladder fig03 was read against (cv_ocr) carries none of the tick values the readers report for this axis — it is a ladder of another axis of the crop, and it was used anyway because nothing better was built (only the cv_ocr ladder calibrates this axis; no read-out tick ladder could be paired with the detected tick marks; the readers' tick labels [-6.0, -4.0, -2.0, 0.0, 2.0, 4.0, 6.0] dispute EVERY ladder, including this one — the axis these numbers are in is unsettled)",
+     "candidate_ids": [
+      "592b3b55a318:d1:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "calibration_disputed",
+     "severity": "error",
+     "message": "the ladder fig03 was read against (cv_ocr) carries none of the tick values the readers report for this axis — it is a ladder of another axis of the crop, and it was used anyway because nothing better was built (only the cv_ocr ladder calibrates this axis; no read-out tick ladder could be paired with the detected tick marks; the readers' tick labels [-6.0, -4.0, -2.0, 0.0, 2.0, 4.0, 6.0] dispute EVERY ladder, including this one — the axis these numbers are in is unsettled)",
+     "candidate_ids": [
+      "592b3b55a318:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "unit_mismatch",
+     "severity": "warn",
+     "message": "values were transcribed in 'standardized score (z)', but the map recorded this outcome in 'standardized score (z-score of IDE in degrees, relative to pre-exposure mean/SD)'",
+     "candidate_ids": [
+      "592b3b55a318:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.42,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "one route, but 2 independent model families read it and agreed (claude-opus, claude-sonnet) — a second family is a different failure mode, which is what agreement is for (+0.25)",
+    "the verifier could not settle it either way (-0.05)",
+    "the digitisation uncertainty is 23% of the value (-0.05)",
+    "consistency errors stand: calibration_disputed",
+    "warnings (unit_mismatch) -0.08",
+    "the adjudicator asked for a human",
+    "adjudicated cells are capped at 0.70",
+    "1 of the digitizer's 1 measurement path(s) read both groups with a usable spread, so the effect this figure implies is corroborated by nothing — one path cannot agree with another",
+    "the digitisation uncertainty is 13% of the sampling error (limit 10%)",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "this cell was held by the evidence, not by its score, so the score is not compared with any boundary: the bucket was not decided by the score"
+   ],
+   "needs_human": true,
+   "n": 5,
+   "mean": 0.38,
+   "dispersion_value": 0.45,
+   "dispersion_type": "SE",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "standardized score (z)",
+   "sigma": 0.088956,
+   "mad": 0.0,
+   "analysis_metric": "baseline_corrected",
+   "route": "figure",
+   "candidate_ids": [
+    "592b3b55a318:d1:late_adaptation:B:digitize:ensemble"
+   ],
+   "higher_is_better": false,
+   "orientation_evidence": "claude-opus-5: IDE is defined as the angular difference (error) between the initial movement direction and the target direction, standardized against pre-exposure; larger values therefore mean greater directional error, i.e., less adaptation, so lower is better for the late-adaptation construct. For the sudden condition at late exposure, the paper's own wording reports 'a trend toward a larger mean standardized IDE score in the aged group' (Group A) than the young, although the difference was not statistically significant (and is elsewhere described as 'similar IDE scores'). | claude-sonnet-5: IDE is defined as the angular deviation of the initial movement direction from the target direction, i.e., an error measure—larger values indicate greater directional error and thus less adaptation to the visuomotor rotation, so lower values indicate more/better adaptation. For the sudden rotation condition (final/late-exposure level), the paper explicitly states a trend toward a larger mean standardized IDE score in the aged group compared to young, though this difference did not reach statistical significance.; The initial directional error (IDE, in degrees) was calculated as the angular difference between this vector and a vector extending from the starting (home) position to the target.; IDE can be considered to represent the planning of the initial direction of movement, and thus, the current state of the internal model of the rotated environment.; The standardized score (z-score) for an item indicates how far and in what direction that item deviates from its distribution's mean, expressed in units of its distribution's standard deviation.; However, whereas Figure 3 shows a trend toward a larger mean standardized IDE score in the aged group, this did not approach statistical significance (2 = 0.884, df = 1, P = 0.347), perhaps due to the large directional variability.; the aged subjects showed higher standardized RMSE scores (but similar IDE scores) in the sudden task than the controls; we used the Kruskal-Wallis test to compare the means of the trial-blocks during the adaptation to the 90° rotation (e.g., late-exposure); Figure 3 shows a trend toward a larger mean standardized IDE score in the aged group, this did not approach statistical significance (χ2 = 0.884, df = 1, P = 0.347)",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "592b3b55a318:d1",
+   "outcome_key": "aftereffect",
+   "group": "A",
+   "agreement": "none",
+   "agreeing_ids": [],
+   "disagreeing_ids": [],
+   "vote_method": "none",
+   "vote_tolerance": null,
+   "needs_third_candidate": false,
+   "verifier_verdict": "not_run",
+   "verifier_reason": "",
+   "verifiers": [],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "metric_mixed_across_outcomes",
+     "severity": "info",
+     "message": "this paper's outcomes are read on different analysis metrics (baseline_corrected) — legitimate when the outcomes really are different quantities, worth a look when they are not",
+     "candidate_ids": [
+      "592b3b55a318:d1:late_adaptation:A:digitize:ensemble",
+      "592b3b55a318:d1:late_adaptation:B:digitize:ensemble",
+      "592b3b55a318:d2:aftereffect:A:digitize:ensemble",
+      "592b3b55a318:d2:aftereffect:A:digitize:ensemble",
+      "592b3b55a318:d2:aftereffect:A:digitize:ensemble",
+      "592b3b55a318:d2:aftereffect:B:digitize:ensemble",
+      "592b3b55a318:d2:aftereffect:B:digitize:ensemble",
+      "592b3b55a318:d2:aftereffect:B:digitize:ensemble",
+      "592b3b55a318:d2:late_adaptation:A:digitize:ensemble",
+      "592b3b55a318:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.0,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "no value was resolved for this cell"
+   ],
+   "needs_human": true,
+   "n": null,
+   "mean": null,
+   "dispersion_value": null,
+   "dispersion_type": "UNKNOWN",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "",
+   "sigma": null,
+   "mad": null,
+   "analysis_metric": "unknown",
+   "route": "",
+   "candidate_ids": [],
+   "higher_is_better": false,
+   "orientation_evidence": "claude-opus-5: The measure is a signed, baseline-standardized z-score of initial directional error; the paper explicitly states the aftereffect appears as a NEGATIVE standardized IDE score (opposite in direction to the early-exposure error), so magnitude of the aftereffect grows as the value becomes more negative. Hence a larger (less negative / more positive) raw value corresponds to LESS implicit recalibration, i.e. lower raw values mean more of the reviewed construct. For the sudden condition the paper reports only that the two age groups did not differ significantly and were 'comparable', without stating which group's raw value was higher, so the stated direction is unknown. | claude-sonnet-5: The paper defines the aftereffect for IDE as a negative z-score, so the sign carries the direction of the effect rather than the magnitude alone indicating more or less aftereffect (a more negative value corresponds to a larger aftereffect). Because raw values are negative, a higher (less negative) raw value corresponds to a smaller aftereffect, so higher raw value is not better for the construct being measured (implicit recalibration magnitude). For the sudden condition specifically, the text states there were no statistically significant differences between age groups for either the first aftereffect trial or the four-trial mean, so the paper does not state which group (Young or Aged) had the numerically greater (or less negative) raw IDE aftereffect score in the sudden condition.; During the post-exposure trials, the aftereffect was manifested as a negative standardized IDE score (in fact in the opposite direction as that seen during early adaptation trials) and as an increase in standardized RMSE scores.; The initial directional error (IDE, in degrees) was calculated as the angular difference between this vector and a vector extending from the starting (home) position to the target.; zi = (xi − x̄Pre−exposure)/SDPre−exposure; Neither the first aftereffect nor the mean of the first four aftereffects revealed statistically significant differences across age groups by the Kruskal-Wallis test in the sudden adaptation task (standardized IDE and RMSE scores, both P > 0.05).; Visual inspection of the initial direction of movement at post-exposure (see insets in Fig. 2D) shows that the initial movement direction at post-exposure was comparable for both age groups for the sudden condition only.",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "592b3b55a318:d1",
+   "outcome_key": "aftereffect",
+   "group": "B",
+   "agreement": "none",
+   "agreeing_ids": [],
+   "disagreeing_ids": [],
+   "vote_method": "none",
+   "vote_tolerance": null,
+   "needs_third_candidate": false,
+   "verifier_verdict": "not_run",
+   "verifier_reason": "",
+   "verifiers": [],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "metric_mixed_across_outcomes",
+     "severity": "info",
+     "message": "this paper's outcomes are read on different analysis metrics (baseline_corrected) — legitimate when the outcomes really are different quantities, worth a look when they are not",
+     "candidate_ids": [
+      "592b3b55a318:d1:late_adaptation:A:digitize:ensemble",
+      "592b3b55a318:d1:late_adaptation:B:digitize:ensemble",
+      "592b3b55a318:d2:aftereffect:A:digitize:ensemble",
+      "592b3b55a318:d2:aftereffect:A:digitize:ensemble",
+      "592b3b55a318:d2:aftereffect:A:digitize:ensemble",
+      "592b3b55a318:d2:aftereffect:B:digitize:ensemble",
+      "592b3b55a318:d2:aftereffect:B:digitize:ensemble",
+      "592b3b55a318:d2:aftereffect:B:digitize:ensemble",
+      "592b3b55a318:d2:late_adaptation:A:digitize:ensemble",
+      "592b3b55a318:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.0,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "no value was resolved for this cell"
+   ],
+   "needs_human": true,
+   "n": null,
+   "mean": null,
+   "dispersion_value": null,
+   "dispersion_type": "UNKNOWN",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "",
+   "sigma": null,
+   "mad": null,
+   "analysis_metric": "unknown",
+   "route": "",
+   "candidate_ids": [],
+   "higher_is_better": false,
+   "orientation_evidence": "claude-opus-5: The measure is a signed, baseline-standardized z-score of initial directional error; the paper explicitly states the aftereffect appears as a NEGATIVE standardized IDE score (opposite in direction to the early-exposure error), so magnitude of the aftereffect grows as the value becomes more negative. Hence a larger (less negative / more positive) raw value corresponds to LESS implicit recalibration, i.e. lower raw values mean more of the reviewed construct. For the sudden condition the paper reports only that the two age groups did not differ significantly and were 'comparable', without stating which group's raw value was higher, so the stated direction is unknown. | claude-sonnet-5: The paper defines the aftereffect for IDE as a negative z-score, so the sign carries the direction of the effect rather than the magnitude alone indicating more or less aftereffect (a more negative value corresponds to a larger aftereffect). Because raw values are negative, a higher (less negative) raw value corresponds to a smaller aftereffect, so higher raw value is not better for the construct being measured (implicit recalibration magnitude). For the sudden condition specifically, the text states there were no statistically significant differences between age groups for either the first aftereffect trial or the four-trial mean, so the paper does not state which group (Young or Aged) had the numerically greater (or less negative) raw IDE aftereffect score in the sudden condition.; During the post-exposure trials, the aftereffect was manifested as a negative standardized IDE score (in fact in the opposite direction as that seen during early adaptation trials) and as an increase in standardized RMSE scores.; The initial directional error (IDE, in degrees) was calculated as the angular difference between this vector and a vector extending from the starting (home) position to the target.; zi = (xi − x̄Pre−exposure)/SDPre−exposure; Neither the first aftereffect nor the mean of the first four aftereffects revealed statistically significant differences across age groups by the Kruskal-Wallis test in the sudden adaptation task (standardized IDE and RMSE scores, both P > 0.05).; Visual inspection of the initial direction of movement at post-exposure (see insets in Fig. 2D) shows that the initial movement direction at post-exposure was comparable for both age groups for the sudden condition only.",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "592b3b55a318:d2",
+   "outcome_key": "late_adaptation",
+   "group": "A",
+   "agreement": "single",
+   "agreeing_ids": [
+    "592b3b55a318:d2:late_adaptation:A:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 3.0,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "The manuscript text never prints a numeric standardized IDE value (mean or SE) for the aged group at late-exposure in the gradual condition. It only states qualitatively: 'both age groups reached the same level of adaptation by late-exposure in the gradual distortion condition (P > 0.05 for both standardized IDE and RMSE scores)' and that during gradual exposure 'the standardized IDE and RMSE scores slowly increased with the magnitude of the rotation and eventually leveled off.' Figure 3 (page 58) is the only place this quantity appears, as a plotted curve with error bars, and the caption confirms the bars are 'standard errors' (matching the candidate's SE label) and that data are split by age group and distortion type in a 2x2 grid (Sudden/Gradual x IDE_STD/RMSE_STD), consistent with the candidate's panel description. However, no printed number lets me verify the digitized mean (1.05) or SE (0.45) — these are read off a noisy trial-block time series with many overlapping error bars near trial block 90, and I have no way to confirm or contradict the specific digitized values from the text alone.",
+   "verifiers": [
+    {
+     "candidate_id": "592b3b55a318:d2:late_adaptation:A:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "The manuscript text never prints a numeric standardized IDE value (mean or SE) for the aged group at late-exposure in the gradual condition. It only states qualitatively: 'both age groups reached the same level of adaptation by late-exposure in the gradual distortion condition (P > 0.05 for both standardized IDE and RMSE scores)' and that during gradual exposure 'the standardized IDE and RMSE scores slowly increased with the magnitude of the rotation and eventually leveled off.' Figure 3 (page 58) is the only place this quantity appears, as a plotted curve with error bars, and the caption confirms the bars are 'standard errors' (matching the candidate's SE label) and that data are split by age group and distortion type in a 2x2 grid (Sudden/Gradual x IDE_STD/RMSE_STD), consistent with the candidate's panel description. However, no printed number lets me verify the digitized mean (1.05) or SE (0.45) — these are read off a noisy trial-block time series with many overlapping error bars near trial block 90, and I have no way to confirm or contradict the specific digitized values from the text alone.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "",
+     "checked": [
+      "wrong_group",
+      "wrong_time_window",
+      "wrong_panel",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "units",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "7f4542d5707cc12a376120b944979c6a9eb1f3a3ebc3dfb2305087ef578e1b65",
+     "notes": "Figure 3 caption (p.58) explicitly states 'Trial block means, standard errors, and fitted curves for the standardized initial directional error (IDE) and root mean square error (RMSE) scores,' confirming SE as the correct dispersion type and that late-exposure corresponds to trial blocks approaching '90' on the horizontal axis before the Post-Exp segment. Subgroup n=5 for aged-gradual is consistent with 'Both age groups were equally divided at random into two subgroups.' No table or in-text numeric value exists for this specific late-exposure IDE score by group, so the candidate's exact mean/SE cannot be confirmed or refuted from the printed text; verification would require access to the original figure/data, not just this PDF's text extraction."
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": true,
+   "adjudication_rationale": "The requested cell is the late-exposure (full 90° step) standardized IDE score in the gradual condition, by age group. Searching the whole article: the Results report Kruskal-Wallis statistics only for (a) sudden late-exposure RMSE (chi-square = 4.811) and sudden late-exposure IDE (chi-square = 0.884, P = 0.347), and (b) gradual aftereffect trials (IDE chi-square = 3.938; RMSE chi-square = 4.811; four-trial IDE chi-square = 0.884; RMSE chi-square = 3.153). For gradual late-exposure the paper reports only 'P > 0.05 for both standardized IDE and RMSE scores' — no group means, no SEs, no n-specific descriptive statistics. Table 1 is qualitative (Y = E). Figure 4 shows aftereffects, not late exposure. Therefore the only possible numeric source is the Gradual/IDE_STD panel of Figure 3, which prints no values; both candidates are digitiser readings of that panel and both carry a calibration_disputed error, meaning the pixel-to-axis mapping rests on a single unconfirmed tick ladder that the OCR ladder contradicts. Both verifiers independently reached 'ambiguous' for the same reason. Since no value for either group is printed in the paper and I can quote no number for either mean or dispersion, I keep the group labels and n but leave the numbers null and route the cell to a human, who can re-digitise Fig. 3 with a checked axis calibration if the figure route is acceptable for this project.; The paper prints no numeric mean or spread for the standardized IDE score at late-exposure in the gradual condition for the aged group. The only statement about this quantity is qualitative (P > 0.05 between age groups); the Kruskal-Wallis chi-square values printed elsewhere on this page belong to the sudden condition and to aftereffect trials, not to gradual late-exposure. The only numeric source is Fig. 3 (top-right panel), whose caption states the bars are 'Trial block means, standard errors, and fitted curves', but the figure carries no printed values, and the digitiser's own calibration for that panel is disputed (single-witness tick ladder, OCR ladder contradicted). Under the rule that a kept value must be printed and quotable, no value can be kept here. n = 5 follows from 'Ten healthy elderly participants' and 'Both age groups were equally divided at random into two subgroups' (Methods, p.7).",
+   "flags": [
+    {
+     "code": "calibration_disputed",
+     "severity": "error",
+     "message": "the overlay judged a mark off the datum on fig03, but the calibration the mark was drawn with has one witness, so the mark and the reading disagree and nothing says which is wrong (only the vlm_ticks ladder calibrates this axis; OCR ladder [2.0, 1.0] — disputed by the readers' tick labels; no read-out tick ladder could be paired with the detected tick marks; the cv_ocr ladder was set aside — it shares no tick values with the axis the readers report)",
+     "candidate_ids": [
+      "592b3b55a318:d2:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "calibration_disputed",
+     "severity": "error",
+     "message": "the overlay judged a mark off the datum on fig03, but the calibration the mark was drawn with has one witness, so the mark and the reading disagree and nothing says which is wrong (only the vlm_ticks ladder calibrates this axis; OCR ladder [2.0, 1.0] — disputed by the readers' tick labels; no read-out tick ladder could be paired with the detected tick marks; the cv_ocr ladder was set aside — it shares no tick values with the axis the readers report)",
+     "candidate_ids": [
+      "592b3b55a318:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "unit_mismatch",
+     "severity": "warn",
+     "message": "values were transcribed in 'standardized score (z-score)', but the map recorded this outcome in 'standardized score (z-score of IDE in degrees, relative to pre-exposure mean/SD)'",
+     "candidate_ids": [
+      "592b3b55a318:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.47,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "one route, but 2 independent model families read it and agreed (claude-opus, claude-sonnet) — a second family is a different failure mode, which is what agreement is for (+0.25)",
+    "the verifier could not settle it either way (-0.05)",
+    "consistency errors stand: calibration_disputed",
+    "warnings (unit_mismatch) -0.08",
+    "the adjudicator asked for a human",
+    "adjudicated cells are capped at 0.70",
+    "1 of the digitizer's 1 measurement path(s) read both groups with a usable spread, so the effect this figure implies is corroborated by nothing — one path cannot agree with another",
+    "the digitisation uncertainty is 16% of the sampling error (limit 10%)",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "this cell was held by the evidence, not by its score, so the score is not compared with any boundary: the bucket was not decided by the score"
+   ],
+   "needs_human": true,
+   "n": 5,
+   "mean": 1.05,
+   "dispersion_value": 0.45,
+   "dispersion_type": "SE",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "standardized score (z-score)",
+   "sigma": 0.07413000000000006,
+   "mad": 0.0,
+   "analysis_metric": "baseline_corrected",
+   "route": "figure",
+   "candidate_ids": [
+    "592b3b55a318:d2:late_adaptation:A:digitize:ensemble"
+   ],
+   "higher_is_better": false,
+   "orientation_evidence": "claude-opus-5: IDE is defined as the angular difference (error) between the initial movement direction and the target direction, and the standardized score expresses this error in SD units relative to pre-exposure baseline. Larger positive values therefore mean more directional error, i.e. less adaptation (the paper describes 'reduced standardized IDE and RMSE scores' as the favourable outcome in the gradual condition). Hence higher = worse for the late-adaptation construct. For the gradual late-exposure comparison the paper states only that the two age groups 'reached the same level of adaptation by late-exposure in the gradual distortion condition (P > 0.05 for both standardized IDE and RMSE scores)' and reports no main effect of age; it never says which group's raw gradual late-exposure IDE was higher, so the direction is unknown (the reported trend toward a larger IDE in the aged group refers to the Step/sudden condition). | claude-sonnet-5: IDE is defined as an angular deviation (directional error) from the target direction, so larger raw values indicate more error/deviation from the intended movement direction, i.e. higher_more_error semantics. Because it is an error measure, smaller values indicate better/more complete adaptation, so higher_is_better is 'lower'. For the gradual condition at late-exposure specifically, the paper explicitly reports no statistically significant age difference in standardized IDE scores ('both age groups reached the same level of adaptation by late-exposure in the gradual distortion condition, P > 0.05 for both standardized IDE and RMSE scores'), and does not state which group had a numerically greater raw IDE value in this condition, so the direction stated in text is unknown.; The initial directional error (IDE, in degrees) was calculated as the angular difference between this vector and a vector extending from the starting (home) position to the target.; IDE can be considered to represent the planning of the initial direction of movement, and thus, the current state of the internal model of the rotated environment.; the standardized score (z-score) for an item indicates how far and in what direction that item deviates from its distribution's mean, expressed in units of its distribution's standard deviation; An interesting finding is that both age groups reached the same level of adaptation by late-exposure in the gradual distortion condition (P > 0.05 for both standardized IDE and RMSE scores), suggesting a beneficial effect of shaping by gradual exposure to the distortion.; The small rotation steps in the Gradual distortion condition resulted in reduced standardized IDE and RMSE scores throughout the exposure phase.",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "592b3b55a318:d2",
+   "outcome_key": "late_adaptation",
+   "group": "B",
+   "agreement": "single",
+   "agreeing_ids": [
+    "592b3b55a318:d2:late_adaptation:B:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 3.0,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "The paper never prints a numeric mean/SE for the standardized IDE score at late-exposure in the gradual condition for either group. The only textual statement is qualitative: 'An interesting finding is that both age groups reached the same level of adaptation by late-exposure in the gradual distortion condition (P > 0.05 for both standardized IDE and RMSE scores), suggesting a beneficial effect of shaping by gradual exposure to the distortion.' No exact digits, no table entry, and no in-text values are given for the Young group's late-exposure IDE_STD mean or SE; the only representation is the graphical trace in Figure 3 (top-right panel, 'Gradual' column, 'IDE_STD' row), which the candidate digitized. Because the underlying figure trace has no printed numeric anchor points, the specific mean (0.95) and SE (0.45) cannot be confirmed or refuted from the text; they are a visual estimate from a curve with error bars, not a reported statistic.",
+   "verifiers": [
+    {
+     "candidate_id": "592b3b55a318:d2:late_adaptation:B:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "The paper never prints a numeric mean/SE for the standardized IDE score at late-exposure in the gradual condition for either group. The only textual statement is qualitative: 'An interesting finding is that both age groups reached the same level of adaptation by late-exposure in the gradual distortion condition (P > 0.05 for both standardized IDE and RMSE scores), suggesting a beneficial effect of shaping by gradual exposure to the distortion.' No exact digits, no table entry, and no in-text values are given for the Young group's late-exposure IDE_STD mean or SE; the only representation is the graphical trace in Figure 3 (top-right panel, 'Gradual' column, 'IDE_STD' row), which the candidate digitized. Because the underlying figure trace has no printed numeric anchor points, the specific mean (0.95) and SE (0.45) cannot be confirmed or refuted from the text; they are a visual estimate from a curve with error bars, not a reported statistic.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "",
+     "checked": [
+      "wrong_group",
+      "wrong_time_window",
+      "wrong_panel",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "units",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "99ded510f03358e807f37b773923e34f6ae4b11ffd0b466c495a12ad8ba09192",
+     "notes": "Figure 3 caption (p.58) confirms error bars are standard errors ('Trial block means, standard errors, and fitted curves...'), consistent with the candidate's SE label, and the subgroup n=5 per age group in the gradual condition matches the methods description of 10 young/10 elderly split evenly into gradual and sudden subgroups. However, no printed numeric value exists anywhere in the text, results, or Table 1 for the exact late-exposure standardized IDE score in either group; Table 1 only reports categorical comparisons (e.g., 'Y = E'). Thus the specific mean/SE reading cannot be verified as correct or incorrect against the source text — it is an unverifiable digitization from the figure."
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": true,
+   "adjudication_rationale": "The requested cell is the late-exposure (full 90° step) standardized IDE score in the gradual condition, by age group. Searching the whole article: the Results report Kruskal-Wallis statistics only for (a) sudden late-exposure RMSE (chi-square = 4.811) and sudden late-exposure IDE (chi-square = 0.884, P = 0.347), and (b) gradual aftereffect trials (IDE chi-square = 3.938; RMSE chi-square = 4.811; four-trial IDE chi-square = 0.884; RMSE chi-square = 3.153). For gradual late-exposure the paper reports only 'P > 0.05 for both standardized IDE and RMSE scores' — no group means, no SEs, no n-specific descriptive statistics. Table 1 is qualitative (Y = E). Figure 4 shows aftereffects, not late exposure. Therefore the only possible numeric source is the Gradual/IDE_STD panel of Figure 3, which prints no values; both candidates are digitiser readings of that panel and both carry a calibration_disputed error, meaning the pixel-to-axis mapping rests on a single unconfirmed tick ladder that the OCR ladder contradicts. Both verifiers independently reached 'ambiguous' for the same reason. Since no value for either group is printed in the paper and I can quote no number for either mean or dispersion, I keep the group labels and n but leave the numbers null and route the cell to a human, who can re-digitise Fig. 3 with a checked axis calibration if the figure route is acceptable for this project.; Same situation as the aged group: no numeric late-exposure standardized IDE mean or error is printed anywhere in the text, tables or figure labels for the young gradual subgroup. Fig. 3's caption identifies the plotted bars as standard errors of trial-block means, but the panel prints no numbers, and the ensemble digitisation of that panel is flagged calibration_disputed, so its 0.95 ± 0.45 cannot be corroborated against anything printed. n = 5 follows from 'ten healthy young controls between the ages of 18 and 25' and 'Both age groups were equally divided at random into two subgroups' (Methods, p.7).",
+   "flags": [
+    {
+     "code": "calibration_disputed",
+     "severity": "error",
+     "message": "the overlay judged a mark off the datum on fig03, but the calibration the mark was drawn with has one witness, so the mark and the reading disagree and nothing says which is wrong (only the vlm_ticks ladder calibrates this axis; OCR ladder [2.0, 1.0] — disputed by the readers' tick labels; no read-out tick ladder could be paired with the detected tick marks; the cv_ocr ladder was set aside — it shares no tick values with the axis the readers report)",
+     "candidate_ids": [
+      "592b3b55a318:d2:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "calibration_disputed",
+     "severity": "error",
+     "message": "the overlay judged a mark off the datum on fig03, but the calibration the mark was drawn with has one witness, so the mark and the reading disagree and nothing says which is wrong (only the vlm_ticks ladder calibrates this axis; OCR ladder [2.0, 1.0] — disputed by the readers' tick labels; no read-out tick ladder could be paired with the detected tick marks; the cv_ocr ladder was set aside — it shares no tick values with the axis the readers report)",
+     "candidate_ids": [
+      "592b3b55a318:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "unit_mismatch",
+     "severity": "warn",
+     "message": "values were transcribed in 'standardized score (z-score)', but the map recorded this outcome in 'standardized score (z-score of IDE in degrees, relative to pre-exposure mean/SD)'",
+     "candidate_ids": [
+      "592b3b55a318:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.47,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "one route, but 2 independent model families read it and agreed (claude-opus, claude-sonnet) — a second family is a different failure mode, which is what agreement is for (+0.25)",
+    "the verifier could not settle it either way (-0.05)",
+    "consistency errors stand: calibration_disputed",
+    "warnings (unit_mismatch) -0.08",
+    "the adjudicator asked for a human",
+    "adjudicated cells are capped at 0.70",
+    "1 of the digitizer's 1 measurement path(s) read both groups with a usable spread, so the effect this figure implies is corroborated by nothing — one path cannot agree with another",
+    "the digitisation uncertainty is 16% of the sampling error (limit 10%)",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "this cell was held by the evidence, not by its score, so the score is not compared with any boundary: the bucket was not decided by the score"
+   ],
+   "needs_human": true,
+   "n": 5,
+   "mean": 0.95,
+   "dispersion_value": 0.45,
+   "dispersion_type": "SE",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "standardized score (z-score)",
+   "sigma": 0.07412999999999989,
+   "mad": 0.0,
+   "analysis_metric": "baseline_corrected",
+   "route": "figure",
+   "candidate_ids": [
+    "592b3b55a318:d2:late_adaptation:B:digitize:ensemble"
+   ],
+   "higher_is_better": false,
+   "orientation_evidence": "claude-opus-5: IDE is defined as the angular difference (error) between the initial movement direction and the target direction, and the standardized score expresses this error in SD units relative to pre-exposure baseline. Larger positive values therefore mean more directional error, i.e. less adaptation (the paper describes 'reduced standardized IDE and RMSE scores' as the favourable outcome in the gradual condition). Hence higher = worse for the late-adaptation construct. For the gradual late-exposure comparison the paper states only that the two age groups 'reached the same level of adaptation by late-exposure in the gradual distortion condition (P > 0.05 for both standardized IDE and RMSE scores)' and reports no main effect of age; it never says which group's raw gradual late-exposure IDE was higher, so the direction is unknown (the reported trend toward a larger IDE in the aged group refers to the Step/sudden condition). | claude-sonnet-5: IDE is defined as an angular deviation (directional error) from the target direction, so larger raw values indicate more error/deviation from the intended movement direction, i.e. higher_more_error semantics. Because it is an error measure, smaller values indicate better/more complete adaptation, so higher_is_better is 'lower'. For the gradual condition at late-exposure specifically, the paper explicitly reports no statistically significant age difference in standardized IDE scores ('both age groups reached the same level of adaptation by late-exposure in the gradual distortion condition, P > 0.05 for both standardized IDE and RMSE scores'), and does not state which group had a numerically greater raw IDE value in this condition, so the direction stated in text is unknown.; The initial directional error (IDE, in degrees) was calculated as the angular difference between this vector and a vector extending from the starting (home) position to the target.; IDE can be considered to represent the planning of the initial direction of movement, and thus, the current state of the internal model of the rotated environment.; the standardized score (z-score) for an item indicates how far and in what direction that item deviates from its distribution's mean, expressed in units of its distribution's standard deviation; An interesting finding is that both age groups reached the same level of adaptation by late-exposure in the gradual distortion condition (P > 0.05 for both standardized IDE and RMSE scores), suggesting a beneficial effect of shaping by gradual exposure to the distortion.; The small rotation steps in the Gradual distortion condition resulted in reduced standardized IDE and RMSE scores throughout the exposure phase.",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "592b3b55a318:d2",
+   "outcome_key": "aftereffect",
+   "group": "A",
+   "agreement": "disagree",
+   "agreeing_ids": [],
+   "disagreeing_ids": [
+    "592b3b55a318:d2:aftereffect:A:digitize:ensemble",
+    "592b3b55a318:d2:aftereffect:A:digitize:ensemble"
+   ],
+   "vote_method": "figure_tolerance",
+   "vote_tolerance": 1.0,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "Everything I could test about the reading holds up, but the paper never prints the number itself. The caption fixes the provenance and the error-bar type: \"Figure 4 Aftereffect (mean and SEM) for standardized IDE and RMSE scores for the first aftereffect trial and the first aftereffect trial-block mean\" (p. 4), so a SEM at x = 1 post-exposure trial in the IDE_STD panel is the right kind of quantity. The Fig. 4 legend lists four patterns, \"Young} Sudden, Aged} Sudden, Young} Gradual, Aged} Gradual\", so the hatched bar is indeed Aged/Gradual (no wrong_group, wrong_panel or subgroup error), and n = 5 follows from \"Both age groups were equally divided at random into two subgroups\" applied to the ten elderly. The sign and relative size also agree with the text: \"a larger directional aftereffect was observed in the gradual condition for the young group compared with the elderly group\" (p. 3) and \"in the gradual adaptation task (see Fig. 4), there were statistically significant age effects for both standardized IDE and RMSE scores when comparing the first aftereffect trial (IDE score, 2 = 3.938, df = 1, P < 0.05)\" (p. 4), so a small negative Aged value such as -1.675 is directionally plausible. However, the only numbers the paper prints for this comparison are chi-square statistics; no mean or SEM for the gradual Aged IDE_STD aftereffect appears in text, table or caption, so the exact values -1.675 and 0.575 can be neither confirmed nor contradicted from the document.",
+   "verifiers": [
+    {
+     "candidate_id": "592b3b55a318:d2:aftereffect:A:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "Everything I could test about the reading holds up, but the paper never prints the number itself. The caption fixes the provenance and the error-bar type: \"Figure 4 Aftereffect (mean and SEM) for standardized IDE and RMSE scores for the first aftereffect trial and the first aftereffect trial-block mean\" (p. 4), so a SEM at x = 1 post-exposure trial in the IDE_STD panel is the right kind of quantity. The Fig. 4 legend lists four patterns, \"Young} Sudden, Aged} Sudden, Young} Gradual, Aged} Gradual\", so the hatched bar is indeed Aged/Gradual (no wrong_group, wrong_panel or subgroup error), and n = 5 follows from \"Both age groups were equally divided at random into two subgroups\" applied to the ten elderly. The sign and relative size also agree with the text: \"a larger directional aftereffect was observed in the gradual condition for the young group compared with the elderly group\" (p. 3) and \"in the gradual adaptation task (see Fig. 4), there were statistically significant age effects for both standardized IDE and RMSE scores when comparing the first aftereffect trial (IDE score, 2 = 3.938, df = 1, P < 0.05)\" (p. 4), so a small negative Aged value such as -1.675 is directionally plausible. However, the only numbers the paper prints for this comparison are chi-square statistics; no mean or SEM for the gradual Aged IDE_STD aftereffect appears in text, table or caption, so the exact values -1.675 and 0.575 can be neither confirmed nor contradicted from the document.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "",
+     "checked": [
+      "wrong_group",
+      "wrong_time_window",
+      "wrong_panel",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "units",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-opus-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "34164408bd942a06e1069ad574bd194b675ae66cb319aa7522d18c601201549a",
+     "notes": "Standardization is baseline-referenced by construction (\"zi = (xi - x_Pre-exposure)/SD_Pre-exposure\", p. 8), so the baseline_vs_post framing of the candidate is correct; units are z-scores, not degrees, as recorded. Fig. 3 also plots post-exposure trial-block means with standard errors, but it is a compressed time-course panel and the four-condition bar chart of Fig. 4 is the more direct source for the first-trial aftereffect, so no better source exists in this paper."
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": true,
+   "adjudication_rationale": "The adjudication rule is decisive here: every kept value must be printed in the paper and quotable. For the gradual-rotation aftereffect this paper prints no means and no dispersions for either age group — only nonparametric test statistics (IDE score, chi-square = 3.938, df = 1, P < 0.05 for the first post-exposure trial; chi-square = 0.884 for the four-trial block) and two figures (Fig 3 post-exposure segment and Fig 4 bars, the latter captioned 'mean and SEM'). All candidates are figure digitisations, they disagree by more than a full z-unit for group A, they mix two different windows (first single trial in Fig 4 vs first four-trial block in Fig 3), and the consistency checks flag a single-witness, disputed y-axis calibration for Fig 3 plus a collapse across the categorical x axis. Nothing in the document settles which reading is right, so both groups go to a human with only the group sizes retained.; The aftereffect for the aged gradual subgroup is nowhere printed as a number in this paper. The text of the Aftereffects section (p. 4) gives only inferential statistics for the gradual condition ('IDE score, 2 = 3.938, df = 1, P < 0.05'), never a mean or SEM. The only carriers of the quantity are Figure 4 ('Aftereffect (mean and SEM) for standardized IDE and RMSE scores for the first aftereffect trial and the first aftereffect trial-block mean') and the post-exposure section of Figure 3, both purely graphical. The two digitisation routes disagree irreconcilably (-1.675 from the Fig 4 bar at x = 1 vs -2.75 from the Fig 3 post-exposure block 1), the vote flagged 'no two independent routes agreed', and the consistency check reports a disputed y-axis calibration for Fig 3 with a single witness; Fig 4's x = 1 bar and Fig 3's first post-exposure trial *block* are also not the same operationalisation (single trial vs mean of four trials). I therefore keep no mean or dispersion. Dispersion type is left UNKNOWN because, although the Fig 4 caption states the bars are SEM, no numeric dispersion value is printed anywhere. n = 5 is read from the Methods: ten elderly participants split equally at random into the gradual and sudden subgroups.",
+   "flags": [
+    {
+     "code": "calibration_disputed",
+     "severity": "error",
+     "message": "the overlay judged a mark off the datum on fig03, but the calibration the mark was drawn with has one witness, so the mark and the reading disagree and nothing says which is wrong (only the vlm_ticks ladder calibrates this axis; OCR ladder [2.0, 1.0] — disputed by the readers' tick labels; no read-out tick ladder could be paired with the detected tick marks; the cv_ocr ladder was set aside — it shares no tick values with the axis the readers report)",
+     "candidate_ids": [
+      "592b3b55a318:d2:aftereffect:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "calibration_disputed",
+     "severity": "error",
+     "message": "the overlay judged a mark off the datum on fig03, but the calibration the mark was drawn with has one witness, so the mark and the reading disagree and nothing says which is wrong (only the vlm_ticks ladder calibrates this axis; OCR ladder [2.0, 1.0] — disputed by the readers' tick labels; no read-out tick ladder could be paired with the detected tick marks; the cv_ocr ladder was set aside — it shares no tick values with the axis the readers report)",
+     "candidate_ids": [
+      "592b3b55a318:d2:aftereffect:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 2 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "592b3b55a318:d2:aftereffect:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 2 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "592b3b55a318:d2:aftereffect:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.15,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "source kind text (+0.40)",
+    "the routes disagree (-0.20) — a human decides",
+    "the verifier could not settle it either way (-0.05)",
+    "consistency errors stand: calibration_disputed",
+    "warnings (collapsed_across_x) -0.08, which orders this cell in the review queue but cannot withhold it",
+    "the adjudicator asked for a human",
+    "adjudicated cells are capped at 0.70",
+    "collapsed_across_x caps this cell at 0.70: this is an average across a categorical axis and its dispersion is an approximation, not the paper's own",
+    "the caps above stop at 0.15: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "this cell was held by the evidence, not by its score, so the score is not compared with any boundary: the bucket was not decided by the score"
+   ],
+   "needs_human": true,
+   "n": null,
+   "mean": null,
+   "dispersion_value": null,
+   "dispersion_type": "UNKNOWN",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "",
+   "sigma": null,
+   "mad": null,
+   "analysis_metric": "unknown",
+   "route": "",
+   "candidate_ids": [],
+   "higher_is_better": false,
+   "orientation_evidence": "claude-opus-5: The measure is a signed, baseline-standardized z-score of initial directional error; the paper explicitly states the aftereffect appears as a NEGATIVE standardized IDE score (opposite in direction to the early-exposure error), so magnitude of the aftereffect grows as the value becomes more negative. Hence a larger (less negative / more positive) raw value corresponds to LESS implicit recalibration, i.e. lower raw values mean more of the reviewed construct. For the sudden condition the paper reports only that the two age groups did not differ significantly and were 'comparable', without stating which group's raw value was higher, so the stated direction is unknown. | claude-sonnet-5: The paper defines the aftereffect for IDE as a negative z-score, so the sign carries the direction of the effect rather than the magnitude alone indicating more or less aftereffect (a more negative value corresponds to a larger aftereffect). Because raw values are negative, a higher (less negative) raw value corresponds to a smaller aftereffect, so higher raw value is not better for the construct being measured (implicit recalibration magnitude). For the sudden condition specifically, the text states there were no statistically significant differences between age groups for either the first aftereffect trial or the four-trial mean, so the paper does not state which group (Young or Aged) had the numerically greater (or less negative) raw IDE aftereffect score in the sudden condition.; During the post-exposure trials, the aftereffect was manifested as a negative standardized IDE score (in fact in the opposite direction as that seen during early adaptation trials) and as an increase in standardized RMSE scores.; The initial directional error (IDE, in degrees) was calculated as the angular difference between this vector and a vector extending from the starting (home) position to the target.; zi = (xi − x̄Pre−exposure)/SDPre−exposure; Neither the first aftereffect nor the mean of the first four aftereffects revealed statistically significant differences across age groups by the Kruskal-Wallis test in the sudden adaptation task (standardized IDE and RMSE scores, both P > 0.05).; Visual inspection of the initial direction of movement at post-exposure (see insets in Fig. 2D) shows that the initial movement direction at post-exposure was comparable for both age groups for the sudden condition only.",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "592b3b55a318:d2",
+   "outcome_key": "aftereffect",
+   "group": "B",
+   "agreement": "agree",
+   "agreeing_ids": [
+    "592b3b55a318:d2:aftereffect:B:digitize:ensemble",
+    "592b3b55a318:d2:aftereffect:B:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "figure_tolerance",
+   "vote_tolerance": 1.0,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "The only place this quantity appears is Figure 4 on p. 58 (PDF p. 4), whose caption reads \"Aftereffect (mean and SEM) for standardized IDE and RMSE scores for the first aftereffect trial and the first aftereffect trial-block mean.\" The paper never prints a numeric mean or SEM for any of these bars anywhere in the text, tables or figure legends; the accompanying text gives only inferential statistics (\"in the gradual adaptation task (see Fig. 4), there were statistically significant age effects for both standardized IDE and RMSE scores when comparing the first aftereffect trial (IDE score, 2 = 3.938, df = 1, P < 0.05...\"). I therefore cannot confirm or contradict the digitised value of -3.45 ± 0.6 for the Young/Gradual bar at x = 1: nothing printed in the document fixes the bar height. What I can check is consistent with the candidate on the secondary attributes — the dispersion type is indeed SEM per the caption, the left panel is IDE_STD, and n = 5 per group follows from \"Ten healthy elderly participants ... ten healthy young controls\" plus \"Both age groups were equally divided at random into two subgroups\". Two residual concerns: (i) the candidate's own source note conflates the open white (Young, Gradual) and hatched (Aged, Gradual) bars, so bar identity within the gradual pair is not clearly established from the extraction; (ii) the outcome definition asks for the block average when reported, and this paper does report a block average (the x = 4 bars, \"mean of first four post-exposure trials\"), so the x = 1 single-trial bar may be the wrong time window for the recorded outcome, although the authors themselves argue \"only the first post-exposure trial is free of volitional strategic shifts\".",
+   "verifiers": [
+    {
+     "candidate_id": "592b3b55a318:d2:aftereffect:B:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "The only place this quantity appears is Figure 4 on p. 58 (PDF p. 4), whose caption reads \"Aftereffect (mean and SEM) for standardized IDE and RMSE scores for the first aftereffect trial and the first aftereffect trial-block mean.\" The paper never prints a numeric mean or SEM for any of these bars anywhere in the text, tables or figure legends; the accompanying text gives only inferential statistics (\"in the gradual adaptation task (see Fig. 4), there were statistically significant age effects for both standardized IDE and RMSE scores when comparing the first aftereffect trial (IDE score, 2 = 3.938, df = 1, P < 0.05...\"). I therefore cannot confirm or contradict the digitised value of -3.45 ± 0.6 for the Young/Gradual bar at x = 1: nothing printed in the document fixes the bar height. What I can check is consistent with the candidate on the secondary attributes — the dispersion type is indeed SEM per the caption, the left panel is IDE_STD, and n = 5 per group follows from \"Ten healthy elderly participants ... ten healthy young controls\" plus \"Both age groups were equally divided at random into two subgroups\". Two residual concerns: (i) the candidate's own source note conflates the open white (Young, Gradual) and hatched (Aged, Gradual) bars, so bar identity within the gradual pair is not clearly established from the extraction; (ii) the outcome definition asks for the block average when reported, and this paper does report a block average (the x = 4 bars, \"mean of first four post-exposure trials\"), so the x = 1 single-trial bar may be the wrong time window for the recorded outcome, although the authors themselves argue \"only the first post-exposure trial is free of volitional strategic shifts\".",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "SE",
+     "alt_n": 5,
+     "alt_page": 4,
+     "alt_quote": "Figure 4 Aftereffect (mean and SEM) for standardized IDE and RMSE scores for the first aftereffect trial and the first aftereffect trial-block mean.",
+     "better_source": "",
+     "checked": [
+      "wrong_group",
+      "wrong_time_window",
+      "wrong_panel",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "units",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-opus-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "bb3a75074bbd0a0de2a475ae9b7f70f711dc5edfd73f7b0d2846622383c207bb",
+     "notes": "No numeric group means/SEMs for the aftereffect are printed anywhere in the paper; Fig. 4 (p. 58 / PDF p. 4) is the only source and must be digitised, so the reading is unverifiable from text. The stated digitisation uncertainty (±0.0086) is implausibly precise for a bar read from a low-resolution raster figure with a 0-to--7 axis. Direction/sign convention is consistent with the paper (aftereffect = negative standardized IDE: \"the aftereffect was manifested as a negative standardized IDE score\"), and the paper states the young showed the larger gradual-condition aftereffect (Table 1: \"Buch et al. (this study) Gradual display rotation (up to CCW 90°) Y = E Y >Ea\"), so a Young value more negative than the Aged value is qualitatively plausible. If the pipeline needs the block average rather than the first trial, the x = 4 bars of the same panel are the correct target."
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": true,
+   "adjudication_rationale": "The adjudication rule is decisive here: every kept value must be printed in the paper and quotable. For the gradual-rotation aftereffect this paper prints no means and no dispersions for either age group — only nonparametric test statistics (IDE score, chi-square = 3.938, df = 1, P < 0.05 for the first post-exposure trial; chi-square = 0.884 for the four-trial block) and two figures (Fig 3 post-exposure segment and Fig 4 bars, the latter captioned 'mean and SEM'). All candidates are figure digitisations, they disagree by more than a full z-unit for group A, they mix two different windows (first single trial in Fig 4 vs first four-trial block in Fig 3), and the consistency checks flag a single-witness, disputed y-axis calibration for Fig 3 plus a collapse across the categorical x axis. Nothing in the document settles which reading is right, so both groups go to a human with only the group sizes retained.; Same situation as group A: the young gradual aftereffect is never printed numerically. The paper reports only chi-square/P values for the gradual post-exposure comparison and plots the values in Figure 4 ('Aftereffect (mean and SEM) ...') and in the post-exposure segment of Figure 3. The candidate means (-3.45 from Fig 4's x = 1 bar and -2.85 from Fig 3's first post-exposure block) come from two different, non-interchangeable operationalisations and from a figure whose y-axis calibration the checks mark as disputed, so no quotable value exists. n = 5 comes from the Methods statement that the ten young controls were divided equally at random into the two distortion subgroups. Dispersion type left UNKNOWN because no numeric spread is printed, even though the Fig 4 caption identifies its bars as SEM.",
+   "flags": [
+    {
+     "code": "calibration_disputed",
+     "severity": "error",
+     "message": "the overlay judged a mark off the datum on fig03, but the calibration the mark was drawn with has one witness, so the mark and the reading disagree and nothing says which is wrong (only the vlm_ticks ladder calibrates this axis; OCR ladder [2.0, 1.0] — disputed by the readers' tick labels; no read-out tick ladder could be paired with the detected tick marks; the cv_ocr ladder was set aside — it shares no tick values with the axis the readers report)",
+     "candidate_ids": [
+      "592b3b55a318:d2:aftereffect:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "calibration_disputed",
+     "severity": "error",
+     "message": "the overlay judged a mark off the datum on fig03, but the calibration the mark was drawn with has one witness, so the mark and the reading disagree and nothing says which is wrong (only the vlm_ticks ladder calibrates this axis; OCR ladder [2.0, 1.0] — disputed by the readers' tick labels; no read-out tick ladder could be paired with the detected tick marks; the cv_ocr ladder was set aside — it shares no tick values with the axis the readers report)",
+     "candidate_ids": [
+      "592b3b55a318:d2:aftereffect:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 2 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "592b3b55a318:d2:aftereffect:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "collapsed_across_x",
+     "severity": "warn",
+     "message": "this value is the average of 2 points across a categorical x axis, and its spread is mean_of_point_sd — the SD of one point, not of a participant's mean across them, so it overstates the denominator unless the between-point variance is fully shared",
+     "candidate_ids": [
+      "592b3b55a318:d2:aftereffect:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.45,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "2 independent routes agree within 1 (+0.25)",
+    "the verifier could not settle it either way (-0.05)",
+    "the routes are 10% apart around the value (-0.05)",
+    "consistency errors stand: calibration_disputed",
+    "warnings (collapsed_across_x) -0.08, which orders this cell in the review queue but cannot withhold it",
+    "the adjudicator asked for a human",
+    "adjudicated cells are capped at 0.70",
+    "collapsed_across_x caps this cell at 0.70: this is an average across a categorical axis and its dispersion is an approximation, not the paper's own",
+    "the caps above stop at 0.45: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "1 of the digitizer's 1 measurement path(s) read both groups with a usable spread, so the effect this figure implies is corroborated by nothing — one path cannot agree with another",
+    "the digitisation uncertainty is 14% of the sampling error (limit 10%)",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "this cell was held by the evidence, not by its score, so the score is not compared with any boundary: the bucket was not decided by the score"
+   ],
+   "needs_human": true,
+   "n": 5,
+   "mean": -3.1500000000000004,
+   "dispersion_value": 0.6,
+   "dispersion_type": "SE",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "standardized IDE score (z)",
+   "sigma": 0.14826000000000011,
+   "mad": 0.30000000000000004,
+   "analysis_metric": "baseline_corrected",
+   "route": "figure",
+   "candidate_ids": [
+    "592b3b55a318:d2:aftereffect:B:digitize:ensemble",
+    "592b3b55a318:d2:aftereffect:B:digitize:ensemble"
+   ],
+   "higher_is_better": false,
+   "orientation_evidence": "claude-opus-5: The measure is a signed, baseline-standardized z-score of initial directional error; the paper explicitly states the aftereffect appears as a NEGATIVE standardized IDE score (opposite in direction to the early-exposure error), so magnitude of the aftereffect grows as the value becomes more negative. Hence a larger (less negative / more positive) raw value corresponds to LESS implicit recalibration, i.e. lower raw values mean more of the reviewed construct. For the sudden condition the paper reports only that the two age groups did not differ significantly and were 'comparable', without stating which group's raw value was higher, so the stated direction is unknown. | claude-sonnet-5: The paper defines the aftereffect for IDE as a negative z-score, so the sign carries the direction of the effect rather than the magnitude alone indicating more or less aftereffect (a more negative value corresponds to a larger aftereffect). Because raw values are negative, a higher (less negative) raw value corresponds to a smaller aftereffect, so higher raw value is not better for the construct being measured (implicit recalibration magnitude). For the sudden condition specifically, the text states there were no statistically significant differences between age groups for either the first aftereffect trial or the four-trial mean, so the paper does not state which group (Young or Aged) had the numerically greater (or less negative) raw IDE aftereffect score in the sudden condition.; During the post-exposure trials, the aftereffect was manifested as a negative standardized IDE score (in fact in the opposite direction as that seen during early adaptation trials) and as an increase in standardized RMSE scores.; The initial directional error (IDE, in degrees) was calculated as the angular difference between this vector and a vector extending from the starting (home) position to the target.; zi = (xi − x̄Pre−exposure)/SDPre−exposure; Neither the first aftereffect nor the mean of the first four aftereffects revealed statistically significant differences across age groups by the Kruskal-Wallis test in the sudden adaptation task (standardized IDE and RMSE scores, both P > 0.05).; Visual inspection of the initial direction of movement at post-exposure (see insets in Fig. 2D) shows that the initial movement direction at post-exposure was comparable for both age groups for the sudden condition only.",
+   "overridden_by_human": false,
+   "override_justification": ""
+  }
+ ],
+ "extra_candidates": [],
+ "orientation": {
+  "late_adaptation|Standardized initial directional error (IDE) score, z-score relative to pre-exposure (one of two measures reported; RMSE is recorded separately)": {
+   "outcome_key": "late_adaptation",
+   "measure_name": "Standardized initial directional error (IDE) score, z-score relative to pre-exposure (one of two measures reported; RMSE is recorded separately)",
+   "dataset_id": "592b3b55a318:d1",
+   "higher_is_better": false,
+   "raw_value_semantics": "higher_more_error",
+   "raw_value_semantics_by_model": {
+    "claude-opus-5": "higher_more_error",
+    "claude-sonnet-5": "higher_more_error"
+   },
+   "direction_stated_in_text": "a_greater",
+   "quotes": [
+    "The initial directional error (IDE, in degrees) was calculated as the angular difference between this vector and a vector extending from the starting (home) position to the target.",
+    "IDE can be considered to represent the planning of the initial direction of movement, and thus, the current state of the internal model of the rotated environment.",
+    "The standardized score (z-score) for an item indicates how far and in what direction that item deviates from its distribution's mean, expressed in units of its distribution's standard deviation.",
+    "However, whereas Figure 3 shows a trend toward a larger mean standardized IDE score in the aged group, this did not approach statistical significance (2 = 0.884, df = 1, P = 0.347), perhaps due to the large directional variability.",
+    "the aged subjects showed higher standardized RMSE scores (but similar IDE scores) in the sudden task than the controls",
+    "we used the Kruskal-Wallis test to compare the means of the trial-blocks during the adaptation to the 90° rotation (e.g., late-exposure)",
+    "Figure 3 shows a trend toward a larger mean standardized IDE score in the aged group, this did not approach statistical significance (χ2 = 0.884, df = 1, P = 0.347)"
+   ],
+   "reason": "claude-opus-5: IDE is defined as the angular difference (error) between the initial movement direction and the target direction, standardized against pre-exposure; larger values therefore mean greater directional error, i.e., less adaptation, so lower is better for the late-adaptation construct. For the sudden condition at late exposure, the paper's own wording reports 'a trend toward a larger mean standardized IDE score in the aged group' (Group A) than the young, although the difference was not statistically significant (and is elsewhere described as 'similar IDE scores'). | claude-sonnet-5: IDE is defined as the angular deviation of the initial movement direction from the target direction, i.e., an error measure—larger values indicate greater directional error and thus less adaptation to the visuomotor rotation, so lower values indicate more/better adaptation. For the sudden rotation condition (final/late-exposure level), the paper explicitly states a trend toward a larger mean standardized IDE score in the aged group compared to young, though this difference did not reach statistical significance.",
+   "agreed": true,
+   "needs_human": false,
+   "third_read": false,
+   "runs": [
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": false,
+     "raw_value_semantics": "higher_more_error",
+     "direction_stated_in_text": "a_greater",
+     "quotes": [
+      "The initial directional error (IDE, in degrees) was calculated as the angular difference between this vector and a vector extending from the starting (home) position to the target.",
+      "IDE can be considered to represent the planning of the initial direction of movement, and thus, the current state of the internal model of the rotated environment.",
+      "The standardized score (z-score) for an item indicates how far and in what direction that item deviates from its distribution's mean, expressed in units of its distribution's standard deviation.",
+      "However, whereas Figure 3 shows a trend toward a larger mean standardized IDE score in the aged group, this did not approach statistical significance (2 = 0.884, df = 1, P = 0.347), perhaps due to the large directional variability.",
+      "the aged subjects showed higher standardized RMSE scores (but similar IDE scores) in the sudden task than the controls"
+     ],
+     "reason": "IDE is defined as the angular difference (error) between the initial movement direction and the target direction, standardized against pre-exposure; larger values therefore mean greater directional error, i.e., less adaptation, so lower is better for the late-adaptation construct. For the sudden condition at late exposure, the paper's own wording reports 'a trend toward a larger mean standardized IDE score in the aged group' (Group A) than the young, although the difference was not statistically significant (and is elsewhere described as 'similar IDE scores').",
+     "model": "claude-opus-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "a0c0b337e18cbaa385b9dd471f83b3f6432941fa95dedc88674dc33e76d6965b"
+    },
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": false,
+     "raw_value_semantics": "higher_more_error",
+     "direction_stated_in_text": "a_greater",
+     "quotes": [
+      "The initial directional error (IDE, in degrees) was calculated as the angular difference between this vector and a vector extending from the starting (home) position to the target.",
+      "we used the Kruskal-Wallis test to compare the means of the trial-blocks during the adaptation to the 90° rotation (e.g., late-exposure)",
+      "Figure 3 shows a trend toward a larger mean standardized IDE score in the aged group, this did not approach statistical significance (χ2 = 0.884, df = 1, P = 0.347)"
+     ],
+     "reason": "IDE is defined as the angular deviation of the initial movement direction from the target direction, i.e., an error measure—larger values indicate greater directional error and thus less adaptation to the visuomotor rotation, so lower values indicate more/better adaptation. For the sudden rotation condition (final/late-exposure level), the paper explicitly states a trend toward a larger mean standardized IDE score in the aged group compared to young, though this difference did not reach statistical significance.",
+     "model": "claude-sonnet-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "0044ab4fa00e1872ba578a9bf034a2786d6444add032ebdc267b3d50ff0fea8e"
+    }
+   ],
+   "llm_call_ids": [
+    "a0c0b337e18cbaa385b9dd471f83b3f6432941fa95dedc88674dc33e76d6965b",
+    "0044ab4fa00e1872ba578a9bf034a2786d6444add032ebdc267b3d50ff0fea8e"
+   ],
+   "notes": "means check: ran — every reader that stated a direction was checked against the resolved raw means A = 0.9 and B = 0.38"
+  },
+  "aftereffect|Standardized IDE aftereffect score (negative z-score) — first post-exposure trial and mean of first four post-exposure trials": {
+   "outcome_key": "aftereffect",
+   "measure_name": "Standardized IDE aftereffect score (negative z-score) — first post-exposure trial and mean of first four post-exposure trials",
+   "dataset_id": "592b3b55a318:d1",
+   "higher_is_better": false,
+   "raw_value_semantics": "signed_direction",
+   "raw_value_semantics_by_model": {
+    "claude-opus-5": "signed_direction",
+    "claude-sonnet-5": "signed_direction"
+   },
+   "direction_stated_in_text": "unknown",
+   "quotes": [
+    "During the post-exposure trials, the aftereffect was manifested as a negative standardized IDE score (in fact in the opposite direction as that seen during early adaptation trials) and as an increase in standardized RMSE scores.",
+    "The initial directional error (IDE, in degrees) was calculated as the angular difference between this vector and a vector extending from the starting (home) position to the target.",
+    "zi = (xi − x̄Pre−exposure)/SDPre−exposure",
+    "Neither the first aftereffect nor the mean of the first four aftereffects revealed statistically significant differences across age groups by the Kruskal-Wallis test in the sudden adaptation task (standardized IDE and RMSE scores, both P > 0.05).",
+    "Visual inspection of the initial direction of movement at post-exposure (see insets in Fig. 2D) shows that the initial movement direction at post-exposure was comparable for both age groups for the sudden condition only."
+   ],
+   "reason": "claude-opus-5: The measure is a signed, baseline-standardized z-score of initial directional error; the paper explicitly states the aftereffect appears as a NEGATIVE standardized IDE score (opposite in direction to the early-exposure error), so magnitude of the aftereffect grows as the value becomes more negative. Hence a larger (less negative / more positive) raw value corresponds to LESS implicit recalibration, i.e. lower raw values mean more of the reviewed construct. For the sudden condition the paper reports only that the two age groups did not differ significantly and were 'comparable', without stating which group's raw value was higher, so the stated direction is unknown. | claude-sonnet-5: The paper defines the aftereffect for IDE as a negative z-score, so the sign carries the direction of the effect rather than the magnitude alone indicating more or less aftereffect (a more negative value corresponds to a larger aftereffect). Because raw values are negative, a higher (less negative) raw value corresponds to a smaller aftereffect, so higher raw value is not better for the construct being measured (implicit recalibration magnitude). For the sudden condition specifically, the text states there were no statistically significant differences between age groups for either the first aftereffect trial or the four-trial mean, so the paper does not state which group (Young or Aged) had the numerically greater (or less negative) raw IDE aftereffect score in the sudden condition.",
+   "agreed": true,
+   "needs_human": false,
+   "third_read": false,
+   "runs": [
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": false,
+     "raw_value_semantics": "signed_direction",
+     "direction_stated_in_text": "unknown",
+     "quotes": [
+      "During the post-exposure trials, the aftereffect was manifested as a negative standardized IDE score (in fact in the opposite direction as that seen during early adaptation trials) and as an increase in standardized RMSE scores.",
+      "The initial directional error (IDE, in degrees) was calculated as the angular difference between this vector and a vector extending from the starting (home) position to the target.",
+      "zi = (xi − x̄Pre−exposure)/SDPre−exposure",
+      "Neither the first aftereffect nor the mean of the first four aftereffects revealed statistically significant differences across age groups by the Kruskal-Wallis test in the sudden adaptation task (standardized IDE and RMSE scores, both P > 0.05).",
+      "Visual inspection of the initial direction of movement at post-exposure (see insets in Fig. 2D) shows that the initial movement direction at post-exposure was comparable for both age groups for the sudden condition only."
+     ],
+     "reason": "The measure is a signed, baseline-standardized z-score of initial directional error; the paper explicitly states the aftereffect appears as a NEGATIVE standardized IDE score (opposite in direction to the early-exposure error), so magnitude of the aftereffect grows as the value becomes more negative. Hence a larger (less negative / more positive) raw value corresponds to LESS implicit recalibration, i.e. lower raw values mean more of the reviewed construct. For the sudden condition the paper reports only that the two age groups did not differ significantly and were 'comparable', without stating which group's raw value was higher, so the stated direction is unknown.",
+     "model": "claude-opus-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "6288db186faf3b9a8f903d056e6151842b52b1138b803689ab54afe906ade280"
+    },
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": false,
+     "raw_value_semantics": "signed_direction",
+     "direction_stated_in_text": "unknown",
+     "quotes": [
+      "During the post-exposure trials, the aftereffect was manifested as a negative standardized IDE score (in fact in the opposite direction as that seen during early adaptation trials) and as an increase in standardized RMSE scores.",
+      "Neither the first aftereffect nor the mean of the first four aftereffects revealed statistically significant differences across age groups by the Kruskal-Wallis test in the sudden adaptation task (standardized IDE and RMSE scores, both P > 0.05)."
+     ],
+     "reason": "The paper defines the aftereffect for IDE as a negative z-score, so the sign carries the direction of the effect rather than the magnitude alone indicating more or less aftereffect (a more negative value corresponds to a larger aftereffect). Because raw values are negative, a higher (less negative) raw value corresponds to a smaller aftereffect, so higher raw value is not better for the construct being measured (implicit recalibration magnitude). For the sudden condition specifically, the text states there were no statistically significant differences between age groups for either the first aftereffect trial or the four-trial mean, so the paper does not state which group (Young or Aged) had the numerically greater (or less negative) raw IDE aftereffect score in the sudden condition.",
+     "model": "claude-sonnet-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "36eea57bfc68b5ab938e899a240481c035215599ea8fcffe00e325219bd15a06"
+    }
+   ],
+   "llm_call_ids": [
+    "6288db186faf3b9a8f903d056e6151842b52b1138b803689ab54afe906ade280",
+    "36eea57bfc68b5ab938e899a240481c035215599ea8fcffe00e325219bd15a06"
+   ],
+   "notes": "means check: no_means — the raw means were not available, so no reader could be checked against them"
+  },
+  "late_adaptation|Standardized initial directional error (IDE) score, z-score relative to pre-exposure (one of two measures reported; RMSE recorded separately)": {
+   "outcome_key": "late_adaptation",
+   "measure_name": "Standardized initial directional error (IDE) score, z-score relative to pre-exposure (one of two measures reported; RMSE recorded separately)",
+   "dataset_id": "592b3b55a318:d2",
+   "higher_is_better": false,
+   "raw_value_semantics": "higher_more_error",
+   "raw_value_semantics_by_model": {
+    "claude-opus-5": "higher_more_error",
+    "claude-sonnet-5": "higher_more_error"
+   },
+   "direction_stated_in_text": "unknown",
+   "quotes": [
+    "The initial directional error (IDE, in degrees) was calculated as the angular difference between this vector and a vector extending from the starting (home) position to the target.",
+    "IDE can be considered to represent the planning of the initial direction of movement, and thus, the current state of the internal model of the rotated environment.",
+    "the standardized score (z-score) for an item indicates how far and in what direction that item deviates from its distribution's mean, expressed in units of its distribution's standard deviation",
+    "An interesting finding is that both age groups reached the same level of adaptation by late-exposure in the gradual distortion condition (P > 0.05 for both standardized IDE and RMSE scores), suggesting a beneficial effect of shaping by gradual exposure to the distortion.",
+    "The small rotation steps in the Gradual distortion condition resulted in reduced standardized IDE and RMSE scores throughout the exposure phase."
+   ],
+   "reason": "claude-opus-5: IDE is defined as the angular difference (error) between the initial movement direction and the target direction, and the standardized score expresses this error in SD units relative to pre-exposure baseline. Larger positive values therefore mean more directional error, i.e. less adaptation (the paper describes 'reduced standardized IDE and RMSE scores' as the favourable outcome in the gradual condition). Hence higher = worse for the late-adaptation construct. For the gradual late-exposure comparison the paper states only that the two age groups 'reached the same level of adaptation by late-exposure in the gradual distortion condition (P > 0.05 for both standardized IDE and RMSE scores)' and reports no main effect of age; it never says which group's raw gradual late-exposure IDE was higher, so the direction is unknown (the reported trend toward a larger IDE in the aged group refers to the Step/sudden condition). | claude-sonnet-5: IDE is defined as an angular deviation (directional error) from the target direction, so larger raw values indicate more error/deviation from the intended movement direction, i.e. higher_more_error semantics. Because it is an error measure, smaller values indicate better/more complete adaptation, so higher_is_better is 'lower'. For the gradual condition at late-exposure specifically, the paper explicitly reports no statistically significant age difference in standardized IDE scores ('both age groups reached the same level of adaptation by late-exposure in the gradual distortion condition, P > 0.05 for both standardized IDE and RMSE scores'), and does not state which group had a numerically greater raw IDE value in this condition, so the direction stated in text is unknown.",
+   "agreed": true,
+   "needs_human": false,
+   "third_read": false,
+   "runs": [
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": false,
+     "raw_value_semantics": "higher_more_error",
+     "direction_stated_in_text": "unknown",
+     "quotes": [
+      "The initial directional error (IDE, in degrees) was calculated as the angular difference between this vector and a vector extending from the starting (home) position to the target.",
+      "IDE can be considered to represent the planning of the initial direction of movement, and thus, the current state of the internal model of the rotated environment.",
+      "the standardized score (z-score) for an item indicates how far and in what direction that item deviates from its distribution's mean, expressed in units of its distribution's standard deviation",
+      "An interesting finding is that both age groups reached the same level of adaptation by late-exposure in the gradual distortion condition (P > 0.05 for both standardized IDE and RMSE scores), suggesting a beneficial effect of shaping by gradual exposure to the distortion.",
+      "The small rotation steps in the Gradual distortion condition resulted in reduced standardized IDE and RMSE scores throughout the exposure phase."
+     ],
+     "reason": "IDE is defined as the angular difference (error) between the initial movement direction and the target direction, and the standardized score expresses this error in SD units relative to pre-exposure baseline. Larger positive values therefore mean more directional error, i.e. less adaptation (the paper describes 'reduced standardized IDE and RMSE scores' as the favourable outcome in the gradual condition). Hence higher = worse for the late-adaptation construct. For the gradual late-exposure comparison the paper states only that the two age groups 'reached the same level of adaptation by late-exposure in the gradual distortion condition (P > 0.05 for both standardized IDE and RMSE scores)' and reports no main effect of age; it never says which group's raw gradual late-exposure IDE was higher, so the direction is unknown (the reported trend toward a larger IDE in the aged group refers to the Step/sudden condition).",
+     "model": "claude-opus-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "250999f334e3d65df693d8d7a261e477c77b4f11fd3f3bff5d6e3081efa8a1fd"
+    },
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": false,
+     "raw_value_semantics": "higher_more_error",
+     "direction_stated_in_text": "unknown",
+     "quotes": [
+      "The initial directional error (IDE, in degrees) was calculated as the angular difference between this vector and a vector extending from the starting (home) position to the target.",
+      "An interesting finding is that both age groups reached the same level of adaptation by late-exposure in the gradual distortion condition (P > 0.05 for both standardized IDE and RMSE scores), suggesting a beneficial effect of shaping by gradual exposure to the distortion."
+     ],
+     "reason": "IDE is defined as an angular deviation (directional error) from the target direction, so larger raw values indicate more error/deviation from the intended movement direction, i.e. higher_more_error semantics. Because it is an error measure, smaller values indicate better/more complete adaptation, so higher_is_better is 'lower'. For the gradual condition at late-exposure specifically, the paper explicitly reports no statistically significant age difference in standardized IDE scores ('both age groups reached the same level of adaptation by late-exposure in the gradual distortion condition, P > 0.05 for both standardized IDE and RMSE scores'), and does not state which group had a numerically greater raw IDE value in this condition, so the direction stated in text is unknown.",
+     "model": "claude-sonnet-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "8f87f71896261c21f19e00b667a9625ffac11999a8f9c03f357994a2bcf11f3c"
+    }
+   ],
+   "llm_call_ids": [
+    "250999f334e3d65df693d8d7a261e477c77b4f11fd3f3bff5d6e3081efa8a1fd",
+    "8f87f71896261c21f19e00b667a9625ffac11999a8f9c03f357994a2bcf11f3c"
+   ],
+   "notes": "means check: ran — every reader that stated a direction was checked against the resolved raw means A = 1.05 and B = 0.95"
+  }
+ },
+ "adjudications": [
+  {
+   "dataset_id": "592b3b55a318:d1",
+   "outcome_key": "late_adaptation",
+   "groups": [
+    {
+     "group": "A",
+     "n": 5,
+     "mean": null,
+     "dispersion_value": null,
+     "dispersion_type": "UNKNOWN",
+     "unit": "standardized score (z-score of IDE relative to pre-exposure)",
+     "quote": "",
+     "page": null,
+     "locator": "Fig. 3, top-left panel (Sudden, IDE_STD) — no numeric mean/dispersion printed anywhere in the text, tables or captions",
+     "grounded": null,
+     "grounding_similarity": null,
+     "chosen_candidate_ids": [],
+     "reason": "The paper never prints a numeric group mean or dispersion for the standardized IDE score at late exposure in the sudden (step) condition. The only quantitative statements about this comparison are Kruskal-Wallis outputs ('a significant age effect during Step adaptation was found for standardized RMSE scores (2 = 4.811, df = 1, P < 0.05). However, whereas Figure 3 shows a trend toward a larger mean standardized IDE score in the aged group, this did not approach statistical significance (2 = 0.884, df = 1, P = 0.347)'), which give no means. The only candidate value (0.9 ± 0.5) comes from digitising Fig. 3, and its axis calibration was flagged as disputed (the ladder used carries none of the reported tick values), so it cannot be trusted or quoted. Reported n = 5 is supported by the Methods ('Ten healthy elderly participants ... Both age groups were equally divided at random into two subgroups').",
+     "needs_human": true
+    },
+    {
+     "group": "B",
+     "n": 5,
+     "mean": null,
+     "dispersion_value": null,
+     "dispersion_type": "UNKNOWN",
+     "unit": "standardized score (z-score of IDE relative to pre-exposure)",
+     "quote": "",
+     "page": null,
+     "locator": "Fig. 3, top-left panel (Sudden, IDE_STD) — no numeric mean/dispersion printed anywhere in the text, tables or captions",
+     "grounded": null,
+     "grounding_similarity": null,
+     "chosen_candidate_ids": [],
+     "reason": "Same situation as group A: the young group's late-exposure standardized IDE mean and error are shown only as symbols in Fig. 3 and are never printed numerically. The candidate value (0.38 ± 0.45) is a figure digitisation whose axis calibration was flagged as disputed, so it is not a quotable value. Reported n = 5 follows from 'ten healthy young controls ... Both age groups were equally divided at random into two subgroups'.",
+     "needs_human": true
+    }
+   ],
+   "rationale": "The requested outcome (late-exposure standardized IDE under the sudden 90° rotation, per group) appears in this paper only as plotted trial-block means with standard errors in Figure 3; no numeric mean or dispersion for either age group is printed in the text, in Table 1, or in any figure caption. Figure 4 prints only aftereffect (post-exposure) IDE/RMSE bars, which are a different measurement window. The text's only numbers for this window are rank-based test statistics (χ² = 4.811, P < 0.05 for RMSE; χ² = 0.884, df = 1, P = 0.347 for IDE), which describe the comparison but supply no group values, and the candidate test-statistic extraction is not a group mean at all. The two group-level candidates are both figure digitisations, and the pipeline itself flagged an axis-calibration error for both ('the readers' tick labels dispute EVERY ladder — the axis these numbers are in is unsettled'), with the routes also disagreeing on the error-bar half-length. Because I cannot quote any printed mean and the only available numbers rest on a disputed calibration, I keep no numeric values and send both groups to a human.",
+   "needs_human": true,
+   "chosen_candidate_ids": [],
+   "model": "claude-opus-5",
+   "prompt_version": "adjudicator/1@d3c814eb",
+   "llm_call_id": "7fb11cf9d6272d8b44a7eb3be88a049d74553a1b3f4ea094ca7b4009f1d55377",
+   "notes": "If a human digitisation of Fig. 3 (top-left panel, Sudden IDE_STD, last exposure trial blocks near the '90' tick) is acceptable for this cell, note that the caption states the plotted spread is standard error: 'Figure 3 Trial block means, standard errors, and fitted curves for the standardized initial directional error (IDE) and root mean square error (RMSE) scores during exposure and post-exposure conditions as a function of age group and distortion type.' The y-axis of that panel is labelled IDE_STD with ticks from -6 to 6. The direction the paper states for this measure is that the aged group trended toward a LARGER (worse) standardized IDE at late exposure, though non-significant. Analysed n per subgroup (5 young, 5 aged) is inferred from the Methods statement that each age group of ten was equally divided into two subgroups; the paper does not print subgroup n explicitly."
+  },
+  {
+   "dataset_id": "592b3b55a318:d2",
+   "outcome_key": "late_adaptation",
+   "groups": [
+    {
+     "group": "A",
+     "n": 5,
+     "mean": null,
+     "dispersion_value": null,
+     "dispersion_type": "SE",
+     "unit": "standardized score (z-score of IDE relative to pre-exposure)",
+     "quote": "An interesting finding is that both age groups reached the same level of adaptation by late-exposure in the gradual distortion condition (P > 0.05 for both standardized IDE and RMSE scores), suggesting a beneficial effect of shaping by gradual exposure to the distortion.",
+     "page": 4,
+     "locator": "Results, 'Final Level of Adaptation' (text continuing on p.4, left column)",
+     "grounded": null,
+     "grounding_similarity": null,
+     "chosen_candidate_ids": [],
+     "reason": "The paper prints no numeric mean or spread for the standardized IDE score at late-exposure in the gradual condition for the aged group. The only statement about this quantity is qualitative (P > 0.05 between age groups); the Kruskal-Wallis chi-square values printed elsewhere on this page belong to the sudden condition and to aftereffect trials, not to gradual late-exposure. The only numeric source is Fig. 3 (top-right panel), whose caption states the bars are 'Trial block means, standard errors, and fitted curves', but the figure carries no printed values, and the digitiser's own calibration for that panel is disputed (single-witness tick ladder, OCR ladder contradicted). Under the rule that a kept value must be printed and quotable, no value can be kept here. n = 5 follows from 'Ten healthy elderly participants' and 'Both age groups were equally divided at random into two subgroups' (Methods, p.7).",
+     "needs_human": true
+    },
+    {
+     "group": "B",
+     "n": 5,
+     "mean": null,
+     "dispersion_value": null,
+     "dispersion_type": "SE",
+     "unit": "standardized score (z-score of IDE relative to pre-exposure)",
+     "quote": "An interesting finding is that both age groups reached the same level of adaptation by late-exposure in the gradual distortion condition (P > 0.05 for both standardized IDE and RMSE scores), suggesting a beneficial effect of shaping by gradual exposure to the distortion.",
+     "page": 4,
+     "locator": "Results, 'Final Level of Adaptation' (text continuing on p.4, left column)",
+     "grounded": null,
+     "grounding_similarity": null,
+     "chosen_candidate_ids": [],
+     "reason": "Same situation as the aged group: no numeric late-exposure standardized IDE mean or error is printed anywhere in the text, tables or figure labels for the young gradual subgroup. Fig. 3's caption identifies the plotted bars as standard errors of trial-block means, but the panel prints no numbers, and the ensemble digitisation of that panel is flagged calibration_disputed, so its 0.95 ± 0.45 cannot be corroborated against anything printed. n = 5 follows from 'ten healthy young controls between the ages of 18 and 25' and 'Both age groups were equally divided at random into two subgroups' (Methods, p.7).",
+     "needs_human": true
+    }
+   ],
+   "rationale": "The requested cell is the late-exposure (full 90° step) standardized IDE score in the gradual condition, by age group. Searching the whole article: the Results report Kruskal-Wallis statistics only for (a) sudden late-exposure RMSE (chi-square = 4.811) and sudden late-exposure IDE (chi-square = 0.884, P = 0.347), and (b) gradual aftereffect trials (IDE chi-square = 3.938; RMSE chi-square = 4.811; four-trial IDE chi-square = 0.884; RMSE chi-square = 3.153). For gradual late-exposure the paper reports only 'P > 0.05 for both standardized IDE and RMSE scores' — no group means, no SEs, no n-specific descriptive statistics. Table 1 is qualitative (Y = E). Figure 4 shows aftereffects, not late exposure. Therefore the only possible numeric source is the Gradual/IDE_STD panel of Figure 3, which prints no values; both candidates are digitiser readings of that panel and both carry a calibration_disputed error, meaning the pixel-to-axis mapping rests on a single unconfirmed tick ladder that the OCR ladder contradicts. Both verifiers independently reached 'ambiguous' for the same reason. Since no value for either group is printed in the paper and I can quote no number for either mean or dispersion, I keep the group labels and n but leave the numbers null and route the cell to a human, who can re-digitise Fig. 3 with a checked axis calibration if the figure route is acceptable for this project.",
+   "needs_human": true,
+   "chosen_candidate_ids": [],
+   "model": "claude-opus-5",
+   "prompt_version": "adjudicator/1@d3c814eb",
+   "llm_call_id": "85f46c6ccd9a1a1d2a318b8d9c06ebd41dfe14de7ff60227cff83fb8a7b679f0",
+   "notes": "If a human accepts figure digitisation for this cell, the target is Fig. 3 top-right panel (Gradual, IDE_STD), the last exposure trial blocks near the '90' tick, black = Young, gray = Aged; the caption states the bars are standard errors, and each subgroup has n = 5, so the dispersion should be entered as SE. The axis calibration must be re-verified first (the flagged OCR ladder [2.0, 1.0] disagrees with the readers' tick labels, and the IDE_STD axis in the printed figure runs from -6 to 6). Note also that Fig. 2C insets offer an alternative, differently-scaled late-exposure measure (normalized shift of initial movement direction in degrees) that must not be mixed with the z-scored IDE."
+  },
+  {
+   "dataset_id": "592b3b55a318:d2",
+   "outcome_key": "aftereffect",
+   "groups": [
+    {
+     "group": "A",
+     "n": 5,
+     "mean": null,
+     "dispersion_value": null,
+     "dispersion_type": "UNKNOWN",
+     "unit": "standardized score (z-score of IDE relative to pre-exposure mean/SD)",
+     "quote": "Both age groups were equally divided at random into two subgroups",
+     "page": 7,
+     "locator": "Methods, 'Experimental Procedure' ¶1 (n evidence); outcome itself appears only in Figure 4 / Figure 3, p. 4",
+     "grounded": null,
+     "grounding_similarity": null,
+     "chosen_candidate_ids": [],
+     "reason": "The aftereffect for the aged gradual subgroup is nowhere printed as a number in this paper. The text of the Aftereffects section (p. 4) gives only inferential statistics for the gradual condition ('IDE score, 2 = 3.938, df = 1, P < 0.05'), never a mean or SEM. The only carriers of the quantity are Figure 4 ('Aftereffect (mean and SEM) for standardized IDE and RMSE scores for the first aftereffect trial and the first aftereffect trial-block mean') and the post-exposure section of Figure 3, both purely graphical. The two digitisation routes disagree irreconcilably (-1.675 from the Fig 4 bar at x = 1 vs -2.75 from the Fig 3 post-exposure block 1), the vote flagged 'no two independent routes agreed', and the consistency check reports a disputed y-axis calibration for Fig 3 with a single witness; Fig 4's x = 1 bar and Fig 3's first post-exposure trial *block* are also not the same operationalisation (single trial vs mean of four trials). I therefore keep no mean or dispersion. Dispersion type is left UNKNOWN because, although the Fig 4 caption states the bars are SEM, no numeric dispersion value is printed anywhere. n = 5 is read from the Methods: ten elderly participants split equally at random into the gradual and sudden subgroups.",
+     "needs_human": true
+    },
+    {
+     "group": "B",
+     "n": 5,
+     "mean": null,
+     "dispersion_value": null,
+     "dispersion_type": "UNKNOWN",
+     "unit": "standardized score (z-score of IDE relative to pre-exposure mean/SD)",
+     "quote": "Both age groups were equally divided at random into two subgroups",
+     "page": 7,
+     "locator": "Methods, 'Experimental Procedure' ¶1 (n evidence); outcome itself appears only in Figure 4 / Figure 3, p. 4",
+     "grounded": null,
+     "grounding_similarity": null,
+     "chosen_candidate_ids": [],
+     "reason": "Same situation as group A: the young gradual aftereffect is never printed numerically. The paper reports only chi-square/P values for the gradual post-exposure comparison and plots the values in Figure 4 ('Aftereffect (mean and SEM) ...') and in the post-exposure segment of Figure 3. The candidate means (-3.45 from Fig 4's x = 1 bar and -2.85 from Fig 3's first post-exposure block) come from two different, non-interchangeable operationalisations and from a figure whose y-axis calibration the checks mark as disputed, so no quotable value exists. n = 5 comes from the Methods statement that the ten young controls were divided equally at random into the two distortion subgroups. Dispersion type left UNKNOWN because no numeric spread is printed, even though the Fig 4 caption identifies its bars as SEM.",
+     "needs_human": true
+    }
+   ],
+   "rationale": "The adjudication rule is decisive here: every kept value must be printed in the paper and quotable. For the gradual-rotation aftereffect this paper prints no means and no dispersions for either age group — only nonparametric test statistics (IDE score, chi-square = 3.938, df = 1, P < 0.05 for the first post-exposure trial; chi-square = 0.884 for the four-trial block) and two figures (Fig 3 post-exposure segment and Fig 4 bars, the latter captioned 'mean and SEM'). All candidates are figure digitisations, they disagree by more than a full z-unit for group A, they mix two different windows (first single trial in Fig 4 vs first four-trial block in Fig 3), and the consistency checks flag a single-witness, disputed y-axis calibration for Fig 3 plus a collapse across the categorical x axis. Nothing in the document settles which reading is right, so both groups go to a human with only the group sizes retained.",
+   "needs_human": true,
+   "chosen_candidate_ids": [],
+   "model": "claude-opus-5",
+   "prompt_version": "adjudicator/1@d3c814eb",
+   "llm_call_id": "a9cad10bc12a2e7f2f8ec954a71deaa05175ca712351221f654ae3320e7ab414",
+   "notes": "If a human recovers this cell, note that the paper offers two distinct aftereffect windows and they must not be mixed: (i) the first available post-exposure trial (Fig 4, x = 1) and (ii) the mean of the first four post-exposure trials (Fig 4, x = 4; also the first post-exposure trial block in Fig 3). The paper states the age effect in the gradual condition was significant for the first trial only and vanished for the four-trial block, so the choice of window changes the sign of the conclusion. Fig 4's caption fixes the error bars as SEM; Fig 3's caption fixes its bars as 'standard errors'. Units are standardized (z) IDE scores relative to each subject's pre-exposure mean and SD (Equation 3, p. 8)."
+  }
+ ],
+ "source_rank": {
+  "592b3b55a318:d1|late_adaptation": {
+   "ranked": [
+    {
+     "locator": "Fig 3, top-left panel (Sudden, IDE_STD), final exposure trial blocks near the '90' tick on the Trial Block axis; black symbols = Young, gray symbols = Aged",
+     "page": 4,
+     "figure_id": "fig03",
+     "table_id": null,
+     "kind": "figure_line",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries SE error bars",
+      "measures the outcome's own metric (baseline_corrected)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    },
+    {
+     "locator": "Results, 'Final Level of Adaptation' paragraph",
+     "page": 4,
+     "figure_id": null,
+     "table_id": null,
+     "kind": "test_statistic",
+     "score": 2,
+     "has_dispersion": false,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "measures the outcome's own metric (baseline_corrected)"
+     ],
+     "losing_reasons": [
+      "scored 2 against the best source's 5",
+      "no dispersion was determined here, so a value read from it cannot become an effect size on its own",
+      "no group size is printed with it"
+     ]
+    }
+   ],
+   "held_back_from_vote": [],
+   "reopened_on_better_source": ""
+  },
+  "592b3b55a318:d1|aftereffect": {
+   "ranked": [
+    {
+     "locator": "Fig 3, top-left panel, 'Post-Exp' section (Sudden IDE_STD), first post-exposure trial block (x = 1 of 1-10); black = Young, gray = Aged",
+     "page": 4,
+     "figure_id": "fig03",
+     "table_id": null,
+     "kind": "figure_line",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries SE error bars",
+      "measures the outcome's own metric (baseline_corrected)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    },
+    {
+     "locator": "Fig 4, left panel (IDE_STD): filled black bar (Young, Sudden) and gray bar (Aged, Sudden) at x = 1 post-exposure trial",
+     "page": 4,
+     "figure_id": "fig04",
+     "table_id": null,
+     "kind": "figure_bar",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries SE error bars",
+      "measures the outcome's own metric (baseline_corrected)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    },
+    {
+     "locator": "Fig 4, left panel (IDE_STD): filled black bar (Young, Sudden) and gray bar (Aged, Sudden) at x = 4 post-exposure trials",
+     "page": 4,
+     "figure_id": "fig04",
+     "table_id": null,
+     "kind": "figure_bar",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries SE error bars",
+      "measures the outcome's own metric (baseline_corrected)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    }
+   ],
+   "held_back_from_vote": [],
+   "reopened_on_better_source": ""
+  },
+  "592b3b55a318:d2|late_adaptation": {
+   "ranked": [
+    {
+     "locator": "Fig 3, top-right panel (Gradual, IDE_STD), final exposure trial blocks near the '90' tick on the Trial Block axis; black = Young, gray = Aged",
+     "page": 4,
+     "figure_id": "fig03",
+     "table_id": null,
+     "kind": "figure_line",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries SE error bars",
+      "measures the outcome's own metric (baseline_corrected)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    }
+   ],
+   "held_back_from_vote": [],
+   "reopened_on_better_source": ""
+  },
+  "592b3b55a318:d2|aftereffect": {
+   "ranked": [
+    {
+     "locator": "Fig 3, top-right panel, post-exposure section (Gradual IDE_STD), first post-exposure trial block (x = 1 of 1-10); black = Young, gray = Aged",
+     "page": 4,
+     "figure_id": "fig03",
+     "table_id": null,
+     "kind": "figure_line",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries SE error bars",
+      "measures the outcome's own metric (baseline_corrected)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    },
+    {
+     "locator": "Fig 4, left panel (IDE_STD): open white bar (Young, Gradual) and hatched bar (Aged, Gradual) at x = 1 post-exposure trial",
+     "page": 4,
+     "figure_id": "fig04",
+     "table_id": null,
+     "kind": "figure_bar",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries SE error bars",
+      "measures the outcome's own metric (baseline_corrected)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    },
+    {
+     "locator": "Fig 4, left panel (IDE_STD): open white bar (Young, Gradual) and hatched bar (Aged, Gradual) at x = 4 post-exposure trials",
+     "page": 4,
+     "figure_id": "fig04",
+     "table_id": null,
+     "kind": "figure_bar",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries SE error bars",
+      "measures the outcome's own metric (baseline_corrected)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    }
+   ],
+   "held_back_from_vote": [],
+   "reopened_on_better_source": ""
+  }
+ },
+ "reopens": 0
+}

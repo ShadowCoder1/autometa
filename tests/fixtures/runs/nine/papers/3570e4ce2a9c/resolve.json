@@ -1,0 +1,264 @@
+{
+ "records": [
+  {
+   "paper_id": "3570e4ce2a9c77369570581f2b66d0543307d06336944015952078950e06b97c",
+   "cluster_id": "3570e4ce2a9c",
+   "sample_id": "3570e4ce2a9c77369570581f2b66d0543307d06336944015952078950e06b97c|Experiment 1a",
+   "dataset_id": "3570e4ce2a9c:d1",
+   "outcome_key": "late_adaptation",
+   "label": "Exp 1a: 75° CCW rotation, 8 targets — older vs younger",
+   "route": "not_convertible",
+   "n_a": null,
+   "n_b": null,
+   "d": null,
+   "g": null,
+   "es": null,
+   "var": null,
+   "se": null,
+   "ci_low": null,
+   "ci_high": null,
+   "estimator": "cohen",
+   "variance_method": "hedges_olkin_df",
+   "level": 0.95,
+   "higher_is_better": false,
+   "orientation_applied": false,
+   "conversion_chain": "not convertible: text_mean_sd: group(s) A, B have no mean, group size and dispersion; table: group(s) A, B have no mean, group size and dispersion; text_mean_se_ci: group(s) A, B have no mean, group size and dispersion; figure: group(s) A, B have no mean, group size and dispersion; test_statistic: no t or F statistic was resolved for this contrast; p_value: no p value was resolved for this contrast; reported_d: the paper reports no effect size for this contrast",
+   "conversion_steps": [
+    "not convertible: text_mean_sd: group(s) A, B have no mean, group size and dispersion; table: group(s) A, B have no mean, group size and dispersion; text_mean_se_ci: group(s) A, B have no mean, group size and dispersion; figure: group(s) A, B have no mean, group size and dispersion; test_statistic: no t or F statistic was resolved for this contrast; p_value: no p value was resolved for this contrast; reported_d: the paper reports no effect size for this contrast"
+   ],
+   "routes_available": [],
+   "routes_rejected": {
+    "text_mean_sd": "group(s) A, B have no mean, group size and dispersion",
+    "table": "group(s) A, B have no mean, group size and dispersion",
+    "text_mean_se_ci": "group(s) A, B have no mean, group size and dispersion",
+    "figure": "group(s) A, B have no mean, group size and dispersion",
+    "test_statistic": "no t or F statistic was resolved for this contrast",
+    "p_value": "no p value was resolved for this contrast",
+    "reported_d": "the paper reports no effect size for this contrast"
+   },
+   "inputs": {},
+   "not_convertible_reason": "text_mean_sd: group(s) A, B have no mean, group size and dispersion; table: group(s) A, B have no mean, group size and dispersion; text_mean_se_ci: group(s) A, B have no mean, group size and dispersion; figure: group(s) A, B have no mean, group size and dispersion; test_statistic: no t or F statistic was resolved for this contrast; p_value: no p value was resolved for this contrast; reported_d: the paper reports no effect size for this contrast",
+   "digitization_var": null,
+   "var_with_digitization": null,
+   "digitization_var_share": null,
+   "confidence": "needs_human",
+   "analysis_metric": "change_from_baseline",
+   "flags": [
+    "collapsed_across_x",
+    "dispersion_approximated",
+    "dispersion_approximated:mean_of_point_sd",
+    "multi_group_closest_to_definition",
+    "not_convertible",
+    "series_marker_mismatch"
+   ],
+   "moderators": {
+    "task_type": "visuomotor",
+    "perturbation_size_deg": "75° counterclockwise (CCW)",
+    "n_targets": "eight (target directions 0, 45, 90, 135, 180, 227, 270, and 313°)"
+   },
+   "citation": {
+    "authors": "Heuer, H., & Hegele, M.",
+    "year": 2008,
+    "title": "Adaptation to Visuomotor Rotations in Younger and Older Adults",
+    "journal": "Psychology and Aging",
+    "doi": "10.1037/0882-7974.23.1.190",
+    "first_author": "Heuer"
+   },
+   "notes": ""
+  },
+  {
+   "paper_id": "3570e4ce2a9c77369570581f2b66d0543307d06336944015952078950e06b97c",
+   "cluster_id": "3570e4ce2a9c",
+   "sample_id": "3570e4ce2a9c77369570581f2b66d0543307d06336944015952078950e06b97c|Experiment 1a",
+   "dataset_id": "3570e4ce2a9c:d1",
+   "outcome_key": "aftereffect",
+   "label": "Exp 1a: 75° CCW rotation, 8 targets — older vs younger",
+   "route": "not_convertible",
+   "n_a": null,
+   "n_b": null,
+   "d": null,
+   "g": null,
+   "es": null,
+   "var": null,
+   "se": null,
+   "ci_low": null,
+   "ci_high": null,
+   "estimator": "cohen",
+   "variance_method": "hedges_olkin_df",
+   "level": 0.95,
+   "higher_is_better": null,
+   "orientation_applied": false,
+   "conversion_chain": "not convertible: the direction of this measure is unresolved, so an effect size built from it could not be signed",
+   "conversion_steps": [
+    "not convertible: the direction of this measure is unresolved, so an effect size built from it could not be signed"
+   ],
+   "routes_available": [
+    "figure"
+   ],
+   "routes_rejected": {},
+   "inputs": {},
+   "not_convertible_reason": "the direction of this measure is unresolved, so an effect size built from it could not be signed",
+   "digitization_var": null,
+   "var_with_digitization": null,
+   "digitization_var_share": null,
+   "confidence": "needs_human",
+   "analysis_metric": "change_from_baseline",
+   "flags": [
+    "collapsed_across_x",
+    "dispersion_approximated",
+    "dispersion_approximated:mean_of_point_sd",
+    "multi_group_closest_to_definition",
+    "not_convertible",
+    "orientation_unknown",
+    "orientation_unresolved",
+    "series_marker_mismatch"
+   ],
+   "moderators": {
+    "task_type": "visuomotor",
+    "perturbation_size_deg": "75° counterclockwise (CCW)",
+    "n_targets": "eight (target directions 0, 45, 90, 135, 180, 227, 270, and 313°)"
+   },
+   "citation": {
+    "authors": "Heuer, H., & Hegele, M.",
+    "year": 2008,
+    "title": "Adaptation to Visuomotor Rotations in Younger and Older Adults",
+    "journal": "Psychology and Aging",
+    "doi": "10.1037/0882-7974.23.1.190",
+    "first_author": "Heuer"
+   },
+   "notes": ""
+  },
+  {
+   "paper_id": "3570e4ce2a9c77369570581f2b66d0543307d06336944015952078950e06b97c",
+   "cluster_id": "3570e4ce2a9c",
+   "sample_id": "3570e4ce2a9c77369570581f2b66d0543307d06336944015952078950e06b97c|Experiment 2",
+   "dataset_id": "3570e4ce2a9c:d2",
+   "outcome_key": "late_adaptation",
+   "label": "Exp 2: 30° CCW rotation, single practice target — older vs younger",
+   "route": "not_convertible",
+   "n_a": null,
+   "n_b": null,
+   "d": null,
+   "g": null,
+   "es": null,
+   "var": null,
+   "se": null,
+   "ci_low": null,
+   "ci_high": null,
+   "estimator": "cohen",
+   "variance_method": "hedges_olkin_df",
+   "level": 0.95,
+   "higher_is_better": false,
+   "orientation_applied": false,
+   "conversion_chain": "not convertible: text_mean_sd: group(s) A, B have no mean, group size and dispersion; table: group(s) A, B have no mean, group size and dispersion; text_mean_se_ci: group(s) A, B have no mean, group size and dispersion; figure: group(s) A, B have no mean, group size and dispersion; test_statistic: no t or F statistic was resolved for this contrast; p_value: no p value was resolved for this contrast; reported_d: the paper reports no effect size for this contrast",
+   "conversion_steps": [
+    "not convertible: text_mean_sd: group(s) A, B have no mean, group size and dispersion; table: group(s) A, B have no mean, group size and dispersion; text_mean_se_ci: group(s) A, B have no mean, group size and dispersion; figure: group(s) A, B have no mean, group size and dispersion; test_statistic: no t or F statistic was resolved for this contrast; p_value: no p value was resolved for this contrast; reported_d: the paper reports no effect size for this contrast"
+   ],
+   "routes_available": [],
+   "routes_rejected": {
+    "text_mean_sd": "group(s) A, B have no mean, group size and dispersion",
+    "table": "group(s) A, B have no mean, group size and dispersion",
+    "text_mean_se_ci": "group(s) A, B have no mean, group size and dispersion",
+    "figure": "group(s) A, B have no mean, group size and dispersion",
+    "test_statistic": "no t or F statistic was resolved for this contrast",
+    "p_value": "no p value was resolved for this contrast",
+    "reported_d": "the paper reports no effect size for this contrast"
+   },
+   "inputs": {},
+   "not_convertible_reason": "text_mean_sd: group(s) A, B have no mean, group size and dispersion; table: group(s) A, B have no mean, group size and dispersion; text_mean_se_ci: group(s) A, B have no mean, group size and dispersion; figure: group(s) A, B have no mean, group size and dispersion; test_statistic: no t or F statistic was resolved for this contrast; p_value: no p value was resolved for this contrast; reported_d: the paper reports no effect size for this contrast",
+   "digitization_var": null,
+   "var_with_digitization": null,
+   "digitization_var_share": null,
+   "confidence": "needs_human",
+   "analysis_metric": "change_from_baseline",
+   "flags": [
+    "axis_conflict",
+    "collapsed_across_x",
+    "dispersion_approximated",
+    "dispersion_approximated:mean_of_point_sd",
+    "dispersion_missing",
+    "multi_group_closest_to_definition",
+    "n_missing",
+    "not_convertible",
+    "series_marker_mismatch"
+   ],
+   "moderators": {
+    "task_type": "visuomotor",
+    "perturbation_size_deg": "30° counterclockwise (CCW)",
+    "n_targets": "one during practice (\"Only a single target (0° direction, 60 mm amplitude) was presented\"); five target directions (0°, 45°, 90°, 135°, 180°) in the tests"
+   },
+   "citation": {
+    "authors": "Heuer, H., & Hegele, M.",
+    "year": 2008,
+    "title": "Adaptation to Visuomotor Rotations in Younger and Older Adults",
+    "journal": "Psychology and Aging",
+    "doi": "10.1037/0882-7974.23.1.190",
+    "first_author": "Heuer"
+   },
+   "notes": ""
+  },
+  {
+   "paper_id": "3570e4ce2a9c77369570581f2b66d0543307d06336944015952078950e06b97c",
+   "cluster_id": "3570e4ce2a9c",
+   "sample_id": "3570e4ce2a9c77369570581f2b66d0543307d06336944015952078950e06b97c|Experiment 2",
+   "dataset_id": "3570e4ce2a9c:d2",
+   "outcome_key": "aftereffect",
+   "label": "Exp 2: 30° CCW rotation, single practice target — older vs younger",
+   "route": "not_convertible",
+   "n_a": null,
+   "n_b": null,
+   "d": null,
+   "g": null,
+   "es": null,
+   "var": null,
+   "se": null,
+   "ci_low": null,
+   "ci_high": null,
+   "estimator": "cohen",
+   "variance_method": "hedges_olkin_df",
+   "level": 0.95,
+   "higher_is_better": null,
+   "orientation_applied": false,
+   "conversion_chain": "not convertible: the direction of this measure is unresolved, so an effect size built from it could not be signed",
+   "conversion_steps": [
+    "not convertible: the direction of this measure is unresolved, so an effect size built from it could not be signed"
+   ],
+   "routes_available": [
+    "figure"
+   ],
+   "routes_rejected": {},
+   "inputs": {},
+   "not_convertible_reason": "the direction of this measure is unresolved, so an effect size built from it could not be signed",
+   "digitization_var": null,
+   "var_with_digitization": null,
+   "digitization_var_share": null,
+   "confidence": "needs_human",
+   "analysis_metric": "change_from_baseline",
+   "flags": [
+    "collapsed_across_x",
+    "dispersion_approximated",
+    "dispersion_approximated:mean_of_point_sd",
+    "multi_group_closest_to_definition",
+    "not_convertible",
+    "orientation_unknown",
+    "orientation_unresolved",
+    "series_marker_mismatch",
+    "sign_mismatch"
+   ],
+   "moderators": {
+    "task_type": "visuomotor",
+    "perturbation_size_deg": "30° counterclockwise (CCW)",
+    "n_targets": "one during practice (\"Only a single target (0° direction, 60 mm amplitude) was presented\"); five target directions (0°, 45°, 90°, 135°, 180°) in the tests"
+   },
+   "citation": {
+    "authors": "Heuer, H., & Hegele, M.",
+    "year": 2008,
+    "title": "Adaptation to Visuomotor Rotations in Younger and Older Adults",
+    "journal": "Psychology and Aging",
+    "doi": "10.1037/0882-7974.23.1.190",
+    "first_author": "Heuer"
+   },
+   "notes": ""
+  }
+ ]
+}

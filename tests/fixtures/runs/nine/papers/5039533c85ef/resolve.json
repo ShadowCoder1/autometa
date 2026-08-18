@@ -1,0 +1,149 @@
+{
+ "records": [
+  {
+   "paper_id": "5039533c85efb0d864a80568f5bf6b4ecd8ca136d3831391ee690c1edb6928eb",
+   "cluster_id": "5039533c85ef",
+   "sample_id": "5039533c85efb0d864a80568f5bf6b4ecd8ca136d3831391ee690c1edb6928eb|Single experiment (2 testing days)",
+   "dataset_id": "5039533c85ef:d1",
+   "outcome_key": "late_adaptation",
+   "label": "Older vs younger adults, gradual 30° visuomotor rotation",
+   "route": "figure",
+   "n_a": 9,
+   "n_b": 10,
+   "d": -0.22561429632968197,
+   "g": -0.21548681025538077,
+   "es": -0.22561429632968197,
+   "var": 0.2126082231907681,
+   "se": 0.46109459245448553,
+   "ci_low": -1.1293430910066478,
+   "ci_high": 0.6781144983472838,
+   "estimator": "cohen",
+   "variance_method": "hedges_olkin_df",
+   "level": 0.95,
+   "higher_is_better": true,
+   "orientation_applied": true,
+   "conversion_chain": "SD_A = SE 1.9 × √9 = 5.7; SD_B = SE 3.35 × √10 = 10.59; pooled SD = √((((9−1)·5.7² + (10−1)·10.59²) / (9+10−2)) = 8.643; d = (31.4 − 33.35) / 8.643 = -0.22561; oriented: a larger raw value means more of the construct = True, so d = -0.22561; var (hedges_olkin_df) = 0.2126, SE = 0.4611, 95% CI [-1.129, 0.6781]; digitisation variance (delta method) = 0.0003678, 0.2% of the sampling variance",
+   "conversion_steps": [
+    "SD_A = SE 1.9 × √9 = 5.7",
+    "SD_B = SE 3.35 × √10 = 10.59",
+    "pooled SD = √((((9−1)·5.7² + (10−1)·10.59²) / (9+10−2)) = 8.643",
+    "d = (31.4 − 33.35) / 8.643 = -0.22561",
+    "oriented: a larger raw value means more of the construct = True, so d = -0.22561",
+    "var (hedges_olkin_df) = 0.2126, SE = 0.4611, 95% CI [-1.129, 0.6781]",
+    "digitisation variance (delta method) = 0.0003678, 0.2% of the sampling variance"
+   ],
+   "routes_available": [
+    "figure"
+   ],
+   "routes_rejected": {},
+   "inputs": {
+    "mean_a": 31.4,
+    "sd_a": 5.699999999999999,
+    "n_a": 9.0,
+    "mean_b": 33.349999999999994,
+    "sd_b": 10.59363016156407,
+    "n_b": 10.0,
+    "sigma_mean_a": 0.14825999999999684,
+    "sigma_mean_b": 0.07413000000000106,
+    "sigma_sd_a": null,
+    "sigma_sd_b": null
+   },
+   "not_convertible_reason": "",
+   "digitization_var": 0.0003678087133701724,
+   "var_with_digitization": 0.21297603190413827,
+   "digitization_var_share": 0.0017299834778269452,
+   "confidence": "needs_human",
+   "analysis_metric": "endpoint",
+   "flags": [
+    "panel_not_isolated"
+   ],
+   "moderators": {
+    "task_type": "visuomotor",
+    "perturbation_size_deg": "30 (rotated 30 clockwise with respect to the hand; introduced gradually in increments of 0.75 over the first 41 trials)",
+    "n_targets": "4 reach targets (5 and 30 left and right of center) during reach training; the final no-cursor set used all 5 reach targets and reference marker positions"
+   },
+   "citation": {
+    "authors": "Cressman EK, Salomonczyk D, Henriques DYP",
+    "year": 2010,
+    "title": "Visuomotor adaptation and proprioceptive recalibration in older adults",
+    "journal": "Experimental Brain Research",
+    "doi": "10.1007/s00221-010-2392-2",
+    "first_author": "Cressman"
+   },
+   "notes": ""
+  },
+  {
+   "paper_id": "5039533c85efb0d864a80568f5bf6b4ecd8ca136d3831391ee690c1edb6928eb",
+   "cluster_id": "5039533c85ef",
+   "sample_id": "5039533c85efb0d864a80568f5bf6b4ecd8ca136d3831391ee690c1edb6928eb|Single experiment (2 testing days)",
+   "dataset_id": "5039533c85ef:d1",
+   "outcome_key": "aftereffect",
+   "label": "Older vs younger adults, gradual 30° visuomotor rotation",
+   "route": "figure",
+   "n_a": 9,
+   "n_b": 10,
+   "d": -0.1053182604513407,
+   "g": -0.10059068230827843,
+   "es": -0.1053182604513407,
+   "var": 0.21143734452241983,
+   "se": 0.4598231665786532,
+   "ci_low": -1.0065551062026628,
+   "ci_high": 0.7959185852999814,
+   "estimator": "cohen",
+   "variance_method": "hedges_olkin_df",
+   "level": 0.95,
+   "higher_is_better": true,
+   "orientation_applied": true,
+   "conversion_chain": "SD_A = SE 2.95 × √9 = 8.85; SD_B = SE 3.018 × √10 = 9.543; pooled SD = √((((9−1)·8.85² + (10−1)·9.543²) / (9+10−2)) = 9.224; d = (17.5 − 18.47) / 9.224 = -0.10532; oriented: a larger raw value means more of the construct = True, so d = -0.10532; var (hedges_olkin_df) = 0.2114, SE = 0.4598, 95% CI [-1.007, 0.7959]; digitisation variance (delta method) = 4.18e-05, 0.0% of the sampling variance",
+   "conversion_steps": [
+    "SD_A = SE 2.95 × √9 = 8.85",
+    "SD_B = SE 3.018 × √10 = 9.543",
+    "pooled SD = √((((9−1)·8.85² + (10−1)·9.543²) / (9+10−2)) = 9.224",
+    "d = (17.5 − 18.47) / 9.224 = -0.10532",
+    "oriented: a larger raw value means more of the construct = True, so d = -0.10532",
+    "var (hedges_olkin_df) = 0.2114, SE = 0.4598, 95% CI [-1.007, 0.7959]",
+    "digitisation variance (delta method) = 4.18e-05, 0.0% of the sampling variance"
+   ],
+   "routes_available": [
+    "figure"
+   ],
+   "routes_rejected": {},
+   "inputs": {
+    "mean_a": 17.5,
+    "sd_a": 8.850000000000001,
+    "n_a": 9.0,
+    "mean_b": 18.471415016723824,
+    "sd_b": 9.54344477452183,
+    "n_b": 10.0,
+    "sigma_mean_a": 0.04216620013192172,
+    "sigma_mean_b": 0.04216620013192172,
+    "sigma_sd_a": null,
+    "sigma_sd_b": null
+   },
+   "not_convertible_reason": "",
+   "digitization_var": 4.1798111095604066e-05,
+   "var_with_digitization": 0.21147914263351544,
+   "digitization_var_share": 0.00019768556585883525,
+   "confidence": "accept_with_note",
+   "analysis_metric": "unknown",
+   "flags": [
+    "metric_mixed",
+    "panel_not_isolated"
+   ],
+   "moderators": {
+    "task_type": "visuomotor",
+    "perturbation_size_deg": "30 (rotated 30 clockwise with respect to the hand; introduced gradually in increments of 0.75 over the first 41 trials)",
+    "n_targets": "4 reach targets (5 and 30 left and right of center) during reach training; the final no-cursor set used all 5 reach targets and reference marker positions"
+   },
+   "citation": {
+    "authors": "Cressman EK, Salomonczyk D, Henriques DYP",
+    "year": 2010,
+    "title": "Visuomotor adaptation and proprioceptive recalibration in older adults",
+    "journal": "Experimental Brain Research",
+    "doi": "10.1007/s00221-010-2392-2",
+    "first_author": "Cressman"
+   },
+   "notes": ""
+  }
+ ]
+}

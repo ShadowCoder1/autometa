@@ -1,0 +1,950 @@
+{
+ "verdicts": [
+  {
+   "dataset_id": "b7523a41b03a:d1",
+   "outcome_key": "late_adaptation",
+   "group": "A",
+   "agreement": "single",
+   "agreeing_ids": [
+    "b7523a41b03a:d1:late_adaptation:A:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 0.5579999999999999,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "The paper's text never prints a specific degree value for the non-instructed older group's final trial set (76-90) of the rotated training block. The only textual statement about this time window is a group-wide qualitative claim: 'by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚).' This does not give a precise, group-specific number (27.9° for ON) nor a dispersion value (2.0° CI95). The number in the candidate was digitized from Fig 3B, but the reader's own notes indicate no y-axis calibration could be verified for this panel, and the image-extraction process could not confirm it isolated panel B specifically rather than pulling from the whole multi-panel figure region (including panel A, the trial-by-trial line plot). This leaves both the mean and the CI95 dispersion unverifiable against any printed value in the paper.",
+   "verifiers": [
+    {
+     "candidate_id": "b7523a41b03a:d1:late_adaptation:A:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "The paper's text never prints a specific degree value for the non-instructed older group's final trial set (76-90) of the rotated training block. The only textual statement about this time window is a group-wide qualitative claim: 'by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚).' This does not give a precise, group-specific number (27.9° for ON) nor a dispersion value (2.0° CI95). The number in the candidate was digitized from Fig 3B, but the reader's own notes indicate no y-axis calibration could be verified for this panel, and the image-extraction process could not confirm it isolated panel B specifically rather than pulling from the whole multi-panel figure region (including panel A, the trial-by-trial line plot). This leaves both the mean and the CI95 dispersion unverifiable against any printed value in the paper.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "",
+     "checked": [
+      "wrong_panel",
+      "wrong_time_window",
+      "subgroup",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "9d943a99eb43be5a6a6fdb3c3d244a869662556cb8600f08f7ecd169941cee2a",
+     "notes": "The paper reports only qualitative text ('reach deviations of roughly 30˚') for the final trial set of rotated training, without breaking this down by non-instructed vs instructed subgroups in prose. The only quantitative figures for this specific group/window would have to come from Fig 3B, but the digitization was performed without a verified axis calibration and with uncertainty about whether the correct panel (B, trial-set averages) versus panel A (raw trial-by-trial curve) was sampled. No table in the paper (Results, R notebook reference aside) prints per-group final-trial-set means or their confidence intervals numerically; the R notebook is mentioned as an external resource but its contents are not reproduced in the PDF, so it cannot serve as a page-citable better source here.; did not report checking: wrong_group, units"
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "calibration_missing",
+     "severity": "warn",
+     "message": "no calibration of the value axis of fig03 could be built at all, so nothing independent checked that this number lies on the axis it was read from, and the scale rests entirely on the readers (no y calibration could be built)",
+     "candidate_ids": [
+      "b7523a41b03a:d1:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "calibration_missing",
+     "severity": "warn",
+     "message": "no calibration of the value axis of fig03 could be built at all, so nothing independent checked that this number lies on the axis it was read from, and the scale rests entirely on the readers (no y calibration could be built)",
+     "candidate_ids": [
+      "b7523a41b03a:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "no y calibration could be built for this figure, so nothing independent checked that these values lie on the axis they were read from; the locator names panel 'b' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder",
+     "candidate_ids": [
+      "b7523a41b03a:d1:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "no y calibration could be built for this figure, so nothing independent checked that these values lie on the axis they were read from; the locator names panel 'b' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder",
+     "candidate_ids": [
+      "b7523a41b03a:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "accept_with_note",
+   "confidence_score": 0.45,
+   "confidence_margin": 0.0,
+   "nearest_boundary": "accept_with_note",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "one route, but 2 independent model families read it and agreed (claude-opus, claude-sonnet) — a second family is a different failure mode, which is what agreement is for (+0.25)",
+    "the verifier could not settle it either way (-0.05)",
+    "warnings (panel_not_isolated) -0.08, which orders this cell in the review queue but cannot withhold it",
+    "calibration_missing: the axis this value was read against is not fully corroborated (-0.16)",
+    "calibration_missing, panel_not_isolated caps this cell at 0.70: no calibration of this figure's value axis could be built at all, so the scale these numbers were read against rests entirely on the readers and nothing checked it; the named panel could not be isolated from its neighbours; the reading was made on the whole figure and is capped below automatic acceptance",
+    "the caps above stop at 0.45: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "no digitizer path recorded both a value and a usable spread, so the digitisation gate could not be evaluated either way",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "decided_by_a_hair: margin 0.0000 clears accept_with_note (0.45) — this cell is inside 0.03 of the line that decided it, so which side it landed on is not a finding about the paper"
+   ],
+   "needs_human": false,
+   "n": 19,
+   "mean": 27.9,
+   "dispersion_value": 2.0,
+   "dispersion_type": "CI95",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "degrees",
+   "sigma": 0.14825999999999948,
+   "mad": 0.0,
+   "analysis_metric": "baseline_corrected",
+   "route": "figure",
+   "candidate_ids": [
+    "b7523a41b03a:d1:late_adaptation:A:digitize:ensemble"
+   ],
+   "higher_is_better": true,
+   "orientation_evidence": "claude-opus-5: The measure is baseline-corrected angular reach deviation away from the target in the direction that counters the 30° rotation; the paper explicitly states that fully countering the rotation corresponds to deviations of 30°, and describes increasing deviations as increasing compensation/adaptation. Hence a larger raw value means more adaptation (more of the construct), so higher is better. For the final trial set the paper reports only that all groups reached near-perfect compensation of roughly 30°, and the reported age effects/follow-up t-tests concern the first trial set and the instructed groups; no older-versus-younger non-instructed difference at the final trial set is stated, so the direction on this raw measure is unknown. | claude-sonnet-5: The measure is baseline-corrected angular reach deviation during rotated training, which reflects the degree of compensation for the imposed 30° rotation; larger values (up to 30°) indicate more complete adaptation, so higher values reflect more of the construct (late adaptation) and are better. The paper's text and figure state that all groups approached ~30° by the final trial set, but does not explicitly state which of the non-instructed older vs younger groups had a higher or lower final value; Fig 3B shows overlapping dashed lines without a stated numeric comparison for this specific pair in the final trial set, so the direction of which group was greater is not explicitly stated in the text.; To fully counter the rotation, angular reach deviations should be 30˚.; all participants' reach deviations, regardless of instruction and age, significantly increased across trial sets (Fig 3B), as required to compensate for the cursor rotation.; And as illustrated in Fig 3, by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚).; For training trials, this was the angle between a line through the home position and the target, and a line through the home position and the position of the hand at maximum velocity on the outward part of the reach.; all participants’ reach deviations, regardless of instruction and age, significantly increased across trial sets (Fig 3B), as required to compensate for the cursor rotation.; by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚).",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "b7523a41b03a:d1",
+   "outcome_key": "late_adaptation",
+   "group": "B",
+   "agreement": "single",
+   "agreeing_ids": [
+    "b7523a41b03a:d1:late_adaptation:B:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 0.547,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "The paper never prints an explicit numeric mean/CI for the non-instructed younger group's reach deviation in trials 76-90. The only quantitative statement about that final trial set is qualitative: \"by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚).\" All specific values in the Results section are inferential statistics (F, p, η²) for main effects/interactions, not group means for the final trial set. The candidate's mean (27.35°) and CI (2.6°) are derived purely from digitizing Fig 3B, and the reader's own notes admit \"no y calibration could be built for this figure\" and that the panel locator could not isolate panel B, resolving instead to the whole Fig 3 region containing panel A's axes as well. This means the pixel-to-degree mapping used for the digitized point is unverified and could be wrong, so the printed number cannot be confirmed against the source figure's true calibration, nor can it be refuted with a printed alternative value.",
+   "verifiers": [
+    {
+     "candidate_id": "b7523a41b03a:d1:late_adaptation:B:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "The paper never prints an explicit numeric mean/CI for the non-instructed younger group's reach deviation in trials 76-90. The only quantitative statement about that final trial set is qualitative: \"by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚).\" All specific values in the Results section are inferential statistics (F, p, η²) for main effects/interactions, not group means for the final trial set. The candidate's mean (27.35°) and CI (2.6°) are derived purely from digitizing Fig 3B, and the reader's own notes admit \"no y calibration could be built for this figure\" and that the panel locator could not isolate panel B, resolving instead to the whole Fig 3 region containing panel A's axes as well. This means the pixel-to-degree mapping used for the digitized point is unverified and could be wrong, so the printed number cannot be confirmed against the source figure's true calibration, nor can it be refuted with a printed alternative value.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "",
+     "checked": [
+      "wrong_panel",
+      "se_vs_sd",
+      "wrong_time_window",
+      "wrong_group",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "cc8089db19357c9d09250798ec843e80569ee901cbdcb8f415ebf078f83defde",
+     "notes": "The paper states only that by the last trial set (76-90) 'all groups attained near perfect compensation (reach deviations of roughly 30˚)' (p.9), with no printed per-group mean or dispersion for this trial set. The underlying raw data are said to be available via OSF (https://osf.io/qzhmy) but that is an external resource, not printed in the article itself. The digitized reading's own uncertainty note (no calibrated y-axis, panel isolation failure defaulting to the full multi-panel figure region) means the specific mean of 27.35° and CI of 2.6° cannot be verified as correctly scaled from panel B specifically, so the reading is unconfirmable from the text and cannot be confidently refuted with an alternative printed number either.; did not report checking: baseline_vs_post, units, subgroup"
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "calibration_missing",
+     "severity": "warn",
+     "message": "no calibration of the value axis of fig03 could be built at all, so nothing independent checked that this number lies on the axis it was read from, and the scale rests entirely on the readers (no y calibration could be built)",
+     "candidate_ids": [
+      "b7523a41b03a:d1:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "calibration_missing",
+     "severity": "warn",
+     "message": "no calibration of the value axis of fig03 could be built at all, so nothing independent checked that this number lies on the axis it was read from, and the scale rests entirely on the readers (no y calibration could be built)",
+     "candidate_ids": [
+      "b7523a41b03a:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "no y calibration could be built for this figure, so nothing independent checked that these values lie on the axis they were read from; the locator names panel 'b' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder",
+     "candidate_ids": [
+      "b7523a41b03a:d1:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "no y calibration could be built for this figure, so nothing independent checked that these values lie on the axis they were read from; the locator names panel 'b' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder",
+     "candidate_ids": [
+      "b7523a41b03a:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "accept_with_note",
+   "confidence_score": 0.45,
+   "confidence_margin": 0.0,
+   "nearest_boundary": "accept_with_note",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "one route, but 2 independent model families read it and agreed (claude-opus, claude-sonnet) — a second family is a different failure mode, which is what agreement is for (+0.25)",
+    "the verifier could not settle it either way (-0.05)",
+    "warnings (panel_not_isolated) -0.08, which orders this cell in the review queue but cannot withhold it",
+    "calibration_missing: the axis this value was read against is not fully corroborated (-0.16)",
+    "calibration_missing, panel_not_isolated caps this cell at 0.70: no calibration of this figure's value axis could be built at all, so the scale these numbers were read against rests entirely on the readers and nothing checked it; the named panel could not be isolated from its neighbours; the reading was made on the whole figure and is capped below automatic acceptance",
+    "the caps above stop at 0.45: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "no digitizer path recorded both a value and a usable spread, so the digitisation gate could not be evaluated either way",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "decided_by_a_hair: margin 0.0000 clears accept_with_note (0.45) — this cell is inside 0.03 of the line that decided it, so which side it landed on is not a finding about the paper"
+   ],
+   "needs_human": false,
+   "n": 20,
+   "mean": 27.35,
+   "dispersion_value": 2.6,
+   "dispersion_type": "CI95",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "degrees",
+   "sigma": 0.2223900000000005,
+   "mad": 0.0,
+   "analysis_metric": "baseline_corrected",
+   "route": "figure",
+   "candidate_ids": [
+    "b7523a41b03a:d1:late_adaptation:B:digitize:ensemble"
+   ],
+   "higher_is_better": true,
+   "orientation_evidence": "claude-opus-5: The measure is baseline-corrected angular reach deviation away from the target in the direction that counters the 30° rotation; the paper explicitly states that fully countering the rotation corresponds to deviations of 30°, and describes increasing deviations as increasing compensation/adaptation. Hence a larger raw value means more adaptation (more of the construct), so higher is better. For the final trial set the paper reports only that all groups reached near-perfect compensation of roughly 30°, and the reported age effects/follow-up t-tests concern the first trial set and the instructed groups; no older-versus-younger non-instructed difference at the final trial set is stated, so the direction on this raw measure is unknown. | claude-sonnet-5: The measure is baseline-corrected angular reach deviation during rotated training, which reflects the degree of compensation for the imposed 30° rotation; larger values (up to 30°) indicate more complete adaptation, so higher values reflect more of the construct (late adaptation) and are better. The paper's text and figure state that all groups approached ~30° by the final trial set, but does not explicitly state which of the non-instructed older vs younger groups had a higher or lower final value; Fig 3B shows overlapping dashed lines without a stated numeric comparison for this specific pair in the final trial set, so the direction of which group was greater is not explicitly stated in the text.; To fully counter the rotation, angular reach deviations should be 30˚.; all participants' reach deviations, regardless of instruction and age, significantly increased across trial sets (Fig 3B), as required to compensate for the cursor rotation.; And as illustrated in Fig 3, by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚).; For training trials, this was the angle between a line through the home position and the target, and a line through the home position and the position of the hand at maximum velocity on the outward part of the reach.; all participants’ reach deviations, regardless of instruction and age, significantly increased across trial sets (Fig 3B), as required to compensate for the cursor rotation.; by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚).",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "b7523a41b03a:d1",
+   "outcome_key": "aftereffect",
+   "group": "A",
+   "agreement": "none",
+   "agreeing_ids": [],
+   "disagreeing_ids": [],
+   "vote_method": "none",
+   "vote_tolerance": null,
+   "needs_third_candidate": false,
+   "verifier_verdict": "not_run",
+   "verifier_reason": "",
+   "verifiers": [],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "metric_mixed_across_outcomes",
+     "severity": "info",
+     "message": "this paper's outcomes are read on different analysis metrics (baseline_corrected) — legitimate when the outcomes really are different quantities, worth a look when they are not",
+     "candidate_ids": [
+      "b7523a41b03a:d1:late_adaptation:A:digitize:ensemble",
+      "b7523a41b03a:d1:late_adaptation:B:digitize:ensemble",
+      "b7523a41b03a:d2:aftereffect:A:digitize:ensemble",
+      "b7523a41b03a:d2:aftereffect:B:digitize:ensemble",
+      "b7523a41b03a:d2:late_adaptation:A:digitize:ensemble",
+      "b7523a41b03a:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.0,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "no value was resolved for this cell"
+   ],
+   "needs_human": true,
+   "n": null,
+   "mean": null,
+   "dispersion_value": null,
+   "dispersion_type": "UNKNOWN",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "",
+   "sigma": null,
+   "mad": null,
+   "analysis_metric": "unknown",
+   "route": "",
+   "candidate_ids": [],
+   "higher_is_better": true,
+   "orientation_evidence": "claude-opus-5: The measure is the baseline-corrected angular reach deviation in no-cursor reaches without strategy, explicitly labelled by the paper as the reach aftereffect reflecting implicit learning, with full compensation being ~30°; hence a larger raw value = more of the construct (implicit recalibration), higher is 'more'. For the direction between the two non-instructed groups specifically, the paper reports a main effect of age but explicitly attributes it solely to the instructed older adults' without-strategy deviations and states there was 'little to no effect of age' on without-strategy no-cursor deviations, so it does not state which non-instructed group was higher. | claude-sonnet-5: The paper defines reach aftereffects as baseline-corrected angular deviations in no-cursor reaches, with larger deviations (approaching 30°) reflecting more implicit adaptation/recalibration ('to fully counter the rotation, angular reach deviations should be 30˚'), consistent with the outcome definition that a larger deviation from baseline means more adaptation. Thus higher raw values = more of the aftereffect construct = higher is better for this outcome. However, the paper's main-effect statement about age (older vs younger) is explicitly qualified as not being a reliable/systematic effect specific to the non-instructed groups (it was 'driven solely by the instructed older adults'), and no specific comparison or quote is given for the non-instructed older vs non-instructed younger contrast, so the direction stated in text for this specific dataset (non-instructed groups only) cannot be determined from the text.; The no-cursor reaches without strategy reflect implicit learning (involuntary reach aftereffects) while any additional deviation in the direction of no-cursor reaches with strategy reflects explicit learning.; Shown are mean, baseline-corrected angular reach deviations in no-cursor reaches for each group, i.e, reach aftereffects, while suppressing (left side) or employing (right side) any strategies used during adaptation. Full reach aftereffects would be a ~30˚.; There was a main effect of age F (1, 75) = 5.66, p = 0.02, η2 = 0.07, which could suggests older adults had larger with- and without-strategy reach aftereffects, and relied more on implicit learning. This was not systematically the case however; as Fig 4, and post-hoc tests showed (see R notebook), this effect was small and driven solely by the instructed older adults reach deviations in the with…; We first look at reach aftereffects and find little to no effect of age on without strategy no-cursor reach deviations after training (implicit reach aftereffects).; significant reach aftereffects of approximately 15˚ did emerge, F (1, 75) = 746.93, p < 0.001, η2 = 0.75",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "b7523a41b03a:d1",
+   "outcome_key": "aftereffect",
+   "group": "B",
+   "agreement": "none",
+   "agreeing_ids": [],
+   "disagreeing_ids": [],
+   "vote_method": "none",
+   "vote_tolerance": null,
+   "needs_third_candidate": false,
+   "verifier_verdict": "not_run",
+   "verifier_reason": "",
+   "verifiers": [],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "metric_mixed_across_outcomes",
+     "severity": "info",
+     "message": "this paper's outcomes are read on different analysis metrics (baseline_corrected) — legitimate when the outcomes really are different quantities, worth a look when they are not",
+     "candidate_ids": [
+      "b7523a41b03a:d1:late_adaptation:A:digitize:ensemble",
+      "b7523a41b03a:d1:late_adaptation:B:digitize:ensemble",
+      "b7523a41b03a:d2:aftereffect:A:digitize:ensemble",
+      "b7523a41b03a:d2:aftereffect:B:digitize:ensemble",
+      "b7523a41b03a:d2:late_adaptation:A:digitize:ensemble",
+      "b7523a41b03a:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.0,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "no value was resolved for this cell"
+   ],
+   "needs_human": true,
+   "n": null,
+   "mean": null,
+   "dispersion_value": null,
+   "dispersion_type": "UNKNOWN",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "",
+   "sigma": null,
+   "mad": null,
+   "analysis_metric": "unknown",
+   "route": "",
+   "candidate_ids": [],
+   "higher_is_better": true,
+   "orientation_evidence": "claude-opus-5: The measure is the baseline-corrected angular reach deviation in no-cursor reaches without strategy, explicitly labelled by the paper as the reach aftereffect reflecting implicit learning, with full compensation being ~30°; hence a larger raw value = more of the construct (implicit recalibration), higher is 'more'. For the direction between the two non-instructed groups specifically, the paper reports a main effect of age but explicitly attributes it solely to the instructed older adults' without-strategy deviations and states there was 'little to no effect of age' on without-strategy no-cursor deviations, so it does not state which non-instructed group was higher. | claude-sonnet-5: The paper defines reach aftereffects as baseline-corrected angular deviations in no-cursor reaches, with larger deviations (approaching 30°) reflecting more implicit adaptation/recalibration ('to fully counter the rotation, angular reach deviations should be 30˚'), consistent with the outcome definition that a larger deviation from baseline means more adaptation. Thus higher raw values = more of the aftereffect construct = higher is better for this outcome. However, the paper's main-effect statement about age (older vs younger) is explicitly qualified as not being a reliable/systematic effect specific to the non-instructed groups (it was 'driven solely by the instructed older adults'), and no specific comparison or quote is given for the non-instructed older vs non-instructed younger contrast, so the direction stated in text for this specific dataset (non-instructed groups only) cannot be determined from the text.; The no-cursor reaches without strategy reflect implicit learning (involuntary reach aftereffects) while any additional deviation in the direction of no-cursor reaches with strategy reflects explicit learning.; Shown are mean, baseline-corrected angular reach deviations in no-cursor reaches for each group, i.e, reach aftereffects, while suppressing (left side) or employing (right side) any strategies used during adaptation. Full reach aftereffects would be a ~30˚.; There was a main effect of age F (1, 75) = 5.66, p = 0.02, η2 = 0.07, which could suggests older adults had larger with- and without-strategy reach aftereffects, and relied more on implicit learning. This was not systematically the case however; as Fig 4, and post-hoc tests showed (see R notebook), this effect was small and driven solely by the instructed older adults reach deviations in the with…; We first look at reach aftereffects and find little to no effect of age on without strategy no-cursor reach deviations after training (implicit reach aftereffects).; significant reach aftereffects of approximately 15˚ did emerge, F (1, 75) = 746.93, p < 0.001, η2 = 0.75",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "b7523a41b03a:d2",
+   "outcome_key": "late_adaptation",
+   "group": "A",
+   "agreement": "single",
+   "agreeing_ids": [
+    "b7523a41b03a:d2:late_adaptation:A:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 5.0,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "The manuscript never prints a numeric mean or CI for the OI group's final trial-set (76-90) reach deviation. The only textual anchor for this data point is the qualitative statement on page 9: 'And as illustrated in Fig 3, by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚).' This confirms the ballpark (~30˚) but does not establish a precise mean of 30.2˚ or a CI95 half-width of 1.5˚ for OI specifically. The value must therefore be read off Fig 3B (a line/point plot with only qualitative labeling), and the reader's own notes flag that the digitization pipeline could not isolate panel B from panel A (both share the fig03 region), meaning the pixel-mapped value could have been pulled from the wrong panel's axis scaling. The notes also report an internally inconsistent error bar reconstruction (half-length 1.046 vs the claimed 1.5, exceeding the stated 0.15 tolerance), which further undermines confidence in the specific digitized numbers even though the general shape (near ceiling ~30˚, small CI) is plausible and consistent with the paper's narrative.",
+   "verifiers": [
+    {
+     "candidate_id": "b7523a41b03a:d2:late_adaptation:A:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "The manuscript never prints a numeric mean or CI for the OI group's final trial-set (76-90) reach deviation. The only textual anchor for this data point is the qualitative statement on page 9: 'And as illustrated in Fig 3, by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚).' This confirms the ballpark (~30˚) but does not establish a precise mean of 30.2˚ or a CI95 half-width of 1.5˚ for OI specifically. The value must therefore be read off Fig 3B (a line/point plot with only qualitative labeling), and the reader's own notes flag that the digitization pipeline could not isolate panel B from panel A (both share the fig03 region), meaning the pixel-mapped value could have been pulled from the wrong panel's axis scaling. The notes also report an internally inconsistent error bar reconstruction (half-length 1.046 vs the claimed 1.5, exceeding the stated 0.15 tolerance), which further undermines confidence in the specific digitized numbers even though the general shape (near ceiling ~30˚, small CI) is plausible and consistent with the paper's narrative.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "",
+     "checked": [
+      "wrong_panel",
+      "wrong_time_window",
+      "se_vs_sd",
+      "units",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "b5ae33a74a8ecc5a6e6ce991019e0f25cb0c151083396605cc77dc6795409b9c",
+     "notes": "Page 9 text (Fig 3 caption and Results 'Rotated reach training' section) only states groups reached 'near perfect compensation (reach deviations of roughly 30˚)' by the final trial set; no per-group numeric mean or CI is printed anywhere in the text, tables, or supplementary description for the 76-90 trial-set bin. The candidate value is plausible in magnitude but cannot be confirmed or refuted against printed digits, and the reader's own uncertainty analysis (panel-resolution ambiguity, error-bar mismatch) suggests the digitization may have mixed panel A (raw trial-by-trial curve) and panel B (binned trial-set means) or misjudged the CI scale bar.; did not report checking: wrong_group, baseline_vs_post"
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "axis_conflict",
+     "severity": "warn",
+     "message": "the readers of this figure answered off different value axes; the ensemble kept 'left y-axis, \"reach deviation [°]\" (shared with panel A, gridlines at 0/10/20/30 repeated in panel B)' and dropped digitize:readout:claude-opus-5:direct",
+     "candidate_ids": [
+      "b7523a41b03a:d2:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "axis_conflict",
+     "severity": "warn",
+     "message": "the readers of this figure answered off different value axes; the ensemble kept 'left y-axis, \"reach deviation [°]\" (shared with panel A, gridlines at 0/10/20/30 repeated in panel B)' and dropped digitize:readout:claude-opus-5:direct",
+     "candidate_ids": [
+      "b7523a41b03a:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "error half-lengths span 1.046, over the 0.15 tolerance (max of 10% of 1.5 and half a pixel = 0.03369); the locator names panel 'b' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder; the routes agree about the mean and disagree about the error half-length (0.9536, 1.5, 2); the median of the 3 route(s) that supplied one is used and its own uncertainty is widened to 0.7413 (whisker drawn on one side only: up); 1 route(s) read this whisker as drawn on one side only (up) and 2 read two arms — they disagree about the shape of the bar, not only about its length, so the half-length they were medianed into is a value neither of them reported",
+     "candidate_ids": [
+      "b7523a41b03a:d2:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "error half-lengths span 0.4797, over the 0.09602 tolerance (max of 10% of 0.9602 and half a pixel = 0.03369); the locator names panel 'b' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder; the routes agree about the mean and disagree about the error half-length (0.7203, 1.2); the median of the 2 route(s) that supplied one is used and its own uncertainty is widened to 0.3556 (whisker drawn on one side only: up); 1 route(s) read this whisker as drawn on one side only (up) and 1 read two arms — they disagree about the shape of the bar, not only about its length, so the half-length they were medianed into is a value neither of them reported",
+     "candidate_ids": [
+      "b7523a41b03a:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "series_identity_conflict",
+     "severity": "warn",
+     "message": "both groups were described as the same marker (filled) — one of the two series is being read for both groups; the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round",
+     "candidate_ids": [
+      "b7523a41b03a:d2:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "series_identity_conflict",
+     "severity": "warn",
+     "message": "both groups were described as the same marker (filled) — one of the two series is being read for both groups; the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round",
+     "candidate_ids": [
+      "b7523a41b03a:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.39,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "one route, but 2 independent model families read it and agreed (claude-opus, claude-sonnet) — a second family is a different failure mode, which is what agreement is for (+0.25)",
+    "the verifier could not settle it either way (-0.05)",
+    "axis_conflict, series_identity_conflict (-0.16) — a human decides: the readers answered off different value axes and only one of them was pooled, so which ladder this number is on rests on a majority; both groups resolve to the same plotted marker, so this number may belong to the other series. Agreement about a number never establishes that it is the right number, so this is not something a score can settle",
+    "warnings (panel_not_isolated) -0.08, which orders this cell in the review queue but cannot withhold it",
+    "panel_not_isolated caps this cell at 0.70: the named panel could not be isolated from its neighbours; the reading was made on the whole figure and is capped below automatic acceptance",
+    "the caps above stop at 0.39: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "no digitizer path recorded both a value and a usable spread, so the digitisation gate could not be evaluated either way",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "this cell was held by the evidence, not by its score, so the score is not compared with any boundary: the bucket was not decided by the score"
+   ],
+   "needs_human": true,
+   "n": 19,
+   "mean": 30.2,
+   "dispersion_value": 1.5,
+   "dispersion_type": "CI95",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "degrees",
+   "sigma": 0.10072281879571413,
+   "mad": 0.0,
+   "analysis_metric": "baseline_corrected",
+   "route": "figure",
+   "candidate_ids": [
+    "b7523a41b03a:d2:late_adaptation:A:digitize:ensemble"
+   ],
+   "higher_is_better": true,
+   "orientation_evidence": "claude-opus-5: The measure is baseline-corrected angular reach deviation away from the target in the direction that counters the 30° rotation; the paper explicitly states that fully countering the rotation corresponds to deviations of 30°, and describes increasing deviations as increasing compensation/adaptation. Hence a larger raw value means more adaptation (more of the construct), so higher is better. For the final trial set the paper reports only that all groups reached near-perfect compensation of roughly 30°, and the reported age effects/follow-up t-tests concern the first trial set and the instructed groups; no older-versus-younger non-instructed difference at the final trial set is stated, so the direction on this raw measure is unknown. | claude-sonnet-5: The measure is baseline-corrected angular reach deviation during rotated training, which reflects the degree of compensation for the imposed 30° rotation; larger values (up to 30°) indicate more complete adaptation, so higher values reflect more of the construct (late adaptation) and are better. The paper's text and figure state that all groups approached ~30° by the final trial set, but does not explicitly state which of the non-instructed older vs younger groups had a higher or lower final value; Fig 3B shows overlapping dashed lines without a stated numeric comparison for this specific pair in the final trial set, so the direction of which group was greater is not explicitly stated in the text.; To fully counter the rotation, angular reach deviations should be 30˚.; all participants' reach deviations, regardless of instruction and age, significantly increased across trial sets (Fig 3B), as required to compensate for the cursor rotation.; And as illustrated in Fig 3, by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚).; For training trials, this was the angle between a line through the home position and the target, and a line through the home position and the position of the hand at maximum velocity on the outward part of the reach.; all participants’ reach deviations, regardless of instruction and age, significantly increased across trial sets (Fig 3B), as required to compensate for the cursor rotation.; by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚).",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "b7523a41b03a:d2",
+   "outcome_key": "late_adaptation",
+   "group": "B",
+   "agreement": "single",
+   "agreeing_ids": [
+    "b7523a41b03a:d2:late_adaptation:B:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 5.0,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "The paper never prints an exact per-group angular value for the final (76-90) trial set. The only textual statement about this window is qualitative: 'by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚).' No table or in-text number gives 28.01˚ (or any other specific value) for the instructed-younger group's mean reach deviation, nor a CI95 of 0.96˚. The figure (Fig 3B) does show a 'trial set 76-90' panel with shaded 95% CIs per the caption ('Shaded areas represent 95% confidence intervals'), which is consistent with the *type* of dispersion claimed, but the actual pixel-level values were obtained by digitizing the figure, not reading a printed number. The reader's own notes flag that the panel-locator could not isolate panel B and instead resolved to panel A's bounding box, meaning the digitized coordinates may have been read using the wrong panel's axis scaling, and that the digitization uncertainty (±0.31, with error bars spanning 0.48) exceeds the required tolerance (0.096). Given these unresolved issues and the absence of any corroborating printed number in the text, the specific mean and CI cannot be confirmed or refuted from the paper's text; it is only loosely consistent with the qualitative 'roughly 30˚' statement.",
+   "verifiers": [
+    {
+     "candidate_id": "b7523a41b03a:d2:late_adaptation:B:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "The paper never prints an exact per-group angular value for the final (76-90) trial set. The only textual statement about this window is qualitative: 'by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚).' No table or in-text number gives 28.01˚ (or any other specific value) for the instructed-younger group's mean reach deviation, nor a CI95 of 0.96˚. The figure (Fig 3B) does show a 'trial set 76-90' panel with shaded 95% CIs per the caption ('Shaded areas represent 95% confidence intervals'), which is consistent with the *type* of dispersion claimed, but the actual pixel-level values were obtained by digitizing the figure, not reading a printed number. The reader's own notes flag that the panel-locator could not isolate panel B and instead resolved to panel A's bounding box, meaning the digitized coordinates may have been read using the wrong panel's axis scaling, and that the digitization uncertainty (±0.31, with error bars spanning 0.48) exceeds the required tolerance (0.096). Given these unresolved issues and the absence of any corroborating printed number in the text, the specific mean and CI cannot be confirmed or refuted from the paper's text; it is only loosely consistent with the qualitative 'roughly 30˚' statement.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "",
+     "checked": [
+      "wrong_panel",
+      "se_vs_sd",
+      "wrong_time_window",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "473dd77de08eaa8ef84d148ec1cabceb0c11c415c0dfd4655ad39c1c04b65bfb",
+     "notes": "Text only states 'by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚)' (p.9-10), with no per-group numeric table for the 76-90 trial set. Exact means/CIs for this window are not printed anywhere in the main text; they would only exist in the underlying dataset/R notebook referenced (https://osf.io/qzhmy), which is not part of the paper itself. The candidate's digitization is therefore the only source, and its own uncertainty and panel-resolution issues (only panel 'a' returned instead of 'b') make it unreliable as a confirmed reading.; did not report checking: wrong_group, baseline_vs_post, units, subgroup"
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "axis_conflict",
+     "severity": "warn",
+     "message": "the readers of this figure answered off different value axes; the ensemble kept 'left y-axis, \"reach deviation [°]\" (shared with panel A, gridlines at 0/10/20/30 repeated in panel B)' and dropped digitize:readout:claude-opus-5:direct",
+     "candidate_ids": [
+      "b7523a41b03a:d2:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "axis_conflict",
+     "severity": "warn",
+     "message": "the readers of this figure answered off different value axes; the ensemble kept 'left y-axis, \"reach deviation [°]\" (shared with panel A, gridlines at 0/10/20/30 repeated in panel B)' and dropped digitize:readout:claude-opus-5:direct",
+     "candidate_ids": [
+      "b7523a41b03a:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "error half-lengths span 1.046, over the 0.15 tolerance (max of 10% of 1.5 and half a pixel = 0.03369); the locator names panel 'b' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder; the routes agree about the mean and disagree about the error half-length (0.9536, 1.5, 2); the median of the 3 route(s) that supplied one is used and its own uncertainty is widened to 0.7413 (whisker drawn on one side only: up); 1 route(s) read this whisker as drawn on one side only (up) and 2 read two arms — they disagree about the shape of the bar, not only about its length, so the half-length they were medianed into is a value neither of them reported",
+     "candidate_ids": [
+      "b7523a41b03a:d2:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "panel_not_isolated",
+     "severity": "warn",
+     "message": "error half-lengths span 0.4797, over the 0.09602 tolerance (max of 10% of 0.9602 and half a pixel = 0.03369); the locator names panel 'b' and ingestion could not hand that panel over on its own (it resolved fig03 to 1 rect(s) ['a']), so the image read is the whole region — which carries every panel's axes, and a value read off it can be scaled with the wrong ladder; the routes agree about the mean and disagree about the error half-length (0.7203, 1.2); the median of the 2 route(s) that supplied one is used and its own uncertainty is widened to 0.3556 (whisker drawn on one side only: up); 1 route(s) read this whisker as drawn on one side only (up) and 1 read two arms — they disagree about the shape of the bar, not only about its length, so the half-length they were medianed into is a value neither of them reported",
+     "candidate_ids": [
+      "b7523a41b03a:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "series_identity_conflict",
+     "severity": "warn",
+     "message": "both groups were described as the same marker (filled) — one of the two series is being read for both groups; the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round",
+     "candidate_ids": [
+      "b7523a41b03a:d2:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "series_identity_conflict",
+     "severity": "warn",
+     "message": "both groups were described as the same marker (filled) — one of the two series is being read for both groups; the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round",
+     "candidate_ids": [
+      "b7523a41b03a:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.14,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "only one independent route produced this value, so it cannot be accepted by vote",
+    "the verifier could not settle it either way (-0.05)",
+    "axis_conflict, series_identity_conflict (-0.16) — a human decides: the readers answered off different value axes and only one of them was pooled, so which ladder this number is on rests on a majority; both groups resolve to the same plotted marker, so this number may belong to the other series. Agreement about a number never establishes that it is the right number, so this is not something a score can settle",
+    "warnings (panel_not_isolated) -0.08, which orders this cell in the review queue but cannot withhold it",
+    "panel_not_isolated caps this cell at 0.70: the named panel could not be isolated from its neighbours; the reading was made on the whole figure and is capped below automatic acceptance",
+    "the caps above stop at 0.14: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "no digitizer path recorded both a value and a usable spread, so the digitisation gate could not be evaluated either way",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "this cell was held by the evidence, not by its score, so the score is not compared with any boundary: the bucket was not decided by the score"
+   ],
+   "needs_human": true,
+   "n": 21,
+   "mean": 28.012090961301247,
+   "dispersion_value": 0.9601674077120158,
+   "dispersion_type": "CI95",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "degrees",
+   "sigma": 0.3144460592252254,
+   "mad": 0.0,
+   "analysis_metric": "baseline_corrected",
+   "route": "figure",
+   "candidate_ids": [
+    "b7523a41b03a:d2:late_adaptation:B:digitize:ensemble"
+   ],
+   "higher_is_better": true,
+   "orientation_evidence": "claude-opus-5: The measure is baseline-corrected angular reach deviation away from the target in the direction that counters the 30° rotation; the paper explicitly states that fully countering the rotation corresponds to deviations of 30°, and describes increasing deviations as increasing compensation/adaptation. Hence a larger raw value means more adaptation (more of the construct), so higher is better. For the final trial set the paper reports only that all groups reached near-perfect compensation of roughly 30°, and the reported age effects/follow-up t-tests concern the first trial set and the instructed groups; no older-versus-younger non-instructed difference at the final trial set is stated, so the direction on this raw measure is unknown. | claude-sonnet-5: The measure is baseline-corrected angular reach deviation during rotated training, which reflects the degree of compensation for the imposed 30° rotation; larger values (up to 30°) indicate more complete adaptation, so higher values reflect more of the construct (late adaptation) and are better. The paper's text and figure state that all groups approached ~30° by the final trial set, but does not explicitly state which of the non-instructed older vs younger groups had a higher or lower final value; Fig 3B shows overlapping dashed lines without a stated numeric comparison for this specific pair in the final trial set, so the direction of which group was greater is not explicitly stated in the text.; To fully counter the rotation, angular reach deviations should be 30˚.; all participants' reach deviations, regardless of instruction and age, significantly increased across trial sets (Fig 3B), as required to compensate for the cursor rotation.; And as illustrated in Fig 3, by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚).; For training trials, this was the angle between a line through the home position and the target, and a line through the home position and the position of the hand at maximum velocity on the outward part of the reach.; all participants’ reach deviations, regardless of instruction and age, significantly increased across trial sets (Fig 3B), as required to compensate for the cursor rotation.; by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚).",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "b7523a41b03a:d2",
+   "outcome_key": "aftereffect",
+   "group": "A",
+   "agreement": "none",
+   "agreeing_ids": [],
+   "disagreeing_ids": [],
+   "vote_method": "none",
+   "vote_tolerance": null,
+   "needs_third_candidate": false,
+   "verifier_verdict": "not_run",
+   "verifier_reason": "",
+   "verifiers": [],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "metric_mixed_across_outcomes",
+     "severity": "info",
+     "message": "this paper's outcomes are read on different analysis metrics (baseline_corrected) — legitimate when the outcomes really are different quantities, worth a look when they are not",
+     "candidate_ids": [
+      "b7523a41b03a:d1:aftereffect:A:digitize:ensemble",
+      "b7523a41b03a:d1:aftereffect:B:digitize:ensemble",
+      "b7523a41b03a:d1:late_adaptation:A:digitize:ensemble",
+      "b7523a41b03a:d1:late_adaptation:B:digitize:ensemble",
+      "b7523a41b03a:d2:late_adaptation:A:digitize:ensemble",
+      "b7523a41b03a:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.0,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "no value was resolved for this cell"
+   ],
+   "needs_human": true,
+   "n": null,
+   "mean": null,
+   "dispersion_value": null,
+   "dispersion_type": "UNKNOWN",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "",
+   "sigma": null,
+   "mad": null,
+   "analysis_metric": "unknown",
+   "route": "",
+   "candidate_ids": [],
+   "higher_is_better": true,
+   "orientation_evidence": "claude-opus-5: The measure is the baseline-corrected angular reach deviation in no-cursor reaches without strategy, explicitly labelled by the paper as the reach aftereffect reflecting implicit learning, with full compensation being ~30°; hence a larger raw value = more of the construct (implicit recalibration), higher is 'more'. For the direction between the two non-instructed groups specifically, the paper reports a main effect of age but explicitly attributes it solely to the instructed older adults' without-strategy deviations and states there was 'little to no effect of age' on without-strategy no-cursor deviations, so it does not state which non-instructed group was higher. | claude-sonnet-5: The paper defines reach aftereffects as baseline-corrected angular deviations in no-cursor reaches, with larger deviations (approaching 30°) reflecting more implicit adaptation/recalibration ('to fully counter the rotation, angular reach deviations should be 30˚'), consistent with the outcome definition that a larger deviation from baseline means more adaptation. Thus higher raw values = more of the aftereffect construct = higher is better for this outcome. However, the paper's main-effect statement about age (older vs younger) is explicitly qualified as not being a reliable/systematic effect specific to the non-instructed groups (it was 'driven solely by the instructed older adults'), and no specific comparison or quote is given for the non-instructed older vs non-instructed younger contrast, so the direction stated in text for this specific dataset (non-instructed groups only) cannot be determined from the text.; The no-cursor reaches without strategy reflect implicit learning (involuntary reach aftereffects) while any additional deviation in the direction of no-cursor reaches with strategy reflects explicit learning.; Shown are mean, baseline-corrected angular reach deviations in no-cursor reaches for each group, i.e, reach aftereffects, while suppressing (left side) or employing (right side) any strategies used during adaptation. Full reach aftereffects would be a ~30˚.; There was a main effect of age F (1, 75) = 5.66, p = 0.02, η2 = 0.07, which could suggests older adults had larger with- and without-strategy reach aftereffects, and relied more on implicit learning. This was not systematically the case however; as Fig 4, and post-hoc tests showed (see R notebook), this effect was small and driven solely by the instructed older adults reach deviations in the with…; We first look at reach aftereffects and find little to no effect of age on without strategy no-cursor reach deviations after training (implicit reach aftereffects).; significant reach aftereffects of approximately 15˚ did emerge, F (1, 75) = 746.93, p < 0.001, η2 = 0.75",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "b7523a41b03a:d2",
+   "outcome_key": "aftereffect",
+   "group": "B",
+   "agreement": "none",
+   "agreeing_ids": [],
+   "disagreeing_ids": [],
+   "vote_method": "none",
+   "vote_tolerance": null,
+   "needs_third_candidate": false,
+   "verifier_verdict": "not_run",
+   "verifier_reason": "",
+   "verifiers": [],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "metric_mixed_across_outcomes",
+     "severity": "info",
+     "message": "this paper's outcomes are read on different analysis metrics (baseline_corrected) — legitimate when the outcomes really are different quantities, worth a look when they are not",
+     "candidate_ids": [
+      "b7523a41b03a:d1:aftereffect:A:digitize:ensemble",
+      "b7523a41b03a:d1:aftereffect:B:digitize:ensemble",
+      "b7523a41b03a:d1:late_adaptation:A:digitize:ensemble",
+      "b7523a41b03a:d1:late_adaptation:B:digitize:ensemble",
+      "b7523a41b03a:d2:late_adaptation:A:digitize:ensemble",
+      "b7523a41b03a:d2:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.0,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "no value was resolved for this cell"
+   ],
+   "needs_human": true,
+   "n": null,
+   "mean": null,
+   "dispersion_value": null,
+   "dispersion_type": "UNKNOWN",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "",
+   "sigma": null,
+   "mad": null,
+   "analysis_metric": "unknown",
+   "route": "",
+   "candidate_ids": [],
+   "higher_is_better": true,
+   "orientation_evidence": "claude-opus-5: The measure is the baseline-corrected angular reach deviation in no-cursor reaches without strategy, explicitly labelled by the paper as the reach aftereffect reflecting implicit learning, with full compensation being ~30°; hence a larger raw value = more of the construct (implicit recalibration), higher is 'more'. For the direction between the two non-instructed groups specifically, the paper reports a main effect of age but explicitly attributes it solely to the instructed older adults' without-strategy deviations and states there was 'little to no effect of age' on without-strategy no-cursor deviations, so it does not state which non-instructed group was higher. | claude-sonnet-5: The paper defines reach aftereffects as baseline-corrected angular deviations in no-cursor reaches, with larger deviations (approaching 30°) reflecting more implicit adaptation/recalibration ('to fully counter the rotation, angular reach deviations should be 30˚'), consistent with the outcome definition that a larger deviation from baseline means more adaptation. Thus higher raw values = more of the aftereffect construct = higher is better for this outcome. However, the paper's main-effect statement about age (older vs younger) is explicitly qualified as not being a reliable/systematic effect specific to the non-instructed groups (it was 'driven solely by the instructed older adults'), and no specific comparison or quote is given for the non-instructed older vs non-instructed younger contrast, so the direction stated in text for this specific dataset (non-instructed groups only) cannot be determined from the text.; The no-cursor reaches without strategy reflect implicit learning (involuntary reach aftereffects) while any additional deviation in the direction of no-cursor reaches with strategy reflects explicit learning.; Shown are mean, baseline-corrected angular reach deviations in no-cursor reaches for each group, i.e, reach aftereffects, while suppressing (left side) or employing (right side) any strategies used during adaptation. Full reach aftereffects would be a ~30˚.; There was a main effect of age F (1, 75) = 5.66, p = 0.02, η2 = 0.07, which could suggests older adults had larger with- and without-strategy reach aftereffects, and relied more on implicit learning. This was not systematically the case however; as Fig 4, and post-hoc tests showed (see R notebook), this effect was small and driven solely by the instructed older adults reach deviations in the with…; We first look at reach aftereffects and find little to no effect of age on without strategy no-cursor reach deviations after training (implicit reach aftereffects).; significant reach aftereffects of approximately 15˚ did emerge, F (1, 75) = 746.93, p < 0.001, η2 = 0.75",
+   "overridden_by_human": false,
+   "override_justification": ""
+  }
+ ],
+ "extra_candidates": [],
+ "orientation": {
+  "late_adaptation|Baseline-corrected angular reach deviation during rotated cursor training": {
+   "outcome_key": "late_adaptation",
+   "measure_name": "Baseline-corrected angular reach deviation during rotated cursor training",
+   "dataset_id": "b7523a41b03a:d1",
+   "higher_is_better": true,
+   "raw_value_semantics": "higher_more_construct",
+   "raw_value_semantics_by_model": {
+    "claude-opus-5": "higher_more_construct",
+    "claude-sonnet-5": "higher_more_construct"
+   },
+   "direction_stated_in_text": "unknown",
+   "quotes": [
+    "To fully counter the rotation, angular reach deviations should be 30˚.",
+    "all participants' reach deviations, regardless of instruction and age, significantly increased across trial sets (Fig 3B), as required to compensate for the cursor rotation.",
+    "And as illustrated in Fig 3, by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚).",
+    "For training trials, this was the angle between a line through the home position and the target, and a line through the home position and the position of the hand at maximum velocity on the outward part of the reach.",
+    "all participants’ reach deviations, regardless of instruction and age, significantly increased across trial sets (Fig 3B), as required to compensate for the cursor rotation.",
+    "by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚)."
+   ],
+   "reason": "claude-opus-5: The measure is baseline-corrected angular reach deviation away from the target in the direction that counters the 30° rotation; the paper explicitly states that fully countering the rotation corresponds to deviations of 30°, and describes increasing deviations as increasing compensation/adaptation. Hence a larger raw value means more adaptation (more of the construct), so higher is better. For the final trial set the paper reports only that all groups reached near-perfect compensation of roughly 30°, and the reported age effects/follow-up t-tests concern the first trial set and the instructed groups; no older-versus-younger non-instructed difference at the final trial set is stated, so the direction on this raw measure is unknown. | claude-sonnet-5: The measure is baseline-corrected angular reach deviation during rotated training, which reflects the degree of compensation for the imposed 30° rotation; larger values (up to 30°) indicate more complete adaptation, so higher values reflect more of the construct (late adaptation) and are better. The paper's text and figure state that all groups approached ~30° by the final trial set, but does not explicitly state which of the non-instructed older vs younger groups had a higher or lower final value; Fig 3B shows overlapping dashed lines without a stated numeric comparison for this specific pair in the final trial set, so the direction of which group was greater is not explicitly stated in the text.",
+   "agreed": true,
+   "needs_human": false,
+   "third_read": false,
+   "runs": [
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": true,
+     "raw_value_semantics": "higher_more_construct",
+     "direction_stated_in_text": "unknown",
+     "quotes": [
+      "To fully counter the rotation, angular reach deviations should be 30˚.",
+      "all participants' reach deviations, regardless of instruction and age, significantly increased across trial sets (Fig 3B), as required to compensate for the cursor rotation.",
+      "And as illustrated in Fig 3, by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚).",
+      "For training trials, this was the angle between a line through the home position and the target, and a line through the home position and the position of the hand at maximum velocity on the outward part of the reach."
+     ],
+     "reason": "The measure is baseline-corrected angular reach deviation away from the target in the direction that counters the 30° rotation; the paper explicitly states that fully countering the rotation corresponds to deviations of 30°, and describes increasing deviations as increasing compensation/adaptation. Hence a larger raw value means more adaptation (more of the construct), so higher is better. For the final trial set the paper reports only that all groups reached near-perfect compensation of roughly 30°, and the reported age effects/follow-up t-tests concern the first trial set and the instructed groups; no older-versus-younger non-instructed difference at the final trial set is stated, so the direction on this raw measure is unknown.",
+     "model": "claude-opus-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "85dfb9418fcb9953cc6025354e7cbcef00f54323677d1f49e8251e60f7687034"
+    },
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": true,
+     "raw_value_semantics": "higher_more_construct",
+     "direction_stated_in_text": "unknown",
+     "quotes": [
+      "To fully counter the rotation, angular reach deviations should be 30˚.",
+      "all participants’ reach deviations, regardless of instruction and age, significantly increased across trial sets (Fig 3B), as required to compensate for the cursor rotation.",
+      "by the last trial set, all groups attained near perfect compensation (reach deviations of roughly 30˚)."
+     ],
+     "reason": "The measure is baseline-corrected angular reach deviation during rotated training, which reflects the degree of compensation for the imposed 30° rotation; larger values (up to 30°) indicate more complete adaptation, so higher values reflect more of the construct (late adaptation) and are better. The paper's text and figure state that all groups approached ~30° by the final trial set, but does not explicitly state which of the non-instructed older vs younger groups had a higher or lower final value; Fig 3B shows overlapping dashed lines without a stated numeric comparison for this specific pair in the final trial set, so the direction of which group was greater is not explicitly stated in the text.",
+     "model": "claude-sonnet-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "262abd15153980bfdfc208bab775b2f58a131f8ef02752ba3b7e2423ac3d904f"
+    }
+   ],
+   "llm_call_ids": [
+    "85dfb9418fcb9953cc6025354e7cbcef00f54323677d1f49e8251e60f7687034",
+    "262abd15153980bfdfc208bab775b2f58a131f8ef02752ba3b7e2423ac3d904f"
+   ],
+   "notes": "means check: ran — every reader that stated a direction was checked against the resolved raw means A = 27.9 and B = 27.35"
+  },
+  "aftereffect|Baseline-corrected angular reach deviation in no-cursor reaches without strategy (reach aftereffect)": {
+   "outcome_key": "aftereffect",
+   "measure_name": "Baseline-corrected angular reach deviation in no-cursor reaches without strategy (reach aftereffect)",
+   "dataset_id": "b7523a41b03a:d1",
+   "higher_is_better": true,
+   "raw_value_semantics": "higher_more_construct",
+   "raw_value_semantics_by_model": {
+    "claude-opus-5": "higher_more_construct",
+    "claude-sonnet-5": "higher_more_construct"
+   },
+   "direction_stated_in_text": "unknown",
+   "quotes": [
+    "The no-cursor reaches without strategy reflect implicit learning (involuntary reach aftereffects) while any additional deviation in the direction of no-cursor reaches with strategy reflects explicit learning.",
+    "Shown are mean, baseline-corrected angular reach deviations in no-cursor reaches for each group, i.e, reach aftereffects, while suppressing (left side) or employing (right side) any strategies used during adaptation. Full reach aftereffects would be a ~30˚.",
+    "There was a main effect of age F (1, 75) = 5.66, p = 0.02, η2 = 0.07, which could suggests older adults had larger with- and without-strategy reach aftereffects, and relied more on implicit learning. This was not systematically the case however; as Fig 4, and post-hoc tests showed (see R notebook), this effect was small and driven solely by the instructed older adults reach deviations in the with…",
+    "We first look at reach aftereffects and find little to no effect of age on without strategy no-cursor reach deviations after training (implicit reach aftereffects).",
+    "significant reach aftereffects of approximately 15˚ did emerge, F (1, 75) = 746.93, p < 0.001, η2 = 0.75"
+   ],
+   "reason": "claude-opus-5: The measure is the baseline-corrected angular reach deviation in no-cursor reaches without strategy, explicitly labelled by the paper as the reach aftereffect reflecting implicit learning, with full compensation being ~30°; hence a larger raw value = more of the construct (implicit recalibration), higher is 'more'. For the direction between the two non-instructed groups specifically, the paper reports a main effect of age but explicitly attributes it solely to the instructed older adults' without-strategy deviations and states there was 'little to no effect of age' on without-strategy no-cursor deviations, so it does not state which non-instructed group was higher. | claude-sonnet-5: The paper defines reach aftereffects as baseline-corrected angular deviations in no-cursor reaches, with larger deviations (approaching 30°) reflecting more implicit adaptation/recalibration ('to fully counter the rotation, angular reach deviations should be 30˚'), consistent with the outcome definition that a larger deviation from baseline means more adaptation. Thus higher raw values = more of the aftereffect construct = higher is better for this outcome. However, the paper's main-effect statement about age (older vs younger) is explicitly qualified as not being a reliable/systematic effect specific to the non-instructed groups (it was 'driven solely by the instructed older adults'), and no specific comparison or quote is given for the non-instructed older vs non-instructed younger contrast, so the direction stated in text for this specific dataset (non-instructed groups only) cannot be determined from the text.",
+   "agreed": true,
+   "needs_human": false,
+   "third_read": false,
+   "runs": [
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": true,
+     "raw_value_semantics": "higher_more_construct",
+     "direction_stated_in_text": "unknown",
+     "quotes": [
+      "The no-cursor reaches without strategy reflect implicit learning (involuntary reach aftereffects) while any additional deviation in the direction of no-cursor reaches with strategy reflects explicit learning.",
+      "Shown are mean, baseline-corrected angular reach deviations in no-cursor reaches for each group, i.e, reach aftereffects, while suppressing (left side) or employing (right side) any strategies used during adaptation. Full reach aftereffects would be a ~30˚.",
+      "There was a main effect of age F (1, 75) = 5.66, p = 0.02, η2 = 0.07, which could suggests older adults had larger with- and without-strategy reach aftereffects, and relied more on implicit learning. This was not systematically the case however; as Fig 4, and post-hoc tests showed (see R notebook), this effect was small and driven solely by the instructed older adults reach deviations in the with…",
+      "We first look at reach aftereffects and find little to no effect of age on without strategy no-cursor reach deviations after training (implicit reach aftereffects)."
+     ],
+     "reason": "The measure is the baseline-corrected angular reach deviation in no-cursor reaches without strategy, explicitly labelled by the paper as the reach aftereffect reflecting implicit learning, with full compensation being ~30°; hence a larger raw value = more of the construct (implicit recalibration), higher is 'more'. For the direction between the two non-instructed groups specifically, the paper reports a main effect of age but explicitly attributes it solely to the instructed older adults' without-strategy deviations and states there was 'little to no effect of age' on without-strategy no-cursor deviations, so it does not state which non-instructed group was higher.",
+     "model": "claude-opus-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "c260cc63109ee0be0e269d1e49c4913b68d997d1060135a1942139b473cdd577"
+    },
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": true,
+     "raw_value_semantics": "higher_more_construct",
+     "direction_stated_in_text": "unknown",
+     "quotes": [
+      "significant reach aftereffects of approximately 15˚ did emerge, F (1, 75) = 746.93, p < 0.001, η2 = 0.75",
+      "There was a main effect of age F (1, 75) = 5.66, p = 0.02, η2 = 0.07, which could suggests older adults had larger with- and without-strategy reach aftereffects, and relied more on implicit learning. This was not systematically the case however; as Fig 4, and post-hoc tests showed (see R notebook), this effect was small and driven solely by the instructed older adults reach deviations in the with…"
+     ],
+     "reason": "The paper defines reach aftereffects as baseline-corrected angular deviations in no-cursor reaches, with larger deviations (approaching 30°) reflecting more implicit adaptation/recalibration ('to fully counter the rotation, angular reach deviations should be 30˚'), consistent with the outcome definition that a larger deviation from baseline means more adaptation. Thus higher raw values = more of the aftereffect construct = higher is better for this outcome. However, the paper's main-effect statement about age (older vs younger) is explicitly qualified as not being a reliable/systematic effect specific to the non-instructed groups (it was 'driven solely by the instructed older adults'), and no specific comparison or quote is given for the non-instructed older vs non-instructed younger contrast, so the direction stated in text for this specific dataset (non-instructed groups only) cannot be determined from the text.",
+     "model": "claude-sonnet-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "a3d3766f0176869cadf8f219dfa4cd944d16916141d075e6b6b5c6f784282c74"
+    }
+   ],
+   "llm_call_ids": [
+    "c260cc63109ee0be0e269d1e49c4913b68d997d1060135a1942139b473cdd577",
+    "a3d3766f0176869cadf8f219dfa4cd944d16916141d075e6b6b5c6f784282c74"
+   ],
+   "notes": "means check: no_means — the raw means were not available, so no reader could be checked against them"
+  }
+ },
+ "adjudications": [],
+ "source_rank": {
+  "b7523a41b03a:d1|late_adaptation": {
+   "ranked": [
+    {
+     "locator": "Fig 3B, rightmost trial set '76-90', dashed purple line (ON: older non-instructed) and dashed red line (YN: younger non-instructed)",
+     "page": 9,
+     "figure_id": "fig03",
+     "table_id": null,
+     "kind": "figure_line",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries CI95 error bars",
+      "measures the outcome's own metric (baseline_corrected)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    }
+   ],
+   "held_back_from_vote": [],
+   "reopened_on_better_source": ""
+  },
+  "b7523a41b03a:d1|aftereffect": {
+   "ranked": [
+    {
+     "locator": "Fig 4, left side of the x axis ('without strategy'), dashed purple line/point (older non-instructed) and dashed red line/point (younger non-instructed)",
+     "page": 10,
+     "figure_id": "fig04",
+     "table_id": null,
+     "kind": "figure_line",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries CI95 error bars",
+      "measures the outcome's own metric (baseline_corrected)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    }
+   ],
+   "held_back_from_vote": [],
+   "reopened_on_better_source": ""
+  },
+  "b7523a41b03a:d2|late_adaptation": {
+   "ranked": [
+    {
+     "locator": "Fig 3B, rightmost trial set '76-90', solid blue line (OI: older instructed) and solid orange line (YI: younger instructed)",
+     "page": 9,
+     "figure_id": "fig03",
+     "table_id": null,
+     "kind": "figure_line",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries CI95 error bars",
+      "measures the outcome's own metric (baseline_corrected)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    }
+   ],
+   "held_back_from_vote": [],
+   "reopened_on_better_source": ""
+  },
+  "b7523a41b03a:d2|aftereffect": {
+   "ranked": [
+    {
+     "locator": "Fig 4, left side of the x axis ('without strategy'), solid blue line/point (older instructed) and solid orange line/point (younger instructed)",
+     "page": 10,
+     "figure_id": "fig04",
+     "table_id": null,
+     "kind": "figure_line",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries CI95 error bars",
+      "measures the outcome's own metric (baseline_corrected)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    }
+   ],
+   "held_back_from_vote": [],
+   "reopened_on_better_source": ""
+  }
+ },
+ "reopens": 0
+}

@@ -1,0 +1,693 @@
+{
+ "verdicts": [
+  {
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "group": "A",
+   "agreement": "agree",
+   "agreeing_ids": [
+    "b511dbb76fa6:d1:late_adaptation:A:text:table_first:claude-opus-5#0",
+    "b511dbb76fa6:d1:late_adaptation:A:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "figure_tolerance",
+   "vote_tolerance": 10.0,
+   "needs_third_candidate": false,
+   "verifier_verdict": "confirmed",
+   "verifier_reason": "The quote is verbatim and correctly attributed to the old-subjects fit: 'An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects.' The constant term 29.51 is the model asymptote (as x→∞ the exponential term vanishes), which is explicitly sanctioned in the outcome definition as an alternative operationalization of late adaptation when the literal final-episode value is not printed numerically (only shown graphically in Fig. 1). No dispersion or n is given for this group-level curve fit, matching the reader's NONE/None entries.",
+   "verifiers": [
+    {
+     "candidate_id": "b511dbb76fa6:d1:late_adaptation:A:text:table_first:claude-opus-5#0",
+     "verdict": "confirmed",
+     "reason": "The quote is verbatim and correctly attributed to the old-subjects fit: 'An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects.' The constant term 29.51 is the model asymptote (as x→∞ the exponential term vanishes), which is explicitly sanctioned in the outcome definition as an alternative operationalization of late adaptation when the literal final-episode value is not printed numerically (only shown graphically in Fig. 1). No dispersion or n is given for this group-level curve fit, matching the reader's NONE/None entries.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "Figure 1 shows the actual group-mean pointing error (with SD error bars) at episode 20, the last adaptation episode before feedback removal, which would be a more literal reading of 'final point of the group time series' than the extrapolated exponential asymptote; however this value is only presented graphically, not as printed digits, so it cannot be extracted as text. (page 3)",
+     "checked": [
+      "wrong_group",
+      "wrong_time_window",
+      "wrong_panel",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "units",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "79dd2375e731a2b6925fe59d98825d267a1b41afb2b7cc44ec404cf0fc36a149",
+     "notes": "The paper provides no table of per-episode means; the only textual numeric characterization of late/asymptotic adaptation for old subjects is the exponential fit constant (29.51 deg), which matches the candidate exactly. Episode 20 raw values exist only in Fig. 1 and are not quotable as printed numbers."
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "dispersion_missing",
+     "severity": "warn",
+     "message": "this value carries no dispersion of any kind",
+     "candidate_ids": [
+      "b511dbb76fa6:d1:late_adaptation:A:text:table_first:claude-opus-5#0"
+     ]
+    },
+    {
+     "code": "dispersion_missing",
+     "severity": "warn",
+     "message": "this value carries no dispersion of any kind",
+     "candidate_ids": [
+      "b511dbb76fa6:d1:late_adaptation:B:text:table_first:claude-opus-5#1"
+     ]
+    },
+    {
+     "code": "n_missing",
+     "severity": "warn",
+     "message": "no group size was transcribed with this value",
+     "candidate_ids": [
+      "b511dbb76fa6:d1:late_adaptation:A:text:table_first:claude-opus-5#0"
+     ]
+    },
+    {
+     "code": "n_missing",
+     "severity": "warn",
+     "message": "no group size was transcribed with this value",
+     "candidate_ids": [
+      "b511dbb76fa6:d1:late_adaptation:B:text:table_first:claude-opus-5#1"
+     ]
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "group A was described as a square, which the pixel pass did not find among blob, circle, open, triangle",
+     "candidate_ids": [
+      "b511dbb76fa6:d1:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "group A was described as a square, which the pixel pass did not find among blob, circle, open, triangle",
+     "candidate_ids": [
+      "b511dbb76fa6:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "accept_with_note",
+   "confidence_score": 0.7,
+   "confidence_margin": 0.05,
+   "nearest_boundary": "auto_accept",
+   "confidence_reasons": [
+    "source kind text (+0.40)",
+    "2 independent routes agree within 10 (+0.25)",
+    "every quote behind this value is printed in the paper (+0.15)",
+    "a verifier confirmed it — it tried to refute the reading and could not (+0.20)",
+    "warnings (dispersion_missing, n_missing) -0.16",
+    "warnings (series_marker_mismatch) -0.08, which orders this cell in the review queue but cannot withhold it",
+    "series_marker_mismatch caps this cell at 0.70: the reader's description of this series and the markers the pixel pass found do not line up, so which series this number was measured on rests on the reader's words alone",
+    "margin 0.0500 misses auto_accept (0.75)"
+   ],
+   "needs_human": false,
+   "n": 12,
+   "mean": 29.51,
+   "dispersion_value": 11.443219263230537,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "deg",
+   "sigma": 0.9059096154219097,
+   "mad": 1.295,
+   "analysis_metric": "endpoint",
+   "route": "text",
+   "candidate_ids": [
+    "b511dbb76fa6:d1:late_adaptation:A:text:table_first:claude-opus-5#0",
+    "b511dbb76fa6:d1:late_adaptation:A:digitize:ensemble"
+   ],
+   "higher_is_better": false,
+   "orientation_evidence": "claude-opus-5: The dependent variable is the angular pointing error (deg) of the initial movement direction, plotted on an axis labelled 'angular error (deg)' — a deviation measure, so larger values mean more error and therefore LESS adaptation to the 60° rotation. The paper states adaptive improvement (i.e. error reduction) was more pronounced for young than old subjects, and the exponential fits give a higher asymptotic error for old (29.51°) than young (9.92°), so the old group (Group A) had the greater raw value at late adaptation. | claude-sonnet-5: The measure is an angular pointing error (deviation from the correct/veridical direction), so larger raw values indicate more error and less adaptation (higher_more_error; lower is better for the underlying construct of adaptation). The text and exponential fit asymptotes indicate old subjects had larger residual errors (higher asymptote, 29.51 vs 9.92 deg) than young subjects at late adaptation, i.e. the 'old/seniors' group (Group A) had the greater raw error value.; We subsequently calculated the initial direction of each response (i.e. between movement onset and peak velocity), and used its median value for each episode and subject as dependent variable for further analyses.; angular error (deg); Fig. 1 Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback.; Their errors increased abruptly at the onset of the adaptation phase, and then gradually dropped again. Most importantly, adaptive improvement was more pronounced for young than for old subjects.; An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects.",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "group": "B",
+   "agreement": "agree",
+   "agreeing_ids": [
+    "b511dbb76fa6:d1:late_adaptation:B:text:table_first:claude-opus-5#1",
+    "b511dbb76fa6:d1:late_adaptation:B:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "figure_tolerance",
+   "vote_tolerance": 10.0,
+   "needs_third_candidate": false,
+   "verifier_verdict": "confirmed",
+   "verifier_reason": "The paper explicitly prints this equation with 9.92 as the constant (asymptote) term for young subjects: 'An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects.' The value 9.92 is correctly attributed to the young group (Group B), not the old group (29.51), matching the candidate's reading. No dispersion or n is given for this fit parameter in the text, consistent with the candidate's NONE/None entries. This matches the outcome's own alternative operationalization ('an alternative operationalization is the asymptote of the exponential fit').",
+   "verifiers": [
+    {
+     "candidate_id": "b511dbb76fa6:d1:late_adaptation:B:text:table_first:claude-opus-5#1",
+     "verdict": "confirmed",
+     "reason": "The paper explicitly prints this equation with 9.92 as the constant (asymptote) term for young subjects: 'An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects.' The value 9.92 is correctly attributed to the young group (Group B), not the old group (29.51), matching the candidate's reading. No dispersion or n is given for this fit parameter in the text, consistent with the candidate's NONE/None entries. This matches the outcome's own alternative operationalization ('an alternative operationalization is the asymptote of the exponential fit').",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "NONE",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "Figure 1 graphically shows the actual mean pointing error (with SD error bars) for the last adaptation episode (episode 20) for young and old subjects, which would be a more literal 'final point of the group time series' as specified in the outcome's primary definition. However, no numeric value for episode 20 is printed in the text — only the fitted exponential parameters are given as numbers — so this is not a strictly better textual source, just an alternative graphical depiction. (page 3)",
+     "checked": [
+      "wrong_group",
+      "wrong_time_window",
+      "transcription",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "units",
+      "subgroup",
+      "wrong_panel"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "55a116c47311fd314444510a3156a193e3ae4609c1bab36447a9be0a79df3d27",
+     "notes": "The exponential fit's constant term (9.92) is an extrapolated asymptote as episode number approaches infinity, not necessarily identical to the actual observed mean at episode 20 (only 15 adaptation episodes were run). The outcome definition explicitly anticipates this as a valid alternative operationalization when a block average is not printed, so the reading is confirmed as accurately transcribed and correctly attributed to the young group, even though it is a model-derived rather than directly measured endpoint value."
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "dispersion_missing",
+     "severity": "warn",
+     "message": "this value carries no dispersion of any kind",
+     "candidate_ids": [
+      "b511dbb76fa6:d1:late_adaptation:A:text:table_first:claude-opus-5#0"
+     ]
+    },
+    {
+     "code": "dispersion_missing",
+     "severity": "warn",
+     "message": "this value carries no dispersion of any kind",
+     "candidate_ids": [
+      "b511dbb76fa6:d1:late_adaptation:B:text:table_first:claude-opus-5#1"
+     ]
+    },
+    {
+     "code": "n_missing",
+     "severity": "warn",
+     "message": "no group size was transcribed with this value",
+     "candidate_ids": [
+      "b511dbb76fa6:d1:late_adaptation:A:text:table_first:claude-opus-5#0"
+     ]
+    },
+    {
+     "code": "n_missing",
+     "severity": "warn",
+     "message": "no group size was transcribed with this value",
+     "candidate_ids": [
+      "b511dbb76fa6:d1:late_adaptation:B:text:table_first:claude-opus-5#1"
+     ]
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "group A was described as a square, which the pixel pass did not find among blob, circle, open, triangle",
+     "candidate_ids": [
+      "b511dbb76fa6:d1:late_adaptation:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "group A was described as a square, which the pixel pass did not find among blob, circle, open, triangle",
+     "candidate_ids": [
+      "b511dbb76fa6:d1:late_adaptation:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "accept_with_note",
+   "confidence_score": 0.7,
+   "confidence_margin": 0.05,
+   "nearest_boundary": "auto_accept",
+   "confidence_reasons": [
+    "source kind text (+0.40)",
+    "2 independent routes agree within 10 (+0.25)",
+    "every quote behind this value is printed in the paper (+0.15)",
+    "a verifier confirmed it — it tried to refute the reading and could not (+0.20)",
+    "the routes are 11% apart around the value (-0.05)",
+    "warnings (dispersion_missing, n_missing) -0.16",
+    "warnings (series_marker_mismatch) -0.08, which orders this cell in the review queue but cannot withhold it",
+    "series_marker_mismatch caps this cell at 0.70: the reader's description of this series and the markers the pixel pass found do not line up, so which series this number was measured on rests on the reader's words alone",
+    "margin 0.0500 misses auto_accept (0.75)"
+   ],
+   "needs_human": false,
+   "n": 12,
+   "mean": 9.92,
+   "dispersion_value": 12.166049056779187,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "deg",
+   "sigma": 0.9059096154219097,
+   "mad": 1.1399999999999997,
+   "analysis_metric": "endpoint",
+   "route": "text",
+   "candidate_ids": [
+    "b511dbb76fa6:d1:late_adaptation:B:text:table_first:claude-opus-5#1",
+    "b511dbb76fa6:d1:late_adaptation:B:digitize:ensemble"
+   ],
+   "higher_is_better": false,
+   "orientation_evidence": "claude-opus-5: The dependent variable is the angular pointing error (deg) of the initial movement direction, plotted on an axis labelled 'angular error (deg)' — a deviation measure, so larger values mean more error and therefore LESS adaptation to the 60° rotation. The paper states adaptive improvement (i.e. error reduction) was more pronounced for young than old subjects, and the exponential fits give a higher asymptotic error for old (29.51°) than young (9.92°), so the old group (Group A) had the greater raw value at late adaptation. | claude-sonnet-5: The measure is an angular pointing error (deviation from the correct/veridical direction), so larger raw values indicate more error and less adaptation (higher_more_error; lower is better for the underlying construct of adaptation). The text and exponential fit asymptotes indicate old subjects had larger residual errors (higher asymptote, 29.51 vs 9.92 deg) than young subjects at late adaptation, i.e. the 'old/seniors' group (Group A) had the greater raw error value.; We subsequently calculated the initial direction of each response (i.e. between movement onset and peak velocity), and used its median value for each episode and subject as dependent variable for further analyses.; angular error (deg); Fig. 1 Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback.; Their errors increased abruptly at the onset of the adaptation phase, and then gradually dropped again. Most importantly, adaptive improvement was more pronounced for young than for old subjects.; An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects.",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "aftereffect",
+   "group": "A",
+   "agreement": "single",
+   "agreeing_ids": [
+    "b511dbb76fa6:d1:aftereffect:A:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 10.0,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "The paper never prints a numeric value (mean or SD) for the after-effect phase in the text. The only place this quantity appears is Fig. 1, a line graph of 'Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback... Also shown are the standard deviations.' No axis tick values, table, or in-text sentence gives the magnitude of the first after-effect episode (episode 21) for either group. The candidate's -21.3±7.8 (n=12) is a digitized estimate from the figure with 'QUOTE GROUNDED IN THE PAGE TEXT: None' — there is no printed text to confirm or contradict these specific digits, the sign, or the SD value. The manuscript only states qualitatively that 'the resulting after-effect was similar in both age groups, and gradually declined with practice.' Without access to the raw plotted data points I cannot verify the digitized reading is accurate, nor can I find a textual value that contradicts it.",
+   "verifiers": [
+    {
+     "candidate_id": "b511dbb76fa6:d1:aftereffect:A:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "The paper never prints a numeric value (mean or SD) for the after-effect phase in the text. The only place this quantity appears is Fig. 1, a line graph of 'Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback... Also shown are the standard deviations.' No axis tick values, table, or in-text sentence gives the magnitude of the first after-effect episode (episode 21) for either group. The candidate's -21.3±7.8 (n=12) is a digitized estimate from the figure with 'QUOTE GROUNDED IN THE PAGE TEXT: None' — there is no printed text to confirm or contradict these specific digits, the sign, or the SD value. The manuscript only states qualitatively that 'the resulting after-effect was similar in both age groups, and gradually declined with practice.' Without access to the raw plotted data points I cannot verify the digitized reading is accurate, nor can I find a textual value that contradicts it.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "No better source exists; the paper reports the after-effect only graphically in Fig. 1 (page 3) with the caption 'Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback... Also shown are the standard deviations,' and never restates these values numerically in the text or a table. (page 3)",
+     "checked": [
+      "wrong_group",
+      "wrong_time_window",
+      "wrong_panel",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "units",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "c4b9f6859d0df53ce84482fa359109ed9a83918b323aea7d255c78406a665890",
+     "notes": "The Results text only characterizes the after-effect qualitatively ('similar in both age groups', 'gradually declined with practice', 'declined somewhat faster in the young group') and reports only ANOVA statistics (F and P values), not means or SDs, for episodes 21-25. The exponential fit equations given are explicitly for the adaptation phase only, not the after-effect phase, so they cannot be used to derive or check the -21.3 figure. Because the candidate's number derives purely from image digitization with stated uncertainty (±0.148) and no grounding quote, verification against the paper's actual printed content is not possible either way."
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "orientation_unknown",
+     "severity": "warn",
+     "message": "nobody has established the direction of this measure (does a larger raw value mean more of the construct?), so the sign of any effect size is undecided",
+     "candidate_ids": []
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round; group A was described as a square, which the pixel pass did not find among blob, circle, open, triangle",
+     "candidate_ids": [
+      "b511dbb76fa6:d1:aftereffect:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round; group A was described as a square, which the pixel pass did not find among blob, circle, open, triangle",
+     "candidate_ids": [
+      "b511dbb76fa6:d1:aftereffect:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.45,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "one route, but 2 independent model families read it and agreed (claude-opus, claude-sonnet) — a second family is a different failure mode, which is what agreement is for (+0.25)",
+    "the verifier could not settle it either way (-0.05)",
+    "warnings (orientation_unknown) -0.08",
+    "warnings (series_marker_mismatch) -0.08, which orders this cell in the review queue but cannot withhold it",
+    "the direction of this measure is unresolved, so the sign of any effect size built on it is undecided",
+    "series_marker_mismatch caps this cell at 0.70: the reader's description of this series and the markers the pixel pass found do not line up, so which series this number was measured on rests on the reader's words alone",
+    "the caps above stop at 0.45: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "1 of the digitizer's 1 measurement path(s) read both groups with a usable spread, so the effect this figure implies is corroborated by nothing — one path cannot agree with another",
+    "the digitisation uncertainty is 21% of the sampling error (limit 10%)",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "this cell was held by the evidence, not by its score, so the score is not compared with any boundary: the bucket was not decided by the score"
+   ],
+   "needs_human": true,
+   "n": 12,
+   "mean": -21.3,
+   "dispersion_value": 7.8,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "deg",
+   "sigma": 0.14825999999999684,
+   "mad": 0.0,
+   "analysis_metric": "endpoint",
+   "route": "figure",
+   "candidate_ids": [
+    "b511dbb76fa6:d1:aftereffect:A:digitize:ensemble"
+   ],
+   "higher_is_better": null,
+   "orientation_evidence": "claude-opus-5: The measure is a signed angular pointing error in degrees (median initial movement direction), plotted on an axis spanning −40 to +60 deg; during adaptation the error is positive (in the direction of the +60° rotation) and during the after-effect phase without feedback it falls into the negative region, i.e. the sign encodes the direction of deviation, so the sign carries the meaning rather than magnitude alone. Because the after-effect appears as a negative deviation, a more negative (lower) raw value corresponds to a larger after-effect, i.e. more implicit recalibration; hence a higher raw value means LESS of the reviewed construct. The text states the after-effect was 'similar in both age groups' and only notes a faster decline in the young group, so it never states which group had the higher raw value at the after-effect onset. | claude-sonnet-5: The paper measures pointing error (deviation of initial movement direction from target), which is literally a magnitude of angular error - i.e., higher_more_error in raw semantics. However, per the outcome definition, this deviation after feedback removal reflects retained implicit recalibration (aftereffect), so a larger deviation corresponds to more adaptation/construct, making higher values 'better' for this outcome. The paper explicitly states the after-effect magnitude 'was similar in both age groups' / 'not degraded' in seniors, without stating which group's raw value was numerically greater, so direction_stated_in_text is unknown.; We subsequently calculated the initial direction of each response (i.e. between movement onset and peak velocity), and used its median value for each episode and subject as dependent variable for further analyses.; Fig. 1 Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback. Open symbols indicate episodes where visual feedback was absent.; Further, from Fig. 1, when visual feedback was removed after adaptation, the resulting after-effect was similar in both age groups, and gradually declined with practice; this age-independence is in marked contrast with the findings during adaptation.; ANOVA yielded significant effects for Episode (F(4,88)=66.84, P<0.001) and the interaction (F(4,88)=3.95, P<0.01); indeed a close look at Fig. 1 reveals that the after-effect declined somewhat faster in the young group.; Seniors adapted less than younger subjects but their after-effects were not degraded.; when visual feedback was removed after adaptation, the resulting after-effect was similar in both age groups, and gradually declined with practice; this age-independence is in marked contrast with the findings during adaptation.; We calculated the initial direction of each response (i.e. between movement onset and peak velocity), and used its median value for each episode and subject as dependent variable for further analyses.",
+   "overridden_by_human": false,
+   "override_justification": ""
+  },
+  {
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "aftereffect",
+   "group": "B",
+   "agreement": "single",
+   "agreeing_ids": [
+    "b511dbb76fa6:d1:aftereffect:B:digitize:ensemble"
+   ],
+   "disagreeing_ids": [],
+   "vote_method": "single",
+   "vote_tolerance": 10.0,
+   "needs_third_candidate": false,
+   "verifier_verdict": "ambiguous",
+   "verifier_reason": "The paper never prints numeric values for the after-effect phase in the text; it only shows a qualitative description (\"the resulting after-effect was similar in both age groups, and gradually declined with practice\") and a graphical panel (Fig. 1) with error bars captioned generically as \"Also shown are the standard deviations.\" No table, in-text mean, SD, or per-episode values for the young or old group's after-effect are ever printed. The candidate's specific numbers (mean -25.4°, SD 5.7, n=12) are derived purely from pixel-level digitization of Fig. 1, which I cannot independently verify against any textual anchor, so I cannot confirm the exact mean/SD/episode reading, nor can I positively refute the specific digits since no printed contradicting value exists.",
+   "verifiers": [
+    {
+     "candidate_id": "b511dbb76fa6:d1:aftereffect:B:digitize:ensemble",
+     "verdict": "ambiguous",
+     "reason": "The paper never prints numeric values for the after-effect phase in the text; it only shows a qualitative description (\"the resulting after-effect was similar in both age groups, and gradually declined with practice\") and a graphical panel (Fig. 1) with error bars captioned generically as \"Also shown are the standard deviations.\" No table, in-text mean, SD, or per-episode values for the young or old group's after-effect are ever printed. The candidate's specific numbers (mean -25.4°, SD 5.7, n=12) are derived purely from pixel-level digitization of Fig. 1, which I cannot independently verify against any textual anchor, so I cannot confirm the exact mean/SD/episode reading, nor can I positively refute the specific digits since no printed contradicting value exists.",
+     "alt_mean": null,
+     "alt_dispersion_value": null,
+     "alt_dispersion_type": "UNKNOWN",
+     "alt_n": null,
+     "alt_page": null,
+     "alt_quote": "",
+     "better_source": "",
+     "checked": [
+      "wrong_group",
+      "wrong_time_window",
+      "wrong_panel",
+      "se_vs_sd",
+      "baseline_vs_post",
+      "units",
+      "subgroup",
+      "transcription"
+     ],
+     "reopen": 0,
+     "model": "claude-sonnet-5",
+     "prompt_version": "verifier/1@f78d94c0",
+     "llm_call_id": "7e879215d352bbe6542946549493ded542f789b40dc4fa216d1101de302fcf37",
+     "notes": "Fig. 1 caption confirms the error bars are standard deviations ('Also shown are the standard deviations'), which is consistent with the candidate's claimed dispersion type, but no numeric SD or mean values for episode 21 (or any after-effect episode) are given anywhere in the text for either age group. The description that after-effects 'declined somewhat faster in the young group' and were otherwise 'similar in both age groups' is consistent with a large first-episode value for young subjects, but this qualitative statement cannot substantiate or contradict the specific digitized value of -25.4±5.7 deg. Since the only source for this outcome is the figure itself, no better textual source exists in the paper; the figure remains the best available source despite lacking printed numeric values."
+    }
+   ],
+   "reopens": 0,
+   "adjudicated": false,
+   "adjudication_rationale": "",
+   "flags": [
+    {
+     "code": "orientation_unknown",
+     "severity": "warn",
+     "message": "nobody has established the direction of this measure (does a larger raw value mean more of the construct?), so the sign of any effect size is undecided",
+     "candidate_ids": []
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round; group A was described as a square, which the pixel pass did not find among blob, circle, open, triangle",
+     "candidate_ids": [
+      "b511dbb76fa6:d1:aftereffect:A:digitize:ensemble"
+     ]
+    },
+    {
+     "code": "series_marker_mismatch",
+     "severity": "warn",
+     "message": "the pixel pass could not resolve a marker on group A, B's datum, so nothing here can say whether the two series are the right way round; group A was described as a square, which the pixel pass did not find among blob, circle, open, triangle",
+     "candidate_ids": [
+      "b511dbb76fa6:d1:aftereffect:B:digitize:ensemble"
+     ]
+    }
+   ],
+   "confidence": "needs_human",
+   "confidence_score": 0.45,
+   "confidence_margin": null,
+   "nearest_boundary": "",
+   "confidence_reasons": [
+    "source kind figure (+0.35)",
+    "one route, but 2 independent model families read it and agreed (claude-opus, claude-sonnet) — a second family is a different failure mode, which is what agreement is for (+0.25)",
+    "the verifier could not settle it either way (-0.05)",
+    "warnings (orientation_unknown) -0.08",
+    "warnings (series_marker_mismatch) -0.08, which orders this cell in the review queue but cannot withhold it",
+    "the direction of this measure is unresolved, so the sign of any effect size built on it is undecided",
+    "series_marker_mismatch caps this cell at 0.70: the reader's description of this series and the markers the pixel pass found do not line up, so which series this number was measured on rests on the reader's words alone",
+    "the caps above stop at 0.45: an under-corroborated reading is a reason for a human to look at this cell, not on its own a reason to withhold it",
+    "1 of the digitizer's 1 measurement path(s) read both groups with a usable spread, so the effect this figure implies is corroborated by nothing — one path cannot agree with another",
+    "the digitisation uncertainty is 21% of the sampling error (limit 10%)",
+    "a digitised cell that does not meet the digitisation gate cannot be accepted automatically, so it stops at 0.70",
+    "this cell was held by the evidence, not by its score, so the score is not compared with any boundary: the bucket was not decided by the score"
+   ],
+   "needs_human": true,
+   "n": 12,
+   "mean": -25.4,
+   "dispersion_value": 5.7,
+   "dispersion_type": "SD",
+   "ci_low": null,
+   "ci_high": null,
+   "points": [],
+   "unit": "deg",
+   "sigma": 0.5930400000000031,
+   "mad": 0.0,
+   "analysis_metric": "endpoint",
+   "route": "figure",
+   "candidate_ids": [
+    "b511dbb76fa6:d1:aftereffect:B:digitize:ensemble"
+   ],
+   "higher_is_better": null,
+   "orientation_evidence": "claude-opus-5: The measure is a signed angular pointing error in degrees (median initial movement direction), plotted on an axis spanning −40 to +60 deg; during adaptation the error is positive (in the direction of the +60° rotation) and during the after-effect phase without feedback it falls into the negative region, i.e. the sign encodes the direction of deviation, so the sign carries the meaning rather than magnitude alone. Because the after-effect appears as a negative deviation, a more negative (lower) raw value corresponds to a larger after-effect, i.e. more implicit recalibration; hence a higher raw value means LESS of the reviewed construct. The text states the after-effect was 'similar in both age groups' and only notes a faster decline in the young group, so it never states which group had the higher raw value at the after-effect onset. | claude-sonnet-5: The paper measures pointing error (deviation of initial movement direction from target), which is literally a magnitude of angular error - i.e., higher_more_error in raw semantics. However, per the outcome definition, this deviation after feedback removal reflects retained implicit recalibration (aftereffect), so a larger deviation corresponds to more adaptation/construct, making higher values 'better' for this outcome. The paper explicitly states the after-effect magnitude 'was similar in both age groups' / 'not degraded' in seniors, without stating which group's raw value was numerically greater, so direction_stated_in_text is unknown.; We subsequently calculated the initial direction of each response (i.e. between movement onset and peak velocity), and used its median value for each episode and subject as dependent variable for further analyses.; Fig. 1 Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback. Open symbols indicate episodes where visual feedback was absent.; Further, from Fig. 1, when visual feedback was removed after adaptation, the resulting after-effect was similar in both age groups, and gradually declined with practice; this age-independence is in marked contrast with the findings during adaptation.; ANOVA yielded significant effects for Episode (F(4,88)=66.84, P<0.001) and the interaction (F(4,88)=3.95, P<0.01); indeed a close look at Fig. 1 reveals that the after-effect declined somewhat faster in the young group.; Seniors adapted less than younger subjects but their after-effects were not degraded.; when visual feedback was removed after adaptation, the resulting after-effect was similar in both age groups, and gradually declined with practice; this age-independence is in marked contrast with the findings during adaptation.; We calculated the initial direction of each response (i.e. between movement onset and peak velocity), and used its median value for each episode and subject as dependent variable for further analyses.",
+   "overridden_by_human": false,
+   "override_justification": ""
+  }
+ ],
+ "extra_candidates": [],
+ "orientation": {
+  "late_adaptation|Angular pointing error (median initial movement direction error per episode)": {
+   "outcome_key": "late_adaptation",
+   "measure_name": "Angular pointing error (median initial movement direction error per episode)",
+   "dataset_id": "b511dbb76fa6:d1",
+   "higher_is_better": false,
+   "raw_value_semantics": "higher_more_error",
+   "raw_value_semantics_by_model": {
+    "claude-opus-5": "higher_more_error",
+    "claude-sonnet-5": "higher_more_error"
+   },
+   "direction_stated_in_text": "a_greater",
+   "quotes": [
+    "We subsequently calculated the initial direction of each response (i.e. between movement onset and peak velocity), and used its median value for each episode and subject as dependent variable for further analyses.",
+    "angular error (deg)",
+    "Fig. 1 Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback.",
+    "Their errors increased abruptly at the onset of the adaptation phase, and then gradually dropped again. Most importantly, adaptive improvement was more pronounced for young than for old subjects.",
+    "An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects."
+   ],
+   "reason": "claude-opus-5: The dependent variable is the angular pointing error (deg) of the initial movement direction, plotted on an axis labelled 'angular error (deg)' — a deviation measure, so larger values mean more error and therefore LESS adaptation to the 60° rotation. The paper states adaptive improvement (i.e. error reduction) was more pronounced for young than old subjects, and the exponential fits give a higher asymptotic error for old (29.51°) than young (9.92°), so the old group (Group A) had the greater raw value at late adaptation. | claude-sonnet-5: The measure is an angular pointing error (deviation from the correct/veridical direction), so larger raw values indicate more error and less adaptation (higher_more_error; lower is better for the underlying construct of adaptation). The text and exponential fit asymptotes indicate old subjects had larger residual errors (higher asymptote, 29.51 vs 9.92 deg) than young subjects at late adaptation, i.e. the 'old/seniors' group (Group A) had the greater raw error value.",
+   "agreed": true,
+   "needs_human": false,
+   "third_read": false,
+   "runs": [
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": false,
+     "raw_value_semantics": "higher_more_error",
+     "direction_stated_in_text": "a_greater",
+     "quotes": [
+      "We subsequently calculated the initial direction of each response (i.e. between movement onset and peak velocity), and used its median value for each episode and subject as dependent variable for further analyses.",
+      "angular error (deg)",
+      "Fig. 1 Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback.",
+      "Their errors increased abruptly at the onset of the adaptation phase, and then gradually dropped again. Most importantly, adaptive improvement was more pronounced for young than for old subjects.",
+      "An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects."
+     ],
+     "reason": "The dependent variable is the angular pointing error (deg) of the initial movement direction, plotted on an axis labelled 'angular error (deg)' — a deviation measure, so larger values mean more error and therefore LESS adaptation to the 60° rotation. The paper states adaptive improvement (i.e. error reduction) was more pronounced for young than old subjects, and the exponential fits give a higher asymptotic error for old (29.51°) than young (9.92°), so the old group (Group A) had the greater raw value at late adaptation.",
+     "model": "claude-opus-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "8a00c8ce1e6f377f1be7f087e205bb9bae93ccd84592dc0108002c8103335ded"
+    },
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": false,
+     "raw_value_semantics": "higher_more_error",
+     "direction_stated_in_text": "a_greater",
+     "quotes": [
+      "We subsequently calculated the initial direction of each response (i.e. between movement onset and peak velocity), and used its median value for each episode and subject as dependent variable for further analyses.",
+      "Their errors increased abruptly at the onset of the adaptation phase, and then gradually dropped again. Most importantly, adaptive improvement was more pronounced for young than for old subjects.",
+      "An exponential fit yielded y=9.92+53.51×exp(−x/5.89) for young subjects and y=29.51+29.91×exp(−x/5.13) for old subjects."
+     ],
+     "reason": "The measure is an angular pointing error (deviation from the correct/veridical direction), so larger raw values indicate more error and less adaptation (higher_more_error; lower is better for the underlying construct of adaptation). The text and exponential fit asymptotes indicate old subjects had larger residual errors (higher asymptote, 29.51 vs 9.92 deg) than young subjects at late adaptation, i.e. the 'old/seniors' group (Group A) had the greater raw error value.",
+     "model": "claude-sonnet-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "faa6b5a8ddaac3c27a1a23e567ae9d9edae420d43a6bd1e924cdc2db4859fcf9"
+    }
+   ],
+   "llm_call_ids": [
+    "8a00c8ce1e6f377f1be7f087e205bb9bae93ccd84592dc0108002c8103335ded",
+    "faa6b5a8ddaac3c27a1a23e567ae9d9edae420d43a6bd1e924cdc2db4859fcf9"
+   ],
+   "notes": "means check: disputed — which series is which is disputed (series_marker_mismatch), so no reader was checked against means that may be the other group's"
+  },
+  "aftereffect|Angular pointing error (median initial movement direction error per episode) with visual feedback absent after adaptation": {
+   "outcome_key": "aftereffect",
+   "measure_name": "Angular pointing error (median initial movement direction error per episode) with visual feedback absent after adaptation",
+   "dataset_id": "b511dbb76fa6:d1",
+   "higher_is_better": null,
+   "raw_value_semantics": "unknown",
+   "raw_value_semantics_by_model": {
+    "claude-opus-5": "signed_direction",
+    "claude-sonnet-5": "higher_more_error"
+   },
+   "direction_stated_in_text": "unknown",
+   "quotes": [
+    "We subsequently calculated the initial direction of each response (i.e. between movement onset and peak velocity), and used its median value for each episode and subject as dependent variable for further analyses.",
+    "Fig. 1 Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback. Open symbols indicate episodes where visual feedback was absent.",
+    "Further, from Fig. 1, when visual feedback was removed after adaptation, the resulting after-effect was similar in both age groups, and gradually declined with practice; this age-independence is in marked contrast with the findings during adaptation.",
+    "ANOVA yielded significant effects for Episode (F(4,88)=66.84, P<0.001) and the interaction (F(4,88)=3.95, P<0.01); indeed a close look at Fig. 1 reveals that the after-effect declined somewhat faster in the young group.",
+    "Seniors adapted less than younger subjects but their after-effects were not degraded.",
+    "when visual feedback was removed after adaptation, the resulting after-effect was similar in both age groups, and gradually declined with practice; this age-independence is in marked contrast with the findings during adaptation.",
+    "We calculated the initial direction of each response (i.e. between movement onset and peak velocity), and used its median value for each episode and subject as dependent variable for further analyses."
+   ],
+   "reason": "claude-opus-5: The measure is a signed angular pointing error in degrees (median initial movement direction), plotted on an axis spanning −40 to +60 deg; during adaptation the error is positive (in the direction of the +60° rotation) and during the after-effect phase without feedback it falls into the negative region, i.e. the sign encodes the direction of deviation, so the sign carries the meaning rather than magnitude alone. Because the after-effect appears as a negative deviation, a more negative (lower) raw value corresponds to a larger after-effect, i.e. more implicit recalibration; hence a higher raw value means LESS of the reviewed construct. The text states the after-effect was 'similar in both age groups' and only notes a faster decline in the young group, so it never states which group had the higher raw value at the after-effect onset. | claude-sonnet-5: The paper measures pointing error (deviation of initial movement direction from target), which is literally a magnitude of angular error - i.e., higher_more_error in raw semantics. However, per the outcome definition, this deviation after feedback removal reflects retained implicit recalibration (aftereffect), so a larger deviation corresponds to more adaptation/construct, making higher values 'better' for this outcome. The paper explicitly states the after-effect magnitude 'was similar in both age groups' / 'not degraded' in seniors, without stating which group's raw value was numerically greater, so direction_stated_in_text is unknown.",
+   "agreed": false,
+   "needs_human": true,
+   "third_read": false,
+   "runs": [
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": false,
+     "raw_value_semantics": "signed_direction",
+     "direction_stated_in_text": "unknown",
+     "quotes": [
+      "We subsequently calculated the initial direction of each response (i.e. between movement onset and peak velocity), and used its median value for each episode and subject as dependent variable for further analyses.",
+      "Fig. 1 Mean pointing errors of young (triangles) and old (squares) subjects before, during, and after exposure to rotated visual feedback. Open symbols indicate episodes where visual feedback was absent.",
+      "Further, from Fig. 1, when visual feedback was removed after adaptation, the resulting after-effect was similar in both age groups, and gradually declined with practice; this age-independence is in marked contrast with the findings during adaptation.",
+      "ANOVA yielded significant effects for Episode (F(4,88)=66.84, P<0.001) and the interaction (F(4,88)=3.95, P<0.01); indeed a close look at Fig. 1 reveals that the after-effect declined somewhat faster in the young group."
+     ],
+     "reason": "The measure is a signed angular pointing error in degrees (median initial movement direction), plotted on an axis spanning −40 to +60 deg; during adaptation the error is positive (in the direction of the +60° rotation) and during the after-effect phase without feedback it falls into the negative region, i.e. the sign encodes the direction of deviation, so the sign carries the meaning rather than magnitude alone. Because the after-effect appears as a negative deviation, a more negative (lower) raw value corresponds to a larger after-effect, i.e. more implicit recalibration; hence a higher raw value means LESS of the reviewed construct. The text states the after-effect was 'similar in both age groups' and only notes a faster decline in the young group, so it never states which group had the higher raw value at the after-effect onset.",
+     "model": "claude-opus-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "d0ff9372b23e688c9701bbf898863a32fe8d6a649c58b830c972686ac0447533"
+    },
+    {
+     "not_run": false,
+     "discarded": false,
+     "higher_is_better": true,
+     "raw_value_semantics": "higher_more_error",
+     "direction_stated_in_text": "unknown",
+     "quotes": [
+      "Seniors adapted less than younger subjects but their after-effects were not degraded.",
+      "when visual feedback was removed after adaptation, the resulting after-effect was similar in both age groups, and gradually declined with practice; this age-independence is in marked contrast with the findings during adaptation.",
+      "We calculated the initial direction of each response (i.e. between movement onset and peak velocity), and used its median value for each episode and subject as dependent variable for further analyses."
+     ],
+     "reason": "The paper measures pointing error (deviation of initial movement direction from target), which is literally a magnitude of angular error - i.e., higher_more_error in raw semantics. However, per the outcome definition, this deviation after feedback removal reflects retained implicit recalibration (aftereffect), so a larger deviation corresponds to more adaptation/construct, making higher values 'better' for this outcome. The paper explicitly states the after-effect magnitude 'was similar in both age groups' / 'not degraded' in seniors, without stating which group's raw value was numerically greater, so direction_stated_in_text is unknown.",
+     "model": "claude-sonnet-5",
+     "prompt_version": "orientation/1@534ccb5b",
+     "llm_call_id": "c3450c8ad77b2c6e6fd59f2fb307a3b124a9f56e44d221f2858575a07423e383"
+    }
+   ],
+   "llm_call_ids": [
+    "d0ff9372b23e688c9701bbf898863a32fe8d6a649c58b830c972686ac0447533",
+    "c3450c8ad77b2c6e6fd59f2fb307a3b124a9f56e44d221f2858575a07423e383"
+   ],
+   "notes": "means check: disputed — which series is which is disputed (series_marker_mismatch), so no reader was checked against means that may be the other group's; the agents disagree about the direction of this measure: claude-opus-5=False, claude-sonnet-5=True; raw_value_semantics per reader: claude-opus-5=signed_direction, claude-sonnet-5=higher_more_error"
+  }
+ },
+ "adjudications": [],
+ "source_rank": {
+  "b511dbb76fa6:d1|late_adaptation": {
+   "ranked": [
+    {
+     "locator": "Fig. 1, adaptation phase, last filled data point before the after-effect phase (pointing episode 20): filled triangles = young, filled squares = old, with SD whiskers",
+     "page": 3,
+     "figure_id": "fig01",
+     "table_id": null,
+     "kind": "figure_line",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries SD error bars",
+      "measures the outcome's own metric (endpoint)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    },
+    {
+     "locator": "Results text, exponential fits to the adaptation time course (asymptote + amplitude × exp(−x/tau)) for young and old",
+     "page": 3,
+     "figure_id": null,
+     "table_id": null,
+     "kind": "unknown",
+     "score": 3,
+     "has_dispersion": false,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "measures the outcome's own metric (endpoint)",
+      "the values themselves are printed"
+     ],
+     "losing_reasons": [
+      "scored 3 against the best source's 5",
+      "no dispersion was determined here, so a value read from it cannot become an effect size on its own",
+      "no group size is printed with it"
+     ]
+    }
+   ],
+   "held_back_from_vote": [],
+   "reopened_on_better_source": ""
+  },
+  "b511dbb76fa6:d1|aftereffect": {
+   "ranked": [
+    {
+     "locator": "Fig. 1, first open-symbol point of the after-effect phase (pointing episode 21, negative angular error region): open triangles = young, open squares = old, with SD whiskers",
+     "page": 3,
+     "figure_id": "fig01",
+     "table_id": null,
+     "kind": "figure_line",
+     "score": 5,
+     "has_dispersion": true,
+     "has_n": false,
+     "matches_metric": true,
+     "reasons": [
+      "carries SD error bars",
+      "measures the outcome's own metric (endpoint)"
+     ],
+     "losing_reasons": [
+      "no group size is printed with it"
+     ]
+    }
+   ],
+   "held_back_from_vote": [],
+   "reopened_on_better_source": ""
+  }
+ },
+ "reopens": 0
+}

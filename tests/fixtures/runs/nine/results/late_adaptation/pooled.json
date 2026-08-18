@@ -1,0 +1,105 @@
+{
+ "outcome_key": "late_adaptation",
+ "outcome_label": "Late adaptation",
+ "k": 2,
+ "k_papers": 2,
+ "n_needs_human": 8,
+ "needs_human_dataset_ids": [
+  "d1f2946e7e81:d1",
+  "d1f2946e7e81:d2",
+  "b7523a41b03a:d2",
+  "5039533c85ef:d1",
+  "3570e4ce2a9c:d1",
+  "3570e4ce2a9c:d2",
+  "592b3b55a318:d1",
+  "592b3b55a318:d2"
+ ],
+ "settings": {
+  "profile": "cisneros2024",
+  "estimator": "cohen",
+  "variance": "hedges_olkin_df",
+  "tau2_method": "REML",
+  "hakn": false,
+  "pi_method": "HTS",
+  "route_precedence": [
+   "text_mean_sd",
+   "table",
+   "text_mean_se_ci",
+   "figure",
+   "test_statistic",
+   "p_value",
+   "reported_d"
+  ],
+  "late_window_sd": "paper_reported_block",
+  "ci_to_sd_dist": "auto",
+  "primary_analysis_includes": [
+   "auto_accept",
+   "accept_with_note"
+  ],
+  "shared_control_strategy": "split_n",
+  "multi_group_policy": "closest_to_definition",
+  "digitization_variance": "sensitivity",
+  "one_row_per_paper": false,
+  "within_paper_r": 0.5,
+  "ci_level": 0.95
+ },
+ "positive_direction_label": "Enhanced in Old",
+ "negative_direction_label": "Reduced in Old",
+ "note": "",
+ "method": "REML",
+ "estimate": -0.7378011105314994,
+ "se": 0.8845234176678994,
+ "ci_low": -2.471435152642862,
+ "ci_high": 0.9958329315798631,
+ "z": -0.8341227555927887,
+ "p": 0.40421181332538525,
+ "tau2": 1.4013121289376493,
+ "tau": 1.1837703024394763,
+ "se_tau2": 2.216513551064629,
+ "Q": 9.441657963009746,
+ "Q_df": 1,
+ "Q_p": 0.0021211165849036647,
+ "I2": 0.8940863983933997,
+ "I2_tau": 0.8940863983933997,
+ "H2": 9.441657963009748,
+ "weights": [
+  0.5201616901603312,
+  0.47983830983966885
+ ],
+ "weights_pct": [
+  52.01616901603311,
+  47.98383098396688
+ ],
+ "weights_raw": [
+  0.6648439065595712,
+  0.6133046367417322
+ ],
+ "pi_low": NaN,
+ "pi_high": NaN,
+ "pi_df": 0,
+ "pi_low_z": -3.634103896881811,
+ "pi_high_z": 2.158501675818812,
+ "pi_low_v": -19.514174794743052,
+ "pi_high_v": 18.038572573680053,
+ "hakn": false,
+ "level": 0.95,
+ "tau2_ci_low": null,
+ "tau2_ci_high": null,
+ "iterations": 1,
+ "converged": true,
+ "yi": [
+  0.11174628535906206,
+  -1.6587405191948008
+ ],
+ "vi": [
+  0.10280032532968665,
+  0.22919894189436296
+ ],
+ "hakn_fallback": "",
+ "pi_method": "HTS",
+ "pi_low_used": NaN,
+ "pi_high_used": NaN,
+ "pi_df_used": 0,
+ "estimator": "cohen",
+ "variance_method": "hedges_olkin_df"
+}

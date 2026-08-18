@@ -1,0 +1,280 @@
+{
+ "records": [
+  {
+   "paper_id": "592b3b55a3184aad6241688b11e20e4301fb1868a5bd119b5fd07c960cb01cc7",
+   "cluster_id": "592b3b55a318",
+   "sample_id": "592b3b55a3184aad6241688b11e20e4301fb1868a5bd119b5fd07c960cb01cc7|Single experiment (one session)",
+   "dataset_id": "592b3b55a318:d1",
+   "outcome_key": "late_adaptation",
+   "label": "Sudden 90° rotation: elderly vs young",
+   "route": "figure",
+   "n_a": 5,
+   "n_b": 5,
+   "d": -0.4889045145111591,
+   "g": -0.44133573509867,
+   "es": -0.4889045145111591,
+   "var": 0.414939226519337,
+   "se": 0.6441577652402686,
+   "ci_low": -1.7514305347438928,
+   "ci_high": 0.7736215057215744,
+   "estimator": "cohen",
+   "variance_method": "hedges_olkin_df",
+   "level": 0.95,
+   "higher_is_better": false,
+   "orientation_applied": true,
+   "conversion_chain": "SD_A = SE 0.5 × √5 = 1.118; SD_B = SE 0.45 × √5 = 1.006; pooled SD = √((((5−1)·1.118² + (5−1)·1.006²) / (5+5−2)) = 1.064; d = (0.9 − 0.38) / 1.064 = 0.4889; oriented: a larger raw value means more of the construct = False, so d = -0.4889; var (hedges_olkin_df) = 0.4149, SE = 0.6442, 95% CI [-1.751, 0.7736]; digitisation variance (delta method) = 0.007003, 1.7% of the sampling variance",
+   "conversion_steps": [
+    "SD_A = SE 0.5 × √5 = 1.118",
+    "SD_B = SE 0.45 × √5 = 1.006",
+    "pooled SD = √((((5−1)·1.118² + (5−1)·1.006²) / (5+5−2)) = 1.064",
+    "d = (0.9 − 0.38) / 1.064 = 0.4889",
+    "oriented: a larger raw value means more of the construct = False, so d = -0.4889",
+    "var (hedges_olkin_df) = 0.4149, SE = 0.6442, 95% CI [-1.751, 0.7736]",
+    "digitisation variance (delta method) = 0.007003, 1.7% of the sampling variance"
+   ],
+   "routes_available": [
+    "figure"
+   ],
+   "routes_rejected": {},
+   "inputs": {
+    "mean_a": 0.9,
+    "sd_a": 1.118033988749895,
+    "n_a": 5.0,
+    "mean_b": 0.38,
+    "sd_b": 1.0062305898749055,
+    "n_b": 5.0,
+    "sigma_mean_a": 0.002967359050445103,
+    "sigma_mean_b": 0.088956,
+    "sigma_sd_a": null,
+    "sigma_sd_b": null
+   },
+   "not_convertible_reason": "",
+   "digitization_var": 0.007002850966421033,
+   "var_with_digitization": 0.42194207748575807,
+   "digitization_var_share": 0.01687681115416232,
+   "confidence": "needs_human",
+   "analysis_metric": "baseline_corrected",
+   "flags": [
+    "calibration_disputed",
+    "multi_group_closest_to_definition",
+    "unit_mismatch"
+   ],
+   "moderators": {
+    "task_type": "visuomotor",
+    "perturbation_size_deg": "90° CCW screen cursor rotation from the onset of exposure",
+    "n_targets": "four (directions 45, 135, 225, and 315°)"
+   },
+   "citation": {
+    "authors": "Buch, E.R., Young, S., & Contreras-Vidal, J.L.",
+    "year": 2003,
+    "title": "Visuomotor Adaptation in Normal Aging",
+    "journal": "Learning & Memory",
+    "doi": "10.1101/lm.50303",
+    "first_author": "Buch"
+   },
+   "notes": ""
+  },
+  {
+   "paper_id": "592b3b55a3184aad6241688b11e20e4301fb1868a5bd119b5fd07c960cb01cc7",
+   "cluster_id": "592b3b55a318",
+   "sample_id": "592b3b55a3184aad6241688b11e20e4301fb1868a5bd119b5fd07c960cb01cc7|Single experiment (one session)",
+   "dataset_id": "592b3b55a318:d1",
+   "outcome_key": "aftereffect",
+   "label": "Sudden 90° rotation: elderly vs young",
+   "route": "not_convertible",
+   "n_a": null,
+   "n_b": null,
+   "d": null,
+   "g": null,
+   "es": null,
+   "var": null,
+   "se": null,
+   "ci_low": null,
+   "ci_high": null,
+   "estimator": "cohen",
+   "variance_method": "hedges_olkin_df",
+   "level": 0.95,
+   "higher_is_better": false,
+   "orientation_applied": false,
+   "conversion_chain": "not convertible: text_mean_sd: group(s) A, B have no mean, group size and dispersion; table: group(s) A, B have no mean, group size and dispersion; text_mean_se_ci: group(s) A, B have no mean, group size and dispersion; figure: group(s) A, B have no mean, group size and dispersion; test_statistic: no t or F statistic was resolved for this contrast; p_value: no p value was resolved for this contrast; reported_d: the paper reports no effect size for this contrast",
+   "conversion_steps": [
+    "not convertible: text_mean_sd: group(s) A, B have no mean, group size and dispersion; table: group(s) A, B have no mean, group size and dispersion; text_mean_se_ci: group(s) A, B have no mean, group size and dispersion; figure: group(s) A, B have no mean, group size and dispersion; test_statistic: no t or F statistic was resolved for this contrast; p_value: no p value was resolved for this contrast; reported_d: the paper reports no effect size for this contrast"
+   ],
+   "routes_available": [],
+   "routes_rejected": {
+    "text_mean_sd": "group(s) A, B have no mean, group size and dispersion",
+    "table": "group(s) A, B have no mean, group size and dispersion",
+    "text_mean_se_ci": "group(s) A, B have no mean, group size and dispersion",
+    "figure": "group(s) A, B have no mean, group size and dispersion",
+    "test_statistic": "no t or F statistic was resolved for this contrast",
+    "p_value": "no p value was resolved for this contrast",
+    "reported_d": "the paper reports no effect size for this contrast"
+   },
+   "inputs": {},
+   "not_convertible_reason": "text_mean_sd: group(s) A, B have no mean, group size and dispersion; table: group(s) A, B have no mean, group size and dispersion; text_mean_se_ci: group(s) A, B have no mean, group size and dispersion; figure: group(s) A, B have no mean, group size and dispersion; test_statistic: no t or F statistic was resolved for this contrast; p_value: no p value was resolved for this contrast; reported_d: the paper reports no effect size for this contrast",
+   "digitization_var": null,
+   "var_with_digitization": null,
+   "digitization_var_share": null,
+   "confidence": "needs_human",
+   "analysis_metric": "unknown",
+   "flags": [
+    "multi_group_closest_to_definition",
+    "not_convertible"
+   ],
+   "moderators": {
+    "task_type": "visuomotor",
+    "perturbation_size_deg": "90° CCW screen cursor rotation from the onset of exposure",
+    "n_targets": "four (directions 45, 135, 225, and 315°)"
+   },
+   "citation": {
+    "authors": "Buch, E.R., Young, S., & Contreras-Vidal, J.L.",
+    "year": 2003,
+    "title": "Visuomotor Adaptation in Normal Aging",
+    "journal": "Learning & Memory",
+    "doi": "10.1101/lm.50303",
+    "first_author": "Buch"
+   },
+   "notes": ""
+  },
+  {
+   "paper_id": "592b3b55a3184aad6241688b11e20e4301fb1868a5bd119b5fd07c960cb01cc7",
+   "cluster_id": "592b3b55a318",
+   "sample_id": "592b3b55a3184aad6241688b11e20e4301fb1868a5bd119b5fd07c960cb01cc7|Single experiment (one session)",
+   "dataset_id": "592b3b55a318:d2",
+   "outcome_key": "late_adaptation",
+   "label": "Gradual rotation (11.25° steps up to 90°): elderly vs young",
+   "route": "figure",
+   "n_a": 5,
+   "n_b": 5,
+   "d": -0.09938079899999072,
+   "g": -0.08971137856071684,
+   "es": -0.09938079899999072,
+   "var": 0.4006172839506173,
+   "se": 0.6329433497167162,
+   "ci_low": -1.3399269686988946,
+   "ci_high": 1.1411653706989133,
+   "estimator": "cohen",
+   "variance_method": "hedges_olkin_df",
+   "level": 0.95,
+   "higher_is_better": false,
+   "orientation_applied": true,
+   "conversion_chain": "SD_A = SE 0.45 × √5 = 1.006; SD_B = SE 0.45 × √5 = 1.006; pooled SD = √((((5−1)·1.006² + (5−1)·1.006²) / (5+5−2)) = 1.006; d = (1.05 − 0.95) / 1.006 = 0.099381; oriented: a larger raw value means more of the construct = False, so d = -0.099381; var (hedges_olkin_df) = 0.4006, SE = 0.6329, 95% CI [-1.34, 1.141]; digitisation variance (delta method) = 0.01085, 2.7% of the sampling variance",
+   "conversion_steps": [
+    "SD_A = SE 0.45 × √5 = 1.006",
+    "SD_B = SE 0.45 × √5 = 1.006",
+    "pooled SD = √((((5−1)·1.006² + (5−1)·1.006²) / (5+5−2)) = 1.006",
+    "d = (1.05 − 0.95) / 1.006 = 0.099381",
+    "oriented: a larger raw value means more of the construct = False, so d = -0.099381",
+    "var (hedges_olkin_df) = 0.4006, SE = 0.6329, 95% CI [-1.34, 1.141]",
+    "digitisation variance (delta method) = 0.01085, 2.7% of the sampling variance"
+   ],
+   "routes_available": [
+    "figure"
+   ],
+   "routes_rejected": {},
+   "inputs": {
+    "mean_a": 1.05,
+    "sd_a": 1.0062305898749055,
+    "n_a": 5.0,
+    "mean_b": 0.95,
+    "sd_b": 1.0062305898749055,
+    "n_b": 5.0,
+    "sigma_mean_a": 0.07413000000000006,
+    "sigma_mean_b": 0.07412999999999989,
+    "sigma_sd_a": null,
+    "sigma_sd_b": null
+   },
+   "not_convertible_reason": "",
+   "digitization_var": 0.010854828444354094,
+   "var_with_digitization": 0.4114721123949714,
+   "digitization_var_share": 0.02709525744199327,
+   "confidence": "needs_human",
+   "analysis_metric": "baseline_corrected",
+   "flags": [
+    "calibration_disputed",
+    "multi_group_closest_to_definition",
+    "unit_mismatch"
+   ],
+   "moderators": {
+    "task_type": "visuomotor",
+    "perturbation_size_deg": "11.25° CCW step increments every 45 trials up to a total of 90° (11.25, 22.5, 33.75, 45, 56.25, 67.5, 78.75, and 90°)",
+    "n_targets": "four (directions 45, 135, 225, and 315°)"
+   },
+   "citation": {
+    "authors": "Buch, E.R., Young, S., & Contreras-Vidal, J.L.",
+    "year": 2003,
+    "title": "Visuomotor Adaptation in Normal Aging",
+    "journal": "Learning & Memory",
+    "doi": "10.1101/lm.50303",
+    "first_author": "Buch"
+   },
+   "notes": ""
+  },
+  {
+   "paper_id": "592b3b55a3184aad6241688b11e20e4301fb1868a5bd119b5fd07c960cb01cc7",
+   "cluster_id": "592b3b55a318",
+   "sample_id": "592b3b55a3184aad6241688b11e20e4301fb1868a5bd119b5fd07c960cb01cc7|Single experiment (one session)",
+   "dataset_id": "592b3b55a318:d2",
+   "outcome_key": "aftereffect",
+   "label": "Gradual rotation (11.25° steps up to 90°): elderly vs young",
+   "route": "not_convertible",
+   "n_a": null,
+   "n_b": null,
+   "d": null,
+   "g": null,
+   "es": null,
+   "var": null,
+   "se": null,
+   "ci_low": null,
+   "ci_high": null,
+   "estimator": "cohen",
+   "variance_method": "hedges_olkin_df",
+   "level": 0.95,
+   "higher_is_better": false,
+   "orientation_applied": false,
+   "conversion_chain": "not convertible: text_mean_sd: group(s) A have no mean, group size and dispersion; table: group(s) A have no mean, group size and dispersion; text_mean_se_ci: group(s) A have no mean, group size and dispersion; figure: group(s) A have no mean, group size and dispersion; test_statistic: no t or F statistic was resolved for this contrast; p_value: no p value was resolved for this contrast; reported_d: the paper reports no effect size for this contrast",
+   "conversion_steps": [
+    "not convertible: text_mean_sd: group(s) A have no mean, group size and dispersion; table: group(s) A have no mean, group size and dispersion; text_mean_se_ci: group(s) A have no mean, group size and dispersion; figure: group(s) A have no mean, group size and dispersion; test_statistic: no t or F statistic was resolved for this contrast; p_value: no p value was resolved for this contrast; reported_d: the paper reports no effect size for this contrast"
+   ],
+   "routes_available": [],
+   "routes_rejected": {
+    "text_mean_sd": "group(s) A have no mean, group size and dispersion",
+    "table": "group(s) A have no mean, group size and dispersion",
+    "text_mean_se_ci": "group(s) A have no mean, group size and dispersion",
+    "figure": "group(s) A have no mean, group size and dispersion",
+    "test_statistic": "no t or F statistic was resolved for this contrast",
+    "p_value": "no p value was resolved for this contrast",
+    "reported_d": "the paper reports no effect size for this contrast"
+   },
+   "inputs": {},
+   "not_convertible_reason": "text_mean_sd: group(s) A have no mean, group size and dispersion; table: group(s) A have no mean, group size and dispersion; text_mean_se_ci: group(s) A have no mean, group size and dispersion; figure: group(s) A have no mean, group size and dispersion; test_statistic: no t or F statistic was resolved for this contrast; p_value: no p value was resolved for this contrast; reported_d: the paper reports no effect size for this contrast",
+   "digitization_var": null,
+   "var_with_digitization": null,
+   "digitization_var_share": null,
+   "confidence": "needs_human",
+   "analysis_metric": "unknown",
+   "flags": [
+    "calibration_disputed",
+    "collapsed_across_x",
+    "dispersion_approximated",
+    "dispersion_approximated:mean_of_point_sd",
+    "multi_group_closest_to_definition",
+    "not_convertible"
+   ],
+   "moderators": {
+    "task_type": "visuomotor",
+    "perturbation_size_deg": "11.25° CCW step increments every 45 trials up to a total of 90° (11.25, 22.5, 33.75, 45, 56.25, 67.5, 78.75, and 90°)",
+    "n_targets": "four (directions 45, 135, 225, and 315°)"
+   },
+   "citation": {
+    "authors": "Buch, E.R., Young, S., & Contreras-Vidal, J.L.",
+    "year": 2003,
+    "title": "Visuomotor Adaptation in Normal Aging",
+    "journal": "Learning & Memory",
+    "doi": "10.1101/lm.50303",
+    "first_author": "Buch"
+   },
+   "notes": ""
+  }
+ ]
+}

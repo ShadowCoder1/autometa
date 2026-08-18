@@ -13,3 +13,5 @@ pi_method: HTS
 # a sensitivity analysis there, not the primary model. Reproducing it therefore means NOT
 # collapsing a paper's rows into one.
 one_row_per_paper: false
+# The published forests are drawn on a fixed ±4 axis, so her figures can be laid side by side.
+forest_xlim: [-4, 4]

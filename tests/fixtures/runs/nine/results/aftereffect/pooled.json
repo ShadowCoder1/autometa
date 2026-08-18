@@ -1,0 +1,50 @@
+{
+ "outcome_key": "aftereffect",
+ "outcome_label": "Aftereffect",
+ "k": 0,
+ "k_papers": 1,
+ "n_needs_human": 9,
+ "needs_human_dataset_ids": [
+  "d1f2946e7e81:d1",
+  "d1f2946e7e81:d2",
+  "b7523a41b03a:d1",
+  "b7523a41b03a:d2",
+  "b511dbb76fa6:d1",
+  "3570e4ce2a9c:d1",
+  "3570e4ce2a9c:d2",
+  "592b3b55a318:d1",
+  "592b3b55a318:d2"
+ ],
+ "settings": {
+  "profile": "cisneros2024",
+  "estimator": "cohen",
+  "variance": "hedges_olkin_df",
+  "tau2_method": "REML",
+  "hakn": false,
+  "pi_method": "HTS",
+  "route_precedence": [
+   "text_mean_sd",
+   "table",
+   "text_mean_se_ci",
+   "figure",
+   "test_statistic",
+   "p_value",
+   "reported_d"
+  ],
+  "late_window_sd": "paper_reported_block",
+  "ci_to_sd_dist": "auto",
+  "primary_analysis_includes": [
+   "auto_accept",
+   "accept_with_note"
+  ],
+  "shared_control_strategy": "split_n",
+  "multi_group_policy": "closest_to_definition",
+  "digitization_variance": "sensitivity",
+  "one_row_per_paper": false,
+  "within_paper_r": 0.5,
+  "ci_level": 0.95
+ },
+ "positive_direction_label": "Enhanced in Old",
+ "negative_direction_label": "Reduced in Old",
+ "note": "nothing could be pooled for this outcome — fewer than two rows reached the primary analysis"
+}

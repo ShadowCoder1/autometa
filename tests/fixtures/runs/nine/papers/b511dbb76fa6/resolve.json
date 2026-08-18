@@ -1,0 +1,138 @@
+{
+ "records": [
+  {
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "cluster_id": "b511dbb76fa6",
+   "sample_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d|Main experiment (experimental subjects)",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "late_adaptation",
+   "label": "Pointing adaptation to 60° visual rotation: old vs young",
+   "route": "text_mean_sd",
+   "n_a": 12,
+   "n_b": 12,
+   "d": -1.6587405191948008,
+   "g": -1.6014321270193344,
+   "es": -1.6587405191948008,
+   "var": 0.22919894189436296,
+   "se": 0.4787472630672294,
+   "ci_low": -2.597067912503693,
+   "ci_high": -0.7204131258859083,
+   "estimator": "cohen",
+   "variance_method": "hedges_olkin_df",
+   "level": 0.95,
+   "higher_is_better": false,
+   "orientation_applied": true,
+   "conversion_chain": "group A: mean 29.51, SD 11.44 as printed (n = 12); group B: mean 9.92, SD 12.17 as printed (n = 12); pooled SD = √((((12−1)·11.44² + (12−1)·12.17²) / (12+12−2)) = 11.81; d = (29.51 − 9.92) / 11.81 = 1.6587; oriented: a larger raw value means more of the construct = False, so d = -1.6587; var (hedges_olkin_df) = 0.2292, SE = 0.4787, 95% CI [-2.597, -0.7204]; digitisation variance (delta method) = 0.01177, 5.1% of the sampling variance",
+   "conversion_steps": [
+    "group A: mean 29.51, SD 11.44 as printed (n = 12)",
+    "group B: mean 9.92, SD 12.17 as printed (n = 12)",
+    "pooled SD = √((((12−1)·11.44² + (12−1)·12.17²) / (12+12−2)) = 11.81",
+    "d = (29.51 − 9.92) / 11.81 = 1.6587",
+    "oriented: a larger raw value means more of the construct = False, so d = -1.6587",
+    "var (hedges_olkin_df) = 0.2292, SE = 0.4787, 95% CI [-2.597, -0.7204]",
+    "digitisation variance (delta method) = 0.01177, 5.1% of the sampling variance"
+   ],
+   "routes_available": [
+    "text_mean_sd"
+   ],
+   "routes_rejected": {},
+   "inputs": {
+    "mean_a": 29.51,
+    "sd_a": 11.443219263230537,
+    "n_a": 12.0,
+    "mean_b": 9.92,
+    "sd_b": 12.166049056779187,
+    "n_b": 12.0,
+    "sigma_mean_a": 0.9059096154219097,
+    "sigma_mean_b": 0.9059096154219097,
+    "sigma_sd_a": null,
+    "sigma_sd_b": null
+   },
+   "not_convertible_reason": "",
+   "digitization_var": 0.011767596529969766,
+   "var_with_digitization": 0.24096653842433272,
+   "digitization_var_share": 0.05134228121957654,
+   "confidence": "accept_with_note",
+   "analysis_metric": "endpoint",
+   "flags": [
+    "dispersion_missing",
+    "multi_group_closest_to_definition",
+    "n_missing",
+    "series_marker_mismatch"
+   ],
+   "moderators": {
+    "task_type": "visuomotor",
+    "perturbation_size_deg": "+60°",
+    "n_targets": "eight possible directions"
+   },
+   "citation": {
+    "authors": "Bock O",
+    "year": 2005,
+    "title": "Components of sensorimotor adaptation in young and elderly subjects",
+    "journal": "Experimental Brain Research",
+    "doi": "10.1007/s00221-004-2133-5",
+    "first_author": "Bock"
+   },
+   "notes": ""
+  },
+  {
+   "paper_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d",
+   "cluster_id": "b511dbb76fa6",
+   "sample_id": "b511dbb76fa6ded9a7bd9d64e90d72cea400413e0a739d72675602ff37bc598d|Main experiment (experimental subjects)",
+   "dataset_id": "b511dbb76fa6:d1",
+   "outcome_key": "aftereffect",
+   "label": "Pointing adaptation to 60° visual rotation: old vs young",
+   "route": "not_convertible",
+   "n_a": null,
+   "n_b": null,
+   "d": null,
+   "g": null,
+   "es": null,
+   "var": null,
+   "se": null,
+   "ci_low": null,
+   "ci_high": null,
+   "estimator": "cohen",
+   "variance_method": "hedges_olkin_df",
+   "level": 0.95,
+   "higher_is_better": null,
+   "orientation_applied": false,
+   "conversion_chain": "not convertible: the direction of this measure is unresolved, so an effect size built from it could not be signed",
+   "conversion_steps": [
+    "not convertible: the direction of this measure is unresolved, so an effect size built from it could not be signed"
+   ],
+   "routes_available": [
+    "figure"
+   ],
+   "routes_rejected": {},
+   "inputs": {},
+   "not_convertible_reason": "the direction of this measure is unresolved, so an effect size built from it could not be signed",
+   "digitization_var": null,
+   "var_with_digitization": null,
+   "digitization_var_share": null,
+   "confidence": "needs_human",
+   "analysis_metric": "endpoint",
+   "flags": [
+    "multi_group_closest_to_definition",
+    "not_convertible",
+    "orientation_unknown",
+    "orientation_unresolved",
+    "series_marker_mismatch"
+   ],
+   "moderators": {
+    "task_type": "visuomotor",
+    "perturbation_size_deg": "+60°",
+    "n_targets": "eight possible directions"
+   },
+   "citation": {
+    "authors": "Bock O",
+    "year": 2005,
+    "title": "Components of sensorimotor adaptation in young and elderly subjects",
+    "journal": "Experimental Brain Research",
+    "doi": "10.1007/s00221-004-2133-5",
+    "first_author": "Bock"
+   },
+   "notes": ""
+  }
+ ]
+}

@@ -1,0 +1,365 @@
+{
+ "sha256": "d1f2946e7e815ba72a5afcc638af30825f08453b434e5c9b1943950e57cc7c3e",
+ "source_path": "/private/tmp/claude-501/-Users-sritejpadmanabhan/fedf4a57-b641-4d37-8bc9-58b33607def3/scratchpad/nine/paper_1072361.pdf",
+ "filename": "paper_1072361.pdf",
+ "n_pages": 9,
+ "title": "Age differences in spatial working memory contributions to visuomotor adaptation and transfer",
+ "doi": "10.1016/j.bbr.2011.07.014",
+ "first_page_text": "Behavioural\n Brain\n Research\n 225 (2011) 160\u2013\n 168\nContents\n lists\n available\n at\n ScienceDirect\nBehavioural\n Brain\n Research\nj\n ourna\n l\n ho\n me\n pa\n ge:\n www.elsevier.com/locate/bbr\nResearch\n report\nAge\n differences\n in\n spatial\n working\n memory\n contributions\n to\n visuomotor\nadaptation\n and\n transfer\nJeanne\n Langan a,c, Rachael\n D.\n Seidler a,b,c,\u2217\na School\n of\n Kinesiology,\n University\n of\n Michigan,\n Ann\n Arbor,\n MI\n 48109,\n USA\nb Department\n of\n Psychology,\n University\n of\n Michigan,\n Ann\n Arbor,\n MI\n 48109,\n USA\nc Institute\n of\n Gerontology,\n University\n of\n Michigan,\n Ann\n Arbor,\n MI\n 48109,\n USA\na\n r\n t\n i c l e \ni n\n f o\nArticle\n history:\nReceived\n 18\n April\n 2011\nReceived\n in\n revised\n form\n 22\n June\n 2011\nAccepted\n 8\n July\n 2011\nAvailable online 20 July 2011\nKeywords:\nSpatial\n working\n memory\nAging\nVisuomotor\n adaptation\nSkill\n acquisition\nTransfer\na\n b\n s\n t\n r\n a c t\nThroughout\n our life span we encounter\n challenges\n that require\n us to adapt to the demands\n of our\n chang-\ning\n environment;\n this entails\n learning\n new skills.\n Two primary\n components\n of motor skill learning\n are\nmotor\n acquisition,\n the initial\n process\n of learning\n the skill, and motor\n transfer,\n when\n learning\n a new skill\n is\nbene\ufb01tted\n by the overlap with a previously\n learned\n one. Older\n adults typically exhibit\n declines\n in motor\nacquisition\n compared\n to young\n adults,\n but remarkably,\n do not demonstrate\n de\ufb01cits\n in motor\n transfer\n [10].\nOur\n recent\n work\n demonstrates\n that a failure to engage\n spatial\n working\n memory\n (SWM)\n is associated\n with\nskill\n learning\n de\ufb01cits\n in older adults\n [16]. Here,\n we investigate\n the role that SWM\n plays\n in both motor\nlearning\n and transfer\n in young\n and older adults.\n Both age groups\n exhibited\n performance\n savings,\n or posi-\ntive\n transfer, at transfer\n of learning\n for some\n performance\n variables.\n Measures\n of spatial\n working\n memory\nperformance\n and reaction\n time correlated\n with both\n motor\n learning\n and transfer\n for young adults. Young\nadults\n recruited\n overlapping\n brain\n regions\n in prefrontal,\n premotor,\n parietal\n and\n occipital\n cortex\n for\n per-\nformance\n of a SWM and a visuomotor\n adaptation\n task, most notably\n during motor\n learning,\n replicating\nour\n prior \ufb01ndings\n [12]. Neural overlap\n between\n the SWM task and visuomotor\n adaptation\n for the older\nadults\n was limited\n to parietal\n cortex, with minimal\n changes\n from\n motor\n learning\n to\n transfer.\n Combined,\nthese\n results\n suggest\n that age differences\n in engagement\n of cognitive\n strategies\n have a differential\n impact\non\n motor\n learning\n and transfer.\n\u00a9 2011 Elsevier B.V. All rights reserved.\n1.\n Introduction\nThe\n ability\n to\n adapt\n to\n changes\n in\n the\n world\n around\n us\n is\n an\nessential\n life\n skill.\n Learning\n a\n new\n skill\n (\u201cmotor\n learning\u201d)\n and\nmodifying\n it\n to\n meet\n new\n task\n demands\n (\u201cmotor\n transfer\u201d)\n are\nboth\n important\n for\n adaptive\n motor\n behavior\n (reviewed\n in\n ref.\n [1])\nat\n all\n stages\n of\n life.\n A\n l",
+ "pages": [
+  {
+   "number": 1,
+   "width_pt": 595.300048828125,
+   "height_pt": 793.7000122070312,
+   "n_chars": 5594,
+   "n_images": 2,
+   "n_drawings": 10,
+   "png": "pages/p001.png",
+   "png_scale": 2.7777777777777777,
+   "text_file": "pages/p001.txt",
+   "words_file": "pages/p001.words.json"
+  },
+  {
+   "number": 2,
+   "width_pt": 595.300048828125,
+   "height_pt": 793.7000122070312,
+   "n_chars": 11905,
+   "n_images": 0,
+   "n_drawings": 3,
+   "png": "pages/p002.png",
+   "png_scale": 2.7777777777777777,
+   "text_file": "pages/p002.txt",
+   "words_file": "pages/p002.words.json"
+  },
+  {
+   "number": 3,
+   "width_pt": 595.300048828125,
+   "height_pt": 793.7000122070312,
+   "n_chars": 10007,
+   "n_images": 0,
+   "n_drawings": 0,
+   "png": "pages/p003.png",
+   "png_scale": 2.7777777777777777,
+   "text_file": "pages/p003.txt",
+   "words_file": "pages/p003.words.json"
+  },
+  {
+   "number": 4,
+   "width_pt": 595.300048828125,
+   "height_pt": 793.7000122070312,
+   "n_chars": 2395,
+   "n_images": 1,
+   "n_drawings": 0,
+   "png": "pages/p004.png",
+   "png_scale": 2.7777777777777777,
+   "text_file": "pages/p004.txt",
+   "words_file": "pages/p004.words.json"
+  },
+  {
+   "number": 5,
+   "width_pt": 595.300048828125,
+   "height_pt": 793.7000122070312,
+   "n_chars": 2534,
+   "n_images": 1,
+   "n_drawings": 0,
+   "png": "pages/p005.png",
+   "png_scale": 2.7777777777777777,
+   "text_file": "pages/p005.txt",
+   "words_file": "pages/p005.words.json"
+  },
+  {
+   "number": 6,
+   "width_pt": 595.300048828125,
+   "height_pt": 793.7000122070312,
+   "n_chars": 2822,
+   "n_images": 2,
+   "n_drawings": 9,
+   "png": "pages/p006.png",
+   "png_scale": 2.7777777777777777,
+   "text_file": "pages/p006.txt",
+   "words_file": "pages/p006.words.json"
+  },
+  {
+   "number": 7,
+   "width_pt": 595.300048828125,
+   "height_pt": 793.7000122070312,
+   "n_chars": 3753,
+   "n_images": 1,
+   "n_drawings": 12,
+   "png": "pages/p007.png",
+   "png_scale": 2.7777777777777777,
+   "text_file": "pages/p007.txt",
+   "words_file": "pages/p007.words.json"
+  },
+  {
+   "number": 8,
+   "width_pt": 595.300048828125,
+   "height_pt": 793.7000122070312,
+   "n_chars": 8734,
+   "n_images": 0,
+   "n_drawings": 0,
+   "png": "pages/p008.png",
+   "png_scale": 2.7777777777777777,
+   "text_file": "pages/p008.txt",
+   "words_file": "pages/p008.words.json"
+  },
+  {
+   "number": 9,
+   "width_pt": 595.300048828125,
+   "height_pt": 793.7000122070312,
+   "n_chars": 5654,
+   "n_images": 0,
+   "n_drawings": 0,
+   "png": "pages/p009.png",
+   "png_scale": 2.7777777777777777,
+   "text_file": "pages/p009.txt",
+   "words_file": "pages/p009.words.json"
+  }
+ ],
+ "figures": [
+  {
+   "id": "fig01",
+   "page": 4,
+   "bbox": {
+    "x0": 36.73001480102539,
+    "y0": 49.58599853515625,
+    "x1": 489.8370056152344,
+    "y1": 559.5360107421875
+   },
+   "caption": "Fig. 1. Performance measures for the 30\u25e6visuomotor adaptation for both young (YA) and older (OA) adults. (A) YA DE, (B) OA DE, (C) YA IEE, (D) OA IEE, (E) YA RT and (F) OA RT.",
+   "label": "Fig. 1",
+   "kind": "raster",
+   "n_images": 1,
+   "n_drawings": 0,
+   "native_px": [
+    1003,
+    1384
+   ],
+   "crop_png": "figures/fig01.png",
+   "claude_png": "figures/fig01.claude.png",
+   "crop_dpi": 500,
+   "claude_scale": 0.57705751509374,
+   "confidence": 0.91,
+   "panels": [
+    {
+     "id": "fig01a",
+     "letter": "a",
+     "bbox": {
+      "x0": 36.73001480102539,
+      "y0": 49.58599853515625,
+      "x1": 489.8370056152344,
+      "y1": 559.5360107421875
+     },
+     "n_numeric": 0,
+     "calibrated": true,
+     "n_ladder": 0,
+     "crop_png": "figures/fig01.png",
+     "claude_png": "figures/fig01.claude.png",
+     "crop_dpi": 500,
+     "claude_scale": 0.57705751509374
+    }
+   ],
+   "text_layer": "none",
+   "n_region_ladder": 0,
+   "n_region_numeric": 0,
+   "caption_growth_pt": 80.025,
+   "caption_panels": []
+  },
+  {
+   "id": "fig02",
+   "page": 5,
+   "bbox": {
+    "x0": 25.92050552368164,
+    "y0": 49.85601806640625,
+    "x1": 483.7449951171875,
+    "y1": 543.5360107421875
+   },
+   "caption": "Fig. 2. Performance measures for the 45\u25e6visuomotor adaptation for both young (YA) and older (OA) adults. (A) YA DE, (B) OA DE, (C) YA IEE, (D) OA IEE, (E) YA RT and (F) OA RT.",
+   "label": "Fig. 2",
+   "kind": "raster",
+   "n_images": 1,
+   "n_drawings": 0,
+   "native_px": [
+    1030,
+    1338
+   ],
+   "crop_png": "figures/fig02.png",
+   "claude_png": "figures/fig02.claude.png",
+   "crop_dpi": 500,
+   "claude_scale": 0.5811320754716981,
+   "confidence": 0.91,
+   "panels": [
+    {
+     "id": "fig02a",
+     "letter": "a",
+     "bbox": {
+      "x0": 25.92050552368164,
+      "y0": 49.85601806640625,
+      "x1": 483.7449951171875,
+      "y1": 543.5360107421875
+     },
+     "n_numeric": 0,
+     "calibrated": true,
+     "n_ladder": 0,
+     "crop_png": "figures/fig02.png",
+     "claude_png": "figures/fig02.claude.png",
+     "crop_dpi": 500,
+     "claude_scale": 0.5811320754716981
+    }
+   ],
+   "text_layer": "none",
+   "n_region_ladder": 0,
+   "n_region_numeric": 0,
+   "caption_growth_pt": 75.0245,
+   "caption_panels": []
+  },
+  {
+   "id": "fig03",
+   "page": 6,
+   "bbox": {
+    "x0": 36.73100662231445,
+    "y0": 49.51600646972656,
+    "x1": 294.63201904296875,
+    "y1": 262.5360107421875
+   },
+   "caption": "Fig. 3. Areas exhibiting greater activation at motor learning than transfer (run 3 > 13). (A) Young adults show greater activation in the right superior frontal gyrus, cingulate",
+   "label": "Fig. 3",
+   "kind": "raster",
+   "n_images": 1,
+   "n_drawings": 0,
+   "native_px": [
+    667,
+    559
+   ],
+   "crop_png": "figures/fig03.png",
+   "claude_png": "figures/fig03.claude.png",
+   "crop_dpi": 500,
+   "claude_scale": 1.0,
+   "confidence": 0.91,
+   "panels": [
+    {
+     "id": "fig03a",
+     "letter": "a",
+     "bbox": {
+      "x0": 36.73100662231445,
+      "y0": 49.51600646972656,
+      "x1": 294.63201904296875,
+      "y1": 262.5360107421875
+     },
+     "n_numeric": 0,
+     "calibrated": true,
+     "n_ladder": 0,
+     "crop_png": "figures/fig03.png",
+     "claude_png": "figures/fig03.claude.png",
+     "crop_dpi": 500,
+     "claude_scale": 1.0
+    }
+   ],
+   "text_layer": "none",
+   "n_region_ladder": 0,
+   "n_region_numeric": 0,
+   "caption_growth_pt": 5.779,
+   "caption_panels": []
+  },
+  {
+   "id": "fig04",
+   "page": 6,
+   "bbox": {
+    "x0": 306.2204895019531,
+    "y0": 49.876007080078125,
+    "x1": 564.1220092773438,
+    "y1": 271.5360107421875
+   },
+   "caption": "Fig. 4. Age differences in brain activation at initial motor learning. (A) Areas in which young",
+   "label": "Fig. 4",
+   "kind": "raster",
+   "n_images": 1,
+   "n_drawings": 0,
+   "native_px": [
+    667,
+    583
+   ],
+   "crop_png": "figures/fig04.png",
+   "claude_png": "figures/fig04.claude.png",
+   "crop_dpi": 500,
+   "claude_scale": 1.0,
+   "confidence": 0.91,
+   "panels": [
+    {
+     "id": "fig04a",
+     "letter": "a",
+     "bbox": {
+      "x0": 306.2204895019531,
+      "y0": 49.876007080078125,
+      "x1": 564.1220092773438,
+      "y1": 271.5360107421875
+     },
+     "n_numeric": 0,
+     "calibrated": true,
+     "n_ladder": 0,
+     "crop_png": "figures/fig04.png",
+     "claude_png": "figures/fig04.claude.png",
+     "crop_dpi": 500,
+     "claude_scale": 1.0
+    }
+   ],
+   "text_layer": "none",
+   "n_region_ladder": 0,
+   "n_region_numeric": 0,
+   "caption_growth_pt": 5.7795,
+   "caption_panels": []
+  },
+  {
+   "id": "fig05",
+   "page": 7,
+   "bbox": {
+    "x0": 25.921085357666016,
+    "y0": 562.7310180664062,
+    "x1": 271.70001220703125,
+    "y1": 715.7109985351562
+   },
+   "caption": "Fig. 5. Areas in which young adults (YA) exhibit more activation than older adults (OA)",
+   "label": "Fig. 5",
+   "kind": "raster",
+   "n_images": 1,
+   "n_drawings": 0,
+   "native_px": [
+    600,
+    392
+   ],
+   "crop_png": "figures/fig05.png",
+   "claude_png": "figures/fig05.claude.png",
+   "crop_dpi": 500,
+   "claude_scale": 1.0,
+   "confidence": 0.91,
+   "panels": [
+    {
+     "id": "fig05a",
+     "letter": "a",
+     "bbox": {
+      "x0": 25.921085357666016,
+      "y0": 562.7310180664062,
+      "x1": 271.70001220703125,
+      "y1": 715.7109985351562
+     },
+     "n_numeric": 0,
+     "calibrated": true,
+     "n_ladder": 0,
+     "crop_png": "figures/fig05.png",
+     "claude_png": "figures/fig05.claude.png",
+     "crop_dpi": 500,
+     "claude_scale": 1.0
+    }
+   ],
+   "text_layer": "none",
+   "n_region_ladder": 0,
+   "n_region_numeric": 0,
+   "caption_growth_pt": 17.7789,
+   "caption_panels": []
+  }
+ ],
+ "tables": [],
+ "has_text_layer": true,
+ "out_dir": "runs/nine/papers/d1f2946e7e81/ingest",
+ "warnings": []
+}

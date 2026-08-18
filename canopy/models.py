@@ -141,6 +141,14 @@ class StatsSettings(CanopyModel):
     #: used by the within-paper composite (`canopy.pipeline.aggregate`, Borenstein ch. 24)
     within_paper_r: float = 0.5
     ci_level: float = 0.95
+    #: forest-plot x axis, as `[low, high]`. None means the renderer picks a symmetric data-driven
+    #: range; a profile pins it so two runs of the same review are comparable by eye — a reader
+    #: who compares forests across runs is comparing arrow lengths, and an axis that rescales
+    #: itself to whatever survived the run makes a shrunken effect look unchanged.
+    forest_xlim: list[float] | None = None
+    #: decimals the forest prints for the effect and its interval. The tables keep full precision:
+    #: this is how the plot READS, not how anything was computed.
+    forest_digits: int = 1
 
 
 class DigitizeSettings(CanopyModel):
@@ -597,6 +605,13 @@ class OrientationVerdict(CanopyModel):
     #: majority exactly as the original call did. Without it a re-run of `combine_orientation` over
     #: the same three ballots would silently downgrade a settled measure to a question.
     third_read: bool = False
+    #: HOW the direction above was settled: `agreed` (the two readers said the same thing),
+    #: `single_witness` (one ballot survived C3's contradiction check and stood alone),
+    #: `tiebreak_ballot` (a third read broke a disagreement) or `human` (a review answered the
+    #: card). It is copied onto every row the verdict signs, because "older adults adapted less"
+    #: read off a majority of three machines is a different claim from one a person made, and a
+    #: reader of the extraction table cannot tell them apart from the sign alone.
+    orientation_source: str = ""
     runs: list[OrientationRun] = Field(default_factory=list)
     llm_call_ids: list[str] = Field(default_factory=list)
     notes: str = ""
@@ -685,11 +700,21 @@ class EffectSizeRecord(CanopyModel):
     level: float = 0.95
     higher_is_better: bool | None = None
     orientation_applied: bool = False
+    #: how the orientation above was settled — `OrientationVerdict.orientation_source`, copied
+    #: onto the row so the extraction table can say who signed it
+    orientation_source: str = ""
     conversion_chain: str = ""
     conversion_steps: list[str] = Field(default_factory=list)
     #: routes the resolved values could have supported, and why the ones ahead were not taken
     routes_available: list[str] = Field(default_factory=list)
     routes_rejected: dict[str, str] = Field(default_factory=dict)
+    #: D1's precedence override: the route the precedence list actually chose, which could not be
+    #: converted (a printed mean with no dispersion), and the reason a same-locator alternative
+    #: was built instead. Set together with the `precedence_override` flag; a row carrying them is
+    #: HELD (`confidence = "needs_human"`), because it is not the number the precedence list asked
+    #: for. Empty on every row the precedence list could satisfy.
+    route_overridden_from: str = ""
+    precedence_override_reason: str = ""
     #: the numbers actually fed to the formula (after every conversion), for the extraction table
     inputs: dict[str, float | None] = Field(default_factory=dict)
     #: set when no route could produce an effect size (amendment C gates, missing values, ...)
@@ -698,6 +723,12 @@ class EffectSizeRecord(CanopyModel):
     var_with_digitization: float | None = None
     digitization_var_share: float | None = None
     confidence: ConfidenceBucket = "needs_human"
+    #: why the best-guess line admitted this held row, and on what evidence. Written by the
+    #: report-side best-guess model onto a COPY of the row (the strict row is never touched), so a
+    #: record read back from `resolve.json` always has them empty — best guess is a way of reading
+    #: the primary analysis, never a stage that changes it.
+    best_guess_rule: str = ""
+    best_guess_reason: str = ""
     #: what the two groups' numbers measured (endpoint, change from baseline, ...) — copied from
     #: the verified cell by the orchestrator so the sensitivity set can split rows by metric
     analysis_metric: AnalysisMetric = "unknown"

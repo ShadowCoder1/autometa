@@ -23,6 +23,7 @@ from canopy.models import (
     Verdict,
 )
 from canopy.protocol import apply_profile, available_profiles, load_protocol
+from tests.helpers import nine
 
 REPO = Path(__file__).resolve().parents[1]
 EXAMPLE = REPO / "examples" / "protocols" / "aging_sensorimotor_adaptation.yaml"
@@ -364,3 +365,38 @@ def test_every_verifier_state_round_trips_through_the_cell_verdict():
     for state in states:
         verdict = Verdict(verifier_verdict=state)
         assert Verdict.model_validate(verdict.model_dump(mode="json")).verifier_verdict == state
+
+
+# --------------------------------------------------------------- the runs/nine real records
+def test_nine_fixture_loads_twenty_records():
+    """`tests/fixtures/runs/nine` is a real run, not a hand-written one.
+
+    Every later test that needs a record, a verdict, a candidate or a study map reads it through
+    `tests.helpers.nine`, so a model change that a hand-made fixture would have shrugged off
+    fails here against numbers a run actually produced.
+    """
+    assert len(nine.records()) == 20 and nine.record("3570e4ce2a9c:d1", "late_adaptation").route == "not_convertible"
+
+
+def test_record_and_settings_fields_default():
+    from canopy.models import EffectSizeRecord, StatsSettings
+
+    r = EffectSizeRecord()
+    assert (r.best_guess_rule, r.best_guess_reason, r.route_overridden_from, r.precedence_override_reason, r.orientation_source) == ("",) * 5
+    assert StatsSettings().forest_xlim is None and StatsSettings().forest_digits == 1
+
+
+def test_cisneros_profile_pins_the_humans_axis():
+    from canopy.models import StatsSettings; from canopy.protocol import apply_profile
+    assert apply_profile(StatsSettings(profile="cisneros2024")).forest_xlim == [-4.0, 4.0]
+
+
+def test_protocol_hash_change_is_deliberate():   # Major 9: the consequence is pinned, not discovered
+    """New settings fields change every protocol's hash — including the one `runs/nine` recorded.
+
+    That is a `--resume` of an older run refusing to reuse its stages, which is the correct
+    behaviour and not a thing to discover in the middle of a re-run. It is asserted here so the
+    cost is a decision someone made rather than a surprise someone hit.
+    """
+    from canopy.models import Protocol
+    assert nine.protocol().hash() != json.load(open(nine.NINE / "manifest.json"))["protocol_hash"]
