@@ -833,3 +833,24 @@ def test_forest_weights_are_the_pooled_models_own_weights(gold_rows, pooled_gold
     for dataset_id, weight in expected.items():
         assert by_dataset[dataset_id] == pytest.approx(float(weight), rel=1e-9)
     assert np.isclose(sum(by_dataset.values()), 100.0)
+
+
+def test_the_effect_size_and_its_interval_are_separate_named_columns(tmp_path, gold_rows,
+                                                                     pooled_gold, outcome,
+                                                                     settings):
+    """A reader scans a column of effect sizes; they should not have to parse brackets out of it.
+
+    The estimate column is headed by what the number IS (`Cohen's d`, `Hedges' g` — from the
+    profile's estimator), not by the outcome, which the title already names; the interval sits
+    beside it under `95% CI`, the convention the reference review's own forest follows.
+    """
+    from canopy.report.forest import forest_plot
+    from canopy.report.theme import estimator_label
+
+    out = forest_plot(gold_rows, pooled_gold, outcome, settings, tmp_path / "forest")
+    svg = out["svg"].read_text(encoding="utf-8")
+    assert estimator_label(settings) in svg          # "Hedges' g" for this profile
+    assert f"{settings.ci_level * 100:g}% CI" in svg
+    # the combined form is gone: no cell prints an estimate and its interval together
+    row = gold_rows[0]
+    assert f"{row.es:.2f} [" not in svg

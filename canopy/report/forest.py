@@ -30,8 +30,8 @@ from ..models import EffectSizeRecord, OutcomeDef, StatsSettings
 from ..stats.meta import MetaResult, prediction_interval
 from . import theme
 from .theme import (ACCENT, ACCENT_SOFT, AXIS, GRID, INK, INK_SECONDARY, MARK, MUTED,
-                    figure_style, fmt, fmt_ci, is_overridden, route_glyph, save_figure,
-                    study_label)
+                    estimator_label, figure_style, fmt, fmt_ci, is_overridden, route_glyph,
+                    save_figure, study_label)
 
 __all__ = ["forest_plot", "forest_layout", "ForestLayout", "ForestRow", "MAX_SQUARE", "MIN_SQUARE"]
 
@@ -247,24 +247,29 @@ def _left_columns(layout: ForestLayout) -> list[_Column]:
     return columns
 
 
-def _effect_cell(row: ForestRow) -> str:
-    if row.es is None:
-        return "\u2014"
-    return f"{fmt(row.es)} {fmt_ci(row.ci_low, row.ci_high)}"
-
-
 def _right_columns(layout: ForestLayout, outcome: OutcomeDef,
                    settings: StatsSettings) -> list[_Column]:
+    """The numbers, in the order a meta-analysis reader expects: estimate, interval, weight.
+
+    The estimate gets its own column headed by what it IS \u2014 `Cohen's d`, `Hedges' g` \u2014 rather
+    than by the outcome, which the title already names. One column holding "\u22121.66 [\u22122.60, \u22120.72]"
+    reads as a single quantity; the convention every published forest follows (and the one the
+    reference review uses) is to print the point estimate and its interval side by side, so a
+    reader can scan a column of effect sizes without parsing brackets out of it.
+    """
     rows = layout.all_rows
-    label = outcome.label or outcome.key
-    header = _wrap_header(f"{label} [{settings.ci_level * 100:g}% CI]", 16)
-    effect = _Column("effect", header, [_effect_cell(r) for r in rows] +
-                     [f"{fmt(layout.pooled.estimate)} "
-                      f"{fmt_ci(layout.pooled.ci_low, layout.pooled.ci_high)}"],
-                     pad_ch=2.5)          # the pooled row is set bold and one point larger
+    estimate = _Column("effect", estimator_label(settings),
+                       [fmt(r.es) if r.es is not None else "\u2014" for r in rows]
+                       + [fmt(layout.pooled.estimate)],
+                       pad_ch=2.5)        # the pooled row is set bold and one point larger
+    interval = _Column("ci", f"{settings.ci_level * 100:g}% CI",
+                       [fmt_ci(r.ci_low, r.ci_high) if r.es is not None else "\u2014"
+                        for r in rows]
+                       + [fmt_ci(layout.pooled.ci_low, layout.pooled.ci_high)],
+                       pad_ch=2.5)
     weight = _Column("weight", "Weight",
                      [f"{r.weight_pct:.1f}%" for r in layout.rows] + ["100%"])
-    return [effect, weight]
+    return [estimate, interval, weight]
 
 
 def _draw_row(ax, row: ForestRow, xlim: tuple[float, float], max_weight: float) -> None:
@@ -405,25 +410,28 @@ def forest_plot(rows: Sequence[EffectSizeRecord], pooled: MetaResult, outcome: O
                           transform=side.get_yaxis_transform())
         for column in left:
             _text_column(ax_left, column, ys, column.cells, size=7.6, colours=colours)
+        by_key = {column.key: column for column in right}
         for column in right:
-            values = column.cells[:len(all_rows)] if column.key == "effect" else (
-                column.cells[:len(layout.rows)] + ["\u2014"] * len(layout.excluded))
+            # the estimate and its interval have a cell for every row, held ones included; a
+            # weight belongs only to a row that was pooled
+            values = (column.cells[:len(all_rows)] if column.key in ("effect", "ci")
+                      else column.cells[:len(layout.rows)] + ["\u2014"] * len(layout.excluded))
             _text_column(ax_right, column, ys, values, size=7.6, colours=colours)
 
         pooled_label = f"Random-effects model (k = {pooled.k})"
         ax_left.text(left[0].x, layout.pooled_y, pooled_label, fontsize=8.2, fontweight="bold",
                      color=INK, ha="left", va="center", transform=ax_left.get_yaxis_transform())
-        ax_right.text(right[0].x, layout.pooled_y,
-                      f"{fmt(pooled.estimate)} {fmt_ci(pooled.ci_low, pooled.ci_high)}",
-                      fontsize=8.2, fontweight="bold", color=INK, ha="left", va="center",
-                      transform=ax_right.get_yaxis_transform())
-        ax_right.text(right[1].x, layout.pooled_y, "100%", fontsize=8.2, fontweight="bold",
-                      color=INK, ha="left", va="center", transform=ax_right.get_yaxis_transform())
+        for key, text in (("effect", fmt(pooled.estimate)),
+                          ("ci", fmt_ci(pooled.ci_low, pooled.ci_high)), ("weight", "100%")):
+            ax_right.text(by_key[key].x, layout.pooled_y, text, fontsize=8.2, fontweight="bold",
+                          color=INK, ha="left", va="center",
+                          transform=ax_right.get_yaxis_transform())
         if layout.pi_y:
             ax_left.text(left[0].x, layout.pi_y, "Prediction interval", fontsize=7.6, color=MUTED,
                          ha="left", va="center", transform=ax_left.get_yaxis_transform())
             if layout.pi_low == layout.pi_low:
-                ax_right.text(right[0].x, layout.pi_y, fmt_ci(layout.pi_low, layout.pi_high),
+                # an interval with no point estimate of its own: it goes under the CI column
+                ax_right.text(by_key["ci"].x, layout.pi_y, fmt_ci(layout.pi_low, layout.pi_high),
                               fontsize=7.6, color=MUTED, ha="left", va="center",
                               transform=ax_right.get_yaxis_transform())
         if layout.excluded:
