@@ -143,8 +143,27 @@ def test_degrees_of_freedom_that_do_not_match_the_group_sizes_are_refused():
     assert "40" in str(excinfo.value) and "22" in str(excinfo.value)
 
 
-def test_degrees_of_freedom_within_two_of_the_group_sizes_are_accepted():
-    r = es.smd_from_t(5.25, 12, 12, df=20, design="independent_t")
+def test_a_degrees_of_freedom_shortfall_nothing_explains_is_refused():
+    """DECISION-v2 C9: "A df tolerance may absorb a shortfall only when the shortfall is
+    *explained* … otherwise require exact equality."
+
+    The old +/-2 window admitted `df = 20` at n = 12/12, and `F(1,36)` at n = 20/20 — the shape of
+    a two-covariate ANCOVA reported as a one-way. No arithmetic here can tell that apart from the
+    two-group test, so the default is refusal.
+    """
+    with pytest.raises(NotConvertible) as excinfo:
+        es.smd_from_t(5.25, 12, 12, df=20, design="independent_t")
+    assert "20" in str(excinfo.value) and "22" in str(excinfo.value)
+    with pytest.raises(NotConvertible) as excinfo:        # C9's own acceptance input
+        es.smd_from_f(4.2, 20, 20, a_greater=True, df1=1, df2=36, design="independent_t")
+    assert "36" in str(excinfo.value) and "38" in str(excinfo.value)
+
+
+def test_an_explained_shortfall_is_admitted_and_flagged_rather_than_refused():
+    """The other half of C9: the paper's own reported participant total explains the gap (a stated
+    exclusion that also reduced n), so the conversion runs — flagged, never silently."""
+    r = es.smd_from_t(5.25, 12, 12, df=20, design="independent_t",
+                      df_shortfall_explained="df_off_by_2")
     assert "df_off_by" in r.details["flags"][0]
 
 
@@ -315,3 +334,190 @@ def test_the_dispersion_partials_are_included_when_the_digitizer_measured_them()
         {"m_a": 0.5, "m_b": 0.5, "sd_a": 0.4, "sd_b": 0.4})
     assert set(parts) == {"m_a", "m_b", "sd_a", "sd_b"}
     assert var > math.fsum(parts[k] for k in ("m_a", "m_b")) > 0
+
+
+# --------------------------------------------------------------------- P-B: what a statistic contrasts
+def test_a_test_against_a_constant_is_refused_even_when_its_df_match_the_group_sizes():
+    """P-B's code-side counterpart. The prompt tells a model that a test of one group against zero
+    is not a `value` source; this is the same rule where it binds.
+
+    Heuer & Hegele print "tests of adaptive shifts against zero" one paragraph away from the
+    between-group ANOVA, on the same measure, with degrees of freedom that look right. Nothing but
+    the recorded contrast separates them.
+    """
+    with pytest.raises(NotConvertible) as exc:
+        es.smd_from_t(2.1, 20, 20, df=38, design="independent_t", contrast_kind="against_constant",
+                      within_factors=[], outcome_averages_over=[])
+    assert "constant" in str(exc.value) and "n_a + n_b - 2" in str(exc.value)
+
+
+def test_a_contrast_nobody_recorded_is_refused_rather_than_assumed_to_be_the_groups():
+    with pytest.raises(NotConvertible) as exc:
+        es.smd_from_t(2.1, 20, 20, df=38, design="independent_t", contrast_kind="unknown",
+                      within_factors=[], outcome_averages_over=[])
+    assert "nobody recorded" in str(exc.value)
+
+
+def test_an_interaction_is_refused_by_its_contrast_as_well_as_by_its_design():
+    ok, reason = es.contrast_ok("interaction")
+    assert ok is False and "interaction" in reason
+    ok, reason = es.contrast_ok("within")
+    assert ok is False and "within-subject" in reason
+
+
+def test_the_case_p_b_exists_to_rescue_still_converts():
+    """t(38) = 2.1 from an independent-groups t test, no means printed anywhere."""
+    result = es.smd_from_t(2.1, 20, 20, df=38, design="independent_t", contrast_kind="groups",
+                           within_factors=[], outcome_averages_over=[])
+    assert result.d == pytest.approx(2.1 * math.sqrt(1 / 20 + 1 / 20), abs=1e-12)
+    assert result.route == "t_stat"
+
+
+def test_an_omnibus_f_over_more_than_two_levels_is_still_refused():
+    with pytest.raises(NotConvertible) as exc:
+        es.smd_from_f(3.0, 20, 20, a_greater=True, df1=9, df2=342, design="one_way_between",
+                      contrast_kind="groups", within_factors=[], outcome_averages_over=[])
+    assert "more than two groups" in str(exc.value)
+
+
+# ------------------------------------------------------------- C5: does it answer the outcome's question
+def test_a_main_effect_averaged_over_a_factor_the_outcome_keeps_is_refused_by_name():
+    """C5 (i). Heuer's F(1,38) on adaptive shifts is a main effect of age from a 2 x 8 model; the
+    outcome asks about the last practice block, not about the mean over eight target directions."""
+    ok, reason, _ = es.aggregation_scope_ok(
+        "mixed_main_effect", ["target direction (8 levels)"], ["block"], 38, 20, 20)
+    assert ok is False
+    assert "target direction (8 levels)" in reason        # the factor AND its levels are named
+    assert "averaged over every level" in reason
+
+
+def test_an_empty_factor_list_blocks_by_default_when_the_design_is_not_a_two_group_t():
+    """C5 (ii) — the fail-open path v1 shipped untested.
+
+    "A 2 x 8 ANOVA" names no factors, so the extractor records `[]`. An empty list is not evidence
+    that the model had none.
+    """
+    ok, reason, _ = es.aggregation_scope_ok("mixed_main_effect", [], [], 38, 20, 20)
+    assert ok is False and "were not recorded" in reason
+    ok, reason, _ = es.aggregation_scope_ok("one_way_between", [], [], 38, 20, 20)
+    assert ok is False and "were not recorded" in reason
+    # …and the df alone cannot rescue it: a mixed main effect's error df ARE n_a + n_b - 2
+    assert 38 == 20 + 20 - 2
+
+
+def test_an_empty_factor_list_is_allowed_only_for_a_two_group_t_with_exact_df():
+    """C5 (iii)."""
+    ok, reason, flags = es.aggregation_scope_ok("independent_t", [], [], 38, 20, 20)
+    assert ok is True and reason == "" and flags == []
+    # one participant off, and the exactness rule closes it again
+    ok, reason, _ = es.aggregation_scope_ok("independent_t", [], [], 37, 20, 20)
+    assert ok is False and "were not recorded" in reason
+    ok, reason, _ = es.aggregation_scope_ok("independent_t", [], [], None, 20, 20)
+    assert ok is False
+
+
+def test_a_statistic_whose_average_is_the_outcomes_own_window_is_allowed():
+    """C5 (iv). The outcome IS "the mean across all eight targets", the model's factors are
+    recorded, and the arithmetic is the one the route would apply.
+
+    The conversion itself stays refused for the nine-paper run — `CONVERTIBLE_DESIGNS` is
+    unchanged and `mixed_main_effect` is not in it — so this asserts the aggregation gate's answer
+    and the arithmetic that would follow it, not an end-to-end conversion.
+    """
+    ok, reason, flags = es.aggregation_scope_ok(
+        "mixed_main_effect", ["target direction (8 levels)"], ["target direction"], 38, 20, 20)
+    assert ok is True and reason == "" and flags == ["aggregation_scope_matched"]
+    assert es.d_from_f(6.3, 20, 20, 1) == pytest.approx(
+        math.sqrt(6.3) * math.sqrt(1 / 20 + 1 / 20), abs=1e-9)
+    with pytest.raises(NotConvertible):                  # …and the design gate still refuses it
+        es.smd_from_f(6.3, 20, 20, a_greater=True, df1=1, df2=38, design="mixed_main_effect",
+                      contrast_kind="groups", within_factors=["target direction (8 levels)"],
+                      outcome_averages_over=["target direction"])
+
+
+def test_one_verbose_outcome_string_does_not_cover_two_within_factors():
+    """F4, reproduced from the review: the factor match was a bag-of-words SUBSET test.
+
+    One `outcome_averages_over` entry that mentions both factors covered both of Heuer's within
+    factors, so the F(1,38) averaged over eight targets — the statistic C5 exists to refuse,
+    worth 0.13-0.17 on Heuer d1 late — passed the scope gate. A match is EQUALITY of the
+    normalised factor name, not containment.
+    """
+    ok, reason, _ = es.aggregation_scope_ok(
+        "mixed_main_effect", ["block (5 levels)", "target direction (8 levels)"],
+        ["the eight target directions in the last block"], 38, 20, 20)
+    assert ok is False
+    assert "block (5 levels)" in reason and "target direction (8 levels)" in reason
+
+
+def test_an_outcome_that_keeps_one_level_of_a_factor_does_not_average_over_it():
+    """The prompt asks the extractor to qualify a factor in parentheses, and the matcher drops the
+    parenthetical — so "block (last block only)" matched "block (5 levels)" exactly. Keeping ONE
+    level is the opposite of averaging over the factor, and a level selector never matches."""
+    ok, reason, _ = es.aggregation_scope_ok(
+        "mixed_main_effect", ["block (5 levels)"], ["block (last block only)"], 38, 20, 20)
+    assert ok is False and "block (5 levels)" in reason
+    ok, _, _ = es.aggregation_scope_ok(
+        "mixed_main_effect", ["block (5 levels)"], ["the last block"], 38, 20, 20)
+    assert ok is False
+    ok, _, _ = es.aggregation_scope_ok(
+        "mixed_main_effect", ["block (5 levels)"], ["block 5"], 38, 20, 20)
+    assert ok is False
+    # the same factor named plainly, or with its own level count, still matches
+    for averaged in (["block"], ["blocks"], ["block (5 levels)"]):
+        ok, reason, flags = es.aggregation_scope_ok(
+            "mixed_main_effect", ["block (5 levels)"], averaged, 38, 20, 20)
+        assert ok is True and flags == ["aggregation_scope_matched"], averaged
+
+
+def test_a_statistic_kept_at_one_level_of_its_factor_is_refused_end_to_end():
+    """The review's end-to-end reproduction: t = 2.1 on 12/12 converted to d = 0.8573 because
+    "the last block" contains the word "block"."""
+    with pytest.raises(NotConvertible) as exc:
+        es.smd_from_t(2.1, 12, 12, df=22, design="independent_t", contrast_kind="groups",
+                      within_factors=["block (5 levels)"],
+                      outcome_averages_over=["the last block"])
+    assert "block (5 levels)" in str(exc.value)
+
+
+def test_a_named_factor_the_outcome_does_not_name_at_all_is_still_refused():
+    """A protocol that writes the factor with different words does not open the route: equality
+    is fail-closed, and the prompt tells the extractor to reuse the same names."""
+    ok, _, _ = es.aggregation_scope_ok(
+        "mixed_main_effect", ["target direction (8 levels)"], ["targets"], 38, 20, 20)
+    assert ok is False
+
+
+# ------------------------------------------------------- P-B: a printed effect size has a contrast too
+def test_a_printed_effect_size_that_contrasted_a_constant_is_refused_in_code():
+    """F5: `smd_from_reported` had no gate at all, so "d = 1.30 against zero" pooled as the
+    between-group effect. The rule is the same one every other route applies."""
+    with pytest.raises(NotConvertible) as exc:
+        es.smd_from_reported(1.30, 12, 12, positive_means_a_greater=True,
+                             contrast_kind="against_constant")
+    assert "constant" in str(exc.value)
+    with pytest.raises(NotConvertible) as exc:
+        es.smd_from_reported(1.30, 12, 12, positive_means_a_greater=True, contrast_kind="unknown")
+    assert "nobody recorded" in str(exc.value)
+    result = es.smd_from_reported(1.30, 12, 12, positive_means_a_greater=True,
+                                  contrast_kind="groups")
+    assert result.d == pytest.approx(1.30, abs=1e-12) and result.route == "reported_d"
+
+
+def test_the_plain_arithmetic_helpers_are_not_forced_to_record_an_estimand():
+    """`within_factors=None` means "this call site knows nothing about a model" — the numeric
+    helpers called with numbers. The pipeline always passes a list, and `[]` is a refusal."""
+    ok, _, _ = es.aggregation_scope_ok("one_way_between", None, None, 22, 12, 12)
+    assert ok is True
+    assert es.smd_from_t(5.25, 12, 12, df=22, design="independent_t").route == "t_stat"
+    # …and the same convention on the printed-effect-size helper: no record, no check
+    assert es.smd_from_reported(1.30, 12, 12).route == "reported_d"
+
+
+def test_the_refusal_for_a_mixed_main_effect_names_aggregation_scope_not_a_different_error_term():
+    """P-B: the old reason was false — the between-subjects portion of a split-plot IS the one-way
+    ANOVA on subject means, so F_between(1, N-2) = t^2."""
+    ok, reason, _ = es.convertibility("mixed_main_effect", 22, 12, 12, contrast_kind="groups")
+    assert ok is False
+    assert "averaged over every level" in reason
+    assert "error term" not in reason

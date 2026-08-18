@@ -1,0 +1,111 @@
+{
+ "key": "6113488d6767f4490bb448a81010ba1405367b5ae1cf4c8e7df55fcfa41f0357",
+ "model": "claude-sonnet-5",
+ "served_model": "claude-sonnet-5",
+ "stop_reason": "end_turn",
+ "usage": {
+  "input_tokens": 2892,
+  "output_tokens": 797,
+  "cache_creation_input_tokens": 5218,
+  "cache_read_input_tokens": 0
+ },
+ "text": "{\"groups\":[{\"group\":\"A\",\"group_label_as_written\":\"old subjects\",\"status\":\"not_on_these_pages\",\"page\":null,\"kind\":\"unknown\",\"quote\":\"\",\"row_header\":\"\",\"col_header\":\"\",\"value_as_written\":\"\",\"mean\":null,\"dispersion_value\":null,\"dispersion_type\":\"UNKNOWN\",\"ci_low\":null,\"ci_high\":null,\"ci_level\":\"unknown\",\"unit\":\"\",\"n\":null,\"n_quote\":\"\",\"raw_value_semantics\":\"unknown\",\"analysis_metric\":\"unknown\",\"error_bar_scope\":\"unknown\",\"notes\":\"These pages give only the exponential fit equations (y=29.51+29.91×exp(−x/5.13) for old subjects) and Fig. 1, not printed numeric values for individual episodes or a block average; computing the asymptote or endpoint from the fit would require calculation, which is not permitted. No table of per-episode means is present on these pages.\"},{\"group\":\"B\",\"group_label_as_written\":\"young subjects\",\"status\":\"not_on_these_pages\",\"page\":null,\"kind\":\"unknown\",\"quote\":\"\",\"row_header\":\"\",\"col_header\":\"\",\"value_as_written\":\"\",\"mean\":null,\"dispersion_value\":null,\"dispersion_type\":\"UNKNOWN\",\"ci_low\":null,\"ci_high\":null,\"ci_level\":\"unknown\",\"unit\":\"\",\"n\":null,\"n_quote\":\"\",\"raw_value_semantics\":\"unknown\",\"analysis_metric\":\"unknown\",\"error_bar_scope\":\"unknown\",\"notes\":\"These pages give only the exponential fit equation (y=9.92+53.51×exp(−x/5.89) for young subjects) and reference to Fig. 1, not a printed numeric value for the last adaptation episode or a block average; deriving one would require calculation, which is not permitted.\"}],\"notes\":\"The only numeric late-adaptation-related information on these pages is the exponential fit equations reported in the text (per age group) and the graphical data in Fig. 1, which is not accompanied by printed episode-level values or a block average. No table with per-episode or endpoint error values for the pointing adaptation phase appears on these pages. The pooled-seniors 'adaptation magnitude' (0.49±0.21) refers to a different metric (proportion of adaptation calculated as (I-F)/I from a combined sample of 54 seniors across multiple studies, not the young/old experimental groups' angular error), so it was not used for either group.\"}",
+ "content": [
+  {
+   "citations": null,
+   "text": "{\"groups\":[{\"group\":\"A\",\"group_label_as_written\":\"old subjects\",\"status\":\"not_on_these_pages\",\"page\":null,\"kind\":\"unknown\",\"quote\":\"\",\"row_header\":\"\",\"col_header\":\"\",\"value_as_written\":\"\",\"mean\":null,\"dispersion_value\":null,\"dispersion_type\":\"UNKNOWN\",\"ci_low\":null,\"ci_high\":null,\"ci_level\":\"unknown\",\"unit\":\"\",\"n\":null,\"n_quote\":\"\",\"raw_value_semantics\":\"unknown\",\"analysis_metric\":\"unknown\",\"error_bar_scope\":\"unknown\",\"notes\":\"These pages give only the exponential fit equations (y=29.51+29.91×exp(−x/5.13) for old subjects) and Fig. 1, not printed numeric values for individual episodes or a block average; computing the asymptote or endpoint from the fit would require calculation, which is not permitted. No table of per-episode means is present on these pages.\"},{\"group\":\"B\",\"group_label_as_written\":\"young subjects\",\"status\":\"not_on_these_pages\",\"page\":null,\"kind\":\"unknown\",\"quote\":\"\",\"row_header\":\"\",\"col_header\":\"\",\"value_as_written\":\"\",\"mean\":null,\"dispersion_value\":null,\"dispersion_type\":\"UNKNOWN\",\"ci_low\":null,\"ci_high\":null,\"ci_level\":\"unknown\",\"unit\":\"\",\"n\":null,\"n_quote\":\"\",\"raw_value_semantics\":\"unknown\",\"analysis_metric\":\"unknown\",\"error_bar_scope\":\"unknown\",\"notes\":\"These pages give only the exponential fit equation (y=9.92+53.51×exp(−x/5.89) for young subjects) and reference to Fig. 1, not a printed numeric value for the last adaptation episode or a block average; deriving one would require calculation, which is not permitted.\"}],\"notes\":\"The only numeric late-adaptation-related information on these pages is the exponential fit equations reported in the text (per age group) and the graphical data in Fig. 1, which is not accompanied by printed episode-level values or a block average. No table with per-episode or endpoint error values for the pointing adaptation phase appears on these pages. The pooled-seniors 'adaptation magnitude' (0.49±0.21) refers to a different metric (proportion of adaptation calculated as (I-F)/I from a combined sample of 54 seniors across multiple studies, not the young/old experimental groups' angular error), so it was not used for either group.\"}",
+   "type": "text"
+  }
+ ],
+ "parsed": {
+  "groups": [
+   {
+    "group": "A",
+    "group_label_as_written": "old subjects",
+    "status": "not_on_these_pages",
+    "page": null,
+    "kind": "unknown",
+    "quote": "",
+    "row_header": "",
+    "col_header": "",
+    "value_as_written": "",
+    "mean": null,
+    "dispersion_value": null,
+    "dispersion_type": "UNKNOWN",
+    "ci_low": null,
+    "ci_high": null,
+    "ci_level": "unknown",
+    "unit": "",
+    "n": null,
+    "n_quote": "",
+    "raw_value_semantics": "unknown",
+    "analysis_metric": "unknown",
+    "error_bar_scope": "unknown",
+    "notes": "These pages give only the exponential fit equations (y=29.51+29.91×exp(−x/5.13) for old subjects) and Fig. 1, not printed numeric values for individual episodes or a block average; computing the asymptote or endpoint from the fit would require calculation, which is not permitted. No table of per-episode means is present on these pages."
+   },
+   {
+    "group": "B",
+    "group_label_as_written": "young subjects",
+    "status": "not_on_these_pages",
+    "page": null,
+    "kind": "unknown",
+    "quote": "",
+    "row_header": "",
+    "col_header": "",
+    "value_as_written": "",
+    "mean": null,
+    "dispersion_value": null,
+    "dispersion_type": "UNKNOWN",
+    "ci_low": null,
+    "ci_high": null,
+    "ci_level": "unknown",
+    "unit": "",
+    "n": null,
+    "n_quote": "",
+    "raw_value_semantics": "unknown",
+    "analysis_metric": "unknown",
+    "error_bar_scope": "unknown",
+    "notes": "These pages give only the exponential fit equation (y=9.92+53.51×exp(−x/5.89) for young subjects) and reference to Fig. 1, not a printed numeric value for the last adaptation episode or a block average; deriving one would require calculation, which is not permitted."
+   }
+  ],
+  "notes": "The only numeric late-adaptation-related information on these pages is the exponential fit equations reported in the text (per age group) and the graphical data in Fig. 1, which is not accompanied by printed episode-level values or a block average. No table with per-episode or endpoint error values for the pointing adaptation phase appears on these pages. The pooled-seniors 'adaptation magnitude' (0.49±0.21) refers to a different metric (proportion of adaptation calculated as (I-F)/I from a combined sample of 54 seniors across multiple studies, not the young/old experimental groups' angular error), so it was not used for either group."
+ },
+ "response": {
+  "id": "msg_011Ce9sU8wkBxmMrbr8F9aMQ",
+  "container": null,
+  "content": [
+   {
+    "citations": null,
+    "text": "{\"groups\":[{\"group\":\"A\",\"group_label_as_written\":\"old subjects\",\"status\":\"not_on_these_pages\",\"page\":null,\"kind\":\"unknown\",\"quote\":\"\",\"row_header\":\"\",\"col_header\":\"\",\"value_as_written\":\"\",\"mean\":null,\"dispersion_value\":null,\"dispersion_type\":\"UNKNOWN\",\"ci_low\":null,\"ci_high\":null,\"ci_level\":\"unknown\",\"unit\":\"\",\"n\":null,\"n_quote\":\"\",\"raw_value_semantics\":\"unknown\",\"analysis_metric\":\"unknown\",\"error_bar_scope\":\"unknown\",\"notes\":\"These pages give only the exponential fit equations (y=29.51+29.91×exp(−x/5.13) for old subjects) and Fig. 1, not printed numeric values for individual episodes or a block average; computing the asymptote or endpoint from the fit would require calculation, which is not permitted. No table of per-episode means is present on these pages.\"},{\"group\":\"B\",\"group_label_as_written\":\"young subjects\",\"status\":\"not_on_these_pages\",\"page\":null,\"kind\":\"unknown\",\"quote\":\"\",\"row_header\":\"\",\"col_header\":\"\",\"value_as_written\":\"\",\"mean\":null,\"dispersion_value\":null,\"dispersion_type\":\"UNKNOWN\",\"ci_low\":null,\"ci_high\":null,\"ci_level\":\"unknown\",\"unit\":\"\",\"n\":null,\"n_quote\":\"\",\"raw_value_semantics\":\"unknown\",\"analysis_metric\":\"unknown\",\"error_bar_scope\":\"unknown\",\"notes\":\"These pages give only the exponential fit equation (y=9.92+53.51×exp(−x/5.89) for young subjects) and reference to Fig. 1, not a printed numeric value for the last adaptation episode or a block average; deriving one would require calculation, which is not permitted.\"}],\"notes\":\"The only numeric late-adaptation-related information on these pages is the exponential fit equations reported in the text (per age group) and the graphical data in Fig. 1, which is not accompanied by printed episode-level values or a block average. No table with per-episode or endpoint error values for the pointing adaptation phase appears on these pages. The pooled-seniors 'adaptation magnitude' (0.49±0.21) refers to a different metric (proportion of adaptation calculated as (I-F)/I from a combined sample of 54 seniors across multiple studies, not the young/old experimental groups' angular error), so it was not used for either group.\"}",
+    "type": "text"
+   }
+  ],
+  "model": "claude-sonnet-5",
+  "role": "assistant",
+  "stop_details": null,
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "type": "message",
+  "usage": {
+   "cache_creation": {
+    "ephemeral_1h_input_tokens": 0,
+    "ephemeral_5m_input_tokens": 5218
+   },
+   "cache_creation_input_tokens": 5218,
+   "cache_read_input_tokens": 0,
+   "inference_geo": "global",
+   "input_tokens": 2892,
+   "output_tokens": 797,
+   "output_tokens_details": {
+    "thinking_tokens": 0
+   },
+   "server_tool_use": null,
+   "service_tier": "standard"
+  }
+ },
+ "request_id": "req_011Ce9sU7tzGxDmmr3DhfAvj",
+ "effort": "medium",
+ "max_tokens": 8000,
+ "cost_usd": 0.026799,
+ "created_at": "2026-08-18T08:07:41+00:00"
+}

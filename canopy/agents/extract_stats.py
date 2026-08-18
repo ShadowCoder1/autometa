@@ -19,8 +19,9 @@ from ..config import MODELS
 from ..ingest.pdf import PaperRecord
 from ..llm.client import LLMClient
 from ..llm.context import text_block
-from ..models import (Candidate, CandidateStatus, DatasetSpec, Direction, PKind, Protocol,
-                      ReportedScale, Source, SourceKind, Standardizer, TestDesign)
+from ..models import (Candidate, CandidateStatus, ContrastKind, DatasetSpec, Direction, PKind,
+                      Protocol, ReportedScale, Source, SourceKind, Standardizer, TestDesign)
+from ..stats.effect_sizes import aggregation_scope_ok, contrast_ok
 from . import render_prompt
 from .extract_common import (STAT_SOURCE_KINDS, SYSTEM, candidate_id, context_blocks, enum_schema,
                              ground_candidate, groups_text, note, outcome_text, pages_of,
@@ -47,9 +48,13 @@ _YES_NO = ("yes", "no", "unknown")
 ADMISSIBLE_DESIGNS: frozenset[str] = frozenset({"independent_t", "one_way_between"})
 #: why each other design cannot stand in for the two group means
 DESIGN_REASONS: dict[str, str] = {
-    "mixed_main_effect": "the effect of the grouping factor in a mixed analysis is tested against "
-                         "a different error term than a two-group comparison, so its F does not "
-                         "convert to a standardised mean difference",
+    # NOT "tested against a different error term" — that was false (the between-subjects portion
+    # of a split-plot IS the one-way ANOVA on subject means, so F_between(1, N-2) = t^2). The
+    # reason to refuse is aggregation scope, and it is worth 0.13-0.17 on a real cell (P-B).
+    "mixed_main_effect": "the main effect of the grouping factor in a mixed analysis is computed "
+                         "on scores averaged over every level of the model's within-subject "
+                         "factors, so it estimates the group contrast at that average rather "
+                         "than at the window this outcome asks about",
     "interaction": "an interaction term is not a comparison of the two groups",
     "paired": "a within-participant comparison carries no between-group variance",
     "ancova": "a covariate-adjusted statistic is not the raw contrast of the two groups",
@@ -62,16 +67,42 @@ _WITHIN_STANDARDIZERS = frozenset({"dz_paired", "partial_eta"})
 
 
 def admissibility(kind: str, design: str, compares: str, model_ok: bool, model_reason: str,
-                  reported_scale: str = "unknown",
-                  standardizer: str = "unknown") -> tuple[bool, str]:
+                  reported_scale: str = "unknown", standardizer: str = "unknown",
+                  contrast_kind: str = "unknown", within_factors: Sequence[str] | None = None,
+                  outcome_averages_over: Sequence[str] | None = None) -> tuple[bool, str]:
     """`(admissible, reason)` — code's own reading of whether this statistic could carry the effect.
 
     Advisory: Task 9 applies the same rule again before it converts anything. The extractor may
     veto (it saw the sentence), but it may never promote a design this table refuses.
+
+    Two of the checks are the same functions Task 9 uses, called here so the refusal is visible on
+    the candidate a reviewer reads rather than only in the resolve log: `contrast_ok` (P-B — a test
+    against a constant is refused whatever its degrees of freedom) and `aggregation_scope_ok` (C5 —
+    a main effect averaged over factors this outcome does not average over answers a different
+    question). Only C5's *recorded-factors* half is applied here, because it needs no arithmetic;
+    the fail-closed half (nothing recorded, so the estimand is unknown) needs the analysed group
+    sizes and is applied in `canopy.stats`, where the number would actually be produced.
+
+    `contrast_ok` applies to EVERY kind, printed effect sizes included. A printed d has no test
+    statistic behind it but it always has a contrast, and "the aftereffect differed from zero,
+    d = 1.30" is not the difference between the two groups — it pooled as one while this field
+    sat unread on the candidate.
     """
     if compares != "yes":                    # first: is it even about these two groups?
         return False, ("the extractor could not confirm that this compares the two groups of this "
                        f"contrast on this outcome (it answered {compares!r})")
+    ok, reason = contrast_ok(contrast_kind)
+    if not ok:
+        return False, reason
+    if kind == "test_statistic":
+        named = [f for f in (within_factors or []) if str(f).strip()]
+        if named:
+            # only the recorded-factors branch is wanted here, and it returns before the error df
+            # and group sizes are looked at — hence the placeholders, which are never read
+            ok, reason, _ = aggregation_scope_ok(design, named,
+                                                 list(outcome_averages_over or []), None, 0, 0)
+            if not ok:
+                return False, reason
     if kind == "reported_d":
         if reported_scale not in _BETWEEN_SCALES:
             return False, (f"a reported effect size on the {reported_scale!r} scale is not a "
@@ -88,7 +119,7 @@ def admissibility(kind: str, design: str, compares: str, model_ok: bool, model_r
 
 
 # ----------------------------------------------------------------------------- schema
-#: one row per statistic found; 28 leaf properties, under the structured-output grammar limit
+#: one row per statistic found; 31 leaf properties, under the structured-output grammar limit
 EXTRACT_STATS_SCHEMA: dict[str, Any] = {
     "type": "object", "additionalProperties": False,
     "required": ["statistics", "notes"],
@@ -98,10 +129,12 @@ EXTRACT_STATS_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object", "additionalProperties": False,
                 "required": ["kind", "status", "page", "locator", "quote", "effect_as_written",
-                             "compares_the_two_groups", "design", "stat_type", "stat_value", "df",
-                             "df1", "df2", "tails", "p_kind", "p_value", "direction",
-                             "direction_quote", "reported_value", "reported_scale", "standardizer",
-                             "reported_ci_low", "reported_ci_high", "positive_means", "admissible",
+                             "compares_the_two_groups", "contrast_kind", "design", "stat_type",
+                             "stat_value", "df", "df1", "df2", "within_factors",
+                             "outcome_averages_over", "model_fitted_to", "tails", "p_kind",
+                             "p_value", "direction", "direction_quote", "reported_value",
+                             "reported_scale", "standardizer", "reported_ci_low",
+                             "reported_ci_high", "positive_means", "admissible",
                              "admissible_reason", "notes"],
                 "properties": {
                     "kind": enum_schema([*_KINDS, "unknown"]),
@@ -111,12 +144,16 @@ EXTRACT_STATS_SCHEMA: dict[str, Any] = {
                     "quote": {"type": "string"},
                     "effect_as_written": {"type": "string"},
                     "compares_the_two_groups": enum_schema(_YES_NO),
+                    "contrast_kind": enum_schema(get_args(ContrastKind)),
                     "design": enum_schema(get_args(TestDesign)),
                     "stat_type": enum_schema(_STAT_TYPES),
                     "stat_value": {"type": ["number", "null"]},
                     "df": {"type": ["number", "null"]},
                     "df1": {"type": ["number", "null"]},
                     "df2": {"type": ["number", "null"]},
+                    "within_factors": {"type": "array", "items": {"type": "string"}},
+                    "outcome_averages_over": {"type": "array", "items": {"type": "string"}},
+                    "model_fitted_to": {"type": "string"},
                     "tails": {"type": ["integer", "null"]},
                     "p_kind": enum_schema(get_args(PKind)),
                     "p_value": {"type": ["number", "null"]},
@@ -153,6 +190,13 @@ def _whole(raw: Any) -> int | None:
     return raw if isinstance(raw, int) and not isinstance(raw, bool) else None
 
 
+def _strings(raw: Any) -> list[str]:
+    """A list of non-empty strings the model sent (anything else is not an answer)."""
+    if not isinstance(raw, list):
+        return []
+    return [item.strip() for item in raw if isinstance(item, str) and item.strip()]
+
+
 def _number(raw: Any) -> float | None:
     if isinstance(raw, bool) or raw is None:
         return None
@@ -176,6 +220,10 @@ def _candidate(row: dict[str, Any], *, index: int, paper: PaperRecord, dataset: 
     design = _enum_value(row.get("design"), get_args(TestDesign), "unknown")
     stat_type = _enum_value(row.get("stat_type"), _STAT_TYPES, "unknown")
     compares = _enum_value(row.get("compares_the_two_groups"), _YES_NO, "unknown")
+    contrast_kind = _enum_value(row.get("contrast_kind"), get_args(ContrastKind), "unknown")
+    within_factors = _strings(row.get("within_factors"))
+    averages_over = _strings(row.get("outcome_averages_over"))
+    fitted_to = (row.get("model_fitted_to") or "").strip()
     reported_scale = _enum_value(row.get("reported_scale"), get_args(ReportedScale), "unknown")
     standardizer = _enum_value(row.get("standardizer"), get_args(Standardizer), "unknown")
     notes = (row.get("notes") or "").strip()
@@ -196,7 +244,8 @@ def _candidate(row: dict[str, Any], *, index: int, paper: PaperRecord, dataset: 
 
     admissible, reason = admissibility(
         kind, design, compares, bool(row.get("admissible")),
-        (row.get("admissible_reason") or "").strip(), reported_scale, standardizer)
+        (row.get("admissible_reason") or "").strip(), reported_scale, standardizer,
+        contrast_kind, within_factors, averages_over)
     if status != "found":                    # nothing was transcribed, so nothing is admissible
         admissible, reason = False, f"the extractor answered {status}"
 
@@ -209,6 +258,8 @@ def _candidate(row: dict[str, Any], *, index: int, paper: PaperRecord, dataset: 
         stat_type=stat_type, stat_value=values["stat_value"],
         df=values["df"], df1=values["df1"], df2=values["df2"], tails=tails, p_kind=p_kind,
         p_value=values["p_value"], design=design,
+        contrast_kind=contrast_kind, within_factors=within_factors,
+        outcome_averages_over=averages_over, model_fitted_to=fitted_to,
         direction=_enum_value(row.get("direction"), get_args(Direction), "unknown"),
         admissible=admissible, admissible_reason=reason,
         reported_value=values["reported_value"], reported_scale=reported_scale,

@@ -12,6 +12,7 @@ Conventions (used everywhere in Canopy):
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Literal, Sequence
 
@@ -216,10 +217,17 @@ CONVERTIBLE_DESIGNS: frozenset[str] = frozenset({"independent_t", "one_way_betwe
 #: how far the printed degrees of freedom may sit from n_a + n_b − 2 before the statistic is
 #: refused (±2 covers a paper that reports df after one exclusion, or rounds a Welch correction)
 DF_TOLERANCE = 2.0
-#: why each other design cannot stand in for the two group means
+#: why each other design cannot stand in for the two group means. The reason given for
+#: `mixed_main_effect` used to be "tested against a different error term", which is false: the
+#: between-subjects portion of a split-plot IS the one-way ANOVA on the subject means, so
+#: F_between(1, N-2) = t^2. The real reason to refuse is AGGREGATION SCOPE — the main effect is
+#: computed on scores averaged over every level of the model's within-subject factors, so it
+#: answers the outcome's question only when the outcome asks for that same average (C5, P-B).
 _DESIGN_REASONS: dict[str, str] = {
-    "mixed_main_effect": "the grouping factor in a mixed analysis is tested against a different "
-                         "error term than a two-group comparison",
+    "mixed_main_effect": "the main effect of the grouping factor in a mixed analysis is computed "
+                         "on scores averaged over every level of the model's within-subject "
+                         "factors, so it estimates the group contrast at that average and not "
+                         "necessarily at the window this outcome asks about",
     "interaction": "an interaction term is not a comparison of the two groups",
     "paired": "a within-participant comparison carries no between-group variance",
     "ancova": "a covariate-adjusted statistic is not the raw contrast of the two groups",
@@ -227,31 +235,193 @@ _DESIGN_REASONS: dict[str, str] = {
     "unknown": "the paper does not say what kind of test this is",
 }
 
+#: the only thing a statistic may contrast if it is to stand in for the two group means (P-B)
+CONVERTIBLE_CONTRAST = "groups"
+#: why each other contrast cannot, whatever its degrees of freedom
+_CONTRAST_REASONS: dict[str, str] = {
+    "against_constant": "it tests one group against a constant (zero, chance, a baseline value), "
+                        "not group A against group B — its degrees of freedom may still equal "
+                        "n_a + n_b - 2 and it is still not this contrast",
+    "interaction": "an interaction term is not a comparison of the two groups",
+    "within": "a within-subject effect is not a comparison of the two groups",
+    "unknown": "nobody recorded what this statistic contrasts, and a statistic is not assumed to "
+               "compare the two groups because its design label allows it",
+}
 
-def convertibility(design: str, df: float | None, n_a: float,
-                   n_b: float) -> tuple[bool, str, list[str]]:
+
+def _factor_tokens(name: str) -> frozenset[str]:
+    """A factor name as a set of comparable words.
+
+    Extractors write a factor with its levels ("target direction (8 levels)") and the outcome
+    side writes the same factor plainly ("target direction", "blocks"). So: drop anything in
+    parentheses (that is the level count), drop digits, lower-case, split on non-letters, and take
+    the singular of each word. What is left is the factor's NAME, and two names match only when
+    they are the same name (see `_same_factor`).
+    """
+    text = re.sub(r"\([^)]*\)", " ", str(name).lower())
+    words = [w for w in re.split(r"[^a-z]+", text) if w]
+    return frozenset(w[:-1] if len(w) > 3 and w.endswith("s") else w for w in words)
+
+
+#: "5 levels" / "eight conditions" is a factor's SIZE, not a choice of one of them
+_LEVEL_COUNT = re.compile(r"\b\d+\s*(?:levels?|conditions?|values?)\b", re.I)
+#: words that pick ONE level of a factor instead of naming the factor
+_LEVEL_SELECTOR = re.compile(r"\b(?:last|first|final|only|single|one)\b", re.I)
+
+
+def _names_one_level(text: str) -> bool:
+    """Does this outcome-side entry name one LEVEL of a factor rather than the factor itself?
+
+    "block (last block only)" and "block 5" are the outcome KEEPING a level — the opposite of
+    averaging over the factor — and the parenthetical is exactly the part `_factor_tokens` drops,
+    so without this the two strings compare equal to "block (5 levels)".
+    """
+    stripped = _LEVEL_COUNT.sub(" ", str(text))
+    return bool(_LEVEL_SELECTOR.search(stripped) or re.search(r"\d", stripped))
+
+
+def _same_factor(factor: str, averaged_over: str) -> bool:
+    """Is `averaged_over` (from the OUTCOME) the same factor as `factor` (from the MODEL)?
+
+    Equality of the normalised name, not containment. The subset test this replaces let one
+    verbose outcome string ("the eight target directions in the last block") cover BOTH of a
+    model's within factors, and let "the last block" satisfy the gate for "block (5 levels)"
+    because it contains the word "block" — which is the statistic C5 exists to refuse. The
+    arguments are not interchangeable: only the outcome side is checked for a level selector,
+    because only the outcome side is claiming to average over the whole factor.
+    """
+    tokens_factor, tokens_averaged = _factor_tokens(factor), _factor_tokens(averaged_over)
+    if not tokens_factor or not tokens_averaged:
+        return False
+    if _names_one_level(averaged_over):
+        return False
+    return tokens_factor == tokens_averaged
+
+
+def contrast_ok(contrast_kind: str) -> tuple[bool, str]:
+    """`(ok, reason)` — P-B's code-side counterpart to the prompt's exclusions.
+
+    The prompt tells the extractor that a test against a constant is not a `value` source. This
+    says the same thing where it binds: a statistic whose recorded contrast is anything but
+    `groups` is refused, so the rule survives a model that labels it wrongly.
+    """
+    if contrast_kind == CONVERTIBLE_CONTRAST:
+        return True, ""
+    reason = _CONTRAST_REASONS.get(contrast_kind,
+                                   "it is not recorded as a comparison of the two groups")
+    return False, f"contrast {contrast_kind!r} cannot carry this cell: {reason}"
+
+
+def aggregation_scope_ok(design: str, within_factors: Sequence[str] | None,
+                         outcome_averages_over: Sequence[str] | None,
+                         error_df: float | None, n_a: float,
+                         n_b: float) -> tuple[bool, str, list[str]]:
+    """`(ok, reason, flags)` — C5: does this statistic answer the question the outcome asks?
+
+    A main-effect t/F from a model containing within-subject factors estimates the group contrast
+    AVERAGED OVER every level of those factors. It may fill a cell only when the outcome's own
+    measurement window is that same average, which is what `outcome_averages_over` records.
+
+    Absence of evidence about the model's factors is treated as evidence of risk. Papers write
+    "a 2 x 8 ANOVA" without naming the factors, and an extractor that read such a sentence records
+    an empty list — indistinguishable from a model that truly had none. So an empty/absent
+    `within_factors` opens the route only for the one shape where no within-subject factor can be
+    hiding: `design == "independent_t"` AND the error df equal n_a + n_b - 2 EXACTLY.
+
+    `within_factors=None` means this call site records nothing at all about the model (the plain
+    arithmetic helpers, called with numbers rather than with an extraction) and the scope check is
+    not applied; the pipeline always passes a list.
+    """
+    if within_factors is None:
+        return True, "", []
+    named = [f for f in within_factors if str(f).strip()]
+    if named:
+        averaged = [f for f in (outcome_averages_over or []) if str(f).strip()]
+        missing = [f for f in named if not any(_same_factor(f, w) for w in averaged)]
+        if missing:
+            return False, (f"the statistic comes from a model containing the within-subject "
+                           f"factor(s) {', '.join(repr(str(f)) for f in missing)}, so it estimates "
+                           f"the group contrast averaged over every level of them; this outcome's "
+                           f"measurement window does not average over "
+                           f"{'them' if len(missing) > 1 else 'it'}"
+                           + (f" (it averages over {', '.join(sorted(str(f) for f in (outcome_averages_over or [])))})"
+                              if outcome_averages_over else " (it averages over nothing recorded)")), []
+        return True, "", ["aggregation_scope_matched"]
+    expected = n_a + n_b - 2
+    if design == "independent_t" and error_df is not None and float(error_df) == float(expected):
+        return True, "", []
+    return False, ("the model's within-subject factors were not recorded, so the statistic's "
+                   "estimand is unknown: it may be the group contrast averaged over blocks, "
+                   "targets or sessions this outcome does not average over. Only an "
+                   "`independent_t` whose error df equal n_a + n_b - 2 exactly "
+                   f"(here design {design!r}, df {('none' if error_df is None else format(float(error_df), 'g'))} "
+                   f"against {expected:g}) can be trusted without them"), []
+
+
+def convertibility(design: str, df: float | None, n_a: float, n_b: float, *,
+                   contrast_kind: str | None = None,
+                   within_factors: Sequence[str] | None = None,
+                   outcome_averages_over: Sequence[str] | None = None,
+                   df_shortfall_explained: str = "",
+                   ) -> tuple[bool, str, list[str]]:
     """`(ok, reason, flags)` — may a statistic from this design and these dfs become an SMD?
 
     Missing degrees of freedom are allowed but flagged: a paper that prints "t = 5.25, p < .001"
     with two groups of twelve is usually reporting the two-group test, and the flag says the claim
     was never checked against the group sizes.
+
+    `contrast_kind` (P-B) and `within_factors` / `outcome_averages_over` (C5) are the extraction's
+    record of WHAT the statistic contrasts and WHAT it was averaged over. Passing `None` for them
+    means this call site has no such record — the plain arithmetic helpers — and the corresponding
+    check is skipped; every pipeline call passes them, and `"unknown"` / `[]` are refusals, not
+    permissions.
+
+    **C9 — the degrees of freedom must EQUAL n_a + n_b - 2, unless the shortfall is explained.**
+    A tolerance is not an explanation. `F(1,36)` reported for two groups of twenty is two df short
+    of the 38 those groups have, and that is the shape of a two-covariate ANCOVA reported as a
+    one-way: the number is a real F, computed on a model these two groups are only part of. The
+    old `±2` window admitted it silently, and no arithmetic here can tell the difference. So the
+    default is refusal, and `df_shortfall_explained` is the caller's record of WHY a gap is
+    admissible — decided once, in `canopy.verify.checks._shortfall_is_explained`, against the
+    paper's own reported participant total and whether the group sizes were printed at all. An
+    explained gap is still never automatic: it is flagged `df_off_by_<gap>` and
+    `confidence.conversion_gate_bucket` caps the row that carries it.
     """
+    if contrast_kind is not None:
+        ok, reason = contrast_ok(contrast_kind)
+        if not ok:
+            return False, reason, []
     if design not in CONVERTIBLE_DESIGNS:
         reason = _DESIGN_REASONS.get(design, "it is not a comparison of two independent groups")
         return False, f"design {design!r} cannot carry this contrast: {reason}", []
+    scope_ok, scope_reason, scope_flags = aggregation_scope_ok(
+        design, within_factors, outcome_averages_over, df, n_a, n_b)
+    if not scope_ok:
+        return False, scope_reason, []
     expected = n_a + n_b - 2
     if df is None:
-        return True, "", ["df_missing"]
+        return True, "", [*scope_flags, "df_missing"]
     gap = abs(float(df) - expected)
+    if gap and not df_shortfall_explained:
+        return False, (f"the printed degrees of freedom ({float(df):g}) do not equal "
+                       f"n_a + n_b - 2 = {expected:g} and nothing on the record explains the "
+                       f"shortfall, so this statistic was not computed on these two groups as "
+                       f"analysed"), []
     if gap > DF_TOLERANCE:
-        return False, (f"the printed degrees of freedom ({float(df):g}) do not match "
-                       f"n_a + n_b - 2 = {expected:g}, so this statistic was not computed on "
-                       f"these two groups"), []
-    return True, "", ([f"df_off_by_{gap:g}"] if gap else [])
+        return False, (f"the printed degrees of freedom ({float(df):g}) are {gap:g} from "
+                       f"n_a + n_b - 2 = {expected:g}, further than any explanation covers "
+                       f"({df_shortfall_explained})"), []
+    return True, "", [*scope_flags, *([f"df_off_by_{gap:g}"] if gap else [])]
 
 
-def _gate(design: str, df: float | None, n_a: float, n_b: float, what: str) -> list[str]:
-    ok, reason, flags = convertibility(design, df, n_a, n_b)
+def _gate(design: str, df: float | None, n_a: float, n_b: float, what: str, *,
+          contrast_kind: str | None = None, within_factors: Sequence[str] | None = None,
+          outcome_averages_over: Sequence[str] | None = None,
+          df_shortfall_explained: str = "") -> list[str]:
+    ok, reason, flags = convertibility(design, df, n_a, n_b, contrast_kind=contrast_kind,
+                                       within_factors=within_factors,
+                                       outcome_averages_over=outcome_averages_over,
+                                       df_shortfall_explained=df_shortfall_explained)
     if not ok:
         raise NotConvertible(f"{what}: {reason}")
     return flags
@@ -304,14 +474,20 @@ def smd_from_means(m_a: float, sd_a: float, n_a: float, m_b: float, sd_b: float,
 def smd_from_t(t: float, n_a: float, n_b: float, *, df: float | None = None,
                design: str = "unknown", positive_means_a_greater: bool = True,
                higher_is_better: bool = True, estimator: Estimator = "cohen",
-               variance: VarianceMethod = "borenstein", level: float = 0.95) -> SMDResult:
+               variance: VarianceMethod = "borenstein", level: float = 0.95,
+               contrast_kind: str | None = None, within_factors: Sequence[str] | None = None,
+               outcome_averages_over: Sequence[str] | None = None,
+               df_shortfall_explained: str = "") -> SMDResult:
     """d from an independent-samples t (amendment C: gated by `design` and `df`).
 
     ``positive_means_a_greater`` states the paper's sign convention. Raises `NotConvertible` when
-    the design cannot carry a between-group contrast, or when the printed degrees of freedom do
-    not match the analysed group sizes.
+    the design cannot carry a between-group contrast, when what it contrasts is not the two groups
+    (P-B), when its estimand is an average over factors this outcome does not average over (C5),
+    or when the printed degrees of freedom do not match the analysed group sizes.
     """
-    flags = _gate(design, df, n_a, n_b, f"t = {t:g}")
+    flags = _gate(design, df, n_a, n_b, f"t = {t:g}", contrast_kind=contrast_kind,
+                  within_factors=within_factors, outcome_averages_over=outcome_averages_over,
+                  df_shortfall_explained=df_shortfall_explained)
     t_ab = t if positive_means_a_greater else -t
     return _finish(d_from_t(t_ab, n_a, n_b), n_a, n_b, higher_is_better, estimator, variance, level, "t_stat",
                    dict(t=t, df=df, design=design,
@@ -321,7 +497,10 @@ def smd_from_t(t: float, n_a: float, n_b: float, *, df: float | None = None,
 def smd_from_f(F: float, n_a: float, n_b: float, *, a_greater: bool, df1: float | None = None,
                df2: float | None = None, design: str = "unknown", higher_is_better: bool = True,
                estimator: Estimator = "cohen", variance: VarianceMethod = "borenstein",
-               level: float = 0.95) -> SMDResult:
+               level: float = 0.95, contrast_kind: str | None = None,
+               within_factors: Sequence[str] | None = None,
+               outcome_averages_over: Sequence[str] | None = None,
+               df_shortfall_explained: str = "") -> SMDResult:
     """d from a between-subjects F(1, df) (amendment C: gated). ``a_greater`` = A's raw mean is higher.
 
     An F with more than one numerator degree of freedom compares more than two groups, so it is
@@ -332,7 +511,9 @@ def smd_from_f(F: float, n_a: float, n_b: float, *, a_greater: bool, df1: float 
         raise NotConvertible(
             f"F = {F:g}: df1 = {float(df1):g} means the test compares more than two groups, so it "
             f"is not the contrast of this pair")
-    flags = _gate(design, df2, n_a, n_b, f"F = {F:g}")
+    flags = _gate(design, df2, n_a, n_b, f"F = {F:g}", contrast_kind=contrast_kind,
+                  within_factors=within_factors, outcome_averages_over=outcome_averages_over,
+                  df_shortfall_explained=df_shortfall_explained)
     return _finish(d_from_f(F, n_a, n_b, 1 if a_greater else -1), n_a, n_b, higher_is_better, estimator, variance,
                    level, "f_stat", dict(F=F, df1=df1, df2=df2, design=design,
                                          a_greater=a_greater), flags)
@@ -341,9 +522,14 @@ def smd_from_f(F: float, n_a: float, n_b: float, *, a_greater: bool, df1: float 
 def smd_from_p(p: float, n_a: float, n_b: float, *, a_greater: bool, df: float | None = None,
                design: str = "unknown", two_tailed: bool = True, higher_is_better: bool = True,
                estimator: Estimator = "cohen", variance: VarianceMethod = "borenstein",
-               level: float = 0.95) -> SMDResult:
+               level: float = 0.95, contrast_kind: str | None = None,
+               within_factors: Sequence[str] | None = None,
+               outcome_averages_over: Sequence[str] | None = None,
+               df_shortfall_explained: str = "") -> SMDResult:
     """d from an exact p value (amendment C: gated exactly like the t it is inverted from)."""
-    flags = _gate(design, df, n_a, n_b, f"p = {p:g}")
+    flags = _gate(design, df, n_a, n_b, f"p = {p:g}", contrast_kind=contrast_kind,
+                  within_factors=within_factors, outcome_averages_over=outcome_averages_over,
+                  df_shortfall_explained=df_shortfall_explained)
     d_raw = d_from_p(p, n_a, n_b, two_tailed, 1 if a_greater else -1)
     return _finish(d_raw, n_a, n_b, higher_is_better, estimator, variance, level, "p_value",
                    dict(p=p, df=df, design=design, two_tailed=two_tailed,
@@ -352,8 +538,21 @@ def smd_from_p(p: float, n_a: float, n_b: float, *, a_greater: bool, df: float |
 
 def smd_from_reported(d_reported: float, n_a: float, n_b: float, *, positive_means_a_greater: bool = True,
                       higher_is_better: bool = True, is_hedges_g: bool = False, estimator: Estimator = "cohen",
-                      variance: VarianceMethod = "borenstein", level: float = 0.95) -> SMDResult:
-    """Use an effect size the paper itself reports (Cohen's d or Hedges' g for A vs B)."""
+                      variance: VarianceMethod = "borenstein", level: float = 0.95,
+                      contrast_kind: str | None = None) -> SMDResult:
+    """Use an effect size the paper itself reports (Cohen's d or Hedges' g for A vs B).
+
+    `contrast_kind` is what the printed effect size CONTRASTS (P-B). A printed d has no test
+    statistic behind it, but it always has a contrast: "the aftereffect differed from zero,
+    d = 1.30" is a one-sample effect, and pooling it as the between-group difference is a wrong
+    number, not an imprecise one. `None` means this call site records nothing — the plain
+    arithmetic helpers — and the check is skipped, exactly as it is for `convertibility`; the
+    pipeline always passes it, and `"unknown"` is a refusal.
+    """
+    if contrast_kind is not None:
+        ok, reason = contrast_ok(contrast_kind)
+        if not ok:
+            raise NotConvertible(f"the reported effect size cannot carry this cell: {reason}")
     d_raw = d_reported if positive_means_a_greater else -d_reported
     if is_hedges_g:  # back out d so `d`/`g` fields are consistent
         d_raw = d_raw / J_exact(n_a + n_b - 2)

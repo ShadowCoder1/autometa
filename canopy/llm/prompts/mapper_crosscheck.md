@@ -29,6 +29,12 @@ Rules that matter for the comparison:
 * `page` numbers, ids and quotes follow the same rules as above for every part of the answer.
 * Use the figure/table ids from the roster below in `figure_id` / `table_id`; leave them empty for
   text sources.
+* `analysis_metric` says what the numbers at that location ARE: raw endpoint values, changes from
+  baseline, baseline-corrected values, values expressed as a percentage of the manipulation, or
+  `unknown` when the paper does not make it clear. Answer it for every location you list: an
+  outcome whose locations disagree about this is measuring two different things, which is decided
+  before anything is read, and a location that cannot say which of them it reports has to be set
+  aside rather than read.
 * List every location you can find, including ones you suspect a careful reader might miss. Do not
   extract, digitize, average or compute any value.
 

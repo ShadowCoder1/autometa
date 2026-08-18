@@ -28,9 +28,34 @@ Two kinds of answer, one row each — report every one you find, do not choose b
   you cannot quote it, you did not find it.
 - `effect_as_written`: the paper's own name for what was tested ("Age", "Group", "Group ×
   Session", "post hoc comparison at block 5").
-- `compares_the_two_groups`: `yes` only when the test contrasts the two groups described below on
-  the outcome described below; `no` when it tests anything else (a within-participant factor,
-  another measure, a test against zero); `unknown` when you cannot tell from these pages.
+- `compares_the_two_groups`: `yes` only when the test contrasts **exactly group A versus group B on
+  this outcome, at this measurement window**, and you can say so from the paper's own sentence;
+  `no` when it tests anything else (a within-participant factor, another measure, a test against
+  zero); `unknown` when you cannot tell from these pages.
+- `contrast_kind`, what the statistic **or the printed effect size** contrasts — answer it from the
+  sentence, not from the design label. A printed effect size has a contrast behind it just as a t
+  does: "the change differed from zero, d = 1.30" is `against_constant`, and it is refused for this
+  cell whatever scale it is printed on:
+  - `groups` — group A against group B on this outcome;
+  - `against_constant` — one group (or both together) against zero, chance, or any other fixed
+    value. **A test against a constant is `against_constant` even when its degrees of freedom equal
+    n_a + n_b − 2**, and it can never stand in for the two groups' means;
+  - `interaction` — a product term (group × anything);
+  - `within` — a main effect of a within-participant factor;
+  - `unknown` — the sentence does not say. `unknown` is refused in code, so do not use it to mean
+    "probably the groups".
+- `within_factors`: every **within-subject factor of the model this statistic came from**, each with
+  its number of levels as the paper states it — `["target direction (8 levels)", "block (10
+  levels)"]` for a 2 × 8 × 10 analysis. A main effect from such a model is computed on scores
+  **averaged over every level** of these factors. Leave the list empty ONLY when the paper's
+  sentence shows the model had none (a plain two-group t test); an empty list from a sentence you
+  could not read closes the route rather than opening it, so record what you saw.
+- `outcome_averages_over`: which of those factors the **outcome definition below** itself averages
+  over ("mean across all eight targets" → `["target direction"]`). Use the same factor names you
+  used in `within_factors`. If the outcome asks about one level (one block, one target, one
+  session), this list does not contain that factor.
+- `model_fitted_to`: the quantity the model was fitted to, in the paper's words ("per-subject means
+  of the eight target directions", "each subject's median per episode").
 - `design`, what kind of test it is:
   - `independent_t` — two independent groups compared by a t test;
   - `one_way_between` — an analysis of variance whose only factor is the grouping;
@@ -54,13 +79,20 @@ Two kinds of answer, one row each — report every one you find, do not choose b
   carry a sign, and guessing one would invert the result.
 - For a printed effect size: `reported_value` as printed, `reported_scale` (which effect size it
   is), `standardizer` (what it was divided by, when the paper says), `reported_ci_low` and
-  `reported_ci_high` when an interval is given, and `positive_means` — which group a positive value
-  favours, per the paper's own wording.
+  `reported_ci_high` when an interval is given, `positive_means` — which group a positive value
+  favours, per the paper's own wording — and `contrast_kind`, what the two things it compares are.
 - `admissible`: `true` only when this statistic is a comparison **between participants** of exactly
-  these two groups on exactly this outcome, so that it could stand in for their means. Everything
-  else is `false` with a short reason in `admissible_reason` (an interaction, a within-participant
-  effect, a covariate-adjusted analysis, a different measure, a different phase). Your answer is
-  recorded, not obeyed: the rule is applied again in code.
+  these two groups on exactly this outcome, at this measurement window, so that it could stand in
+  for their means. Everything else is `false` with a short reason in `admissible_reason`. It is
+  **not** admissible, whatever its degrees of freedom, when it is: a test of one group against zero
+  or any constant (even when its df equal n_a + n_b − 2); an interaction; a main effect of a
+  within-subject factor; a test from a model containing a second between-subjects factor or a
+  covariate; an omnibus test over more than two levels (numerator df > 1); a paired or
+  repeated-measures test; a bounded p ("p < .05") rather than an exact one; or a statistic computed
+  on scores **averaged over** a factor this outcome does not average over — blocks, episodes,
+  targets, sessions. A χ² is never admissible for a continuous outcome: no conversion to a
+  standardised mean difference exists. Your answer is recorded, not obeyed: the rule is applied
+  again in code, and code can only make a statistic *less* admissible than you said.
 - `status`: `found` when the statistic is printed on these pages; `not_on_these_pages` when nothing
   of this kind is here (leave every number null and the quote empty, and say in `notes` what these
   pages do report); `ambiguous` when two readings are possible (numbers null, both readings with

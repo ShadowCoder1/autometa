@@ -105,7 +105,8 @@ def test_prompt_version_tracks_the_prompt_file():
     ("unknown", False),
 ])
 def test_only_a_between_group_comparison_is_admissible(design, expected):
-    ok, reason = admissibility("test_statistic", design, "yes", True, "")
+    ok, reason = admissibility("test_statistic", design, "yes", True, "",
+                               contrast_kind="groups")
     assert ok is expected
     assert (reason == "") is expected                 # every refusal explains itself
     assert (design in ADMISSIBLE_DESIGNS) is expected
@@ -127,13 +128,83 @@ def test_an_unclear_target_is_not_admissible():
 
 def test_the_extractor_can_veto_an_admissible_design():
     ok, reason = admissibility("test_statistic", "independent_t", "yes", False,
-                               "this t test is for the baseline block")
+                               "this t test is for the baseline block", contrast_kind="groups")
     assert ok is False and "baseline block" in reason
 
 
 def test_the_extractor_cannot_promote_an_inadmissible_design():
-    ok, reason = admissibility("test_statistic", "interaction", "yes", True, "looks fine to me")
+    ok, reason = admissibility("test_statistic", "interaction", "yes", True, "looks fine to me",
+                               contrast_kind="groups")
     assert ok is False and "interaction" in reason
+
+
+# ------------------------------------------------------------------ P-B: what does it contrast?
+def test_a_contrast_the_extractor_did_not_record_is_not_assumed_to_be_the_two_groups():
+    """`contrast_kind` is a required field of the schema, and `unknown` is a refusal: a statistic
+    is not a group comparison because its design label allows one."""
+    ok, reason = admissibility("test_statistic", "independent_t", "yes", True, "")
+    assert ok is False and "nobody recorded" in reason
+
+
+@pytest.mark.parametrize("kind,expected_word", [
+    ("against_constant", "constant"),
+    ("interaction", "interaction"),
+    ("within", "within-subject"),
+])
+def test_a_statistic_that_contrasts_something_else_is_refused_whatever_its_df(kind, expected_word):
+    """"Tests of adaptive shifts against zero" sits one paragraph from the between-group ANOVA on
+    the same measure, and its degrees of freedom can equal n_a + n_b - 2 exactly."""
+    ok, reason = admissibility("test_statistic", "independent_t", "yes", True, "",
+                               contrast_kind=kind)
+    assert ok is False and expected_word in reason
+
+
+def test_a_reported_effect_size_is_asked_what_it_contrasts_like_everything_else():
+    """F5: this test used to assert the opposite, on the reasoning that a printed d has no test
+    statistic behind it. It always has a CONTRAST behind it, and that is what the field records:
+    "the aftereffect differed from zero, d = 1.30" is not the difference between the two groups,
+    and its `contrast_kind: against_constant` was sitting unread on the candidate.
+    """
+    ok, reason = admissibility("reported_d", "unknown", "yes", True, "",
+                               reported_scale="cohens_d", standardizer="pooled_sd_between",
+                               contrast_kind="against_constant")
+    assert ok is False and "constant" in reason
+    ok, reason = admissibility("reported_d", "unknown", "yes", True, "",
+                               reported_scale="cohens_d", standardizer="pooled_sd_between")
+    assert ok is False and "nobody recorded" in reason      # the default is the refusing one
+    ok, reason = admissibility("reported_d", "unknown", "yes", True, "",
+                               reported_scale="cohens_d", standardizer="pooled_sd_between",
+                               contrast_kind="groups")
+    assert ok is True and reason == ""
+
+
+# ------------------------------------------------------------------ C5: aggregation scope
+def test_a_main_effect_averaged_over_a_factor_this_outcome_keeps_is_inadmissible():
+    ok, reason = admissibility("test_statistic", "independent_t", "yes", True, "",
+                               contrast_kind="groups",
+                               within_factors=["target direction (8 levels)"],
+                               outcome_averages_over=["block"])
+    assert ok is False
+    assert "target direction (8 levels)" in reason and "averaged over every level" in reason
+
+
+def test_the_same_factor_is_fine_when_the_outcome_averages_over_it_too():
+    ok, reason = admissibility("test_statistic", "independent_t", "yes", True, "",
+                               contrast_kind="groups",
+                               within_factors=["target direction (8 levels)"],
+                               outcome_averages_over=["target direction"])
+    assert ok is True and reason == ""
+
+
+def test_the_mixed_design_reason_names_aggregation_scope_not_a_different_error_term():
+    """P-B: the old string said the main effect is "tested against a different error term", which
+    is false — the between-subjects portion of a split-plot IS the one-way ANOVA on subject
+    means."""
+    from canopy.agents.extract_stats import DESIGN_REASONS
+
+    reason = DESIGN_REASONS["mixed_main_effect"]
+    assert "averaged over every level" in reason
+    assert "error term" not in reason
 
 
 @pytest.mark.parametrize("scale,standardizer,expected", [
@@ -145,7 +216,7 @@ def test_the_extractor_cannot_promote_an_inadmissible_design():
 ])
 def test_a_reported_effect_size_is_admissible_only_between_groups(scale, standardizer, expected):
     ok, reason = admissibility("reported_d", "unknown", "yes", True, "", reported_scale=scale,
-                               standardizer=standardizer)
+                               standardizer=standardizer, contrast_kind="groups")
     assert ok is expected
     assert (reason == "") is expected
 
@@ -163,6 +234,8 @@ def _stat(**over):
            "direction_quote": "adaptive improvement was more pronounced for young than for old",
            "reported_value": None, "reported_scale": "unknown", "standardizer": "unknown",
            "reported_ci_low": None, "reported_ci_high": None, "positive_means": "unknown",
+           "contrast_kind": "groups", "within_factors": ["episode (15 levels)"],
+           "outcome_averages_over": [], "model_fitted_to": "each subject's median per episode",
            "admissible": False, "admissible_reason": "mixed design", "notes": ""}
     row.update(over)
     return row
@@ -245,10 +318,13 @@ def test_a_two_group_t_test_is_admissible(paper, protocol, fake_dataset):
     rows = [_stat(design="independent_t", stat_type="t", stat_value=5.25, df=22.0, df1=None,
                   df2=None, p_kind="less_than", p_value=0.001, admissible=True,
                   admissible_reason="", effect_as_written="group difference",
+                  within_factors=[], model_fitted_to="each subject's completion time",
                   quote="the difference was statistically significant (t(22)=5.25; P<0.001)")]
     cands, _ = _extract(paper, protocol, fake_dataset, _payload(rows=rows))
     assert cands[0].admissible is True and cands[0].admissible_reason == ""
     assert (cands[0].stat_type, cands[0].stat_value, cands[0].df) == ("t", 5.25, 22.0)
+    assert cands[0].contrast_kind == "groups" and cands[0].within_factors == []
+    assert cands[0].model_fitted_to == "each subject's completion time"
 
 
 def test_a_bare_p_value_is_routed_as_a_p_value(paper, protocol, fake_dataset):
@@ -397,3 +473,24 @@ def test_no_statistic_source_means_no_call_at_all(paper, protocol, fake_dataset)
     assert extract_test_statistics(client, paper, protocol, fake_dataset, "late_adaptation",
                                    [*only_unknown, STAT_SOURCE])
     assert len(provider.requests) == 1
+
+
+def test_the_estimand_fields_reach_the_candidate(paper, protocol, fake_dataset):
+    """C5/P-B: what the statistic contrasts and what its model averaged over are transcribed like
+    any other printed fact, so the gate in `canopy.stats` has something to refuse on."""
+    rows = [_stat(within_factors=["episode (15 levels)", "target direction (8 levels)"],
+                  outcome_averages_over=["episode"],
+                  model_fitted_to="per-subject medians per episode")]
+    cands, _ = _extract(paper, protocol, fake_dataset, _payload(rows=rows))
+    cand = cands[0]
+    assert cand.within_factors == ["episode (15 levels)", "target direction (8 levels)"]
+    assert cand.outcome_averages_over == ["episode"]
+    assert cand.model_fitted_to == "per-subject medians per episode"
+    # …and the factor the outcome does NOT average over is named in the refusal
+    assert cand.admissible is False and "target direction (8 levels)" in cand.admissible_reason
+
+
+def test_a_junk_factor_list_is_not_a_factor_list(paper, protocol, fake_dataset):
+    rows = [_stat(within_factors=["", "   ", 7], outcome_averages_over="episode")]
+    cands, _ = _extract(paper, protocol, fake_dataset, _payload(rows=rows))
+    assert cands[0].within_factors == [] and cands[0].outcome_averages_over == []

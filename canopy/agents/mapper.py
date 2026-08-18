@@ -34,7 +34,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import Any, get_args
+from typing import Any, Callable, Mapping, Sequence, get_args
 
 from ..config import MODELS
 from ..ingest.pdf import PaperRecord
@@ -42,12 +42,16 @@ from ..llm.client import LLMClient
 from ..llm.errors import LLMError
 from ..llm.context import FILES_API_BETA, figure_blocks, text_block
 from ..models import (AnalysisMetric, Citation, DatasetSpec, DispersionType, ErrorBarScope,
-                      ExposureOrder, GroupSpec, OutcomeSources, Protocol, RosterDecision, Source,
-                      SourceKind, SourceRole, StudyMap, XAxisKind)
+                      ExposureOrder, GroupSpec, MapQuestion, OutcomeSources, Protocol,
+                      RosterDecision, Source, SourceKind, SourceRole, SourceSample, StudyMap,
+                      XAxisKind)
 from . import load_prompt, render_prompt
 
-__all__ = ["map_study", "protocol_text", "roster_text", "roster_entries", "dataset_text",
-           "PROMPT_VERSION", "MAPPER_SCHEMA", "MAPPER_SOURCES_SCHEMA",
+__all__ = ["apply_map_answers", "extraction_blocks", "map_study", "measure_of",
+           "open_map_questions", "protocol_text", "readable_sources", "roster_text",
+           "MAP_ADJUDICATOR",
+           "roster_entries", "dataset_text", "source_unreadable_reason", "split_metrics",
+           "named_alternatives", "PROMPT_VERSION", "MAPPER_SCHEMA", "MAPPER_SOURCES_SCHEMA",
            "MAPPER_CROSSCHECK_SCHEMA", "MAPPER_ADJUDICATE_SCHEMA", "MAPPER_ROSTER_SCHEMA"]
 
 #: every prompt file this agent uses — their content fingerprints `PROMPT_VERSION`
@@ -97,7 +101,7 @@ _SOURCE_SCHEMA: dict[str, Any] = {
     "type": "object", "additionalProperties": False,
     "required": ["kind", "page", "locator", "quote", "figure_id", "table_id", "error_bar_type",
                  "error_bar_scope", "error_bar_evidence", "analysis_metric", "values_in_text",
-                 "x_axis_kind", "role", "notes"],
+                 "x_axis_kind", "role", "sample", "sample_note", "notes"],
     "properties": {
         "kind": _enum([k.value for k in SourceKind]),
         "page": {"type": "integer"},
@@ -112,6 +116,8 @@ _SOURCE_SCHEMA: dict[str, Any] = {
         "analysis_metric": _enum(get_args(AnalysisMetric)),
         "values_in_text": {"type": "string"},
         "role": _enum(get_args(SourceRole)),
+        "sample": _enum(get_args(SourceSample)),
+        "sample_note": {"type": "string"},
         "notes": {"type": "string"},
     },
 }
@@ -248,7 +254,8 @@ MAPPER_CROSSCHECK_SCHEMA: dict[str, Any] = {
                                     "items": {
                                         "type": "object", "additionalProperties": False,
                                         "required": ["kind", "page", "locator", "figure_id",
-                                                     "table_id", "error_bar_type", "quote"],
+                                                     "table_id", "error_bar_type",
+                                                     "analysis_metric", "quote"],
                                         "properties": {
                                             "kind": _enum([k.value for k in SourceKind]),
                                             "page": {"type": "integer"},
@@ -257,6 +264,12 @@ MAPPER_CROSSCHECK_SCHEMA: dict[str, Any] = {
                                             "table_id": {"type": "string"},
                                             "error_bar_type": _enum([d.value for d in
                                                                      DispersionType]),
+                                            # C6/F6: a location that cannot say which measure it
+                                            # reads is an unresolved second candidate, and every
+                                            # location this agent added used to arrive that way —
+                                            # the schema never asked it. `unknown` is still an
+                                            # honest answer; it is just no longer the only one.
+                                            "analysis_metric": _enum(get_args(AnalysisMetric)),
                                             "quote": {"type": "string"},
                                         },
                                     },
@@ -286,7 +299,8 @@ MAPPER_CROSSCHECK_SCHEMA: dict[str, Any] = {
 
 MAPPER_ADJUDICATE_SCHEMA: dict[str, Any] = {
     "type": "object", "additionalProperties": False,
-    "required": ["eligible", "eligibility_rationale", "datasets", "error_bar_rulings", "notes"],
+    "required": ["eligible", "eligibility_rationale", "datasets", "dataset_inclusions",
+                 "measure_rulings", "error_bar_rulings", "notes"],
     "properties": {
         "eligible": {"type": "boolean"},
         "eligibility_rationale": {"type": "string"},
@@ -300,6 +314,44 @@ MAPPER_ADJUDICATE_SCHEMA: dict[str, Any] = {
                     "label": {"type": "string"},
                     "group_a": _CHECK_GROUP_SCHEMA,
                     "group_b": _CHECK_GROUP_SCHEMA,
+                    "rationale": {"type": "string"},
+                },
+            },
+        },
+        "dataset_inclusions": {                      # C7: one row per single-mapper dataset
+            "type": "array",
+            "items": {
+                "type": "object", "additionalProperties": False,
+                "required": ["primary_dataset_index", "verdict", "rule", "quote", "rationale"],
+                "properties": {
+                    "primary_dataset_index": {"type": "integer"},      # 1-based, into MAP A
+                    "verdict": _enum(["include", "exclude", "unknown"]),
+                    "rule": {"type": "string"},                        # the protocol rule, verbatim
+                    "quote": {"type": "string"},                       # the paper's own words
+                    "rationale": {"type": "string"},
+                },
+            },
+        },
+        "measure_rulings": {                         # C6: one row per two-measure outcome
+            "type": "array",
+            "items": {
+                "type": "object", "additionalProperties": False,
+                "required": ["dataset_index", "outcome_key", "verdict", "winning_analysis_metric",
+                             "winning_location", "losing_locations", "winner_quote", "loser_quote",
+                             "rationale"],
+                "properties": {
+                    "dataset_index": {"type": "integer"},              # 1-based, into MAP A
+                    "outcome_key": {"type": "string"},
+                    "verdict": _enum(["winner", "toss_up", "unknown"]),
+                    "winning_analysis_metric": _enum(get_args(AnalysisMetric)),
+                    # C6/F2: two operationalizations routinely share one `analysis_metric`
+                    # (Heuer's Experiment 2 prints both as `change_from_baseline`), and a ruling
+                    # that can only name the metric then demotes nothing and settles nothing.
+                    # The LOCATION is what separates them.
+                    "winning_location": {"type": "string"},
+                    "losing_locations": {"type": "array", "items": {"type": "string"}},
+                    "winner_quote": {"type": "string"},
+                    "loser_quote": {"type": "string"},
                     "rationale": {"type": "string"},
                 },
             },
@@ -748,13 +800,20 @@ class _Conflicts:
     n_mismatch: bool = False
     mapping: list[int] = field(default_factory=list)        # indices into StudyMap.datasets
     error_bars: list[dict[str, Any]] = field(default_factory=list)
+    #: C7: indices of datasets only the PRIMARY proposed — an inclusion question, not a note
+    single_mapper: list[int] = field(default_factory=list)
+    #: C6: (dataset index, outcome_key) whose map names two measures — a `which_measure` decision
+    measures: list[tuple[int, str]] = field(default_factory=list)
     #: (dataset index, "group_a"/"group_b") -> the cross-check's n, so adjudication can check that
     #: an adopted number came from one of the two agents rather than from nowhere
     check_n: dict[tuple[int, str], int] = field(default_factory=dict)
 
     @property
     def needs_adjudication(self) -> bool:
-        return self.eligibility or self.n_mismatch or bool(self.mapping)
+        # A dataset one agent never saw, and an outcome with two candidate measures, are both
+        # decisions taken HERE — before any extraction is bought against them (C6, C7).
+        return bool(self.eligibility or self.n_mismatch or self.mapping or self.single_mapper
+                    or self.measures)
 
 
 def _diff(study: StudyMap, check: dict[str, Any], outcome_keys: set[str],
@@ -772,14 +831,105 @@ def _diff(study: StudyMap, check: dict[str, Any], outcome_keys: set[str],
     if len(check_datasets) != len(study.datasets):
         disagreements.append(f"dataset count: primary={len(study.datasets)} "
                              f"cross-check={len(check_datasets)}")
-    for index, (dataset, raw) in enumerate(zip(study.datasets, check_datasets)):
-        _diff_dataset(index, dataset, raw, conflicts, outcome_keys, ids, disagreements, flags)
-    for position in range(len(study.datasets), len(check_datasets)):
-        _report_extra_dataset(check_datasets[position], position, disagreements, flags)
-    for position in range(len(check_datasets), len(study.datasets)):
-        flags.append(f"dataset {study.datasets[position].dataset_id}: group mapping unconfirmed "
-                     f"(the cross-check found no counterpart dataset) — needs human")
+    matched = _pair_datasets(study.datasets, check_datasets)
+    for index, dataset in enumerate(study.datasets):
+        position = matched.get(index)
+        if position is None:
+            # C7: neither agent's list position says anything — this dataset is one the cross-check
+            # has no counterpart for, by IDENTITY. It is an INCLUSION question, settled at the map
+            # stage against a named protocol rule, and not a warning to be read after the fact:
+            # Bock's tracking-only control sample was mapped by the primary alone, rejected in
+            # prose by the cross-check, and still produced a fully signed d = -2.9610 because
+            # nothing turned the objection into a decision.
+            conflicts.single_mapper.append(index)
+            disagreements.append(f"dataset {dataset.dataset_id} ({dataset.label or 'unlabelled'}) "
+                                 f"has no counterpart in the cross-check's map")
+            flags.append(_unmatched_dataset_flag(dataset.dataset_id))
+            continue
+        _diff_dataset(index, dataset, check_datasets[position], conflicts, outcome_keys, ids,
+                      disagreements, flags)
+    paired_positions = set(matched.values())
+    for position, raw in enumerate(check_datasets):
+        if position not in paired_positions:
+            _report_extra_dataset(raw, position, disagreements, flags)
     return conflicts
+
+
+#: below this, two agents' descriptions of a contrast are not the same contrast. Pairing by
+#: position blocked the WRONG dataset whenever the mapper listed its datasets in another order
+#: (F3), and pairing two different contrasts is worse than not pairing them: `_diff_dataset`
+#: would compare their group labels and their Ns and an adjudicated n could be adopted from that
+#: comparison. Measured on the recorded cross-checks of the nine-paper run, the same contrast
+#: described by two agents scores 0.69-1.00 and a different contrast of the same paper 0.39-0.56.
+DATASET_MATCH = 0.5
+#: words that carry no identity: every dataset description is full of them
+_IDENTITY_STOPWORDS = frozenset({"the", "a", "an", "of", "to", "and", "or", "vs", "versus", "in",
+                                 "on", "with", "for", "by", "at", "day", "single", "experiment"})
+
+
+def _identity_words(*parts: str) -> frozenset[str]:
+    """The content words of a dataset description, singularised — its identity as a bag of words."""
+    text = " ".join(part or "" for part in parts).lower()
+    words = [w for w in re.split(r"[^a-z0-9]+", text)
+             if w and w not in _IDENTITY_STOPWORDS]
+    return frozenset(w[:-1] if len(w) > 3 and w.endswith("s") else w for w in words)
+
+
+def _dataset_similarity(dataset: DatasetSpec, raw: dict[str, Any]) -> float:
+    """0..1 — how much two agents' descriptions look like the same contrast.
+
+    Two measures, and the stronger one counts: how much of the shorter description's vocabulary
+    the other one contains (two agents writing at different lengths about the same contrast —
+    "Pointing adaptation to +60° rotation: old vs young" and "Bock (2005) Experiment 1 — Pointing
+    adaptation to 60° visuomotor rotation" — share almost every content word), and how alike the
+    three fields both schemas ask for read one by one (which separates two experiments of one
+    paper that share most of their words but differ in their own labels).
+
+    When neither side described the contrast in words at all, the group labels are the only
+    identity left; when there are none of those either, there is no identity and no match — a
+    question, never a pairing on nothing.
+    """
+    mine = (dataset.label, dataset.experiment, dataset.condition)
+    theirs = (raw.get("label") or "", raw.get("experiment") or "", raw.get("condition") or "")
+    scored = [_sim(a, b) for a, b in zip(mine, theirs) if _norm(a) and _norm(b)]
+    if not scored:
+        groups = [(dataset.group_a.label, (raw.get("group_a") or {}).get("label") or ""),
+                  (dataset.group_b.label, (raw.get("group_b") or {}).get("label") or "")]
+        scored = [_sim(a, b) for a, b in groups if _norm(a) and _norm(b)]
+        return sum(scored) / len(scored) if scored else 0.0
+    words_a, words_b = _identity_words(*mine), _identity_words(*theirs)
+    shared = (len(words_a & words_b) / min(len(words_a), len(words_b))
+              if words_a and words_b else 0.0)
+    return max(shared, sum(scored) / len(scored))
+
+
+def _pair_datasets(datasets: Sequence[DatasetSpec],
+                   check_datasets: Sequence[dict[str, Any]]) -> dict[int, int]:
+    """`{index into the map: index into the cross-check's list, for the same contrast}`.
+
+    Best-first, one counterpart each: the strongest pair is taken, then the next strongest of
+    what is left. Order is never used — "the dataset at position 2" is not an identity, and
+    nothing about a model's output order is stable across runs.
+    """
+    scores = sorted(((_dataset_similarity(dataset, raw), index, position)
+                     for index, dataset in enumerate(datasets)
+                     for position, raw in enumerate(check_datasets)),
+                    key=lambda item: (-item[0], item[1], item[2]))
+    paired: dict[int, int] = {}
+    taken: set[int] = set()
+    for score, index, position in scores:
+        if score < DATASET_MATCH or index in paired or position in taken:
+            continue
+        paired[index] = position
+        taken.add(position)
+    return paired
+
+
+def _unmatched_dataset_flag(dataset_id: str) -> str:
+    """The `needs_human` line for a dataset the cross-check has no counterpart for — written once
+    and cleared once, so answering the inclusion question does not leave it standing."""
+    return (f"dataset {dataset_id}: group mapping unconfirmed (the cross-check has no counterpart "
+            f"dataset) — needs human")
 
 
 def _report_extra_dataset(raw: dict[str, Any], position: int, disagreements: list[str],
@@ -905,6 +1055,292 @@ def _agree_error_bars(study: StudyMap, determinations: dict[str, dict[str, Any]]
                                              "source": source, "check_type": other})
 
 
+# ----------------------------------------------------------------------------- one measure (C6)
+#: words a mapper uses when its own text is naming a SECOND measure rather than describing one
+ALTERNATIVE_MARKERS: tuple[str, ...] = ("alternatively", "candidate operationalization",
+                                        "candidate operationalisation", "two candidate",
+                                        "either of two", "or, alternatively")
+
+
+def named_alternatives(outcome: OutcomeSources) -> str:
+    """The marker in the mapper's own words that says this outcome has two measures, or `""`."""
+    text = f"{outcome.measure_name} {outcome.operationalization}".lower()
+    return next((marker for marker in ALTERNATIVE_MARKERS if marker in text), "")
+
+
+#: The one member of `AnalysisMetric` that names a UNIT rather than a quantity: a reading divided
+#: by the size of the perturbation the study imposed, written as a percentage of it. The other
+#: three each name a different QUANTITY — `endpoint` a level, `change_from_baseline` a difference
+#: from this group's own pre-manipulation reading, `baseline_corrected` a reading with a control
+#: condition subtracted — and swapping one for another changes what was measured, which is what a
+#: `which_measure` decision is for. Expressing any of those quantities as a percentage of the
+#: perturbation changes only the scale it is written on: it is the same measurement, so the verify
+#: stage treats the same marks read against a degree axis and a percent axis as corroboration
+#: rather than a dispute (`unit_other_expression`, commit `4c59649`), and C6 must not demote one
+#: of them and buy an adjudication call to settle a question nobody asked.
+RE_EXPRESSION_METRIC = "percent_of_perturbation"
+
+
+def _metric_of(source: Source) -> str:
+    return str(getattr(source.analysis_metric, "value", source.analysis_metric))
+
+
+def _value_metrics(outcome: OutcomeSources) -> list[tuple[Source, str]]:
+    """Every `value` location of this outcome that recorded a metric, with that metric.
+
+    `value` only: a `baseline` or `context` location beside the value is not a rival measure, and
+    an `alternate` is one C6 already settled.
+    """
+    return [(source, metric) for source in outcome.sources
+            if source.role == "value" and (metric := _metric_of(source)) != "unknown"]
+
+
+def _metricless_values(outcome: OutcomeSources) -> list[Source]:
+    """`value` locations that did not say which measure they read.
+
+    These are UNRESOLVED, not agreement. Extraction reads `role in ("value", "unknown")`, so a
+    location whose `analysis_metric` the mapper left blank was read for the cell's number while
+    C6 could neither see it nor demote it: after a winner ruling on Heuer's `d1 late_adaptation`
+    the losing operationalization's own paragraph was still read, through exactly such a sibling.
+    """
+    return [source for source in outcome.sources
+            if source.role == "value" and _metric_of(source) == "unknown"]
+
+
+def _element_key(source: Source) -> tuple[str, str] | None:
+    """The plotted element a source points at — `None` when it points at prose.
+
+    The same figure/table id AND the same panel/row qualifier means *the same marks*: this is the
+    key `_match_source` already uses to decide that two panels of one figure are two locations.
+    """
+    ident = source.figure_id or source.table_id
+    return (ident, _qualifier(source.locator)) if ident else None
+
+
+def measure_of(source: Source, outcome: OutcomeSources) -> str:
+    """The MEASURE one `value` location reads: its metric, with a re-expression resolved to the
+    quantity it re-expresses.
+
+    Controller ruling on C6 vs `4c59649`, as a general rule about the `AnalysisMetric` enum: a
+    percentage OF THE PERTURBATION is a unit, not a quantity, so a location that reports it is
+    reporting one of the outcome's other readings in another unit — one measure written twice,
+    not two candidate operationalizations. Cressman's Fig. 3b prints both on one pair of bars
+    (left axis in degrees, right axis in percent); Bock prints the degrees off Fig. 1 and the
+    percentage in a sentence on the next page ("adaptation magnitude A=(I-F)/I"). Neither is a
+    question for a human, and neither may buy the adjudication call that settles a real dispute.
+
+    Which quantity it re-expresses is answered from THE PAPER'S OWN LAYOUT, never inferred from
+    the absence of alternatives: only the same plotted element read against its other axis says
+    so. A percentage printed anywhere else is its own candidate measure and the `which_measure`
+    question is asked.
+
+    The rule used to have a second branch — "an outcome whose other `value` locations read
+    exactly ONE quantity leaves nothing else the percentage could be a percentage of" — and the
+    controller dropped it, because the label is not evidence about the denominator or about the
+    sample: Bock's prose `A = (I - F)/I` divides by the measured initial error (so `d(A) != d(F)`
+    whenever `I` differs between the groups) and computes it over the pooled seniors, and branch
+    (b) merged it into the Fig. 1 reading on nothing but the absence of a third candidate.
+    """
+    metric = _metric_of(source)
+    if metric != RE_EXPRESSION_METRIC:
+        return metric
+    readings = _value_metrics(outcome)
+    quantities = {m for _, m in readings if m != RE_EXPRESSION_METRIC}
+    if not quantities:
+        return metric               # nothing else was read: the percentage IS this measure
+    key = _element_key(source)
+    same_marks = {m for other, m in readings
+                  if m != RE_EXPRESSION_METRIC and key is not None and _element_key(other) == key}
+    if len(same_marks) == 1:
+        return same_marks.pop()
+    return metric
+
+
+def split_metrics(outcome: OutcomeSources) -> list[str]:
+    """The distinct MEASURES the outcome's own `value` locations read (2+ is a split).
+
+    Measures, not metric labels: `measure_of` has already folded a reading and its re-expression
+    in another unit into one.
+    """
+    return sorted({measure_of(source, outcome) for source, _ in _value_metrics(outcome)})
+
+
+def _diff_measures(study: StudyMap, conflicts: _Conflicts, disagreements: list[str]) -> None:
+    """C6: an outcome whose map names two measures is a `which_measure` decision, taken now.
+
+    `measure_name` and `operationalization` are single-measure fields. When the mapper's own text
+    names alternatives, or two `value` locations under one outcome measure different quantities,
+    the cell has two candidate answers and extracting both mixes them: the run's `metric_mixed`,
+    `unit_mismatch` and `value_outside_axis` flags on Heuer's late-adaptation cell are what that
+    looks like downstream. The choice belongs to the protocol's `definition` and
+    `measurement_window`, and it is made once, here.
+    """
+    for index, dataset in enumerate(study.datasets):
+        for outcome in dataset.outcomes:
+            marker = named_alternatives(outcome)
+            metrics = split_metrics(outcome)
+            # a `value` location that recorded no metric is a candidate nobody has resolved: it
+            # cannot say whether it reads this outcome's measure or the other one, and it is read
+            # for the value unless something says otherwise (F6).
+            metricless = _metricless_values(outcome) if metrics else []
+            if not marker and len(metrics) < 2 and not metricless:
+                continue
+            why = []
+            if marker:
+                why.append(f"the map's own words name an alternative ({marker!r})")
+            if len(metrics) >= 2:
+                why.append(f"its value locations measure {' and '.join(metrics)}")
+            if metricless:
+                why.append(f"{len(metricless)} value location(s) cannot say which measure they "
+                           f"read ({'; '.join(_clip(s.locator, 60) for s in metricless)})")
+            conflicts.measures.append((index, outcome.outcome_key))
+            disagreements.append(f"{dataset.dataset_id} {outcome.outcome_key}: two candidate "
+                                 f"measures — {'; '.join(why)}")
+
+
+#: what the record says about a `value` location that never said which measure it reads, once the
+#: outcome's measure has been settled by someone
+WITHHELD_NOTE = ("set aside by the which_measure decision: this location cannot say which measure "
+                 "it reads, so it cannot be read as the winner's number")
+
+
+@dataclass
+class _Settlement:
+    """One `which_measure` answer read against the outcome's own locations — never applied yet.
+
+    The same reading serves the adjudicator's ruling and a human's answer, so the rule that
+    decides what a settlement DOES exists once. `ok` is False when the answer names nothing this
+    outcome carries (never invent); `settles` is False when applying it would leave the rival
+    readings readable, which is not a settlement however valid the answer looks.
+    """
+
+    ok: bool = False
+    reason: str = ""
+    metric: str = ""                                          # the winning metric, for the record
+    measure: str = ""                                         # the measure that won
+    losers: list[tuple[Source, str]] = field(default_factory=list)     # (location, its metric)
+    withheld: list[Source] = field(default_factory=list)      # `value` locations with no metric
+    settles: bool = False
+
+
+def read_measure_answer(outcome: OutcomeSources, *, winning_metric: str = "",
+                        winning_location: str = "",
+                        losing_locations: Sequence[str] = ()) -> _Settlement:
+    """Read a `which_measure` answer against one outcome. Pure: nothing is changed here.
+
+    A LOCATION decides whenever one is named, and only then the metric. Two operationalizations
+    routinely share one `analysis_metric` — Heuer's Experiment 2 prints both of its candidates as
+    `change_from_baseline` — so an answer that can only name the metric names both of them at
+    once: it demotes nothing, leaves both readable, and the run then extracts the two readings
+    the question exists to choose between. When a location is named, every other `value` location
+    loses EXCEPT the winner's own other-axis expression of the same marks (the unit rule), because
+    "read this one" is what the person answering said.
+
+    Every location that carries no metric at all is withheld too: it cannot say whether it reads
+    the winner or the loser, and a location that cannot say which measure it reads cannot be read
+    as the winner's number.
+    """
+    readings = [(source, metric, measure_of(source, outcome))
+                for source, metric in _value_metrics(outcome)]
+    if not readings:
+        return _Settlement(reason="this outcome has no value location that names a measure")
+    settlement = _winner(readings, winning_metric, winning_location)
+    if not settlement.ok and winning_location and winning_metric:
+        # a location the map does not carry cannot be honoured, but the answer also named a
+        # measure: read that instead of throwing the answer away (it settles only if it demotes)
+        settlement, winning_location = _winner(readings, winning_metric, ""), ""
+    if not settlement.ok:
+        return settlement
+
+    winners = _winner_sources(readings, settlement, winning_location)
+    # identity, not equality: two locations with the same fields are still two locations, and a
+    # pydantic model compares by value
+    won = {id(source) for source in winners}
+    #: the marks the winning locations point at: the same marks in another unit are the winner
+    #: written twice (`measure_of` branch (a)), and nothing else survives a named location
+    elements = {_element_key(source) for source in winners if _element_key(source) is not None}
+    named_losers = [name for name in losing_locations if str(name).strip()]
+    losers: list[tuple[Source, str]] = []
+    for source, metric, measure in readings:
+        if winning_location:
+            wins = id(source) in won or (measure == settlement.measure
+                                         and _element_key(source) in elements)
+        else:
+            wins = measure == settlement.measure
+        if wins and named_losers and not (winning_location and id(source) in won):
+            # the answer may also name the losing locations outright — the way to settle a split
+            # whose two sides share one metric. It never demotes the winner's own location.
+            wins = not any(_names_location(source, name) for name in named_losers)
+        if not wins:
+            losers.append((source, metric))
+    settlement.losers = losers
+    settlement.withheld = _metricless_values(outcome)
+    remaining = len(readings) - len(losers)
+    if remaining <= 0:
+        # "the measure is X" has to leave X readable somewhere; an answer that demotes every
+        # location is a deletion, and C6 demotes, it never deletes
+        settlement.reason = ("the answer would demote every value location, leaving nothing for "
+                             "the cell to be read from")
+        settlement.settles = False
+        return settlement
+    # A settlement that leaves the rival readings readable has settled nothing. One reading left
+    # standing IS a settlement — there is nothing else for the cell to be read from — but anything
+    # more means the map still carries two candidate answers and the question stays open.
+    settlement.settles = bool(losers) or remaining <= 1
+    return settlement
+
+
+def _winner(readings: list[tuple[Source, str, str]], winning_metric: str,
+            winning_location: str) -> _Settlement:
+    """Which measure the answer names, or why it names none. The location decides when given."""
+    if winning_location:
+        matched = [(metric, measure) for source, metric, measure in readings
+                   if _names_location(source, winning_location)]
+        if not matched:
+            return _Settlement(reason=f"no value location of this outcome is at "
+                                      f"{winning_location!r}")
+        measures = {measure for _, measure in matched}
+        metrics = {metric for metric, _ in matched}
+        if len(measures) != 1 or len(metrics) != 1:
+            return _Settlement(reason=f"{winning_location!r} names locations that read "
+                                      f"{' and '.join(sorted(measures))}")
+        return _Settlement(ok=True, metric=metrics.pop(), measure=measures.pop())
+    if not winning_metric:
+        return _Settlement(reason="the answer names neither a measure nor a location")
+    carried = sorted({metric for _, metric, _ in readings})
+    if winning_metric not in carried:
+        return _Settlement(reason=f"it names {winning_metric!r}, which none of the value "
+                                  f"locations carries ({', '.join(carried) or 'none'})")
+    won = {measure for _, metric, measure in readings if metric == winning_metric}
+    if len(won) != 1:
+        return _Settlement(reason=f"it names {winning_metric!r}, which this outcome's locations "
+                                  f"read as {' and '.join(sorted(won))}")
+    return _Settlement(ok=True, metric=winning_metric, measure=won.pop())
+
+
+def _winner_sources(readings: list[tuple[Source, str, str]], settlement: _Settlement,
+                    winning_location: str) -> list[Source]:
+    if winning_location:
+        return [source for source, _, _ in readings if _names_location(source, winning_location)]
+    return [source for source, metric, _ in readings if metric == settlement.metric]
+
+
+def apply_measure_settlement(outcome: OutcomeSources, settlement: _Settlement,
+                             why: Callable[[str], str]) -> None:
+    """Demote what the settlement demotes and record the winner. `why(metric)` writes the note.
+
+    The losers are kept on the record with the reason they lost — C6 demotes, it never deletes —
+    and the outcome's own `analysis_metric` becomes the winner's.
+    """
+    for source, metric in settlement.losers:
+        source.role = "alternate"
+        source.notes = _note(source.notes, f"demoted to alternate: {why(metric)}")
+    for source in settlement.withheld:
+        source.role = "alternate"
+        source.notes = _note(source.notes, WITHHELD_NOTE)
+    outcome.analysis_metric = settlement.metric
+
+
 # ----------------------------------------------------------------------------- adjudication
 def _apply_adjudication(study: StudyMap, adjudicated: dict[str, Any], conflicts: _Conflicts,
                         labels: list[tuple[str, str]], disagreements: list[str],
@@ -933,8 +1369,123 @@ def _apply_adjudication(study: StudyMap, adjudicated: dict[str, Any], conflicts:
             _adopt_group(dataset, key, raw.get(key) or {}, conflicts.check_n.get((position, key)),
                          disagreements, flags)
 
+    _apply_inclusion_rulings(study, adjudicated.get("dataset_inclusions") or [], conflicts,
+                             disagreements, flags)
+    _apply_measure_rulings(study, adjudicated.get("measure_rulings") or [], conflicts,
+                           disagreements, flags)
     _apply_error_bar_rulings(study, adjudicated.get("error_bar_rulings") or [], conflicts,
                              disagreements)
+
+
+def _apply_inclusion_rulings(study: StudyMap, rulings: list[dict[str, Any]], conflicts: _Conflicts,
+                             disagreements: list[str], flags: list[str]) -> None:
+    """C7: settle each single-mapper dataset. Reject ONLY on a named protocol rule, with a quote.
+
+    A rejection that cites no rule, or quotes nothing from the paper, is not a rejection: it leaves
+    the dataset open and a person answers. The asymmetry is deliberate — an adjudicator that cannot
+    name the rule it is applying is guessing, and a guess that deletes a dataset is worse than a
+    question.
+    """
+    for ruling in rulings:
+        index = ruling.get("primary_dataset_index")
+        position = int(index) - 1 if isinstance(index, int) else -1
+        if position not in conflicts.single_mapper:
+            if position < 0 or position >= len(study.datasets):
+                flags.append(f"the adjudicator ruled on the inclusion of dataset {index!r}, which "
+                             f"is not one of the datasets a single agent proposed — ignored")
+            continue
+        dataset = study.datasets[position]
+        verdict = (ruling.get("verdict") or "").strip()
+        rule = (ruling.get("rule") or "").strip()
+        quote = (ruling.get("quote") or "").strip()
+        if verdict == "exclude" and rule and quote:
+            dataset.included = False
+            dataset.exclusion_rule = rule
+            dataset.exclusion_quote = quote
+            dataset.notes = _note(dataset.notes,
+                                  f"excluded at the map stage under {rule!r}: {quote}")
+            disagreements.append(f"adjudicated {dataset.dataset_id} inclusion: EXCLUDED under "
+                                 f"{rule!r} — {_clip(quote, 160)}")
+            conflicts.single_mapper.remove(position)
+            continue
+        if verdict == "exclude":
+            disagreements.append(f"adjudicated {dataset.dataset_id} inclusion: exclusion cited "
+                                 f"{'no protocol rule' if not rule else 'no quote from the paper'}"
+                                 f" — not applied")
+            continue                          # stays open: a question, not a deletion
+        if verdict == "include":
+            dataset.notes = _note(dataset.notes,
+                                  f"kept at the map stage{f' under {rule!r}' if rule else ''}"
+                                  + (f": {quote}" if quote else ""))
+            disagreements.append(f"adjudicated {dataset.dataset_id} inclusion: kept"
+                                 + (f" under {rule!r}" if rule else ""))
+            conflicts.single_mapper.remove(position)
+
+
+def _apply_measure_rulings(study: StudyMap, rulings: list[dict[str, Any]], conflicts: _Conflicts,
+                           disagreements: list[str], flags: list[str]) -> None:
+    """C6: one outcome, one measure — the winner keeps `value`, the loser becomes `alternate`.
+
+    A ruling counts only when it names the winner AND quotes the paper for winner and loser, and
+    only when applying it actually settles something: a `winner` that demotes no location has
+    left both readings in place, which is not an answer to "which of these two?". Anything else
+    (a `toss_up`, a ruling with no quotes, a measure no location carries, a metric both
+    operationalizations share) leaves the outcome open, and an open outcome buys no extraction.
+    """
+    for ruling in rulings:
+        index = ruling.get("dataset_index")
+        position = int(index) - 1 if isinstance(index, int) else -1
+        key = (ruling.get("outcome_key") or "").strip()
+        if (position, key) not in conflicts.measures:
+            if position < 0 or position >= len(study.datasets):
+                flags.append(f"the adjudicator ruled on the measure of dataset {index!r} "
+                             f"{key!r}, which the map did not put in question — ignored")
+            continue
+        dataset = study.datasets[position]
+        outcome = next((o for o in dataset.outcomes if o.outcome_key == key), None)
+        if outcome is None:
+            continue
+        verdict = (ruling.get("verdict") or "").strip()
+        winner_quote = (ruling.get("winner_quote") or "").strip()
+        loser_quote = (ruling.get("loser_quote") or "").strip()
+        if verdict != "winner" or not (winner_quote and loser_quote):
+            disagreements.append(
+                f"{dataset.dataset_id} {key} which_measure: not settled "
+                f"({verdict or 'no verdict'}"
+                f"{'' if winner_quote and loser_quote else ', quotes missing'})")
+            continue
+        settlement = read_measure_answer(
+            outcome,
+            winning_metric=(ruling.get("winning_analysis_metric") or "").strip(),
+            winning_location=(ruling.get("winning_location") or "").strip(),
+            losing_locations=[str(x) for x in (ruling.get("losing_locations") or [])])
+        if not settlement.ok:
+            disagreements.append(f"{dataset.dataset_id} {key} which_measure: {settlement.reason} "
+                                 f"— not applied")
+            continue
+        if not settlement.settles:
+            disagreements.append(
+                f"{dataset.dataset_id} {key} which_measure: "
+                + (settlement.reason or f"the ruling for {settlement.metric!r} demoted no "
+                                        f"location, so both readings are still read")
+                + " — it has settled nothing and the question stays open (name the winning "
+                  "location, or the losing ones)")
+            continue
+        apply_measure_settlement(
+            outcome, settlement,
+            lambda metric, winner=settlement.metric: (
+                f"this outcome's measure is {winner} ({_clip(winner_quote, 120)}); this location "
+                f"measures {metric} ({_clip(loser_quote, 120)})"))
+        outcome.measure_ruling = (f"measure: {settlement.metric}. winner: {winner_quote} | loser: "
+                                  f"{loser_quote}"
+                                  + (f" | {ruling.get('rationale')}" if ruling.get("rationale")
+                                     else ""))
+        disagreements.append(f"adjudicated {dataset.dataset_id} {key} which_measure: "
+                             f"{settlement.metric} ({len(settlement.losers)} location(s) demoted "
+                             f"to alternate"
+                             + (f", {len(settlement.withheld)} withheld for naming no measure)"
+                                if settlement.withheld else ")"))
+        conflicts.measures.remove((position, key))
 
 
 def _resolve_mapping(dataset: DatasetSpec, raw: dict[str, Any], position: int,
@@ -1116,6 +1667,7 @@ def map_study(client: LLMClient, paper: PaperRecord, protocol: Protocol, *,
     conflicts = _diff(study, checked, outcome_keys, ids, disagreements, flags)
     _agree_error_bars(study, _roster_determinations(checked), conflicts, disagreements, flags)
     _flag_thin_outcomes(study, flags)
+    _diff_measures(study, conflicts, disagreements)          # C6, before anything is extracted
 
     if conflicts.needs_adjudication:
         verdict = client.structured(
@@ -1130,6 +1682,36 @@ def map_study(client: LLMClient, paper: PaperRecord, protocol: Protocol, *,
         call_ids.append(verdict.call_id)
         _apply_adjudication(study, verdict.parsed or {}, conflicts, labels, disagreements, flags)
 
+    # C7 / C6: what adjudication did not settle becomes a QUESTION, and a question blocks the
+    # extraction of the cell it names. Nothing here deletes data: the dataset and both measures
+    # stay on the record with the words that put them in doubt.
+    for position in conflicts.single_mapper:
+        dataset = study.datasets[position]
+        study.open_questions.append(MapQuestion(
+            kind="include_dataset", dataset_id=dataset.dataset_id,
+            # what the map KNOWS is that the cross-check's map contains no dataset describing this
+            # contrast; which agent "proposed" what is not something the diff can establish.
+            question=(f"The cross-check's map has no counterpart for "
+                      f"{dataset.label or dataset.dataset_id!r} "
+                      f"({dataset.experiment or 'no experiment label'}; "
+                      f"{dataset.condition or 'no condition'}), and no protocol rule was cited to "
+                      f"exclude it. Does this review include it?"),
+            options=["include it", "exclude it"],
+            quotes=[q for q in (dataset.chosen_pair_rationale, dataset.group_a.n_evidence,
+                                dataset.group_b.n_evidence) if q]))
+        flags.append(_question_flag("include_dataset", dataset.dataset_id, ""))
+    for position, key in conflicts.measures:
+        dataset = study.datasets[position]
+        outcome = next((o for o in dataset.outcomes if o.outcome_key == key), None)
+        study.open_questions.append(MapQuestion(
+            kind="which_measure", dataset_id=dataset.dataset_id, outcome_key=key,
+            question=(f"The map names two measures for {key} in "
+                      f"{dataset.label or dataset.dataset_id!r}. Which one does this review's "
+                      f"definition and measurement window ask for?"),
+            options=_measure_options(outcome),
+            quotes=[q for q in ((outcome.measure_name if outcome else ""),
+                                (outcome.operationalization if outcome else "")) if q]))
+        flags.append(_question_flag("which_measure", dataset.dataset_id, key))
     for position in conflicts.mapping:
         dataset = study.datasets[position]
         flags.append(f"dataset {dataset.dataset_id}: group mapping disagreement, primary kept "
@@ -1147,6 +1729,240 @@ def map_study(client: LLMClient, paper: PaperRecord, protocol: Protocol, *,
     study.prompt_version = PROMPT_VERSION
     study.llm_call_ids = call_ids
     return study
+
+
+def extraction_blocks(study: StudyMap) -> tuple[dict[str, str], dict[tuple[str, str], str]]:
+    """`(datasets, cells)` the map says must not be extracted, each with the reason why.
+
+    Two sources, both decided at the map stage and both refusing to spend rather than to guess:
+    a dataset the adjudicator excluded on a named protocol rule (C7, `included=False`), and any
+    cell named by an open map question — `include_dataset` when the inclusion of a single-mapper
+    dataset is unsettled, `which_measure` when one outcome still carries two measures (C6).
+    """
+    datasets: dict[str, str] = {}
+    cells: dict[tuple[str, str], str] = {}
+    for dataset in study.datasets:
+        if dataset.included:
+            continue
+        datasets[dataset.dataset_id] = (
+            f"the map excluded this dataset under {dataset.exclusion_rule!r}"
+            + (f": {dataset.exclusion_quote}" if dataset.exclusion_quote else ""))
+    for question in study.open_questions:
+        why = f"an unanswered {question.kind} question: {question.question}"
+        if question.outcome_key:
+            cells[(question.dataset_id, question.outcome_key)] = why
+        else:
+            datasets.setdefault(question.dataset_id, why)
+    return datasets, cells
+
+
+def _measure_options(outcome: OutcomeSources | None) -> list[str]:
+    """One option per candidate READING, not per metric label.
+
+    Two operationalizations can share one `analysis_metric` (Heuer's Experiment 2 prints both as
+    `change_from_baseline`), and a question whose only option is the metric they share cannot be
+    answered: whoever answers it has to be able to name WHERE the winner is. A location that
+    recorded no metric is offered too — it is a candidate nobody has resolved.
+    """
+    if outcome is None:
+        return ["the first measure named", "the second measure named"]
+    options = [f"{metric} — {_clip(source.locator, 90)}"
+               for source, metric in _value_metrics(outcome)]
+    options += [f"no measure recorded — {_clip(source.locator, 90)}"
+                for source in _metricless_values(outcome)]
+    return options or ["the first measure named", "the second measure named"]
+
+
+def open_map_questions(study: StudyMap) -> list[MapQuestion]:
+    """The map questions still waiting for a person — the list the review UI offers to answer.
+
+    Copies: a pure reader that hands out the study's own models lets its caller edit the map
+    through it, and this list is read by the review UI on every refresh.
+    """
+    return [question.model_copy(deep=True) for question in study.open_questions]
+
+
+#: `Source.sample` answers that are not the two groups this contrast compares. `unknown` and
+#: `both_groups` are read — `unknown` is the honest absence every map written before the field
+#: existed carries, and refusing on it would stop reading every paper in the corpus.
+UNREADABLE_SAMPLES: frozenset[str] = frozenset({"one_group", "pooled", "other"})
+#: the roles a number may be read at: `value` is the outcome's own number, `unknown` is a role the
+#: mapper did not fill in. `baseline`, `context` and `alternate` are on the record for a reader.
+READABLE_ROLES: frozenset[str] = frozenset({"value", "unknown"})
+
+
+def source_unreadable_reason(source: Source) -> str:
+    """Why this location must not be read for its cell's value — `""` when it may be read.
+
+    Two reasons, decided in one place so the pipeline and the map agree: what the location IS for
+    this outcome (`role`), and WHOSE numbers are at it (`sample`). Cressman's aligned-cursor
+    curves were digitised as late adaptation (3.9° beside the misaligned curves' 31.4°) for want
+    of the first; Bock's adaptation magnitude `A=(I-F)/I` is computed over the pooled seniors and
+    sat in the map as a `value` location of a two-group cell for want of the second.
+    """
+    role = str(getattr(source, "role", "") or "unknown")
+    if role not in READABLE_ROLES:
+        return (f"a {role} source — kept for the record, not read for the value")
+    sample = str(getattr(source, "sample", "") or "unknown")
+    if sample in UNREADABLE_SAMPLES:
+        note = _clip(str(getattr(source, "sample_note", "") or ""), 120)
+        return (f"reports the {sample} sample, not the two groups this contrast compares — kept "
+                f"for the record, not read for the value" + (f" ({note})" if note else ""))
+    return ""
+
+
+def readable_sources(sources: Sequence[Source]) -> list[Source]:
+    """The locations of one outcome a number may be read at (`source_unreadable_reason` == "")."""
+    return [source for source in sources if not source_unreadable_reason(source)]
+
+
+#: how the record names a person who answered a map question (never a model name)
+HUMAN_DECIDER = "a human reviewer"
+#: …and how it names the model that rules when nobody has answered. The exclusions table needs
+#: both names, and the two are told apart by the review LOG — the record of who decided — never
+#: by the shape of the rule that was cited (re-review N2).
+MAP_ADJUDICATOR = "map-adjudicator"
+#: the rule an exclusion cites when the person who made it cited none. A person may exclude a
+#: dataset without quoting the protocol at an adjudicator's standard, but the record must not
+#: claim a rule nobody named (C7 holds the ADJUDICATOR to a named rule; this is not that path).
+HUMAN_EXCLUSION_RULE = "human decision"
+_ANSWER_KINDS: tuple[str, ...] = ("include_dataset", "which_measure")
+
+
+def _question_flag(kind: str, dataset_id: str, outcome_key: str) -> str:
+    """The `needs_human` line that goes with one map question — written once, cleared once.
+
+    Both writers share this text so that answering a question removes exactly the flag the
+    question wrote, and a wording change cannot leave a stale flag standing after the answer.
+    """
+    if kind == "include_dataset":
+        return (f"dataset {dataset_id}: proposed by one mapping agent only and no "
+                f"protocol rule was cited to exclude it — inclusion needs human, nothing "
+                f"extracted until then")
+    return (f"dataset {dataset_id} {outcome_key}: two candidate measures and no ruling "
+            f"that quotes both — which_measure needs human, nothing extracted until then")
+
+
+def _answers_this_study(study: StudyMap, answer: Mapping[str, Any]) -> bool:
+    """A record addresses this study when it names its paper id, whole or by the sha12 prefix the
+    run uses in every dataset id. A record that names no paper is not addressed to one."""
+    paper_id = str(answer.get("paper_id") or "").strip()
+    return bool(paper_id) and (study.paper_id == paper_id
+                               or (len(paper_id) >= 12 and study.paper_id.startswith(paper_id)))
+
+
+def _names_location(source: Source, location: str) -> bool:
+    """Does `location` name this source — its figure/table id, or its locator?"""
+    wanted = _norm(location)
+    if not wanted:
+        return False
+    ids = {_norm(ident) for ident in (source.figure_id, source.table_id) if ident}
+    locator = _norm(source.locator)
+    return wanted in ids or (bool(locator) and wanted in locator)
+
+
+def _answer_inclusion(dataset: DatasetSpec, answer: Mapping[str, Any]) -> bool:
+    """C7 answered by a person: include it, or exclude it and say on what.
+
+    `False` means the record was not an answer, and nothing about the dataset changed.
+    """
+    decision = str(answer.get("decision") or "").strip().lower()
+    note = str(answer.get("note") or "").strip()
+    if decision not in ("include", "exclude"):
+        return False
+    if decision == "include":
+        dataset.included = True
+        dataset.notes = _note(dataset.notes, f"included by {HUMAN_DECIDER}"
+                                             + (f": {note}" if note else ""))
+        return True
+    dataset.included = False
+    dataset.exclusion_rule = str(answer.get("rule") or "").strip() or HUMAN_EXCLUSION_RULE
+    dataset.exclusion_quote = str(answer.get("quote") or "").strip()
+    dataset.notes = _note(dataset.notes, f"excluded by {HUMAN_DECIDER} under "
+                                         f"{dataset.exclusion_rule}"
+                                         + (f": {note}" if note else ""))
+    return True
+
+
+def _answer_measure(dataset: DatasetSpec, outcome_key: str, answer: Mapping[str, Any]) -> bool:
+    """C6 answered by a person: the losing `value` locations become `alternate`, as a ruling does.
+
+    One rule, read once (`read_measure_answer`), so the two paths cannot drift apart. The answer
+    may name the winning location or the winning metric; the review UI sends both, and the
+    LOCATION decides, because a metric that both operationalizations carry cannot separate them.
+    An answer that names something the map does not carry, that lands on two measures at once, or
+    that would demote nothing while two readings stay readable, changes nothing and leaves the
+    question open — a person's answer is authority over which measure the review wants, not a
+    licence to write into the record a measure nobody read.
+    """
+    outcome = next((o for o in dataset.outcomes if o.outcome_key == outcome_key), None)
+    if outcome is None:
+        return False
+    settlement = read_measure_answer(
+        outcome,
+        winning_metric=str(answer.get("winning_analysis_metric") or "").strip(),
+        winning_location=str(answer.get("winning_location") or "").strip(),
+        losing_locations=[str(x) for x in (answer.get("losing_locations") or [])])
+    if not (settlement.ok and settlement.settles):
+        return False
+    note = str(answer.get("note") or "").strip()
+    apply_measure_settlement(
+        outcome, settlement,
+        lambda metric, winner=settlement.metric: (
+            f"{HUMAN_DECIDER} chose {winner} as this outcome's measure; this location measures "
+            f"{metric}" + (f" ({_clip(note, 120)})" if note else "")))
+    outcome.measure_ruling = (f"measure: {settlement.metric}. decided by {HUMAN_DECIDER}"
+                              + (f": {_clip(note, 400)}" if note else ""))
+    return True
+
+
+def apply_map_answers(study: StudyMap, answers: Sequence[Mapping[str, Any]]) -> StudyMap:
+    """A NEW `StudyMap` with the human answers to this map's open questions applied.
+
+    Pure: no I/O, no model call, and the study handed in is never mutated — the review log is
+    append-only and a resumed run re-applies the whole log to the stage file it read, so applying
+    an answer twice must give the same map both times.
+
+    An answer is applied only where it ANSWERS AN OPEN QUESTION of this study: the record must
+    name this paper, a dataset the map has, and a question the map actually asked. Anything else
+    — an unknown kind, another paper, a dataset that was never in question, a metric no `value`
+    location carries — is ignored, silently and without changing the map. Two answers to one
+    question are a reviewer changing their mind: the last one stands, and it is applied to the
+    map as it arrived rather than on top of the first, so the order in the log decides the answer
+    and nothing accumulates.
+    """
+    answered = study.model_copy(deep=True)
+    asked = {(q.kind, q.dataset_id, q.outcome_key) for q in answered.open_questions}
+    latest: dict[tuple[str, str, str], Mapping[str, Any]] = {}
+    for answer in answers:
+        kind = str(answer.get("kind") or "").strip()
+        if kind not in _ANSWER_KINDS or not _answers_this_study(answered, answer):
+            continue
+        key = (kind, str(answer.get("dataset_id") or "").strip(),
+               str(answer.get("outcome_key") or "").strip() if kind == "which_measure" else "")
+        if key in asked:
+            latest[key] = answer
+
+    for (kind, dataset_id, outcome_key), answer in latest.items():
+        dataset = next((d for d in answered.datasets if d.dataset_id == dataset_id), None)
+        if dataset is None:
+            continue
+        applied = (_answer_inclusion(dataset, answer) if kind == "include_dataset"
+                   else _answer_measure(dataset, outcome_key, answer))
+        if not applied:
+            continue
+        answered.open_questions = [q for q in answered.open_questions
+                                   if (q.kind, q.dataset_id, q.outcome_key)
+                                   != (kind, dataset_id, outcome_key)]
+        # every line this question put in the human queue goes with it. The inclusion question
+        # writes two — its own, and the "group mapping unconfirmed" line the cross-check diff
+        # wrote for the same dataset — and leaving the second standing sends a settled paper back
+        # to a person for a question they have already answered.
+        stale = {_question_flag(kind, dataset_id, outcome_key)}
+        if kind == "include_dataset":
+            stale.add(_unmatched_dataset_flag(dataset_id))
+        answered.needs_human = [f for f in answered.needs_human if f not in stale]
+    return answered
 
 
 def _has_sources(parsed: dict[str, Any]) -> bool:

@@ -70,18 +70,52 @@ route it, so quote it well.
 
 `analysis_metric` says what the numbers at that location are: raw endpoint values, changes from
 baseline, baseline-corrected values, values expressed as a percentage of the manipulation, or
-unknown. Locations can differ within one outcome — record what each one shows.
+unknown. Locations can differ within one outcome — record what each one shows. Answer it for every
+location you list: a location that does not say which of these it reports is treated as a second,
+unresolved measure and stops the outcome being read until a person settles it.
+
+`sample` says WHOSE numbers are at that location — which people the value describes:
+
+* `both_groups` — the two groups of this dataset, reported separately, so a number for each;
+* `one_group` — only one of the two (one arm's own analysis, one group's post-hoc test);
+* `pooled` — the two groups combined, or a wider or narrower sample: everyone in the study taken
+  together, an analysis that collapses the grouping factor, a subgroup of one group;
+* `other` — a different set of people again (another experiment's participants, a control sample
+  this dataset does not compare);
+* `unknown` — the sentence, caption or table does not say whose numbers these are.
+
+Put the words that told you in `sample_note`. Answer from the paper's own sentence, never from
+what would be convenient: a location whose sample is not this dataset's two groups is still worth
+listing — it is evidence about the paper — but it is NOT read for this contrast's value, because
+a number computed over different people is a wrong number here, not an imprecise one.
 
 `role` says what the location IS for this outcome, and it decides whether a number is read there:
 
-* `value` — the outcome's own number for the two groups can be read at this location. This is
-  the default and the only role an extractor reads a value from.
+* `value` — the outcome's own number for the two groups can be read at this location. A **test
+  statistic** is a `value` source only when its contrast is **exactly group A versus group B on
+  this outcome, at this measurement window**, and you can say so from the paper's own sentence.
+  Record the statistic's `design`, its numerator and denominator degrees of freedom, the model's
+  **within-subject factors**, and the quantity the model was fitted to. If the statistic was
+  computed on scores **averaged over** a factor the outcome does not average over — blocks,
+  episodes, targets, sessions — it is `context`, however clean its degrees of freedom.
+  It is **not** a `value` source, whatever its degrees of freedom, when it is: a test of one group
+  against zero or any constant (even when its df equal n_a + n_b − 2); an interaction; a main
+  effect of a within-subject factor; a test from a model containing a second between-subjects
+  factor or a covariate; an omnibus test over more than two levels (numerator df > 1); a paired or
+  repeated-measures test; or a bounded p ("p < .05") rather than an exact one. A χ² is never a
+  `value` source for a continuous outcome — no conversion to a standardised mean difference exists.
+  A `value` test statistic is a **last resort**: `stats.route_precedence` places `test_statistic`
+  fifth of seven. Do not stop looking for printed means because you found an F.
 * `baseline` — a pre-manipulation, control-condition or aligned/veridical series plotted or
   printed beside the outcome (the aligned-cursor curve next to the rotated one; a pre-test next to
   a post-test). It could correct the value; it is not the value. Listing it as `value` puts a
   baseline number where the outcome should be.
-* `context` — a location that defines the measurement window, names the blocks, or reports a
-  test with no group values printed. Useful to a reader; nothing to extract.
+* `alternate` — a location that measures this same outcome by a **second operationalization** you
+  named as an alternative. Do not choose between them here: list both as `value` and say in
+  `measure_name` / `operationalization` that there are two. The choice is made once, later, against
+  the protocol's own definition and measurement window, and the loser is marked `alternate` then.
+* `context` — a location that defines the measurement window, names the blocks, or reports a test
+  that does not meet the bar above. Useful to a reader; nothing to extract.
 
 ### Error bars
 For every source that has a dispersion (figure error bars, table ±, text ±):
