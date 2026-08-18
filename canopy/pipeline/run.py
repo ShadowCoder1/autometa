@@ -69,9 +69,9 @@ from ..verify.panels import apply_panel_check
 from ..verify.vote import LOCATOR_CONFLICT, LOCATOR_CONFLICT_NOTE, VoteResult, vote_groups
 from .aggregate import AGGREGATED_FLAG, Aggregation, aggregate_one_row_per_paper
 from .overrides import (OVERRIDES_FILE, apply_overrides_and_repool, map_answers, read_overrides)
-from .resolve import resolve_effect
-from .rows import (DISPERSION_APPROXIMATED, ENSEMBLE, approximation_flags,
-                   cell_candidates, prepare_rows, reported_values, statistic_values)
+from .resolve import resolve_effect_with_fallback
+from .rows import (DISPERSION_APPROXIMATED, approximation_flags, cell_candidates, prepare_rows,
+                   reported_values, statistic_values, vote_candidates)
 from .state import (PaperBudgetExceeded, PaperClient, emit, load_manifest, paper_dir,
                     read_stage, review_entry, save_manifest, sha12, sort_review_queue,
                     stage_done, write_stage)
@@ -546,24 +546,12 @@ class _CellVerification:
     reopened_source: str = ""
 
 
-#: the four helpers below live in `canopy.pipeline.rows` now, because the REVIEW layer's rebuild
-#: has to make the same row this stage does (whole-diff H1/H2). They keep their names here so a
-#: caller that knew where they were still finds them.
+#: the helpers below live in `canopy.pipeline.rows` now, because the REVIEW layer's rebuild has
+#: to make the same row this stage does (whole-diff H1/H2) — `vote_candidates` joined them for
+#: D1, whose fallback must offer the resolver the readings the vote weighed and not the
+#: digitiser's raw samples. They keep their names here so a caller that knew where they were
+#: still finds them.
 _cell_candidates = cell_candidates
-
-
-def vote_candidates(candidates: Sequence[Candidate]) -> list[Candidate]:
-    """The candidates the verification layer may see: one figure reading per group, not five.
-
-    `digitize()` returns a `Candidate` per (group, route sample) *and* one ensemble candidate per
-    group. The route samples belong in the stage file and the provenance bundle — that is where a
-    reviewer checks how the picture was measured — but they must not enter the vote: the
-    digitiser's four or five ways of measuring one figure would otherwise outvote the value the
-    paper printed, and the ensemble (amendment F's median-of-routes, with the per-route detail in
-    its `pixel_provenance`) is already their consensus. Controller ruling, fix round 1.
-    """
-    return [c for c in candidates
-            if not c.extractor_id.startswith("digitize:") or c.extractor_id == ENSEMBLE]
 
 
 def _winner(candidates: Sequence[Candidate], result: VoteResult | None,
@@ -1163,7 +1151,12 @@ def _resolve(ctx: RunContext, paper: PaperRecord, study: StudyMap,
     records: list[EffectSizeRecord] = []
     for row in prepared:
         dataset, key, values = row.dataset, row.outcome_key, row.values
-        record = resolve_effect(dataset, ctx.protocol.outcome(key), values, ctx.settings)
+        # D1: `resolve_effect`, plus the one case precedence cannot reach on its own — a printed
+        # value with no spread converts to nothing, and a same-locator candidate pair that does
+        # convert may build the row instead (held, and stamped). `row.alternatives` is prepared by
+        # the same function the review layer's rebuild calls, so both paths offer the same pairs.
+        record = resolve_effect_with_fallback(dataset, ctx.protocol.outcome(key), values,
+                                              row.alternatives, ctx.settings)
         record.paper_id = paper.sha256
         record.cluster_id = record.cluster_id or paper.sha256
         record.sample_id = sample_key(dataset, paper.sha256)

@@ -744,3 +744,48 @@ def test_the_deleted_keyword_rule_would_have_been_a_mass_abstain_switch():
     mine = [RouteSample(route="D", group="A", model="m1", mean=31.5, error=11.0)]
     _mark_illegible(honest, mine)
     assert not mine[0].dropped, "prose is not evidence; the structured field is"
+
+
+# --------------------------------------------------------------- D1: the override, on both paths
+def test_the_precedence_override_row_is_the_same_row_on_the_run_and_the_re_pool_paths():
+    """The standing rule, applied to D1: run and re-pool build the SAME row.
+
+    Heuer d1 late adaptation is the cell the override exists for — the adjudicator kept the two
+    printed numbers, the paper prints no spread for either, and the figure both readers measured
+    sits in the same cell with a mean, an SE and an n. The run reaches it through
+    `rows.prepare_rows → resolve.resolve_effect_with_fallback`; every human answer reaches it
+    through `overrides._rebuild_row`, which calls the same two functions over the same cluster. If
+    only one of them fell back, a reviewer confirming an unrelated cell would silently move the
+    row's effect size — which is precisely the class of defect the one-row-path rule is for.
+
+    The only fields allowed to differ are the ones an override IS: the human's flag and note.
+    """
+    from canopy.pipeline import overrides as ov
+    from canopy.pipeline.resolve import resolve_effect_with_fallback
+    from canopy.pipeline.rows import prepare_rows
+    from canopy.pipeline.state import load_manifest
+    from tests.helpers import nine
+
+    protocol = nine.protocol()
+    state = ov._RunState(nine.NINE, load_manifest(nine.NINE))   # read-only: nothing writes
+    live = {(v.dataset_id, v.outcome_key, v.group): v for v in state.verdicts}
+    ds_id, key = "3570e4ce2a9c:d1", "late_adaptation"
+    dataset = state.datasets[ds_id]
+    verdict_a, verdict_b = live[(ds_id, key, "A")], live[(ds_id, key, "B")]
+
+    prepared = prepare_rows([(dataset, key, verdict_a, verdict_b)], state.candidates,
+                            protocol.stats,
+                            cluster_of=lambda d: d.cluster_id or state.paper_of[d.dataset_id])[0]
+    ran = resolve_effect_with_fallback(dataset, protocol.outcome(key), prepared.values,
+                                       prepared.alternatives, protocol.stats)
+    assert ran.route == "figure" and "precedence_override" in ran.flags
+
+    rebuilt = ov._rebuild_row(nine.record(ds_id, key), dataset, verdict_a, verdict_b, protocol,
+                              key, "I opened Figure 2a and this is what it shows",
+                              state=state, verdicts=live)
+    was, now = ran.model_dump(mode="json"), rebuilt.model_dump(mode="json")
+    for field in ("paper_id", "cluster_id", "sample_id", "citation", "label", "moderators",
+                  "analysis_metric", "notes", "flags"):
+        was.pop(field, None), now.pop(field, None)
+    assert now == was
+    assert set(rebuilt.flags) - set(ran.flags) == {"human_override"}

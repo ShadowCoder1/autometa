@@ -23,8 +23,10 @@ from canopy.models import (DatasetSpec, DispersionType, GroupSpec, OutcomeDef, S
                            Verdict)
 from canopy.pipeline.resolve import (GroupValues, ReportedValues, ResolvedValues, StatisticValues,
                                      apply_shared_control, available_routes, multi_group_flags,
-                                     resolve_effect)
+                                     resolve_effect, resolve_effect_with_fallback)
+from canopy.pipeline.rows import cell_candidates, fallback_values, prepare_row_values
 from canopy.stats import effect_sizes as es
+from tests.helpers import nine
 
 GOLD = Path(__file__).parent.parent / "validation/reference/cisneros2024/late_gsheet.csv"
 
@@ -924,3 +926,60 @@ def test_the_review_layer_reads_the_resolvers_set_rather_than_a_copy_of_it():
 
     assert ROW_REFUSAL_CODES is declared
     assert ROW_REFUSALS is declared
+
+
+# ----------------------------------------------- D1: a printed value with no spread yields
+#
+# Heuer & Hegele 2008 d1 late adaptation. The adjudicator kept the two numbers the paper PRINTS —
+# 27.7° and 18.9°, the initial direction error in the last practice block — over the digitisation
+# of Figure 2a, because a value that cannot be quoted cannot be kept. The paper prints no spread
+# for either, so the printed pair converts to nothing at all and the cell reaches the review queue
+# as `not_convertible`, while the figure the readers DID measure sits in the same cell with a mean,
+# an SE and an n for both groups. D1's ruling: the printed value is preferred whenever it CONVERTS,
+# and when it cannot the row may be built from a convertible same-locator candidate pair — held,
+# never released, with the swap written on the record.
+def _cell(paper, ds_id, key, hib):
+    p = nine.protocol()
+    ds = nine.dataset(paper, ds_id)
+    cands = nine.candidates(paper)
+    vs = {v.group: v for v in nine.verdicts(paper)
+          if v.dataset_id == ds_id and v.outcome_key == key}
+    primary = prepare_row_values(ds, key, vs["A"], vs["B"], cands, p.stats, higher_is_better=hib)
+    # the fixture's verdicts carry an orientation of their own, so `higher_is_better=None` above
+    # reaches `from_verdicts` as "nobody forced one" rather than as "nobody settled one". The
+    # tests below mean the second, and say so here rather than by editing a real run's verdict.
+    primary.higher_is_better = hib
+    return p, ds, primary, fallback_values(cell_candidates(cands, ds_id, key), primary, p.stats)
+
+
+def test_group_statistics_missing_is_flagged_on_the_record():
+    p, ds, primary, _ = _cell("3570e4ce2a9c", "3570e4ce2a9c:d1", "late_adaptation", False)
+    assert "group_statistics_missing" in resolve_effect(ds, p.outcome("late_adaptation"),
+                                                        primary, p.stats).flags
+
+
+def test_precedence_override_uses_figure_when_text_has_no_dispersion():
+    p, ds, primary, alts = _cell("3570e4ce2a9c", "3570e4ce2a9c:d1", "late_adaptation", False)
+    rec = resolve_effect_with_fallback(ds, p.outcome("late_adaptation"), primary, alts, p.stats)
+    assert rec.route == "figure" and abs(rec.es + 0.627) < 0.01 and rec.confidence == "needs_human"
+    assert "precedence_override" in rec.flags and rec.route_overridden_from == "text_mean_se_ci"
+    assert "group_statistics_missing" in rec.flags   # the swap AND what made it necessary
+    assert "27.7" in rec.precedence_override_reason
+    assert "verifier objection" in rec.precedence_override_reason
+
+
+def test_precedence_override_refuses_when_orientation_is_unresolved():
+    p, ds, primary, alts = _cell("3570e4ce2a9c", "3570e4ce2a9c:d1", "late_adaptation", None)
+    rec = resolve_effect_with_fallback(ds, p.outcome("late_adaptation"), primary, alts, p.stats)
+    assert rec.route == "not_convertible" and "precedence_override" not in rec.flags
+
+
+def test_fallback_pairs_never_cross_locators():
+    p, ds, primary, alts = _cell("d1f2946e7e81", "d1f2946e7e81:d1", "late_adaptation", True)
+    assert alts and all(a.group_a.locator == a.group_b.locator for a in alts)
+
+
+def test_rows_that_already_convert_are_untouched():
+    for r in nine.records():
+        if r.route != "not_convertible":
+            assert "precedence_override" not in r.flags   # only not_convertible rows fall back

@@ -27,8 +27,8 @@ from typing import Any, Literal, Sequence
 
 from pydantic import Field
 
-from ..models import (CanopyModel, ConfidenceBucket, ContrastKind, DatasetSpec, Direction,
-                      DispersionType, EffectSizeRecord, GroupKey, OutcomeDef, PKind,
+from ..models import (Candidate, CanopyModel, ConfidenceBucket, ContrastKind, DatasetSpec,
+                      Direction, DispersionType, EffectSizeRecord, GroupKey, OutcomeDef, PKind,
                       ReportedScale, Standardizer, StatsSettings, TestDesign, Verdict)
 from ..stats import effect_sizes as es
 from ..stats.conversions import (mean_sd_from_five_number, mean_sd_from_median_iqr,
@@ -36,16 +36,29 @@ from ..stats.conversions import (mean_sd_from_five_number, mean_sd_from_median_i
 from ..stats.effect_sizes import NotConvertible, SMDResult
 from ..verify.confidence import (DF_SHORTFALL_PREFIX, IMPLAUSIBLE_DISPERSION, ROW_REFUSAL_CODES,
                                  conversion_gate_bucket, dispersion_plausibility_bucket)
+from ..verify.vote import modality as reading_modality
 
-__all__ = ["resolve_effect", "available_routes", "apply_shared_control", "multi_group_flags",
-           "ROW_REFUSAL_CODES",
+__all__ = ["resolve_effect", "resolve_effect_with_fallback", "available_routes",
+           "apply_shared_control", "multi_group_flags", "ROW_REFUSAL_CODES",
            "GroupValues", "StatisticValues", "ReportedValues", "ResolvedValues",
-           "GROUP_ROUTES", "DIGITIZATION_SHARE_FLAG"]
+           "GROUP_ROUTES", "DIGITIZATION_SHARE_FLAG", "GROUP_STATISTICS_MISSING",
+           "PRECEDENCE_OVERRIDE"]
 
 #: the route names in `StatsSettings.route_precedence` that are built from two groups' statistics
 GROUP_ROUTES: tuple[str, ...] = ("text_mean_sd", "table", "text_mean_se_ci", "figure")
 #: digitisation variance above this share of the sampling variance is flagged (spec §3.4)
 DIGITIZATION_SHARE_FLAG = 0.10
+#: the record's own note that no route built from the two groups' statistics was available — the
+#: paper printed a value for each group and no spread for either, so the four group routes were
+#: never even attempted. It is the ONE condition D1's precedence override reads (Blocker 1): the
+#: reason lives in `routes_rejected` as prose, and prose is not something another stage can act on.
+GROUP_STATISTICS_MISSING = "group_statistics_missing"
+#: D1: this row's effect size came from a same-locator candidate pair rather than from the value
+#: the precedence list chose, because that value converts to nothing. Always with
+#: `confidence = "needs_human"` — the row is held, not released.
+PRECEDENCE_OVERRIDE = "precedence_override"
+#: how much of a locator the override's reason prints — enough to name the panel, not the sentence
+_LOCATOR_CHARS = 72
 #: amendment A: `ci_to_sd_dist="auto"` means t(n−1) below this group size, z at or above it
 CI_T_BELOW_N = 100
 
@@ -77,6 +90,16 @@ class GroupValues(CanopyModel):
     unit: str = ""
     route: str = ""                               # text | table | figure | adjudicated | ...
     label: str = ""
+    #: WHERE this group's numbers were read, in the reader's own words. Two panels of one figure
+    #: are two quantities (`verify.vote.locator_key`), so D1's fallback pair may only be built
+    #: from two readings taken at the SAME place. Empty for a value the verdict settled — a
+    #: verdict is one cell's answer and has no place of its own.
+    locator: str = ""
+    #: the candidate this group came from, when it came from ONE candidate rather than a verdict.
+    #: The precedence override names the readings it used, and the verifier's objections are
+    #: recorded against candidate ids, so without this the override could neither cite its
+    #: evidence nor find the objection to it.
+    candidate_id: str = ""
 
     @classmethod
     def from_verdict(cls, verdict: Verdict) -> "GroupValues":
@@ -95,6 +118,32 @@ class GroupValues(CanopyModel):
             values.minimum, values.maximum = verdict.ci_low, verdict.ci_high
         else:
             values.ci_low, values.ci_high = verdict.ci_low, verdict.ci_high
+        return values
+
+    @classmethod
+    def from_candidate(cls, cand: Candidate) -> "GroupValues":
+        """ONE extractor's reading as resolution inputs — D1's fallback, and nothing else.
+
+        The ordinary path is `from_verdict`: the verification layer weighs the readings and
+        records one answer per cell. This reads a single candidate instead, because the override
+        is defined on a candidate PAIR (`rows.fallback_values`) — the two readings taken at one
+        place in one figure — and a pair has no verdict of its own.
+
+        The dispersion is read the way `from_verdict` reads it, from the same fields, so an IQR is
+        quartiles around a median here too; a candidate and the verdict built from it must not
+        mean different things by `ci_low`.
+        """
+        values = cls(n=cand.n, mean=cand.mean, dispersion_value=cand.dispersion_value,
+                     dispersion_type=cand.dispersion_type, points=list(cand.points),
+                     sigma=cand.sigma, dispersion_sigma=cand.dispersion_sigma, unit=cand.unit,
+                     route=reading_modality(cand), locator=cand.locator,
+                     candidate_id=cand.candidate_id)
+        if cand.dispersion_type is DispersionType.IQR:
+            values.median, values.q1, values.q3 = cand.mean, cand.ci_low, cand.ci_high
+        elif cand.dispersion_type is DispersionType.RANGE:
+            values.minimum, values.maximum = cand.ci_low, cand.ci_high
+        else:
+            values.ci_low, values.ci_high = cand.ci_low, cand.ci_high
         return values
 
 
@@ -154,6 +203,12 @@ class ResolvedValues(CanopyModel):
     route_available: list[str] = Field(default_factory=list)
     confidence: ConfidenceBucket = "needs_human"
     flags: list[str] = Field(default_factory=list)
+    #: `candidate_id -> the verifier's objection to it`, for the readings this cell's verifiers
+    #: doubted or refuted. The verdict's flags carry codes and this carries the sentence, because
+    #: D1's precedence override has to quote the objection to the reading it falls back to: a row
+    #: built from a candidate a verifier refuted is still held, and the reviewer who is asked to
+    #: decide it must be shown the objection rather than have to go and find it.
+    objections: dict[str, str] = Field(default_factory=dict)
 
     def group(self, key: str) -> GroupValues | None:
         return self.group_a if key == "A" else self.group_b
@@ -177,7 +232,11 @@ class ResolvedValues(CanopyModel):
                    group_a=GroupValues.from_verdict(verdict_a),
                    group_b=GroupValues.from_verdict(verdict_b),
                    test_statistic=test_statistic, reported=reported,
-                   higher_is_better=direction, confidence=buckets[0], flags=flags)
+                   higher_is_better=direction, confidence=buckets[0], flags=flags,
+                   objections={note.candidate_id: note.reason
+                               for verdict in (verdict_a, verdict_b) for note in verdict.verifiers
+                               if note.verdict in ("refuted", "ambiguous")
+                               and note.candidate_id and note.reason})
 
 
 # ----------------------------------------------------------------------------- route availability
@@ -591,6 +650,13 @@ def resolve_effect(dataset: DatasetSpec, outcome_def: OutcomeDef, resolved_value
 
     routes, why_missing = available_routes(values)
     record.routes_available = list(routes)
+    # Blocker 1. "group(s) A, B have no mean, group size and dispersion" is a sentence in
+    # `routes_rejected`, and a sentence is not something a later stage can act on. As a FLAG it
+    # is the one condition D1's precedence override reads — and it is recorded before the
+    # orientation refusal below, because whether the paper printed a spread is a fact about the
+    # paper, not about whether anyone settled which direction is better.
+    if "group_statistics" in why_missing:
+        record.flags = sorted(set(record.flags) | {GROUP_STATISTICS_MISSING})
     if values.higher_is_better is None:
         return _not_convertible(record, "the direction of this measure is unresolved, so an "
                                         "effect size built from it could not be signed",
@@ -630,6 +696,153 @@ def resolve_effect(dataset: DatasetSpec, outcome_def: OutcomeDef, resolved_value
     record.inputs = {k: (float(v) if isinstance(v, (int, float)) else None)
                      for k, v in inputs.items()}
     return _not_convertible(record, reason, [])
+
+
+# ------------------------------------------------------------------- D1: the precedence override
+def resolve_effect_with_fallback(dataset: DatasetSpec, outcome_def: OutcomeDef,
+                                 primary: ResolvedValues,
+                                 alternatives: Sequence[ResolvedValues],
+                                 settings: StatsSettings) -> EffectSizeRecord:
+    """`resolve_effect`, plus D1: a value that converts to nothing yields to one that converts.
+
+    The precedence list prefers a printed value over a measured one, and it is right to: a number
+    the paper prints can be quoted and checked, and one read off a picture cannot. But precedence
+    presumes the preferred value CAN be converted. Heuer & Hegele 2008 is the case that shows the
+    gap: the paper prints 27.7° and 18.9° for the two age groups and prints no spread for either,
+    so the printed pair yields no effect size at all, while the figure both readers measured sits
+    in the same cell with a mean, an SE and an n. Under strict precedence the cell contributes
+    nothing — not a weaker number, NO number — and the review queue offers a human no way to
+    supply one, because no route was ever available to override.
+
+    So, scoped: *the printed value is preferred whenever it converts; when it cannot, the row may
+    be built from a convertible same-locator candidate pair, and is HELD.* Held is the whole of
+    the safety: `confidence = "needs_human"` on every overridden row, the swap written on the
+    record (`route_overridden_from`, `precedence_override_reason`), and the flag
+    `precedence_override` so a reader can find every one of them. Nothing is released by this.
+
+    Three conditions, all necessary. `group_statistics_missing` says the four group routes were
+    never available — the override only ever restores a route precedence could not reach, so it
+    can never demote a row that converted. An unresolved orientation still refuses: an effect size
+    nobody can sign is not improved by measuring it more precisely. And a row the resolver already
+    refused (`ROW_REFUSAL_CODES`) stays refused — the fallback is not a way around a screen.
+
+    `alternatives` come from `rows.fallback_values`, which is where the pairing rules live (same
+    locator, same unit, one reading per route). The first that converts wins, and the ordering is
+    the protocol's own `route_precedence`.
+    """
+    record = resolve_effect(dataset, outcome_def, primary, settings)
+    if not _may_fall_back(record, primary):
+        return record
+    for alternative in alternatives:
+        values = _with_row_context(alternative, primary)
+        attempt = resolve_effect(dataset, outcome_def, values, settings)
+        if _rank(attempt.route, settings) >= _rank(record.route, settings):
+            continue        # not convertible, or a route precedence ranks BELOW the one we have
+        # both flags: the swap, and the fact that made it necessary. The alternative HAS group
+        # statistics, so `resolve_effect` would never raise the second on it — and a row that did
+        # not say the printed value has no spread would be a row whose reader cannot tell an
+        # override from an ordinary figure read (acceptance item 4).
+        attempt.flags = sorted(set(attempt.flags) | {PRECEDENCE_OVERRIDE, GROUP_STATISTICS_MISSING})
+        attempt.route_overridden_from = _group_route_name(primary)
+        attempt.precedence_override_reason = _override_reason(primary, values, attempt,
+                                                              alternatives)
+        attempt.confidence = "needs_human"          # a row this was done to is never released
+        return attempt
+    return record
+
+
+def _may_fall_back(record: EffectSizeRecord, primary: ResolvedValues) -> bool:
+    """May this row be rebuilt from a candidate pair? The three conditions of D1, in one place."""
+    if GROUP_STATISTICS_MISSING not in record.flags:
+        return False
+    if primary.higher_is_better is None or primary.group_a is None or primary.group_b is None:
+        return False
+    return not (set(record.flags) & ROW_REFUSAL_CODES)
+
+
+def _rank(route: str, settings: StatsSettings) -> int:
+    """Where a route sits in the protocol's precedence list; off the end when it is not on it.
+
+    `not_convertible` is not a route in the list, so it ranks last — which is what makes the one
+    comparison in the loop above cover both cases: a row that converted is only overridden by a
+    route the protocol prefers to it, and a row that converted to nothing is overridden by any.
+    """
+    order = list(settings.route_precedence)
+    return order.index(route) if route in order else len(order)
+
+
+def _with_row_context(alternative: ResolvedValues, primary: ResolvedValues) -> ResolvedValues:
+    """The alternative pair, carrying the ROW's context — its flags, orientation and bucket.
+
+    The candidates supply two groups' numbers and nothing else. Everything else about the row is
+    a fact about the cell and the dataset, not about where the numbers were read: the multi-group
+    policy flag, the cell's warnings, the direction of the measure. Dropping them would build the
+    override row out from under the checks the primary row was subject to.
+
+    The printed statistic and the printed effect size are deliberately NOT carried: this row is
+    the candidate pair or it is nothing, and a fallback that quietly converted a printed t would
+    be an override nobody asked for.
+    """
+    values = alternative.model_copy(deep=True)
+    values.dataset_id = values.dataset_id or primary.dataset_id
+    values.outcome_key = values.outcome_key or primary.outcome_key
+    values.higher_is_better = primary.higher_is_better
+    values.route_available = list(primary.route_available)
+    values.confidence = primary.confidence
+    values.flags = sorted(set(values.flags) | set(primary.flags))
+    values.objections = dict(primary.objections)
+    values.test_statistic = None
+    values.reported = None
+    return values
+
+
+def _shown(group: GroupValues | None, *, spread: bool) -> str:
+    """One group's numbers as a reader would write them — `"-27 ± 4.713 (SE)"`, `"no value"`."""
+    if group is None or (group.mean is None and group.median is None and not group.points):
+        return "no value"
+    centre = _fmt(group.mean if group.mean is not None else group.median) \
+        if (group.mean is not None or group.median is not None) else f"{len(group.points)} points"
+    if not spread or group.dispersion_value is None:
+        return centre
+    kind = group.dispersion_type.value if group.dispersion_type else ""
+    named = f" ({kind})" if kind and kind not in ("UNKNOWN", "NONE") else ""
+    return f"{centre} ± {_fmt(group.dispersion_value)}{named}"
+
+
+def _override_reason(primary: ResolvedValues, alternative: ResolvedValues,
+                     record: EffectSizeRecord, alternatives: Sequence[ResolvedValues] = ()) -> str:
+    """Why this row is not the number the precedence list asked for — in one readable sentence.
+
+    It names both pairs, where the second was read, which candidates it is, and — because a
+    reviewer decides this row — any objection this cell's verifiers raised against exactly those
+    candidates. A refutation does not block the fallback (the printed value it argued for is the
+    one that converts to nothing), but it is the first thing the human should see.
+
+    And when the cell was read in more than one place, it says so. Vachon d2's aftereffect has a
+    pair under Fig 4's left panel and another under Fig 3's top-right, and "the first by route
+    precedence" chose between two pictures. The row is held either way, so nothing is released on
+    that choice — but a reviewer who is not told a choice was made cannot revisit it.
+    """
+    pair = (alternative.group_a, alternative.group_b)
+    ids = ", ".join(g.candidate_id for g in pair if g is not None and g.candidate_id)
+    locator = next((g.locator for g in pair if g is not None and g.locator), "")
+    said = (f"{_group_route_name(primary)} resolved "
+            f"{_shown(primary.group_a, spread=False)}/{_shown(primary.group_b, spread=False)} "
+            f"with no dispersion; {record.route} under {locator!r} resolved "
+            f"{_shown(pair[0], spread=True)}/{_shown(pair[1], spread=True)} "
+            f"(candidates {ids or 'unnamed'}), which converts")
+    objection = "; ".join(dict.fromkeys(
+        primary.objections.get(g.candidate_id, "") for g in pair
+        if g is not None and primary.objections.get(g.candidate_id)))
+    if objection:
+        said += f"; verifier objection on those candidates: {objection[:200]!r}"
+    elsewhere = sorted({(other.group_a.locator or "")[:_LOCATOR_CHARS]
+                        for other in alternatives if other.group_a is not None
+                        and other.group_a.locator and other.group_a.locator != locator})
+    if elsewhere:
+        said += (f"; this cell was also read at {len(elsewhere)} other place(s) "
+                 f"({'; '.join(elsewhere)}), and this pair is the first by route precedence")
+    return said
 
 
 def _run_route(name: str, values: ResolvedValues, dataset: DatasetSpec, settings: StatsSettings,

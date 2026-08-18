@@ -24,18 +24,20 @@ Nothing here calls a model, and nothing here decides a bucket: it assembles inpu
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Collection, Mapping, Sequence
 
 from ..models import Candidate, DatasetSpec, StatsSettings, Verdict
 from ..verify.checks import best_statistic
-from .resolve import (ReportedValues, ResolvedValues, StatisticValues, apply_shared_control,
-                      multi_group_flags)
+from ..verify.units import same_unit
+from ..verify.vote import locator_key, modality
+from .resolve import (GROUP_ROUTES, GroupValues, ReportedValues, ResolvedValues,
+                      StatisticValues, apply_shared_control, available_routes, multi_group_flags)
 
 __all__ = ["PreparedRow", "ENSEMBLE", "DISPERSION_APPROXIMATED", "cell_candidates",
            "statistic_values", "reported_values", "approximation_flags", "prepare_row_values",
            "prepare_rows", "shared_control_siblings", "converted_route",
-           "converting_candidate", "reported_candidate"]
+           "converting_candidate", "reported_candidate", "vote_candidates", "fallback_values"]
 
 ENSEMBLE = "digitize:ensemble"
 
@@ -62,6 +64,11 @@ class PreparedRow:
     dataset: DatasetSpec
     outcome_key: str
     values: ResolvedValues
+    #: D1: the same-locator candidate pairs this row could be built from INSTEAD, if the values
+    #: above turn out to convert to nothing (`resolve.resolve_effect_with_fallback`). Prepared
+    #: here rather than at either call site, because both call sites must offer the resolver the
+    #: same alternatives or the re-pool of an unanswered row would not be the row the run built.
+    alternatives: list[ResolvedValues] = field(default_factory=list)
 
     @property
     def key(self) -> tuple[str, str]:
@@ -72,6 +79,25 @@ def cell_candidates(candidates: Sequence[Candidate], dataset_id: str,
                     outcome_key: str) -> list[Candidate]:
     return [c for c in candidates
             if c.dataset_id == dataset_id and c.outcome_key == outcome_key]
+
+
+def vote_candidates(candidates: Sequence[Candidate]) -> list[Candidate]:
+    """The candidates the verification layer may see: one figure reading per group, not five.
+
+    `digitize()` returns a `Candidate` per (group, route sample) *and* one ensemble candidate per
+    group. The route samples belong in the stage file and the provenance bundle — that is where a
+    reviewer checks how the picture was measured — but they must not enter the vote: the
+    digitiser's four or five ways of measuring one figure would otherwise outvote the value the
+    paper printed, and the ensemble (amendment F's median-of-routes, with the per-route detail in
+    its `pixel_provenance`) is already their consensus. Controller ruling, fix round 1.
+
+    It lives here, beside `fallback_values`, because D1's precedence override has to offer the
+    resolver the same readings the vote weighed. Offered the raw samples instead, "the first
+    alternative that converts" would be whichever measurement path the digitiser happened to list
+    first — a number no reviewer ever saw and no verifier ever read.
+    """
+    return [c for c in candidates
+            if not c.extractor_id.startswith("digitize:") or c.extractor_id == ENSEMBLE]
 
 
 def approximation_flags(cell: Sequence[Candidate]) -> list[str]:
@@ -164,6 +190,81 @@ def prepare_row_values(dataset: DatasetSpec, outcome_key: str, verdict_a: Verdic
     return values
 
 
+def _some_spread(values: GroupValues) -> bool:
+    """Did this reading bring a spread of ANY kind? Whether it converts is the resolver's call."""
+    return (len(values.points) >= 2 or values.dispersion_value is not None
+            or (values.ci_low is not None and values.ci_high is not None))
+
+
+def _reading(cand: Candidate, settled: GroupValues | None) -> GroupValues | None:
+    """One candidate as one group's numbers, or `None` when it is not a whole set of them."""
+    values = GroupValues.from_candidate(cand)
+    # the group size is a fact about the ANALYSIS, not about where the number was read, and the
+    # row's n may already have been divided between the comparisons that share a control arm
+    # (Cochrane 16.5.4). So the size the cell settled on wins whenever it has one: taking the
+    # candidate's would quietly un-split a shared control on exactly the rows this fallback is for.
+    if settled is not None and settled.n:
+        values.n = settled.n
+    if (values.n or 0) < 2 or not _some_spread(values):
+        return None
+    if values.mean is None and values.median is None and len(values.points) < 2:
+        return None
+    return values
+
+
+def fallback_values(cell: Sequence[Candidate], primary: ResolvedValues,
+                    settings: StatsSettings) -> list[ResolvedValues]:
+    """The candidate PAIRS this row could be built from instead — D1's alternatives, in order.
+
+    A pair, never two readings: one route, one place, both groups. The rules are the vote's own,
+    for the vote's own reasons.
+
+    * **One reading per group per route** (`vote_candidates`), so the digitiser's five measurement
+      paths are one alternative and not five.
+    * **The same locator** (`vote.locator_key`), because two panels of one figure are two
+      quantities: Langan's Fig. 1 plots the young adults in panel A and the older adults in panel
+      B, and a "pair" spanning both is a difference between two different pictures.
+    * **The same unit** (`verify.units.same_unit`), because a mean in degrees minus a mean in
+      per-cent is not an effect size.
+    * **Ordered by the protocol's `route_precedence`**, so that when more than one pair converts
+      the row is built from the one the protocol prefers — the fallback changes WHICH value is
+      used, never the order they are preferred in.
+
+    Whether a pair converts is not decided here: `resolve_effect_with_fallback` finds out by
+    resolving it, through the ordinary resolver and its ordinary gates. This function's answer is
+    "these are the pairs that exist", which is why a reading whose dispersion type nobody recorded
+    is still listed — it is a real pair, and the refusal it earns should come from one place.
+    """
+    readings: dict[tuple[str, str], dict[str, Candidate]] = {}
+    for cand in vote_candidates(cell):
+        if cand.kind != "group_stats" or cand.status != "found" or cand.group not in ("A", "B"):
+            continue
+        readings.setdefault((modality(cand), locator_key(cand)), {}).setdefault(cand.group, cand)
+
+    out: list[ResolvedValues] = []
+    for pair in readings.values():
+        cand_a, cand_b = pair.get("A"), pair.get("B")
+        if cand_a is None or cand_b is None or not same_unit(cand_a.unit, cand_b.unit):
+            continue
+        group_a, group_b = _reading(cand_a, primary.group_a), _reading(cand_b, primary.group_b)
+        if group_a is None or group_b is None:
+            continue
+        out.append(ResolvedValues(
+            dataset_id=primary.dataset_id, outcome_key=primary.outcome_key,
+            group_a=group_a, group_b=group_b, higher_is_better=primary.higher_is_better,
+            route_available=list(primary.route_available), confidence=primary.confidence,
+            flags=list(primary.flags), objections=dict(primary.objections)))
+
+    order = list(settings.route_precedence)
+
+    def rank(values: ResolvedValues) -> int:
+        routes, _ = available_routes(values)
+        name = next((route for route in routes if route in GROUP_ROUTES), "")
+        return order.index(name) if name in order else len(order)
+
+    return sorted(out, key=rank)               # stable: pairs of one rank keep the reading order
+
+
 def _default_cluster(dataset: DatasetSpec) -> str:
     return dataset.cluster_id or dataset.dataset_id
 
@@ -202,6 +303,14 @@ def prepare_rows(cells: Sequence[tuple[DatasetSpec, str, Verdict, Verdict]],
         for position, index in enumerate(indices):
             if position < len(adjusted):
                 prepared[index].values = adjusted[position]
+
+    # LAST, after the shared-control adjustment: an alternative takes the row's group sizes from
+    # the values above, and those are the split ones (Cochrane 16.5.4). Built before this loop,
+    # every fallback row would carry a control arm's full n.
+    for row in prepared:
+        row.alternatives = fallback_values(
+            cell_candidates(candidates, row.dataset.dataset_id, row.outcome_key),
+            row.values, settings)
     return prepared
 
 

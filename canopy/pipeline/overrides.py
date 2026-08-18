@@ -53,7 +53,7 @@ from ..verify.confidence import ROW_REFUSAL_CODES
 from ..protocol import load_protocol
 from ..report import (dump_json, exclusions_table, extraction_table, pool_rows, prisma_flow,
                       write_html_report, write_outcome_outputs, write_rows)
-from .resolve import ResolvedValues, resolve_effect
+from .resolve import ResolvedValues, resolve_effect_with_fallback
 from .rows import (PreparedRow, converted_route, prepare_rows,
                    shared_control_siblings)
 from .state import (load_manifest, read_stage, review_entry, save_manifest, sha12,
@@ -1208,7 +1208,12 @@ def _rebuild_row(record: EffectSizeRecord, dataset: DatasetSpec, verdict_a: Verd
                         higher_is_better=higher_is_better, state=state, verdicts=verdicts)
     values = prepared.values
     values.flags = sorted({*values.flags, "human_override"})
-    rebuilt = resolve_effect(dataset, protocol.outcome(outcome_key), values, protocol.stats)
+    # …and through `resolve_effect_with_fallback`, which is what the run calls (D1). A row whose
+    # printed values convert to nothing is built from the same-locator candidate pair `_prepare`
+    # found; were this `resolve_effect` alone, answering anything about such a cell would take the
+    # row's effect size away again — the one-row-path rule, on the newest branch of the resolver.
+    rebuilt = resolve_effect_with_fallback(dataset, protocol.outcome(outcome_key), values,
+                                           prepared.alternatives, protocol.stats)
     rebuilt.paper_id = record.paper_id
     rebuilt.sample_id = record.sample_id
     rebuilt.cluster_id = record.cluster_id
