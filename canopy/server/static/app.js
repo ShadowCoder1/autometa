@@ -817,17 +817,21 @@
   function loadQuestions() {
     if (!state.runId) { return Promise.resolve(null); }
     return api("/api/runs/" + state.runId + "/questions")
-      .then(function (body) { renderQuestions(body.questions || [], body.n_open || 0); })
+      .then(function (body) {
+        renderQuestions(body.questions || [], body.n_open || 0, body.n_pending || 0);
+      })
       .catch(function (error) {
         clear($("questions"));
         $("questions").appendChild(h("p", { cls: "hint", text: error.message }));
       });
   }
 
-  function renderQuestions(questions, nOpen) {
+  function renderQuestions(questions, nOpen, nPending) {
     var badge = $("questions-count");
     badge.textContent = String(nOpen);
-    show(badge, nOpen > 0);
+    badge.title = nPending
+      ? nPending + " answered decision(s) waiting for a re-run" : "";
+    show(badge, nOpen > 0 || nPending > 0);
     var holder = $("questions");
     clear(holder);
     if (!questions.length) {
@@ -838,14 +842,26 @@
     questions.forEach(function (q) { holder.appendChild(questionCard(q)); });
   }
 
+  // a question whose answers are a menu, not a number: a direction, an inclusion and a choice of
+  // measure are all answered by picking one of the things offered, so a "type it yourself" box
+  // could only add a way to answer with nothing.
+  function isChoiceOnly(q) {
+    return q.kind === "orientation" || q.kind === "include_dataset" || q.kind === "which_measure";
+  }
+
   function questionCard(q) {
     var head = h("div", { cls: "q-head" }, [
       h("span", { cls: "q-num", text: "#" + q.number }),
       h("span", { cls: "q-paper", text: q.paper + (q.dataset_label ? " · " + q.dataset_label : "") }),
       h("span", { cls: "q-cell", text: (q.outcome_key || "").replace(/_/g, " ")
         + (q.group_label ? " · " + q.group_label : "") }),
-      q.answered ? h("span", { cls: "pill ok", text: "answered" })
-                 : h("span", { cls: "pill", text: q.kind.replace(/_/g, " ") })
+      // three states, not two: a decision whose consequence has not happened yet is not
+      // "answered" — the extraction it decides has to be bought before anything changes.
+      (q.status === "pending_rerun")
+        ? h("span", { cls: "pill off", text: "answered — pending re-run",
+                      attrs: { title: q.pending_why || "" } })
+        : q.answered ? h("span", { cls: "pill ok", text: "answered" })
+                     : h("span", { cls: "pill", text: q.kind.replace(/_/g, " ") })
     ]);
     var body = h("div", { cls: "q-body" });
     if (q.image && q.image.url) {
@@ -865,19 +881,24 @@
       var backed = o.backed_by && o.backed_by.length ? " — " + o.backed_by.join(", ") : "";
       var quote = o.quote ? " “" + String(o.quote).slice(0, 140) + "”" : "";
       form.appendChild(h("label", { cls: "q-option" }, [
-        h("input", { attrs: { type: "radio", name: "option", value: o.key, id: id } }),
+        h("input", { attrs: { type: "radio", name: "option", value: o.key, id: id,
+          "data-fingerprint": o.fingerprint || "" } }),
         h("span", { text: o.label + backed + quote })
       ]));
     });
     var freeId = "q" + q.number + "-free";
-    form.appendChild(h("label", { cls: "q-option" }, [
-      h("input", { attrs: { type: "radio", name: "option", value: "__free__", id: freeId } }),
-      h("span", { text: (q.kind === "no_value")
-        ? "it is here (say where), or it is not reported"
-        : "none of these — I will type it" })
-    ]));
+    if (!isChoiceOnly(q)) {
+      form.appendChild(h("label", { cls: "q-option" }, [
+        h("input", { attrs: { type: "radio", name: "option", value: "__free__", id: freeId } }),
+        h("span", { text: (q.kind === "no_value")
+          ? "it is here (say where), or it is not reported"
+          : "none of these — I will type it" })
+      ]));
+    }
     var free = h("div", { cls: "q-free", attrs: { hidden: true } });
-    if (q.kind === "no_value") {
+    if (isChoiceOnly(q)) {
+      free.appendChild(h("span", { cls: "hint", text: "" }));
+    } else if (q.kind === "no_value") {
       free.appendChild(h("input", { attrs: { type: "text", name: "hint",
         placeholder: "e.g. Table 2, row 'older', p. 5 — or leave empty for 'not reported'" } }));
     } else {
@@ -899,12 +920,22 @@
       show(free, !!picked && picked.value === "__free__");
     });
     form.appendChild(h("input", { cls: "q-note", attrs: { type: "text", name: "note",
-      placeholder: "note for the record (optional)" } }));
+      placeholder: (q.kind === "orientation")
+        ? "the sentence in the paper that says so — recorded with the direction"
+        : isChoiceOnly(q)
+        ? "why — the rule or the sentence that decides it, recorded with the answer"
+        : "note for the record (optional)" } }));
     var actions = h("div", { cls: "q-actions" }, [
-      h("button", { cls: "btn small", attrs: { type: "submit" }, text: "Answer & re-pool" }),
-      h("button", { cls: "btn small ghost", attrs: { type: "button" }, text: "Exclude this cell",
-        on: { click: function () { submitAnswer(q, form, true); } } })
+      h("button", { cls: "btn small", attrs: { type: "submit" }, text: "Answer & re-pool" })
     ]);
+    // "exclude this cell" on a `which_measure` question writes an exclusion for a dataset nothing
+    // was ever extracted from: the re-pool has no row to drop, so the decision is inert. The
+    // exclusion of such a dataset is the `include_dataset` question's own answer.
+    if (q.kind !== "which_measure") {
+      actions.appendChild(h("button", { cls: "btn small ghost", attrs: { type: "button" },
+        text: "Exclude this cell",
+        on: { click: function () { submitAnswer(q, form, true); } } }));
+    }
     form.appendChild(actions);
     right.appendChild(form);
     var why = h("details", { cls: "q-why" }, [
@@ -914,16 +945,20 @@
     right.appendChild(why);
     if (q.answered && q.answers && q.answers.length) {
       right.appendChild(h("p", { cls: "hint",
-        text: "Answered: " + (q.answers[q.answers.length - 1].justification || "") }));
+        text: "Answered: " + (q.answers[q.answers.length - 1].justification || "")
+          + (q.status === "pending_rerun" ? " — not applied yet: " + (q.pending_why || "") : "") }));
     }
     body.appendChild(right);
-    return h("section", { cls: "card q-card" + (q.answered ? " is-answered" : ""),
+    return h("section", { cls: "card q-card"
+      + (q.answered && q.status !== "pending_rerun" ? " is-answered" : ""),
       attrs: { "data-question": q.number } }, [head, body]);
   }
 
   function submitAnswer(q, form, exclude) {
     var picked = form.querySelector("input[name=option]:checked");
-    var payload = { note: (form.querySelector("input[name=note]") || {}).value || "" };
+    // the number is a position in a list that moves as answers land, so the answer names the
+    // question it answers and the server refuses it if that is no longer question #n.
+    var payload = { id: q.id, note: (form.querySelector("input[name=note]") || {}).value || "" };
     if (exclude) { payload.exclude = true; }
     else if (!picked) { toast("Choose an answer first."); return; }
     else if (picked.value === "__free__") {
@@ -931,15 +966,36 @@
         var input = form.querySelector("[name=" + name + "]");
         if (input && input.value !== "") { payload[name] = input.value; }
       });
-      if (q.kind !== "no_value" && payload.mean === undefined && payload.dispersion_value === undefined
+      if (q.kind !== "no_value" && !isChoiceOnly(q) && payload.mean === undefined
+          && payload.dispersion_value === undefined
           && payload.n === undefined) { toast("Type at least a mean, a spread or an n."); return; }
-    } else { payload.option = picked.value; }
+      if (!payload.note && (payload.mean !== undefined || payload.dispersion_value !== undefined
+          || payload.n !== undefined)) {
+        toast("A typed number needs a note saying where it comes from.");
+        return;
+      }
+    } else {
+      payload.option = picked.value;
+      // what this option MEANT when it was drawn: the keys are positional and the list is rebuilt
+      // on every request, so the server refuses an answer echoing a number it no longer offers.
+      payload.option_fingerprint = picked.getAttribute("data-fingerprint") || "";
+    }
     var buttons = form.querySelectorAll("button");
     Array.prototype.forEach.call(buttons, function (b) { b.disabled = true; });
     api("/api/runs/" + state.runId + "/questions/" + q.number + "/answer",
         { method: "POST", json: payload })
       .then(function (body) {
-        toast("Recorded. " + (body.n_open ? body.n_open + " question(s) still open." : "No open questions."));
+        // an answer the tool cannot act on itself says so, in the reviewer's own moment: a map
+        // answer waits for the resume that buys the extraction, and "recorded" alone would read
+        // as "done".
+        var waiting = (body.repool && body.repool.pending || []).filter(function (p) {
+          return p.seq === (body.override || {}).seq;
+        })[0];
+        var waitingCount = body.n_pending
+          ? " " + body.n_pending + " answered decision(s) waiting for a re-run." : "";
+        toast(waiting ? "Recorded — " + waiting.why
+                      : "Recorded. " + (body.n_open ? body.n_open + " question(s) still open."
+                                                    : "No open questions.") + waitingCount);
         return refreshRun().then(loadResults).then(loadQuestions);
       })
       .catch(function (error) {
@@ -1506,6 +1562,7 @@
       ["mark_reviewed", "Mark as reviewed"],
       ["exclude_dataset", "Exclude this dataset"],
       ["re_extract", "Ask for a re-extraction"],
+      ["orientation", "Set the direction of this measure"],
       ["eligibility", "Change the paper's eligibility"]
     ];
     var kind = h("select");
@@ -1524,6 +1581,25 @@
     });
     var n = h("input", { attrs: { type: "number", min: "1", placeholder: "n" } });
     var hint = h("input", { attrs: { type: "text", placeholder: "what should be read instead" } });
+    var direction = h("select");
+    [["false", "a SMALLER raw value is more of what this review scores (error-type measure)"],
+     ["true", "a LARGER raw value is more of what this review scores"]].forEach(function (pair) {
+      direction.appendChild(h("option", { text: pair[1], attrs: { value: pair[0] } }));
+    });
+    // H1: a direction belongs to ONE measure. A blank box here used to mean "every measure of
+    // this outcome in this paper", which re-signed a different measure's rows and inverted the
+    // pooled estimate — so the reviewer picks from the measures the map itself names.
+    var measures = (((evidence.dataset || {}).outcomes) || [])
+      .filter(function (o) { return o.outcome_key === evidence.outcome_key && o.measure_name; })
+      .map(function (o) { return o.measure_name; });
+    var measure = h("select");
+    if (!measures.length) {
+      measure.appendChild(h("option", { text: "the map names no measure for this outcome",
+        attrs: { value: "" } }));
+    }
+    measures.forEach(function (name) {
+      measure.appendChild(h("option", { text: name, attrs: { value: name } }));
+    });
     var eligible = h("select");
     [["true", "eligible"], ["false", "not eligible"]].forEach(function (pair) {
       eligible.appendChild(h("option", { text: pair[1], attrs: { value: pair[0] } }));
@@ -1541,13 +1617,19 @@
     var hintRow = h("label", { cls: "field" }, [h("span", { cls: "label", text: "hint" }), hint]);
     var eligibleRow = h("label", { cls: "field" },
       [h("span", { cls: "label", text: "this paper is" }), eligible]);
+    var directionRow = h("div", { cls: "grid-2" }, [
+      h("label", { cls: "field" }, [h("span", { cls: "label", text: "on this measure" }), direction]),
+      h("label", { cls: "field" }, [h("span", { cls: "label", text: "measure" }), measure])
+    ]);
     hintRow.hidden = true;
     eligibleRow.hidden = true;
+    directionRow.hidden = true;
 
     kind.addEventListener("change", function () {
       valueRow.hidden = kind.value !== "value";
       hintRow.hidden = kind.value !== "re_extract";
       eligibleRow.hidden = kind.value !== "eligibility";
+      directionRow.hidden = kind.value !== "orientation";
     });
 
     var status = h("p", { cls: "hint", text: "" });
@@ -1566,6 +1648,16 @@
         }
         if (kind.value === "re_extract") { payload.hint = hint.value.trim(); }
         if (kind.value === "eligibility") { payload.eligible = eligible.value === "true"; }
+        if (kind.value === "orientation") {
+          payload.higher_is_better = direction.value === "true";
+          payload.measure_name = (measure.value || "").trim();
+          payload.quote = justification.value.trim();
+          if (!payload.measure_name) {
+            status.textContent = "This outcome's map names no measure, so there is nothing to "
+              + "give a direction to.";
+            return;
+          }
+        }
         submit.disabled = true;
         api("/api/runs/" + state.runId + "/overrides", { method: "POST", json: payload })
           .then(function (body) {
@@ -1599,7 +1691,7 @@
 
     return section("Your decision", [
       h("label", { cls: "field" }, [h("span", { cls: "label", text: "what to change" }), kind]),
-      valueRow, hintRow, eligibleRow,
+      valueRow, hintRow, directionRow, eligibleRow,
       h("label", { cls: "field" },
         [h("span", { cls: "label", text: "justification" }), justification]),
       h("div", { cls: "actions" }, [repool, submit]),

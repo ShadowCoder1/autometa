@@ -768,20 +768,67 @@ def create_app(runs_dir: str | Path = "runs", *,
             if image.get("path"):
                 image["url"] = _file_url(job, str(job.run_dir / image["path"]))
         return {"run_id": job.run_id, "questions": questions,
-                "n_open": sum(1 for q in questions if not q.get("answered"))}
+                # three states, three counts: "not answered" is not the same as "not applied", and
+                # a run whose every remaining answer is waiting for a re-run used to report "no
+                # open questions" while nothing had been applied.
+                "n_open": sum(1 for q in questions if q.get("status") == "open"),
+                "n_pending": sum(1 for q in questions
+                                 if q.get("status") == "pending_rerun")}
 
     @app.post("/api/runs/{run_id}/questions/{number}/answer", status_code=201)
     def answer_question(run_id: str, number: int, request: Request,
                         body: dict[str, Any]) -> dict[str, Any]:
         """An answer becomes an override with a justification naming the question, and the run
-        is re-pooled so the forest plot reflects it."""
+        is re-pooled so the forest plot reflects it.
+
+        The body MUST carry the question's `id` (from `GET /questions`). Without it: **422**;
+        with one that is no longer the question at this number: **409** — the list is rebuilt on
+        every request and shortens as answers land, so a number alone would decide a different
+        cell. An answer that picks an `option` must also echo that option's `fingerprint`: **422**
+        without it, **409** when it no longer matches. Clients written against the earlier
+        contract have to send both.
+        """
         job = run_of(run_id, request)
         from ..review.questions import answer_to_override, questions_for_run
         question = next((q for q in questions_for_run(job.run_dir) if q["number"] == number), None)
         if question is None:
             raise HTTPException(status_code=404, detail=f"no question #{number} in this run")
-        payload = answer_to_override(question, body or {})
+        # A number is a position in a list that is rebuilt on every request, and answering a
+        # question removes it — so #2 means a different cell a moment later, and a retried POST
+        # decides a cell nobody was shown. The answer therefore names the question it answers.
+        wanted = str((body or {}).get("id") or "")
+        if not wanted:
+            raise HTTPException(status_code=422,
+                                detail="an answer must name the question it answers: send the "
+                                       "question's `id` with it (numbers move as answers land)")
+        if wanted != question["id"]:
+            raise HTTPException(status_code=409,
+                                detail=f"question #{number} is now {question['id']!r}, not "
+                                       f"{wanted!r} — the list moved; reload the questions")
+        # the id names the question; it cannot name the OPTION. `v1…vN` are positional and the
+        # list is rebuilt from the cell's current numbers, so after any value answer the same key
+        # under the same id can denote a different number. An answer therefore echoes what it was
+        # shown, and a stale one is refused rather than applied to a number nobody chose.
+        chosen = str((body or {}).get("option") or "")
+        if chosen:
+            option = next((o for o in question.get("options") or []
+                           if o.get("key") == chosen), None)
+            if option is None:
+                raise HTTPException(status_code=409,
+                                    detail=f"question #{number} no longer offers {chosen!r}")
+            echoed = str((body or {}).get("option_fingerprint") or "")
+            if not echoed:
+                raise HTTPException(status_code=422,
+                                    detail="an answer that picks an option must echo its "
+                                           "`fingerprint`: the options are rebuilt on every "
+                                           "request, so a key alone can mean a different number")
+            if echoed != option.get("fingerprint"):
+                raise HTTPException(status_code=409,
+                                    detail=f"{chosen!r} on question #{number} is not the option "
+                                           f"you were shown ({option.get('label')!r}); reload "
+                                           f"the questions")
         try:
+            payload = answer_to_override(question, body or {})
             record = append_override(job.run_dir, payload)
         except OverrideRejected as exc:
             raise HTTPException(status_code=422, detail=str(exc))
@@ -790,8 +837,10 @@ def create_app(runs_dir: str | Path = "runs", *,
                 summary = apply_overrides_and_repool(job.run_dir)
             except FileNotFoundError as exc:
                 raise HTTPException(status_code=409, detail=str(exc))
+        after = questions_for_run(job.run_dir)
         return {"ok": True, "override": record, "repool": summary,
-                "n_open": sum(1 for q in questions_for_run(job.run_dir) if not q.get("answered"))}
+                "n_open": sum(1 for q in after if q.get("status") == "open"),
+                "n_pending": sum(1 for q in after if q.get("status") == "pending_rerun")}
 
     @app.post("/api/runs/{run_id}/repool")
     def repool(run_id: str, request: Request) -> dict[str, Any]:

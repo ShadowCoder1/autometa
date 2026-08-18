@@ -1158,10 +1158,12 @@ def test_a_run_offers_its_held_cells_as_questions_and_an_answer_repools(cloned):
         assert q["image"]["url"].startswith("/api/runs/")
 
     before = api.get(f"/api/runs/{run_id}/results/{OUTCOME}", headers=auth(token)).json()
-    answer = ({"option": q["options"][0]["key"], "note": "checked the figure"}
+    answer = ({"id": q["id"], "option": q["options"][0]["key"],
+               "option_fingerprint": q["options"][0]["fingerprint"],
+               "note": "checked the figure"}
               if q["options"] and q["options"][0].get("mean") is not None
-              else {"mean": 12.0, "dispersion_value": 4.0, "dispersion_type": "SD", "n": 12,
-                    "note": "typed from the table"})
+              else {"id": q["id"], "mean": 12.0, "dispersion_value": 4.0, "dispersion_type": "SD",
+                    "n": 12, "note": "typed from the table"})
     response = api.post(f"/api/runs/{run_id}/questions/{q['number']}/answer",
                         headers=auth(token), json=answer)
     assert response.status_code == 201, response.text
@@ -1177,6 +1179,189 @@ def test_a_run_offers_its_held_cells_as_questions_and_an_answer_repools(cloned):
     # way the run was re-pooled and still reads as a finished run
     after = api.get(f"/api/runs/{run_id}/results/{OUTCOME}", headers=auth(token)).json()
     assert "pooled" in after and (Path(api.app.state.runs_dir) / run_id / "prisma.json").exists()
+
+
+def test_the_server_records_a_direction_for_a_measure_and_refuses_one_without_a_direction(cloned):
+    """C4's `orientation` decision reaches the log through the ordinary override endpoint.
+
+    The direction of a measure is not a cell value — it is decided once per (paper, outcome,
+    measure) — so before C4 there was no kind a reviewer could post it as, and `resolve` refused
+    every such row with `orientation_unresolved`.
+    """
+    api, run_id, token = cloned["api"], cloned["run_id"], cloned["token"]
+    queue = api.get(f"/api/runs/{run_id}/review", headers=auth(token)).json()["queue"]
+    paper_id = next((e.get("paper_id") for e in queue if e.get("paper_id")), None) \
+        or api.get(f"/api/runs/{run_id}", headers=auth(token)).json()["papers"][0]["paper_id"]
+
+    posted = api.post(f"/api/runs/{run_id}/overrides", headers=auth(token), json={
+        "kind": "orientation", "paper_id": paper_id, "outcome_key": OUTCOME, "group": "A",
+        "higher_is_better": False, "measure_name": "mean direction error",
+        "quote": "“a smaller aftereffect means less adaptation”",
+        "justification": "the outcome is an error measure, so smaller is more adaptation"})
+    assert posted.status_code == 201, posted.text
+    record = posted.json()["override"]
+    assert record["kind"] == "orientation" and record["higher_is_better"] is False
+    assert record["group"] is None, "a direction belongs to the measure, not to one group's cell"
+
+    refused = api.post(f"/api/runs/{run_id}/overrides", headers=auth(token), json={
+        "kind": "orientation", "paper_id": paper_id, "outcome_key": OUTCOME,
+        "measure_name": "mean direction error",
+        "justification": "I am not sure which way round it goes"})
+    assert refused.status_code == 422
+    assert "higher_is_better" in refused.json()["detail"]
+
+    # H1/N4: a blank measure is recordable — an outcome whose map never named one has a blank
+    # measure, and refusing the field would leave its direction question unanswerable. The scope is
+    # enforced where it can be seen: the re-pool refuses a direction that lands on more than one
+    # measure (`test_a_direction_with_no_measure_named_is_refused_instead_of_re_signing_the_whole_paper`).
+    unscoped = api.post(f"/api/runs/{run_id}/overrides", headers=auth(token), json={
+        "kind": "orientation", "paper_id": paper_id, "outcome_key": OUTCOME,
+        "higher_is_better": True, "measure_name": "",
+        "justification": "a larger value is more adaptation"})
+    assert unscoped.status_code == 201 and unscoped.json()["override"]["measure_name"] == ""
+
+
+def test_a_question_the_map_could_not_settle_is_asked_and_answered_through_the_server(cloned):
+    """C6/C7: a map question blocks an extraction, so it never reaches the review queue — and
+    before this it reached no page either. Here it is asked, answered, and the answer comes back
+    as the record the extract stage reads, with the honest news that acting on it needs a resume.
+    """
+    from canopy.models import MapQuestion
+
+    api, run_id, token = cloned["api"], cloned["run_id"], cloned["token"]
+    run_dir = Path(api.app.state.runs_dir) / run_id
+    path = next(iter(sorted(run_dir.glob("papers/*/map.json"))))
+    payload = json.loads(path.read_text())
+    dataset_id = payload["study"]["datasets"][0]["dataset_id"]
+    payload["study"]["open_questions"] = [MapQuestion(
+        kind="include_dataset", dataset_id=dataset_id,
+        question="Only one of the two mapping agents proposed this dataset. Is it in the review?",
+        options=["include it", "exclude it"],
+        quotes=["these participants never performed the adaptation task"]).model_dump(mode="json")]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    body = api.get(f"/api/runs/{run_id}/questions", headers=auth(token)).json()
+    question = next(q for q in body["questions"] if q["kind"] == "include_dataset")
+    assert question["dataset_id"] == dataset_id and question["answer_writes"] == "include_dataset"
+    assert [o["key"] for o in question["options"]][0] == "include"
+    assert "never performed the adaptation task" in question["why"]
+
+    include = next(o for o in question["options"] if o["key"] == "include")
+    posted = api.post(f"/api/runs/{run_id}/questions/{question['number']}/answer",
+                      headers=auth(token),
+                      json={"id": question["id"], "option": "include",
+                            "option_fingerprint": include["fingerprint"],
+                            "note": "a separate sample"})
+    assert posted.status_code == 201, posted.text
+    record = posted.json()["override"]
+    assert record["kind"] == "include_dataset" and record["decision"] == "include"
+    assert record["note"] == "a separate sample" and record["group"] is None
+    pending = posted.json()["repool"]["pending"]
+    assert pending and pending[0]["why"] == ("extraction was never bought for this; re-run with "
+                                             "--resume to extract it")
+    # and it now reads as answered rather than being asked again
+    again = api.get(f"/api/runs/{run_id}/questions", headers=auth(token)).json()["questions"]
+    assert next(q for q in again if q["kind"] == "include_dataset")["answered"] is True
+
+
+def test_the_server_refuses_a_map_answer_that_names_no_decision_or_no_winning_measure(cloned):
+    api, run_id, token = cloned["api"], cloned["run_id"], cloned["token"]
+    paper_id = api.get(f"/api/runs/{run_id}", headers=auth(token)).json()["papers"][0]["paper_id"]
+    for body, wanted in (
+            ({"kind": "include_dataset", "paper_id": paper_id, "dataset_id": "x:d2",
+              "decision": "maybe", "note": "I am not sure"}, "decision"),
+            ({"kind": "include_dataset", "paper_id": paper_id, "dataset_id": "",
+              "decision": "exclude", "note": "the controls never adapted"}, "dataset_id"),
+            ({"kind": "which_measure", "paper_id": paper_id, "dataset_id": "x:d1",
+              "outcome_key": OUTCOME, "note": "one of them"}, "winning")):
+        refused = api.post(f"/api/runs/{run_id}/overrides", headers=auth(token), json=body)
+        assert refused.status_code == 422, refused.text
+        assert wanted in refused.json()["detail"]
+
+
+def _with_a_map_question(cloned) -> dict:
+    """A run holding one question whose number is stable enough to aim two POSTs at."""
+    from canopy.models import MapQuestion
+
+    run_dir = Path(cloned["api"].app.state.runs_dir) / cloned["run_id"]
+    path = next(iter(sorted(run_dir.glob("papers/*/map.json"))))
+    payload = json.loads(path.read_text())
+    payload["study"]["open_questions"] = [MapQuestion(
+        kind="include_dataset", dataset_id=payload["study"]["datasets"][0]["dataset_id"],
+        question="Only one mapping agent proposed this dataset. Is it in the review?",
+        options=["include it", "exclude it"]).model_dump(mode="json")]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    body = cloned["api"].get(f"/api/runs/{cloned['run_id']}/questions",
+                             headers=auth(cloned["token"])).json()
+    return body
+
+
+def test_an_answer_must_name_the_question_it_answers_and_a_stale_number_is_refused(cloned):
+    """H3. The number is a position in a list that is rebuilt on every request and shortens as
+    answers land, so a retried POST to `/questions/2/answer` decided a *different* cell — the
+    replay in the review produced two identical POSTs writing means to two different groups, and
+    pooled a row nobody was shown. The answer now names the question, and a number that has since
+    moved is a 409 rather than a decision.
+    """
+    api, run_id, token = cloned["api"], cloned["run_id"], cloned["token"]
+    body = _with_a_map_question(cloned)
+    question = next(q for q in body["questions"] if q["kind"] == "include_dataset")
+    url = f"/api/runs/{run_id}/questions/{question['number']}/answer"
+
+    fp = next(o for o in question["options"] if o["key"] == "include")["fingerprint"]
+    nameless = api.post(url, headers=auth(token), json={"option": "include", "note": "keep it"})
+    assert nameless.status_code == 422 and "id" in nameless.json()["detail"]
+
+    stale = api.post(url, headers=auth(token),
+                     json={"id": "d9|late_adaptation|A|which_axis", "option": "include",
+                           "option_fingerprint": fp, "note": "keep it"})
+    assert stale.status_code == 409, stale.text
+    assert question["id"] in stale.json()["detail"]
+
+    # N6: the id names the question, not the option — an answer echoes what it was shown
+    unechoed = api.post(url, headers=auth(token),
+                        json={"id": question["id"], "option": "include", "note": "keep it"})
+    assert unechoed.status_code == 422 and "fingerprint" in unechoed.json()["detail"]
+    moved = api.post(url, headers=auth(token),
+                     json={"id": question["id"], "option": "include",
+                           "option_fingerprint": "0" * 12, "note": "keep it"})
+    assert moved.status_code == 409 and "not the option you were shown" in moved.json()["detail"]
+
+    named = api.post(url, headers=auth(token),
+                     json={"id": question["id"], "option": "include",
+                           "option_fingerprint": fp, "note": "keep it"})
+    assert named.status_code == 201, named.text
+
+
+def test_the_badge_counts_open_questions_and_reports_the_ones_waiting_for_a_re_run(cloned):
+    """M7. `n_open` counted "not answered", so a run whose every remaining answer was waiting for
+    a resume reported "No open questions" while nothing had been applied."""
+    api, run_id, token = cloned["api"], cloned["run_id"], cloned["token"]
+    before = _with_a_map_question(cloned)
+    question = next(q for q in before["questions"] if q["kind"] == "include_dataset")
+    assert before["n_open"] >= 1 and before["n_pending"] == 0
+
+    fp = next(o for o in question["options"] if o["key"] == "include")["fingerprint"]
+    answered = api.post(f"/api/runs/{run_id}/questions/{question['number']}/answer",
+                        headers=auth(token),
+                        json={"id": question["id"], "option": "include",
+                              "option_fingerprint": fp, "note": "keep it"}).json()
+    assert answered["n_pending"] == 1
+    assert answered["n_open"] == before["n_open"] - 1
+    after = api.get(f"/api/runs/{run_id}/questions", headers=auth(token)).json()
+    assert after["n_pending"] == 1 and after["n_open"] == before["n_open"] - 1
+
+
+def test_the_page_offers_no_inert_button_and_no_unscoped_direction():
+    """M4 + H1, on the page itself: the exclude button is not drawn on a `which_measure` card (its
+    override could never apply), and the direction form offers the measures the map names rather
+    than a blank box that meant "every measure of this outcome"."""
+    source = (Path(__file__).resolve().parents[1] / "canopy" / "server" / "static"
+              / "app.js").read_text(encoding="utf-8")
+    assert 'if (q.kind !== "which_measure") {' in source
+    assert "blank means every measure" not in source
+    assert "o.outcome_key === evidence.outcome_key && o.measure_name" in source
+    assert "payload.id = q.id" in source or "{ id: q.id," in source
 
 
 def test_answering_a_question_that_does_not_exist_is_a_404(cloned):

@@ -252,8 +252,13 @@
          aria-labelledby="tab-questions" hidden>
       <div class="card-head">
         <p class="hint">Each held cell as one question: the picture the tool read, the answers it
-           is choosing between, and why it could not decide. Answering writes a recorded override
-           and re-pools the forest plot.</p>
+           is choosing between, and why it could not decide. Every answer on offer changes the
+           cell — a question whose answers could not is not asked. Answering writes a recorded
+           override and re-pools the forest plot; a cell held for two reasons stays held until
+           both are answered. The questions the map could not settle are here too — which
+           measure an outcome carries, and whether a dataset only one mapping agent proposed is
+           in the review. Nothing was read for those, so their answers are applied by the next
+           <code>--resume</code>.</p>
       </div>
       <div id="questions"></div>
     </div>
