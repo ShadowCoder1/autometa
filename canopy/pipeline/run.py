@@ -65,7 +65,8 @@ from ..stats.meta import MetaResult
 from ..verify.checks import (CHECK_SEVERITY, DF_PROVENANCE_FLAGS, ORIENTATION_FLAGS,
                             run_checks)
 from ..verify.confidence import ROW_REFUSAL_CODES, resolve_cell
-from ..verify.vote import VoteResult, vote_groups
+from ..verify.panels import apply_panel_check
+from ..verify.vote import LOCATOR_CONFLICT, LOCATOR_CONFLICT_NOTE, VoteResult, vote_groups
 from .aggregate import AGGREGATED_FLAG, Aggregation, aggregate_one_row_per_paper
 from .overrides import (OVERRIDES_FILE, apply_overrides_and_repool, map_answers, read_overrides)
 from .resolve import resolve_effect
@@ -254,6 +255,37 @@ def _has_printed_source(sources: Sequence[Source]) -> bool:
 
 def _figure(paper: PaperRecord, figure_id: str) -> FigureRegion | None:
     return next((f for f in paper.figures if f.id == figure_id), None)
+
+
+def _cell_caption(paper: PaperRecord, sources: OutcomeSources) -> str:
+    """The caption of the figure this cell is read off — "" unless there is exactly one.
+
+    A cell whose readings come from two different figures has two captions, and a panel letter
+    means something different in each: "panel B" of Fig. 3 and "panel B" of Fig. 4 are unrelated
+    claims. The check that reads captions is only entitled to speak when there is one figure to
+    speak about, so two captions (or none) means it does not run. `verify.panels` fails closed
+    for the same reason at every other step.
+    """
+    captions = {" ".join((figure.caption or "").split())
+                for source in readable_sources(sources.sources) if source.figure_id
+                for figure in [_figure(paper, source.figure_id)]
+                if figure is not None and (figure.caption or "").strip()}
+    return captions.pop() if len(captions) == 1 else ""
+
+
+def _group_vocabulary(dataset: DatasetSpec, protocol: Protocol) -> dict[str, list[str]]:
+    """Every word the review has for each arm — the dataset's own label first, then the review's.
+
+    The same vocabulary the digitiser matches x categories against, for the same reason: a paper
+    labels its panels in its own words, and a check that only knows the protocol's one label for
+    a group cannot read a caption that abbreviates it.
+    """
+    return {
+        "A": [name for name in (dataset.group_a.label, protocol.group_a.label,
+                                *(protocol.group_a.synonyms or ())) if str(name or "").strip()],
+        "B": [name for name in (dataset.group_b.label, protocol.group_b.label,
+                                *(protocol.group_b.synonyms or ())) if str(name or "").strip()],
+    }
 
 
 # ----------------------------------------------------------------------------- stages
@@ -700,6 +732,13 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                  status: PaperStatus) -> _CellVerification:
     key = sources.outcome_key
     outcome_def = ctx.protocol.outcome(key)
+    # D2: the caption says which panel is whose, and a reading taken off another group's panel is
+    # that group's number wearing this cell's name. It is settled BEFORE anything else looks at
+    # the cell — the vote, the checks and the adversarial verifier all see the filtered list —
+    # because a reading nobody may weigh is not a reading a verifier should be paid to refute.
+    candidates, panel_flags = apply_panel_check(
+        candidates, _cell_caption(paper, sources), _group_vocabulary(dataset, ctx.protocol))
+    extra_flags: list[CheckFlag] = list(panel_flags)
     # the digitiser's per-route samples stay in the stage file; only its ensemble votes
     cell = vote_candidates(candidates)
     others = vote_candidates([c for c in all_candidates
@@ -728,7 +767,8 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
     # `n_sum_mismatch` were both dead in every real run). Nothing on a `StudyMap` records a
     # stated total yet, so nothing is passed: an argument that is not the thing the parameter
     # names is worse than a missing one.
-    flags = run_checks(dataset, key, cell, other_candidates=others, orientation=orientation)
+    flags = [*run_checks(dataset, key, cell, other_candidates=others, orientation=orientation),
+             *extra_flags]
     votes = vote_groups(cell, unit_hint=sources.units or outcome_def.units_hint)
 
     # amendment G: the two text extractors disagreed, so buy a third cheap reading — the secondary
@@ -743,8 +783,8 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
         if third:
             out.extra_candidates.extend(third)
             cell = [*cell, *third]
-            flags = run_checks(dataset, key, cell, other_candidates=others,
-                               orientation=orientation)
+            flags = [*run_checks(dataset, key, cell, other_candidates=others,
+                                 orientation=orientation), *extra_flags]
             votes = vote_groups(cell, unit_hint=sources.units or outcome_def.units_hint)
 
     verifier_verdicts = []
@@ -807,7 +847,6 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
     # already found: a re-open on a page number a model invented would be worse than not looking.
     reopened = _reopen_on_better_source(ctx, paper, dataset, sources, verifier_verdicts, cell,
                                         status)
-    extra_flags: list[CheckFlag] = []
     if reopened is not None:
         named, extra = reopened
         out.reopened_source = named
@@ -829,6 +868,19 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
         orientation = out.orientation = checked
         flags = [*run_checks(dataset, key, cell, other_candidates=others,
                              orientation=orientation), *extra_flags]
+
+    # …and D2's first half, recorded once the vote is final: the readings that agreed came from
+    # different places in one figure, so their agreement is a coincidence of the figure tolerance
+    # rather than corroboration, and the vote refused to average them.
+    for group in ("A", "B"):
+        result = votes.get(group)
+        if result is None or result.method != LOCATOR_CONFLICT:
+            continue
+        flags = [*flags, CheckFlag(
+            code="locator_reads_conflict", severity=CHECK_SEVERITY["locator_reads_conflict"],
+            message=next((note for note in result.notes
+                          if note.startswith(LOCATOR_CONFLICT_NOTE)), LOCATOR_CONFLICT_NOTE),
+            candidate_ids=sorted(set(result.disagreeing_ids)))]
 
     disagreed = any(v.agreement == "disagree" for v in votes.values())
     if disagreed or refuted or buys_adjudication(flags):

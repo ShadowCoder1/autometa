@@ -27,6 +27,7 @@ from ..ingest.pdf import (FigureRegion, MIN_PANEL_NUMERIC, PanelRegion, PaperRec
 from ..llm.client import LLMClient
 from ..models import (Candidate, DatasetSpec, DigitizeSettings, DispersionType, Source,
                       SourceKind)
+from ..verify.panels import _label_key, _labels_are_the_same, _names_group
 from .calibrate import AxisCalibration, fit_axis, pair_ticks, pixel_resolution, \
     px_to_value, value_to_px
 from .overlay import draw_overlay
@@ -831,34 +832,12 @@ CATEGORICAL_GROUPS = "groups"           # the x categories ARE the comparison ar
 CATEGORICAL_CONDITIONS = "conditions"   # the outcome is the average across the categories
 CATEGORICAL_UNRESOLVED = "unknown"      # nothing said which, so nothing may be averaged
 
-_LABEL_JUNK = re.compile(r"[^a-z0-9]+")
-#: a label this short matches too much to be evidence of anything ("SD", "n", "A")
-_MIN_LABEL_CHARS = 3
-
-
-def _label_key(text: Any) -> str:
-    return _LABEL_JUNK.sub("", str(text or "").lower())
-
-
-def _labels_are_the_same(a: Any, b: Any) -> bool:
-    """Do a plotted x category and a protocol group label name the same thing?
-
-    Equal after stripping case and punctuation, or one contained in the other — a figure axis
-    says "Elderly" where the protocol says "Elderly adults", and an axis that says "old" is not
-    evidence about a group called "older adults" unless one spells the other.
-    """
-    left, right = _label_key(a), _label_key(b)
-    if not left or not right:
-        return False
-    if left == right:
-        return True
-    short, long = sorted((left, right), key=len)
-    return len(short) >= _MIN_LABEL_CHARS and short in long
-
-
-def _names_group(category: Any, names: Sequence[str]) -> bool:
-    """Does a plotted x category name this group, in any of the words the protocol gave for it?"""
-    return any(_labels_are_the_same(category, name) for name in names if str(name or "").strip())
+#: The vocabulary question — *do these words name this group?* — is asked in two places now: here,
+#: to decide whether a categorical x axis IS the comparison, and in `verify.panels`, to decide
+#: whether a caption puts this group in the panel a reading came from. Two answers to one question
+#: is how a figure gets read one way and checked another, so `_labels_are_the_same`, `_names_group`
+#: and `_label_key` live in `verify.panels` and are imported at the top of this file — they are
+#: still reachable under their old names here, for the callers and tests that knew them.
 
 
 def _categorical_role(target: TargetSpec | None, readings: Sequence[Any]

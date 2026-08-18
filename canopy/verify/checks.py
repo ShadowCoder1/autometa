@@ -159,6 +159,13 @@ CHECK_SEVERITY: dict[str, str] = {
     #: axis-identity, overlay and verifier nets still apply to it. Doubt caps; contradiction
     #: withholds — so this is a `warn` in `CAPPING_FLAGS`, never a hold.
     "panel_not_isolated": "warn",
+    #: WHERE in a figure a reading was taken, and whether the caption agrees it is this group's
+    #: panel (D2). All three are `warn`: a reading off the wrong panel is a claim about the
+    #: LOCATION, and the location is decided by the caption and the vote, not by an error budget
+    #: — `confidence` weighs the first two as contradictions and the third as a cap.
+    "locator_reads_conflict": "warn",
+    "locator_panel_mismatch": "warn",
+    "locator_reads_set_aside": "warn",
     "duplicate_across_outcomes": "warn",
     "figure_n_mismatch": "warn",
     "reopened_on_better_source": "warn",

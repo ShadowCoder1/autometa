@@ -159,6 +159,11 @@ CAPPING_FLAGS: frozenset[str] = frozenset({
     #: evidence that this number came from somewhere else — the axis-identity, overlay and
     #: verifier nets all still apply — so it caps like its neighbours here rather than withholding.
     "panel_not_isolated",
+    #: a reading taken off another group's panel was set aside, and this group's OWN panel still
+    #: has one. The number that survives came from where the caption says it should have — the
+    #: doubt left is that a reader went to the wrong panel at all, which is a reason to look at
+    #: the cell, not evidence against the reading that stands (D2).
+    "locator_reads_set_aside",
 })
 
 #: `CONTRADICTING_FLAGS` — **"this may be a different quantity."** Each one is evidence that the
@@ -184,6 +189,14 @@ CONTRADICTING_FLAGS: frozenset[str] = frozenset({
     #: agreement on the direction was — so it belongs here rather than beside its three
     #: `orientation_*` neighbours in `CAPPING_FLAGS` (fix round F5).
     "orientation_reader_contradicts_values",
+    #: the readings that agreed came from different places in one figure. A figure tolerance is
+    #: wide enough to span two panels, so their agreement is a coincidence of scale rather than
+    #: corroboration, and their middle is a number neither panel contains (D2).
+    "locator_reads_conflict",
+    #: every reading for this group was taken off a panel the caption gives to another group, and
+    #: this group has none of its own — so nothing could be set aside, and the value that stands
+    #: may be the other group's
+    "locator_panel_mismatch",
 })
 
 #: A code belongs to exactly one of the two, and every one of them tells the reviewer why it
@@ -276,6 +289,17 @@ CAP_REASONS: dict[str, str] = {
                                        "group came out higher in opposite directions, so nothing "
                                        "the paper states is left for the sign check to compare "
                                        "the extracted numbers with"),
+    "locator_reads_conflict": ("the readings that agreed were taken at different places in the "
+                               "same figure, and a figure tolerance is wide enough to span two "
+                               "panels — so their agreement is a coincidence of scale and their "
+                               "middle is a value neither place contains"),
+    "locator_panel_mismatch": ("every reading for this group was taken off a panel the caption "
+                               "gives to another group, and this group has no reading from its "
+                               "own panel, so this number may be the other group's"),
+    "locator_reads_set_aside": ("a reading taken off another group's panel was set aside because "
+                                "the caption says which panel is whose; the value that stands "
+                                "came from this group's own panel, and a reader went to the "
+                                "wrong one"),
     "orientation_reader_contradicts_values": ("a reader states which group came out higher on "
                                               "this measure and this cell's resolved means say "
                                               "the opposite, so the reader that made the one "
@@ -689,7 +713,10 @@ def _witness_families(result: VoteResult, candidates: Sequence[Candidate] | None
     ran are recorded in its provenance; a text or table route carries its family in its route key.
     An empty family is "not stated", never a second one.
     """
-    families = {key.split("/", 1)[1] for key in (r.route_key for r in _agreeing_routes(result))}
+    # index 1, not "everything after the first slash": `route_key` gained a third segment for the
+    # PLACE a figure reading was taken (D2), and one model reading two panels is one family
+    families = {parts[1] for parts in (r.route_key.split("/")
+                                       for r in _agreeing_routes(result)) if len(parts) > 1}
     families |= set(_agreeing_model_families(result, candidates))
     return {name for name in families if name}
 

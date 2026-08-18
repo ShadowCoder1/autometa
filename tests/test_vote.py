@@ -11,8 +11,10 @@ from __future__ import annotations
 import pytest
 
 from canopy.models import Candidate, DispersionType, SourceKind
-from canopy.verify.vote import (VoteResult, figure_tolerance, model_family, precision_tolerance,
-                                route_key, vote, vote_groups)
+from canopy.verify.vote import (VoteResult, figure_tolerance, locator_key, modality,
+                                model_family, precision_tolerance, route_key, vote,
+                                vote_groups)
+from tests.helpers import nine
 
 OPUS, SONNET = "claude-opus-5", "claude-sonnet-5"
 
@@ -388,8 +390,18 @@ def test_vote_groups_returns_one_result_per_group():
 
 
 def test_a_vote_result_round_trips_through_json():
+    """Everything the result PUBLISHES survives JSON.
+
+    `RouteValue.positions` deliberately does not: it indexes the row list of the call that
+    produced it, so outside that call it is a set of integers pointing at nothing, and writing it
+    into `verify.json` would invite exactly the misreading it exists to prevent. The comparison
+    is therefore between what was written and what was read back.
+    """
     result = vote([text_cand("a", 31.51), text_cand("b", 31.51, model=SONNET)])
-    assert VoteResult.model_validate_json(result.model_dump_json()) == result
+    reloaded = VoteResult.model_validate_json(result.model_dump_json())
+    assert reloaded.model_dump() == result.model_dump()
+    assert any(r.positions for r in result.routes), "the routes did not record their members"
+    assert all(not r.positions for r in reloaded.routes), "a position outlived its row list"
 
 
 def test_voting_never_changes_a_candidate():
@@ -459,3 +471,43 @@ def test_when_every_candidate_is_in_the_other_unit_the_hint_is_the_odd_one_out()
     result = vote([a, b], group="B", unit_hint="degrees")
     assert result.unit_set_aside_ids == []
     assert result.mean == pytest.approx(61.6, abs=0.15)
+
+
+# ------------------------------------------------- D2: one figure, two locators, never averaged
+# Real records: Langan 2022's Fig. 1 puts the young adults in panel A and the older adults in
+# panel B, and the digitiser read the SAME cell off both. Their two values are two quantities —
+# averaging them produced -18.5, a number no reader wrote down and no panel contains.
+def _langan(group):
+    return [c for c in nine.candidates("d1f2946e7e81")
+            if c.dataset_id == "d1f2946e7e81:d1" and c.outcome_key == "late_adaptation"
+            and c.group == group and c.extractor_id.endswith("ensemble")]
+
+
+def test_two_locators_never_average():
+    res = vote(_langan("B"))
+    assert res.mean != -18.5 and res.agreement == "disagree" and res.method == "locator_conflict"
+    assert "Fig. 1A" in " ".join(res.notes) and "Fig. 1B" in " ".join(res.notes)
+
+
+def test_locator_key_partitions_only_figure_candidates():
+    """A place is part of a route only for a reading that was measured somewhere.
+
+    The modality of a digitised reading is `figure:<path>` — the path is how the picture was
+    measured — so the family is the first segment, not the whole string. A text or table or
+    statistic reading keeps the two-part route it always had.
+    """
+    for p in ("3570e4ce2a9c", "5039533c85ef", "b511dbb76fa6", "b7523a41b03a", "592b3b55a318",
+              "d1f2946e7e81"):
+        for c in nine.candidates(p):
+            if modality(c).split(":", 1)[0] not in ("figure", "digitize"):
+                assert locator_key(c) == "" and route_key(c).count("/") == 1
+            else:
+                assert route_key(c).count("/") == (2 if c.locator.strip() else 1)
+
+
+def test_duplicate_ids_under_two_locators_are_all_considered_and_ids_keep_their_shape():
+    cands = _langan("B")
+    assert len({c.candidate_id for c in cands}) < len(cands)
+    res = vote(cands)
+    assert res.n_candidates_considered == len(cands)
+    assert all(isinstance(i, str) for i in res.agreeing_ids + res.disagreeing_ids)

@@ -1,9 +1,12 @@
 """Agreement vote (spec §3.3(2), amendment G) — pure code, no model.
 
 A number is believed when two readers that fail *differently* wrote it down. "Differently" is
-`route_key` = modality (text / table / one digitizer path / statistic) × model family: two prompt
-variants of the same model on the same pages share a failure mode, so they are one voter, and
-their answers are collapsed to that route's median before anything is compared.
+`route_key` = modality (text / table / one digitizer path / statistic) × model family × the PLACE
+a picture was read: two prompt variants of the same model on the same pages share a failure mode,
+so they are one voter, and their answers are collapsed to that route's median before anything is
+compared. The place joins the route because two panels of one figure are two quantities — the
+digitiser handed a whole figure reads the cell off both, and their middle is a number neither
+panel contains (see `locator_key`).
 
 Tolerance comes from the evidence, not from a constant, and it is applied PER PAIR — never once
 for the whole cell:
@@ -40,6 +43,7 @@ Agreement across at least two routes is *accepted by vote*. Two text extractors 
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import statistics
 from collections import Counter
@@ -53,8 +57,9 @@ from .figures import (AXIS_FRACTION, FALLBACK_FRACTION, FIGURE_KINDS, TICK_FRACT
 from .grounding import is_short_quote as _is_short_quote
 from .units import unit_key
 
-__all__ = ["vote", "vote_groups", "VoteResult", "RouteValue", "route_key", "modality",
-           "digitizer_path",
+__all__ = ["vote", "vote_groups", "VoteResult", "RouteValue", "route_key", "locator_key",
+           "modality", "digitizer_path", "LOCATOR_CONFLICT", "LOCATOR_CONFLICT_NOTE",
+           "LOCATOR_DROPPED",
            "model_family", "precision_tolerance", "figure_tolerance", "candidate_tolerance",
            "AXIS_FRACTION", "TICK_FRACTION"]
 
@@ -93,8 +98,47 @@ def modality(cand: Candidate) -> str:
     return "text"
 
 
+#: modalities whose readings have a PLACE — the half of a route the locator supplies. A table's
+#: "row 3, column 2" is already the whole of what `table` means to the vote, and a sentence that
+#: names no place is not a second place; only a picture is read somewhere in particular.
+_LOCATED_MODALITIES = frozenset({"figure", "digitize"})
+
+#: the mark `verify.panels` writes into a candidate whose panel the caption gives to another
+#: group. It lives here, with the code that honours it, so the two cannot drift apart.
+LOCATOR_DROPPED = "locator_dropped"
+
+#: the vote's answer when the readings that agreed came from different places in one figure
+LOCATOR_CONFLICT = "locator_conflict"
+LOCATOR_CONFLICT_NOTE = ("the readings that agreed were taken at different places in the same "
+                         "figure and were not averaged")
+#: how much of a locator a note prints — enough to name the panel, not the whole sentence
+_LOCATOR_CHARS = 72
+
+
+def locator_key(cand: Candidate) -> str:
+    """Which PLACE in a figure this reading was taken at — eight hex characters, or "".
+
+    Two panels of one figure are two quantities. Langan's Fig. 1 plots the young adults in panel
+    A and the older adults in panel B, and the digitiser, handed the figure, read one cell off
+    both: -20.5 and -16.5, whose middle -18.5 is a number neither panel contains and no reader
+    wrote down. Nothing about the numbers distinguishes that from two honest readings of one
+    place, so the PLACE joins the route: two readings that agree across a panel boundary are not
+    corroborating each other, and `vote` refuses to average them.
+
+    Only a figure reading has one, and only when it says where it looked.
+    """
+    if modality(cand).split(":", 1)[0] not in _LOCATED_MODALITIES:
+        return ""
+    locator = " ".join((cand.locator or "").split())
+    if not locator:
+        return ""
+    return hashlib.sha1(locator.casefold().encode("utf-8")).hexdigest()[:8]
+
+
 def route_key(cand: Candidate) -> str:
-    return f"{modality(cand)}/{model_family(cand.model)}"
+    key = f"{modality(cand)}/{model_family(cand.model)}"
+    locator = locator_key(cand)
+    return f"{key}/{locator}" if locator else key
 
 
 def is_text_route(key: str) -> bool:
@@ -149,6 +193,11 @@ class RouteValue(CanopyModel):
     n: int | None = None
     sigma: float | None = None
     candidate_ids: list[str] = Field(default_factory=list)
+    #: WHERE those members sit in the vote's own row list. Ids are not a key: the digitiser gives
+    #: two readings of two panels the same `candidate_id`, so a dict keyed by id silently keeps
+    #: one of them and the other's dispersion, n and unit are read off the wrong candidate. Not
+    #: serialised — a position means nothing outside the call that produced it.
+    positions: list[int] = Field(default_factory=list, exclude=True)
     tolerance: float = 0.0               # what THIS route can honestly claim about its own value
     spread: float | None = None          # furthest candidate from this route's own median
     consistent: bool = True
@@ -185,6 +234,10 @@ class VoteResult(CanopyModel):
     tolerance: float | None = None
     agreeing_ids: list[str] = Field(default_factory=list)
     disagreeing_ids: list[str] = Field(default_factory=list)
+    #: how many candidates this vote weighed. The id lists cannot say: two readings of two panels
+    #: carry ONE id between them, so counting `agreeing_ids + disagreeing_ids` under-reports the
+    #: evidence exactly where it matters most.
+    n_candidates_considered: int = 0
     needs_third_candidate: bool = False
     routes: list[RouteValue] = Field(default_factory=list)
     #: candidates whose unit is not the outcome's, set aside before the vote (Cressman's Fig. 3b
@@ -204,8 +257,16 @@ class VoteResult(CanopyModel):
 
 # ----------------------------------------------------------------------------- the vote
 def _usable(candidates: Iterable[Candidate], group: str | None) -> list[Candidate]:
+    """The readings this vote may weigh — and `verify.panels` has already ruled some out.
+
+    A reading the caption places in another group's panel is not a second reading of this cell,
+    it is a different group's number, so it is set aside before the vote rather than argued with
+    inside it. The mark is on the candidate (`pixel_provenance["locator_dropped"]`) so that every
+    caller of `vote` honours it, not only the orchestrator that filtered its own list.
+    """
     return [c for c in candidates
             if c.kind == "group_stats" and c.status == "found" and c.mean is not None
+            and not (c.pixel_provenance or {}).get(LOCATOR_DROPPED)
             and (group is None or c.group == group)]
 
 
@@ -265,7 +326,7 @@ def _pair_tolerance(a: RouteValue, b: RouteValue) -> float:
 
 def _route_values(rows: Sequence[Candidate], axis_range: float | None,
                   notes: list[str]) -> list[RouteValue]:
-    """One voter per modality × model family × UNIT, each voting only what its members corroborate.
+    """One voter per modality × family × place × UNIT, voting only what its members corroborate.
 
     Two things a route may not do. It may not hold readings in different units — a bar read off
     a degrees axis and the same bar read off the percentage axis beside it are two quantities,
@@ -275,39 +336,41 @@ def _route_values(rows: Sequence[Candidate], axis_range: float | None,
     largest cluster of mutually-agreeing members votes; if no two members agree and there are
     more than one, the route abstains and is kept for the record.
     """
-    grouped: dict[tuple[str, str], list[Candidate]] = {}
-    for cand in rows:
-        grouped.setdefault((route_key(cand), unit_key(cand.unit)), []).append(cand)
+    grouped: dict[tuple[str, str], list[int]] = {}
+    for position, cand in enumerate(rows):
+        grouped.setdefault((route_key(cand), unit_key(cand.unit)), []).append(position)
     units_per_key: dict[str, set[str]] = {}
     for key, unit in grouped:
         units_per_key.setdefault(key, set()).add(unit)
     routes: list[RouteValue] = []
     for key, unit in sorted(grouped):
-        members = grouped[(key, unit)]
+        indexed = [(position, rows[position]) for position in grouped[(key, unit)]]
+        members = [cand for _position, cand in indexed]
         label = key if len(units_per_key[key]) == 1 else f"{key}[{unit or 'no unit'}]"
         means = [c.mean for c in members]
         median = _median(means)
         spread = max(abs(m - median) for m in means)
         tolerance = _route_tolerance(members, axis_range)
         consistent = spread <= tolerance
-        voters = members
+        voters = indexed
         value: float | None = median
         if not consistent:
             # the median of an odd count is a member's own reading, and it stands if at least
             # one other member is within tolerance of it (an outlier does not move it); the
             # median of two far-apart members is their average, which nobody read
             at_median = [c for c in members if c.mean == median]
-            partners = [c for c in members if abs(c.mean - median) <= tolerance]
+            partners = [(position, c) for position, c in indexed
+                        if abs(c.mean - median) <= tolerance]
             if at_median and len(partners) >= 2:
                 voters = partners
                 notes.append(f"route {label} disagrees with itself: {means}; its median "
                              f"{median:.4g} is a reading {len(partners)} of {len(members)} "
                              f"agree with, and it votes; the rest are set aside")
             else:
-                cluster = _largest_cluster(members, tolerance)
+                cluster = _largest_cluster(indexed, tolerance)
                 if len(cluster) >= 2:
                     voters = cluster
-                    value = _median([c.mean for c in cluster])
+                    value = _median([c.mean for _position, c in cluster])
                     notes.append(f"route {label} disagrees with itself: {means}; the "
                                  f"{len(cluster)} of {len(members)} that agree vote "
                                  f"{value:.4g}, the rest are set aside")
@@ -317,22 +380,26 @@ def _route_values(rows: Sequence[Candidate], axis_range: float | None,
                                  f"{spread:.4g} > tolerance {tolerance:.4g}) and no two of its "
                                  f"readings agree — it abstains; a middle none of them read is "
                                  f"not a reading")
-        dispersions = [c.dispersion_value for c in voters if c.dispersion_value is not None]
-        sigmas = [c.sigma for c in voters if c.sigma is not None]
+        chosen = [cand for _position, cand in voters]
+        dispersions = [c.dispersion_value for c in chosen if c.dispersion_value is not None]
+        sigmas = [c.sigma for c in chosen if c.sigma is not None]
         routes.append(RouteValue(
             route_key=label, value=value,
             dispersion_value=_median(dispersions) if dispersions else None,
-            n=_mode([c.n for c in voters]), sigma=_median(sigmas) if sigmas else None,
-            candidate_ids=[c.candidate_id for c in voters], tolerance=tolerance,
+            n=_mode([c.n for c in chosen]), sigma=_median(sigmas) if sigmas else None,
+            candidate_ids=[c.candidate_id for c in chosen],
+            positions=[position for position, _cand in voters], tolerance=tolerance,
             spread=spread, consistent=consistent, unit=unit, abstained=value is None))
     return routes
 
 
-def _largest_cluster(members: Sequence[Candidate], tolerance: float) -> list[Candidate]:
+def _largest_cluster(members: Sequence[tuple[int, Candidate]],
+                     tolerance: float) -> list[tuple[int, Candidate]]:
     """The biggest set of members that all sit within `tolerance` of one of them."""
-    best: list[Candidate] = []
-    for seed in members:
-        cluster = [c for c in members if abs(c.mean - seed.mean) <= tolerance]
+    best: list[tuple[int, Candidate]] = []
+    for _seed_position, seed in members:
+        cluster = [(position, c) for position, c in members
+                   if abs(c.mean - seed.mean) <= tolerance]
         if len(cluster) > len(best):
             best = cluster
     return best
@@ -347,6 +414,38 @@ def _best_cluster(routes: Sequence[RouteValue]) -> list[RouteValue]:
                 (len(best), sum(len(r.candidate_ids) for r in best)):
             best = cluster
     return best
+
+
+def _locator_conflict(cluster: Sequence[RouteValue],
+                      rows: Sequence[Candidate]) -> dict[str, tuple[str, list[float]]]:
+    """The places the winning routes read, keyed by locator — empty unless there are two of them.
+
+    A cluster is a set of routes that agree within tolerance, and a figure tolerance is wide: on
+    Langan's Fig. 1 it is 7.5°, which comfortably covers the 4° between the young adults' panel
+    and the older adults'. So "they agree" says nothing here. Two panels are two quantities, and
+    an agreement that spans them is a coincidence of scale, not corroboration.
+    """
+    places: dict[str, tuple[str, list[float]]] = {}
+    for route in cluster:
+        for position in route.positions:
+            key = locator_key(rows[position])
+            if not key:
+                continue
+            _text, values = places.setdefault(
+                key, (" ".join(rows[position].locator.split()), []))
+            if route.value is not None and route.value not in values:
+                values.append(route.value)
+    return places if len(places) > 1 else {}
+
+
+def _locator_conflict_note(places: dict[str, tuple[str, list[float]]]) -> str:
+    parts = []
+    for text, values in places.values():
+        short = text if len(text) <= _LOCATOR_CHARS else text[:_LOCATOR_CHARS] + "…"
+        parts.append(f"{short!r} reads {', '.join(f'{v:.4g}' for v in values)}")
+    return (f"{LOCATOR_CONFLICT_NOTE}: " + "; ".join(parts) + " — two places in one figure are "
+            f"two quantities, not two readings of one, so nothing here is averaged and the cell "
+            f"is left for a human")
 
 
 def _fill_values(result: VoteResult, agreeing: Sequence[Candidate], notes: list[str]) -> None:
@@ -395,7 +494,7 @@ def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
                          f" — pass group=... or use vote_groups()")
     decided = group or (next(iter(groups)) if groups else None)
     notes: list[str] = []
-    result = VoteResult(group=decided)
+    result = VoteResult(group=decided, n_candidates_considered=len(rows))
     if not rows:
         result.notes = ["no candidate reported a value for this cell"]
         return result
@@ -419,7 +518,12 @@ def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
 
     routes = _route_values(rows, axis_range, notes)
     result.routes = routes
-    by_id = {c.candidate_id: c for c in rows}
+    # BY POSITION, never by id: the digitiser gives its reading of one panel and its reading of
+    # the next the same `candidate_id`, so a dict keyed by id holds one of the two and answers
+    # for both (Major 10). The ids the result publishes keep their bare shape — a reviewer, the
+    # verifier and `verify.json` all name candidates by id — but nothing inside the vote resolves
+    # a member through them.
+    row_index: dict[int, Candidate] = dict(enumerate(rows))
     routes = [r for r in routes if not r.abstained]        # kept on the record, not in the vote
     if not routes:
         result.agreement, result.method = "disagree", "none"
@@ -434,7 +538,7 @@ def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
         result.tolerance = route.tolerance
         result.agreeing_ids = list(route.candidate_ids)
         result.mad = 0.0
-        _fill_values(result, [by_id[cid] for cid in route.candidate_ids], notes)
+        _fill_values(result, [row_index[p] for p in route.positions], notes)
         result.notes = notes
         return result
 
@@ -498,7 +602,7 @@ def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
             result.method = "figure_tolerance" if others else "single"
 
         if len(winners) >= 2:
-            _decide(result, rows, winners, value, by_id, notes)
+            _decide(result, rows, winners, value, row_index, notes)
             return result
 
         # one printed route, and nothing corroborated it
@@ -507,12 +611,14 @@ def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
         result.method = "printed_uncorroborated" if others else "single"
         result.mean = value
         result.mad = 0.0
-        result.agreeing_ids = [c.candidate_id for c in rows if route_key(c) in keys]
-        result.disagreeing_ids = [c.candidate_id for c in rows if route_key(c) not in keys]
+        agreeing = [p for p, c in enumerate(rows) if route_key(c) in keys]
+        result.agreeing_ids = [rows[p].candidate_id for p in agreeing]
+        result.disagreeing_ids = [c.candidate_id for p, c in enumerate(rows)
+                                  if p not in set(agreeing)]
         if others:
             notes.append("no other route corroborated the printed value; it stands on one "
                          "reader alone")
-        _fill_values(result, [by_id[cid] for cid in result.agreeing_ids], notes)
+        _fill_values(result, [row_index[p] for p in agreeing], notes)
         result.notes = notes
         return result
 
@@ -520,9 +626,17 @@ def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
     cluster = _best_cluster(routes)
     result.method = "figure_tolerance" if any(is_figure_route(r.route_key) for r in routes) \
         else "printed_precision"
+    places = _locator_conflict(cluster, rows) if len(cluster) >= 2 else {}
+    if places:
+        result.agreement, result.method = "disagree", LOCATOR_CONFLICT
+        result.tolerance = max(r.tolerance for r in routes)
+        result.disagreeing_ids = [c.candidate_id for c in rows]
+        notes.append(_locator_conflict_note(places))
+        result.notes = notes
+        return result
     if len(cluster) >= 2:
         result.tolerance = max(_pair_tolerance(a, b) for a in cluster for b in cluster if a is not b)
-        _decide(result, rows, cluster, _median([r.value for r in cluster]), by_id, notes)
+        _decide(result, rows, cluster, _median([r.value for r in cluster]), row_index, notes)
         return result
 
     result.agreement = "disagree"
@@ -536,15 +650,17 @@ def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
 
 
 def _decide(result: VoteResult, rows: Sequence[Candidate], winners: Sequence[RouteValue],
-            value: float, by_id: dict[str, Candidate], notes: list[str]) -> None:
+            value: float, row_index: dict[int, Candidate], notes: list[str]) -> None:
     """Record an agreed cell: the value the sources reported, and who stood behind it."""
     keys = {r.route_key for r in winners}
     result.agreement = "agree"
     result.mean = value
     result.mad = _median([abs(r.value - value) for r in winners])
-    result.agreeing_ids = [c.candidate_id for c in rows if route_key(c) in keys]
-    result.disagreeing_ids = [c.candidate_id for c in rows if route_key(c) not in keys]
-    _fill_values(result, [by_id[cid] for cid in result.agreeing_ids], notes)
+    agreeing = [p for p, c in enumerate(rows) if route_key(c) in keys]
+    result.agreeing_ids = [rows[p].candidate_id for p in agreeing]
+    result.disagreeing_ids = [c.candidate_id for p, c in enumerate(rows)
+                              if p not in set(agreeing)]
+    _fill_values(result, [row_index[p] for p in agreeing], notes)
     result.notes = notes
 
 
