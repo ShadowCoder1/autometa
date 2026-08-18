@@ -281,7 +281,7 @@ def test_an_implausible_effect_size_is_flagged():
     huge = [cand("A", mean=100.0, dispersion_value=1.0),
             cand("B", candidate_id="cB", mean=1.0, dispersion_value=1.0)]
     flags = run_checks(make_dataset(), "late_adaptation", huge)
-    flag = next(f for f in flags if f.code == "effect_implausible")
+    flag = next(f for f in flags if f.code == "implausible_dispersion")
     assert "3" in flag.message
 
 
@@ -379,6 +379,43 @@ def test_an_outcome_with_no_direction_is_flagged():
     flags = run_checks(make_dataset(outcome=outcome), "late_adaptation", pair())
     flag = next(f for f in flags if f.code == "orientation_unknown")
     assert "direction" in flag.message.lower()
+
+
+def test_a_reader_the_resolved_means_contradict_is_an_error_on_the_cell():
+    """Fix round F5. `combine_orientation` records the code in the verdict's notes and this module
+    puts it in front of `confidence`; the severity is declared here, and it is an `error`.
+
+    The reader the filter discards is the one that made the only mechanically checkable claim on
+    this measure, and it said the opposite of what this cell's own resolved means say. That is
+    evidence about the VALUES, not only about the polarity — which is why it is not a warning
+    worth -0.08 that a good score can absorb. Before this it was, and combined with the row-4
+    defect it is exactly what let an inverted sign through.
+    """
+    from canopy.models import OrientationVerdict
+    from canopy.verify.checks import orientation_note
+
+    assert CHECK_SEVERITY["orientation_reader_contradicts_values"] == "error"
+    verdict = OrientationVerdict(
+        outcome_key="late_adaptation", higher_is_better=False, agreed=True, needs_human=False,
+        notes=orientation_note("orientation_reader_contradicts_values",
+                               "claude-opus-5 states b greater on this measure, but the resolved "
+                               "raw means say A = 31.51 and B = 12.28"))
+    flags = run_checks(make_dataset(), "late_adaptation", pair(), orientation=verdict)
+    flag = next(f for f in flags if f.code == "orientation_reader_contradicts_values")
+    assert flag.severity == "error"
+    assert "claude-opus-5" in flag.message
+
+
+def test_a_swapped_group_label_suspends_the_discard_check_like_a_transposed_series():
+    """Fix round, caller guarantee 7: `group_label_swapped` says the two groups may be the wrong
+    way round, which is exactly what `series_transposed` says about a figure. A discard run
+    against means that may be the other group's throws out the reader that read the paper right,
+    so the orientation check must abstain rather than choose while it is open."""
+    from canopy.verify.checks import DISPUTED_MEANS_FLAGS
+
+    assert "group_label_swapped" in DISPUTED_MEANS_FLAGS
+    assert CHECK_SEVERITY["group_label_swapped"] == "error"
+    assert DISPUTED_MEANS_FLAGS <= set(CHECK_SEVERITY)
 
 
 def test_a_resolved_orientation_clears_the_flag():
@@ -722,3 +759,179 @@ def test_the_same_group_read_in_the_recorded_unit_and_another_is_an_expression_n
     assert "unit_mismatch" not in codes(flags)
     flag = next(f for f in flags if f.code == "unit_other_expression")
     assert flag.severity == "info" and "%" in flag.message
+
+
+# =============================================================== ceiling C9 — the conversion gate
+# `canopy.stats.effect_sizes.convertibility` answers "may this become an SMD?" while the effect
+# size is being built, and its answer reaches the row as a flag that changes no bucket. These are
+# the same questions, asked on the cell, where `confidence` can act on them.
+from canopy.verify.checks import CHECK_SEVERITY_PREFIXES, DF_SHORTFALL_TOLERANCE, severity_of
+
+
+def evidenced(n_a=20, n_b=20) -> DatasetSpec:
+    """A dataset whose group sizes the paper PRINTED, so `n_a + n_b - 2` is not an estimate."""
+    spec = make_dataset()
+    spec.group_a = GroupSpec(label="old subjects", n=n_a,
+                             n_evidence="twenty older adults were tested")
+    spec.group_b = GroupSpec(label="young subjects", n=n_b,
+                             n_evidence="twenty younger adults were tested")
+    return spec
+
+
+def stat(**kwargs) -> Candidate:
+    base = dict(candidate_id="cT", paper_id="paper1", dataset_id="ds1",
+                outcome_key="late_adaptation", kind="test_statistic", status="found",
+                stat_type="t", stat_value=5.25, design="independent_t", grounded=True,
+                model="claude-opus-5", quote="the difference was significant, t = 5.25, p < .001")
+    base.update(kwargs)
+    return Candidate(**base)
+
+
+def test_a_statistic_with_no_degrees_of_freedom_cannot_claim_these_two_groups():
+    """The failing input: "t = 5.25, p < .001" as a post-hoc from a three-group ANOVA."""
+    flags = run_checks(evidenced(n_a=12, n_b=12), "late_adaptation", [stat()])
+    assert "df_missing" in codes(flags)
+    assert CHECK_SEVERITY["df_missing"] == "error"
+    assert "post-hoc" in next(f for f in flags if f.code == "df_missing").message
+
+
+def test_an_f_with_only_a_numerator_df_is_still_missing_the_one_that_matters():
+    """`test_stat_missing_df` never fired here: `df1` is not None, so the row converted."""
+    flags = run_checks(evidenced(), "late_adaptation",
+                       [stat(stat_type="F", stat_value=27.6, df1=1.0, design="one_way_between")])
+    assert "test_stat_missing_df" not in codes(flags)
+    assert "df_missing" in codes(flags)
+
+
+def test_matching_degrees_of_freedom_raise_nothing():
+    assert codes(run_checks(evidenced(), "late_adaptation", [stat(df=38.0)])) == []
+
+
+def test_an_unexplained_df_shortfall_is_refused_even_inside_the_old_tolerance():
+    """`F(1,36)` at n = 20/20 is the shape of a two-covariate ANCOVA. Gap is exactly 2.0, which
+    `DF_TOLERANCE = 2.0` admitted with `gap > DF_TOLERANCE`."""
+    flags = run_checks(evidenced(), "late_adaptation",
+                       [stat(stat_type="F", stat_value=27.6, df1=1.0, df2=36.0,
+                             design="one_way_between")])
+    assert "df_shortfall_unexplained" in codes(flags)
+    assert CHECK_SEVERITY["df_shortfall_unexplained"] == "error"
+    assert not any(c.startswith("df_off_by_") for c in codes(flags))
+
+
+def test_the_only_explanation_the_record_can_carry_is_an_n_nobody_printed():
+    """C9's acceptance case, AMENDED under review M2. C9 licensed two explanations for a df that
+    is not exactly n_a + n_b - 2; only one of them is checkable on anything the pipeline records.
+
+    "t(37) at n = 20/20 with a stated single dropout is allowed and named `df_off_by_1`" needed a
+    participant total the PAPER states, and nothing extracts one: the `StudyMap` has no field for
+    it and the orchestrator's only call passed the analysed group sizes back in as if they were
+    the total, which made the branch dead in every real run. It is deleted rather than left
+    standing, and the case is refused — fail-closed, a fill-rate cost and never a wrong number —
+    until the mapper grows a stated-total field. That is future mapper work, not a rule change.
+    """
+    from canopy.verify.checks import _shortfall_is_explained
+
+    printed = evidenced()                                     # both n's printed in the paper
+    assert _shortfall_is_explained(printed) == ""
+    assert "df_shortfall_unexplained" in codes(
+        run_checks(printed, "late_adaptation", [stat(df=37.0)]))
+    assert not any(c.startswith("df_off_by_") for c in
+                   codes(run_checks(printed, "late_adaptation", [stat(df=37.0)])))
+
+
+def test_the_gate_screens_the_statistic_the_row_would_convert_and_not_every_other_one():
+    """Review L4. The gate flagged EVERY convertible-design statistic in the cell, so a paper that
+    prints an unrelated one-way F beside the outcome held a cell the row resolves from a printed
+    t — and, before M5, bought an adjudication for it. Bound to `best_statistic`, which is the
+    same selection `canopy.pipeline.run._statistic_values` makes when it builds the row."""
+    from canopy.verify.checks import best_statistic
+
+    usable = stat(candidate_id="cT", df=38.0)                       # t(38) at n = 20/20: exact
+    unrelated = stat(candidate_id="cF", stat_type="F", stat_value=27.6, df=None, df1=1.0,
+                     design="one_way_between",
+                     quote="the main effect of block was significant, F(1) = 27.6")
+    assert best_statistic([unrelated, usable]) is usable             # t outranks F
+    assert codes(run_checks(evidenced(), "late_adaptation", [unrelated, usable])) == []
+    # …and with nothing better in the cell, the same unrelated F is screened exactly as before
+    assert "df_missing" in codes(run_checks(evidenced(), "late_adaptation", [unrelated]))
+
+
+def test_a_statistic_the_extractor_ruled_inadmissible_is_not_screened_either():
+    """`_statistic_values` skips it, so the row never converts from it and holding a cell for its
+    degrees of freedom holds the cell for a number nothing would have used."""
+    from canopy.verify.checks import best_statistic
+
+    ruled_out = stat(candidate_id="cX", admissible=False,
+                     admissible_reason="this is the practice block, not the adaptation block")
+    assert best_statistic([ruled_out]) is None
+    assert "df_missing" not in codes(run_checks(evidenced(), "late_adaptation", [ruled_out]))
+
+
+def test_an_inferred_group_size_excuses_a_shortfall_because_the_expectation_is_an_estimate():
+    flags = run_checks(make_dataset(), "late_adaptation", [stat(df=21.0)])   # n printed nowhere
+    assert "df_off_by_1" in codes(flags)
+    assert severity_of("df_off_by_1") == "warn"
+    assert "inferred rather than printed" in next(
+        f for f in flags if f.code == "df_off_by_1").message
+
+
+def test_a_shortfall_bigger_than_the_tolerance_is_refused_however_it_is_explained():
+    flags = run_checks(make_dataset(), "late_adaptation", [stat(df=18.0)])   # n printed nowhere
+    assert "df_shortfall_unexplained" in codes(flags)
+    assert DF_SHORTFALL_TOLERANCE == 2.0
+
+
+def test_a_design_that_cannot_carry_the_contrast_is_not_the_conversion_gates_business():
+    """`convertibility` refuses these outright; a df quibble about them would be noise."""
+    for design in ("paired", "interaction", "mixed_main_effect", "ancova"):
+        found = codes(run_checks(evidenced(), "late_adaptation", [stat(df=37.0, design=design)]))
+        assert "df_shortfall_unexplained" not in found and "df_off_by_1" not in found, design
+
+
+def test_every_family_code_resolves_to_a_declared_severity():
+    assert CHECK_SEVERITY_PREFIXES
+    for prefix, severity in CHECK_SEVERITY_PREFIXES.items():
+        assert severity_of(f"{prefix}1") == severity
+    with pytest.raises(KeyError):
+        severity_of("a_code_nobody_declared")
+
+
+# ----------------------------------------------------------- C9, second half: the |d| screen
+def test_an_implausible_effect_names_the_denominator_as_an_early_warning():
+    """The cell-level half. It NAMES the suspect denominator, which is what a reviewer needs, and
+    it is a `warn`: the binding screen is on the resolved |d| the row was actually divided by
+    (`confidence.dispersion_plausibility_bucket`), because nothing here can see the vote, the
+    adjudicator or an SE→SD conversion (review H1)."""
+    huge = [cand("A", mean=10.0, dispersion_value=5.0),
+            cand("B", candidate_id="cB", mean=40.0, dispersion_value=5.0)]
+    flag = next(f for f in run_checks(make_dataset(), "late_adaptation", huge)
+                if f.code == "implausible_dispersion")
+    assert flag.severity == "warn" and CHECK_SEVERITY["implausible_dispersion"] == "warn"
+    assert "denominator" in flag.message and "5" in flag.message
+
+
+def test_the_early_warning_reads_an_se_bar_too_because_it_converts_arithmetically():
+    """SE is the modal shape in the live corpus (32 against 25 SD of the 57 `found` group_stats
+    candidates carrying either). An `SD`-only filter never looked at them, so the cheapest
+    warning was silent on the majority."""
+    se = [cand("A", mean=10.0, dispersion_value=0.5, dispersion_type=DispersionType.SE),
+          cand("B", candidate_id="cB", mean=40.0, dispersion_value=0.5,
+               dispersion_type=DispersionType.SE)]
+    flag = next(f for f in run_checks(make_dataset(), "late_adaptation", se)
+                if f.code == "implausible_dispersion")
+    assert "1.73" in flag.message                # SE 0.5 x sqrt(12), not the printed 0.5
+    # …and a spread no arithmetic converts is left to the row, which has the distribution rules
+    iqr = [cand("A", mean=10.0, dispersion_value=0.5, dispersion_type=DispersionType.IQR),
+           cand("B", candidate_id="cB", mean=40.0, dispersion_value=0.5,
+                dispersion_type=DispersionType.IQR)]
+    assert "implausible_dispersion" not in codes(run_checks(make_dataset(), "late_adaptation",
+                                                            iqr))
+
+
+def test_the_plausibility_line_still_clears_the_largest_effect_in_the_live_corpus():
+    """Bock d2 late adaptation resolves at |d| = 2.9610 — nothing in the run changes today."""
+    from canopy.stats.effect_sizes import cohens_d
+    from canopy.verify.checks import MAX_PLAUSIBLE_D
+
+    d = cohens_d(52.49055415155991, 9.15, 12, 27.98296334051485, 7.3, 12)
+    assert abs(round(d, 4)) == 2.9610 and abs(d) < MAX_PLAUSIBLE_D

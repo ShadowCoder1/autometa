@@ -163,6 +163,21 @@ def pi_label(settings: StatsSettings, pooled: MetaResult | None = None) -> str:
     return f"{name}, {dist}" + (f", df = {df}" if df is not None else "")
 
 
+def ci_method_label(pooled: MetaResult) -> str:
+    """What the interval on THIS pool was actually built from — not what was asked for.
+
+    `MetaResult.hakn` records the request, deliberately (R2), and the R2 guard sets
+    `hakn_fallback` when the adjustment had nothing to adjust and the ordinary random-effects SE
+    and the normal `z` quantile were used instead. Reading `hakn` alone printed "CI from t(k−1),
+    Hartung–Knapp" over a normal-z interval — a false statement about the method, sitting next to
+    an honest note nothing read (review M4).
+    """
+    if getattr(pooled, "hakn_fallback", ""):
+        return (f"z (the Hartung–Knapp adjustment was requested but had nothing to adjust: "
+                f"{pooled.hakn_fallback})")
+    return "t(k−1), Hartung–Knapp" if pooled.hakn else "z"
+
+
 def conventions_footer(settings: StatsSettings, pooled: MetaResult, *, k_papers: int,
                        k_datasets: int, n_excluded: int = 0, n_not_convertible: int = 0,
                        level: float | None = None, extra: Sequence[str] = ()) -> list[str]:
@@ -182,7 +197,7 @@ def conventions_footer(settings: StatsSettings, pooled: MetaResult, *, k_papers:
         f"Q = {pooled.Q:.2f} (df = {pooled.Q_df}, p {fmt_p(pooled.Q_p)}) · "
         f"I² = {100 * pooled.I2:.1f}% [(Q−df)/Q, meta] · "
         f"I²τ = {100 * pooled.I2_tau:.1f}% [τ²/(τ²+s²), metafor] · H² = {pooled.H2:.2f}",
-        f"{pct} CI from {'t(k−1), Hartung–Knapp' if pooled.hakn else 'z'} "
+        f"{pct} CI from {ci_method_label(pooled)} "
         f"(Hartung–Knapp: {'on' if settings.hakn else 'off'}) · "
         + (f"{pct} prediction interval: {pi_label(settings, pooled)}" if pooled.k >= 3 else
            f"no prediction interval: it needs k ≥ 3 and k = {pooled.k}"),

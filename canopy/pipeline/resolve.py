@@ -27,15 +27,18 @@ from typing import Any, Literal, Sequence
 
 from pydantic import Field
 
-from ..models import (CanopyModel, ConfidenceBucket, DatasetSpec, Direction, DispersionType,
-                      EffectSizeRecord, GroupKey, OutcomeDef, PKind, ReportedScale, Standardizer,
-                      StatsSettings, TestDesign, Verdict)
+from ..models import (CanopyModel, ConfidenceBucket, ContrastKind, DatasetSpec, Direction,
+                      DispersionType, EffectSizeRecord, GroupKey, OutcomeDef, PKind,
+                      ReportedScale, Standardizer, StatsSettings, TestDesign, Verdict)
 from ..stats import effect_sizes as es
 from ..stats.conversions import (mean_sd_from_five_number, mean_sd_from_median_iqr,
                                  combine_groups, partial_variance, split_control)
 from ..stats.effect_sizes import NotConvertible, SMDResult
+from ..verify.confidence import (DF_SHORTFALL_PREFIX, IMPLAUSIBLE_DISPERSION, ROW_REFUSAL_CODES,
+                                 conversion_gate_bucket, dispersion_plausibility_bucket)
 
 __all__ = ["resolve_effect", "available_routes", "apply_shared_control", "multi_group_flags",
+           "ROW_REFUSAL_CODES",
            "GroupValues", "StatisticValues", "ReportedValues", "ResolvedValues",
            "GROUP_ROUTES", "DIGITIZATION_SHARE_FLAG"]
 
@@ -108,6 +111,12 @@ class StatisticValues(CanopyModel):
     p_value: float | None = None
     design: TestDesign = "unknown"
     direction: Direction = "unknown"
+    #: what the statistic contrasts and what its model averaged over — the extractor's record,
+    #: carried here so the conversion gate can refuse on it (P-B, C5). The defaults are the
+    #: refusing ones: "nobody recorded this" is not "it is fine".
+    contrast_kind: ContrastKind = "unknown"
+    within_factors: list[str] = Field(default_factory=list)
+    outcome_averages_over: list[str] = Field(default_factory=list)
 
 
 class ReportedValues(CanopyModel):
@@ -119,6 +128,12 @@ class ReportedValues(CanopyModel):
     ci_low: float | None = None
     ci_high: float | None = None
     positive_means: Direction = "unknown"
+    #: WHAT the printed effect size contrasts (P-B). A printed d has no test statistic behind it
+    #: but it always has a contrast: "the aftereffect differed from zero, d = 1.30" is a
+    #: one-sample effect, and it pooled as the between-group difference because this field was
+    #: extracted, carried on the `Candidate`, and read by nobody on this route. The default is
+    #: the refusing one, as it is for a statistic.
+    contrast_kind: ContrastKind = "unknown"
 
 
 _BUCKET_ORDER: dict[str, int] = {"auto_accept": 2, "accept_with_note": 1, "needs_human": 0}
@@ -277,8 +292,15 @@ def available_routes(values: ResolvedValues) -> tuple[list[str], dict[str, str]]
         routes.append("test_statistic")
     else:
         reasons["test_statistic"] = "no t or F statistic was resolved for this contrast"
-    if stat is not None and stat.p_value is not None:
+    # P-B: the p route inverts a p BACK to the t it came from, so it is only a route for a
+    # statistic that could have been a t or an F in the first place. Offered on `p_value is not
+    # None` alone it walked around the chi-square refusal: chi2(1) = 7.58, p = .006 on 12/12
+    # became d = 1.2414, a standardised mean difference invented out of a contingency table.
+    if stat is not None and stat.p_value is not None and stat.stat_type in ("t", "F", "p"):
         routes.append("p_value")
+    elif stat is not None and stat.p_value is not None:
+        reasons["p_value"] = (f"a {stat.stat_type} is not a t, an F or a p, so its p value cannot "
+                              f"be inverted back to a statistic this contrast could use")
     else:
         reasons["p_value"] = "no p value was resolved for this contrast"
 
@@ -432,6 +454,11 @@ def _a_greater(direction: str, what: str) -> bool:
                          f"higher, and a statistic has no sign of its own")
 
 
+def _df_shortfall_explained(values: ResolvedValues) -> str:
+    """The `df_off_by_<gap>` code the CELL raised, or `""` when nothing explained the shortfall."""
+    return next((f for f in values.flags if f.startswith(DF_SHORTFALL_PREFIX)), "")
+
+
 def _from_statistic(values: ResolvedValues, dataset: DatasetSpec, settings: StatsSettings,
                     inputs: dict[str, Any], steps: list[str], as_p: bool) -> SMDResult:
     stat = values.test_statistic
@@ -439,7 +466,34 @@ def _from_statistic(values: ResolvedValues, dataset: DatasetSpec, settings: Stat
     inputs.update(stat_value=stat.value, df=stat.df, df1=stat.df1, df2=stat.df2,
                   p_value=stat.p_value, n_a=n_a, n_b=n_b)
     common = dict(higher_is_better=values.higher_is_better, estimator=settings.estimator,
-                  variance=settings.variance, level=settings.ci_level)
+                  variance=settings.variance, level=settings.ci_level,
+                  # P-B / C5: the gate that refuses a statistic answering a different question
+                  # than this cell asks. Always passed — an unrecorded contrast is a refusal.
+                  contrast_kind=stat.contrast_kind or "unknown",
+                  within_factors=list(stat.within_factors),
+                  outcome_averages_over=list(stat.outcome_averages_over),
+                  # C9: the conversion gate now demands df == n_a + n_b - 2 exactly. Whether a
+                  # shortfall is EXPLAINED is a fact about the paper, decided once by
+                  # `checks._shortfall_is_explained` and recorded on the cell as `df_off_by_<gap>`.
+                  # Reading the record here keeps one rule in one place; a cell that reached
+                  # `df_shortfall_unexplained` (or no verdict at all) says nothing, which refuses.
+                  df_shortfall_explained=_df_shortfall_explained(values))
+
+    # P-B: refused HERE, before any branch, because every branch is a conversion. A chi-square
+    # tests an association in a contingency table and a statistic of no recorded kind has no
+    # formula at all; the guard used to sit below the `as_p` branch, so a chi2 carrying an exact
+    # p converted through the p route as if it were a t.
+    if stat.stat_type == "chi2":
+        raise NotConvertible(
+            f"chi2 = {stat.value:g} is not a difference between two group means: no conversion "
+            f"from a chi-square to a standardised mean difference exists for a continuous outcome"
+            if stat.value is not None else
+            "a chi-square is not a difference between two group means: no conversion from a "
+            "chi-square to a standardised mean difference exists for a continuous outcome")
+    if stat.stat_type == "unknown":
+        raise NotConvertible(
+            "the paper's statistic was transcribed without saying whether it is a t, an F or a p, "
+            "so there is no formula to apply to it")
 
     if as_p:
         if stat.p_kind != "exact":
@@ -473,6 +527,11 @@ def _from_reported(values: ResolvedValues, dataset: DatasetSpec, settings: Stats
     reported = values.reported
     n_a, n_b = _sizes(values, dataset)
     inputs.update(reported_value=reported.value, n_a=n_a, n_b=n_b)
+    # P-B: what it contrasts decides before what it is measured in — an effect size for a test
+    # against a constant is not this cell's number whatever scale it is printed on.
+    ok, why = es.contrast_ok(reported.contrast_kind or "unknown")
+    if not ok:
+        raise NotConvertible(f"the reported {reported.scale} cannot carry this cell: {why}")
     if reported.scale not in _BETWEEN_SCALES:
         raise NotConvertible(f"a reported effect size on the {reported.scale!r} scale is not a "
                              f"difference between two groups in standard-deviation units")
@@ -489,7 +548,8 @@ def _from_reported(values: ResolvedValues, dataset: DatasetSpec, settings: Stats
                                 is_hedges_g=(reported.scale == "hedges_g"),
                                 higher_is_better=values.higher_is_better,
                                 estimator=settings.estimator, variance=settings.variance,
-                                level=settings.ci_level)
+                                level=settings.ci_level,
+                                contrast_kind=reported.contrast_kind or "unknown")
 
 
 # ----------------------------------------------------------------------------- digitisation
@@ -637,7 +697,74 @@ def _finish(record: EffectSizeRecord, name: str, result: SMDResult, inputs: dict
     record.inputs = {k: (float(v) if isinstance(v, (int, float)) else None)
                      for k, v in inputs.items()}
     record.flags = sorted(set(record.flags) | set(flags))
+
+    # C9, the v1 defect this item names: the conversion gate's flags are raised HERE, while the
+    # effect size is being built, and `record.confidence` was set from the two cells' buckets long
+    # before that. Until this call, a `df_missing` row carried the flag and pooled anyway. The cap
+    # is on the BUCKET rather than the score on purpose — "below auto_accept" still includes
+    # `accept_with_note`, which pools, so a score cap could never withhold the row.
+    capped, why = conversion_gate_bucket(record.confidence, record.route, record.flags)
+    record.confidence = capped
+    if why:                              # said even when the row was already held, so the reason
+        steps.extend(why)                # a reviewer reads names the conversion, not just the cell
+        record.conversion_steps = steps
+        record.conversion_chain = "; ".join(steps)
+
+    # C9's second half, on the number that reaches the plot (review H1). The cell-level check
+    # screens raw candidates: only the SD-typed ones, an arbitrary one of them, and always before
+    # the vote and the adjudicator. Here `record.d` is the resolved value — post-vote,
+    # post-adjudication, post-conversion — so the screen finally sees the denominator the row was
+    # actually divided by, whatever form the paper printed it in.
+    screened, said = dispersion_plausibility_bucket(record.confidence, record.d,
+                                                    denominator=_denominator_note(values, inputs),
+                                                    route=name)
+    if said:
+        record.confidence = screened
+        _add_row_refusal(record, IMPLAUSIBLE_DISPERSION)
+        steps.extend(said)
+        record.conversion_steps = steps
+        record.conversion_chain = "; ".join(steps)
     return record
+
+
+def _add_row_refusal(record: EffectSizeRecord, code: str) -> None:
+    """Put a ROW-level refusal on the record — the only way `_finish` may add one.
+
+    The review layer decides whether a cell can be released by consulting `ROW_REFUSAL_CODES`
+    (`canopy.pipeline.overrides`), so a code this function could add without being in that set
+    would release cells under a row the resolver refused. The check is here rather than in a test
+    alone because the failure is silent everywhere else: the row is held, the cells are not, and
+    nothing says so.
+    """
+    if code not in ROW_REFUSAL_CODES:
+        raise KeyError(
+            f"{code!r} is not in ROW_REFUSAL_CODES, so the review layer does not know it holds "
+            f"this row's cells. Add it there — that set is the contract, not a description")
+    record.flags = sorted(set(record.flags) | {code})
+
+
+def _denominator_note(values: ResolvedValues, inputs: dict[str, Any]) -> str:
+    """The two dispersions `_mean_sd` actually divided by, and what each was converted FROM.
+
+    A reviewer told "|d| = 17.3 is implausible" and nothing else has to re-derive the conversion
+    before they can see where it went wrong; told "SD_A = 1.732 (from SE 0.5)" they can see it at
+    once. Empty for a route that has no group dispersions of its own (a statistic, a printed d).
+    """
+    said: list[str] = []
+    for side, group in (("A", values.group_a), ("B", values.group_b)):
+        sd = inputs.get(f"sd_{side.lower()}")
+        if not isinstance(sd, (int, float)):
+            continue
+        printed = ""
+        converted = (DispersionType.SD, DispersionType.UNKNOWN, DispersionType.NONE)
+        if (group is not None and group.dispersion_value is not None
+                and group.dispersion_type not in converted):
+            printed = f" (from {group.dispersion_type.value} {_fmt(group.dispersion_value)})"
+        mean = inputs.get(f"mean_{side.lower()}")
+        against = (f" against a mean of {_fmt(float(mean))}"
+                   if isinstance(mean, (int, float)) else "")
+        said.append(f"SD_{side} = {_fmt(float(sd))}{printed}{against}")
+    return "; ".join(said)
 
 
 # ----------------------------------------------------------------------------- dependence policies

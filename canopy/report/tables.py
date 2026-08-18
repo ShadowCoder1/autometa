@@ -46,7 +46,11 @@ __all__ = ["extraction_table", "EXTRACTION_COLUMNS", "exclusions_table", "EXCLUS
 EXCLUSION_REASONS: tuple[str, ...] = (
     "duplicate", "not_eligible", "ineligible_design", "no_usable_data", "outcome_not_reported",
     "not_convertible", "needs_human", "aggregated", "superseded_by_dataset_rule", "ingest_failed",
-    "budget_exhausted", "error", "human_override", "other")
+    "budget_exhausted", "error", "human_override",
+    #: C7: the map adjudicator rejected a dataset on a named protocol rule, before any extraction
+    #: was bought for it. The dataset never reaches the resolver, so without this it left the
+    #: review without appearing anywhere — the same silence an ineligible paper used to leave.
+    "map_adjudication", "other")
 #: `aggregated_into:<row>` is written by the within-paper aggregation and read as `aggregated`
 _REASON_ALIASES: dict[str, str] = {"aggregated_into": "aggregated"}
 

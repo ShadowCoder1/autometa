@@ -29,13 +29,18 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from types import MappingProxyType
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from ..agents.adjudicator import adjudicate
 from ..agents.extract_stats import extract_test_statistics
 from ..agents.extract_text import extract_group_stats
-from ..agents.mapper import map_study
+from ..agents.mapper import (HUMAN_DECIDER, HUMAN_EXCLUSION_RULE, MAP_ADJUDICATOR,
+                             apply_map_answers,
+                             extraction_blocks, map_study, readable_sources,
+                             source_unreadable_reason)
+from ..agents.orientation import combine_orientation
 from ..agents.orientation import orientation as orientation_verdict
 from ..agents.source_rank import (keep_for_vote, match_named_source, rank_sources,
                                  source_of)
@@ -57,19 +62,22 @@ from ..report import (exclusions_table, extraction_table, methods_figure, pool_r
                       prisma_flow, provenance_bundle, route_examples, write_html_report,
                       write_outcome_outputs, write_rows)
 from ..stats.meta import MetaResult
-from ..verify.checks import CHECK_SEVERITY, run_checks
-from ..verify.confidence import resolve_cell
+from ..verify.checks import (CHECK_SEVERITY, DF_PROVENANCE_FLAGS, ORIENTATION_FLAGS,
+                            run_checks)
+from ..verify.confidence import ROW_REFUSAL_CODES, resolve_cell
 from ..verify.vote import VoteResult, vote_groups
 from .aggregate import AGGREGATED_FLAG, Aggregation, aggregate_one_row_per_paper
-from .overrides import OVERRIDES_FILE, apply_overrides_and_repool, read_overrides
-from .resolve import (ReportedValues, ResolvedValues, StatisticValues, apply_shared_control,
-                      multi_group_flags, resolve_effect)
+from .overrides import (OVERRIDES_FILE, apply_overrides_and_repool, map_answers, read_overrides)
+from .resolve import resolve_effect
+from .rows import (DISPERSION_APPROXIMATED, ENSEMBLE, approximation_flags,
+                   cell_candidates, prepare_rows, reported_values, statistic_values)
 from .state import (PaperBudgetExceeded, PaperClient, emit, load_manifest, paper_dir,
                     read_stage, review_entry, save_manifest, sha12, sort_review_queue,
                     stage_done, write_stage)
 
 __all__ = ["run_pipeline", "RunContext", "PaperResult", "revalidate", "target_for_source",
-           "vote_candidates", "sample_key"]
+           "vote_candidates", "sample_key", "cells_for_review", "REVIEW_QUEUE_COLUMNS",
+           "buys_adjudication"]
 
 FIGURE_KINDS = frozenset({SourceKind.figure_bar, SourceKind.figure_line, SourceKind.figure_points,
                           SourceKind.figure_box})
@@ -95,6 +103,12 @@ class RunContext:
     #: how a paper is ingested; the server passes a subprocess-backed one so that a PDF built to
     #: hang a parser takes a child process with it instead of the run
     ingest_fn: Callable[[Path, Path], PaperRecord] = ingest_pdf
+    #: this paper's answers to its map's open questions, read ONCE and shared by the three stages
+    #: that ask for them (review L8). `_run_paper` builds one context per paper, so the cache is
+    #: per paper by construction — and three reads of a file a reviewer may be editing mid-run
+    #: could hand two stages different answers, which is the one thing `apply_map_answers` being
+    #: pure and idempotent cannot protect against.
+    answers: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
     def stop_if_cancelled(self) -> None:
         if self.cancel_event is not None and self.cancel_event.is_set():
@@ -154,6 +168,85 @@ def target_for_source(source: Source, dataset: DatasetSpec, outcome_sources: Out
 _PRINTED_KINDS = frozenset(SourceKind) - FIGURE_KINDS
 
 
+def _answered_map(ctx: "RunContext", paper: PaperRecord, study: StudyMap) -> StudyMap:
+    """This paper's map with the reviewer's answers to its open questions applied (C4/C6/C7).
+
+    `map_answers` reads the review log; `apply_map_answers` applies only the records that answer a
+    question THIS map actually asked. Neither is caught: an unreadable review log must stop the
+    run, because "nobody has answered anything" and "the answers could not be read" block the same
+    cells and mean opposite things — the first is a question waiting for a person, the second is a
+    person's answer being silently discarded.
+
+    Called by BOTH stages that read `extraction_blocks`, because both must see the same map: a
+    person who answers a `which_measure` question between an extract and a `--resume` verify has
+    unblocked the cell for the verify stage too, and `apply_map_answers` is pure and idempotent
+    exactly so that asking twice is free and gives the same answer.
+    """
+    return apply_map_answers(study, _map_answers(ctx, paper))
+
+
+def _map_answers(ctx: "RunContext", paper: PaperRecord) -> list[dict[str, Any]]:
+    """This paper's answers, read from the review log once per paper and cached (review L8)."""
+    cached = ctx.answers.get(paper.sha256)
+    if cached is None:
+        cached = map_answers(ctx.out_dir, paper.sha256)
+        ctx.answers[paper.sha256] = cached
+    return cached
+
+
+#: map answers that can only be acted on by BUYING a reading. "Exclude it" needs no model call and
+#: is applied by `overrides.apply_overrides_and_repool` at re-pool time; these two are decisions
+#: about what to EXTRACT, so they stay pending until an extract stage has read the cells they
+#: un-block — which is what `consumed_override_seqs` records (M8's contract).
+_EXTRACTING_ANSWERS = ("include_dataset", "which_measure")
+
+
+def _answer_cells(answer: Mapping[str, Any], study: StudyMap, keys: set[str],
+                  blocked_cells: Mapping[tuple[str, str], str] = MappingProxyType({})
+                  ) -> list[str]:
+    """The `<dataset>/<outcome>` cells one answer asks the extract stage to read, if any.
+
+    Cells another OPEN map question still blocks are not among them. "Include this dataset" is
+    acted on when every cell it un-blocks has been read, and a sibling cell held by an unanswered
+    `which_measure` is one no resume may buy — so counting it left the inclusion "pending re-run"
+    for ever, and the reviewer was told to run `--resume` again after every resume (whole-diff L4).
+    """
+    if answer.get("kind") not in _EXTRACTING_ANSWERS:
+        return []
+    if answer.get("kind") == "include_dataset" and answer.get("decision") != "include":
+        return []
+    dataset_id = str(answer.get("dataset_id") or "")
+    outcome_key = str(answer.get("outcome_key") or "")
+    return [f"{dataset.dataset_id}/{sources.outcome_key}"
+            for dataset in study.datasets if dataset.dataset_id == dataset_id
+            for sources in dataset.outcomes
+            if sources.outcome_key in keys
+            and (not outcome_key or sources.outcome_key == outcome_key)
+            and (dataset.dataset_id, sources.outcome_key) not in blocked_cells]
+
+
+def _consumed_seqs(ctx: "RunContext", paper: PaperRecord, study: StudyMap, keys: set[str],
+                   extracted: Sequence[str], already: Sequence[Any] = (),
+                   blocked_cells: Mapping[tuple[str, str], str] = MappingProxyType({})
+                   ) -> list[int]:
+    """The `seq` of every answer this stage has now acted on, unioned with what is on record.
+
+    An answer is acted on when every cell it asks for has been extracted — not merely when the
+    stage that could act on it ran. A run that dies on its budget before reaching the dataset a
+    reviewer just included has not consumed that answer, and telling the reviewer it did would
+    retire a decision nothing bought. Cumulative across resumes, per the consumer's contract:
+    the union is written, never this resume's seqs alone.
+    """
+    done = set(extracted)
+    seqs = {int(seq) for seq in already if isinstance(seq, int)}
+    for answer in _map_answers(ctx, paper):
+        seq = answer.get("seq")
+        cells = _answer_cells(answer, study, keys, blocked_cells)
+        if isinstance(seq, int) and cells and done.issuperset(cells):
+            seqs.add(seq)
+    return sorted(seqs)
+
+
 def _has_printed_source(sources: Sequence[Source]) -> bool:
     """Is there anything on this cell for a text or statistic reader to read?"""
     return any(s.kind in _PRINTED_KINDS and not s.figure_id for s in sources)
@@ -201,24 +294,89 @@ def _map(ctx: RunContext, paper: PaperRecord, group: PaperGroup,
                       model_primary=ctx.models["primary"], model_check=ctx.models["secondary"],
                       model_adjudicate=ctx.models["adjudicator"], pdf_file_id=file_id or None)
     write_stage(ctx.out_dir, paper.sha256, "map",
-                {"study": study.model_dump(mode="json"), "pdf_file_id": file_id})
+                {"study": study.model_dump(mode="json"), "pdf_file_id": file_id,
+                 # M8's contract: `overrides.consumed_seqs` reads this key from `map.json` AND
+                 # `extract.json` and unions them. The map stage buys no reading, so it consumes
+                 # nothing: `apply_map_answers` is applied by the two stages that read
+                 # `extraction_blocks`, and an `include_dataset: include` answer is not acted on
+                 # until a reader has been bought for the cells it un-blocks. Claiming it here
+                 # would tell a reviewer their decision had been applied while nothing had been
+                 # extracted for it — the same false statement, one stage earlier, that H2 is
+                 # about. The key is written empty rather than omitted so the record says which.
+                 "consumed_override_seqs": []})
     status.stages["map"] = "done"
     return study, file_id
 
 
+def _cells_still_unread(study: StudyMap, keys: set[str], blocked_datasets: Mapping[str, str],
+                        blocked_cells: Mapping[tuple[str, str], str], extracted: Sequence[str],
+                        candidates: Sequence[Candidate]) -> set[str]:
+    """Cells this map now asks for that a finished extract stage has neither read nor recorded.
+
+    The rule the "answers on resume" ruling needed and did not have (review H2): **the extract
+    stage is not done while the map un-blocks a cell it has no candidates for.** Written against
+    the map rather than against the answers, so anything that un-blocks a cell — an answered
+    question, an edited protocol, a re-mapped paper — re-enters the stage for that cell and only
+    that cell.
+
+    `cells_extracted` is what the stage itself recorded reading, so a cell that WAS read and came
+    back empty is never re-bought; the candidate check is the fallback for a stage file written
+    before that key existed.
+    """
+    have = {(c.dataset_id, c.outcome_key) for c in candidates}
+    read = set(extracted)
+    return {f"{dataset.dataset_id}/{sources.outcome_key}"
+            for dataset in study.datasets if dataset.dataset_id not in blocked_datasets
+            for sources in dataset.outcomes
+            if sources.outcome_key in keys
+            and (dataset.dataset_id, sources.outcome_key) not in blocked_cells
+            and f"{dataset.dataset_id}/{sources.outcome_key}" not in read
+            and (dataset.dataset_id, sources.outcome_key) not in have}
+
+
 def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
              status: PaperStatus) -> list[Candidate]:
-    if ctx.resume and stage_done(ctx.out_dir, paper.sha256, "extract"):
-        payload = read_stage(ctx.out_dir, paper.sha256, "extract")
-        status.stages["extract"] = "skipped"
-        return [Candidate.model_validate(c) for c in payload["candidates"]]
-
     keys = ctx.outcome_keys()
     figures_dir = paper_dir(ctx.out_dir, paper.sha256) / "figures"
+    # C7/C6: a question the MAP could not settle is settled before extraction, not after it. A
+    # dataset only one mapping agent proposed, or an outcome the map gave two measures, buys no
+    # reader at all — Bock's tracking-only control sample was extracted, digitised, verified and
+    # signed at d = -2.9610 for >= $0.745 while the objection to including it sat in a warning.
+    #
+    # Read BEFORE the resume short-circuit, because `--resume` is the only path the answers exist
+    # for: extraction was never bought for a blocked cell, so the answer that un-blocks it can
+    # only be acted on by a later run. Reading them after the short-circuit made the whole
+    # mechanism inert — the tool told the reviewer to re-run with `--resume`, the reviewer did,
+    # and got the identical message back, for ever (review H2).
+    study = _answered_map(ctx, paper, study)
+    blocked_datasets, blocked_cells = extraction_blocks(study)
     candidates: list[Candidate] = []
     done: list[str] = []
     exhausted: list[str] = []
     stopped = ""
+    consumed: list[Any] = []
+    only: set[str] | None = None
+
+    if ctx.resume and stage_done(ctx.out_dir, paper.sha256, "extract"):
+        payload = read_stage(ctx.out_dir, paper.sha256, "extract")
+        candidates = [Candidate.model_validate(c) for c in payload["candidates"]]
+        done = [str(cell) for cell in payload.get("cells_extracted") or []]
+        consumed = list(payload.get("consumed_override_seqs") or [])
+        only = _cells_still_unread(study, keys, blocked_datasets, blocked_cells, done, candidates)
+        if not only:
+            # nothing new to read. The stage file is still rewritten when an answer has finished
+            # being acted on, so a decision whose cells were already extracted stops being pending
+            # instead of waiting for a reading nobody owes it.
+            seqs = _consumed_seqs(ctx, paper, study, keys, done, consumed, blocked_cells)
+            if seqs != sorted(int(s) for s in consumed if isinstance(s, int)):
+                write_stage(ctx.out_dir, paper.sha256, "extract", {**payload,
+                                                                   "consumed_override_seqs": seqs})
+            status.stages["extract"] = "skipped"
+            return candidates
+        status.warnings.append(
+            f"{len(only)} cell(s) this map asks for had never been extracted "
+            f"({', '.join(sorted(only))}) — the extract stage was re-entered for those cells "
+            f"only; every other cell keeps the reading an earlier run paid for")
 
     def save(complete: bool) -> None:
         # written after EVERY cell, not once at the end: Buch 2003 spent $14.37 against a $14 cap
@@ -229,16 +387,32 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
                     {"candidates": [c.model_dump(mode="json") for c in candidates],
                      "complete": complete, "cells_extracted": list(done),
                      "cells_budget_exhausted": list(exhausted),
-                     "budget_note": stopped})
+                     "budget_note": stopped,
+                     # M8: which of the reviewer's answers a stage has acted on. Without it an
+                     # answer that needs a model call is pending for ever and the review page can
+                     # never say which decisions are still outstanding.
+                     "consumed_override_seqs": _consumed_seqs(ctx, paper, study, keys, done,
+                                                              consumed, blocked_cells)})
 
     for dataset in study.datasets:
+        if dataset.dataset_id in blocked_datasets:
+            status.warnings.append(
+                f"{dataset.dataset_id}: not extracted — {blocked_datasets[dataset.dataset_id]}")
+            continue
         for sources in dataset.outcomes:
             if sources.outcome_key not in keys:
                 status.warnings.append(
                     f"{dataset.dataset_id}: the mapper reported outcome "
                     f"{sources.outcome_key!r}, which is not in the protocol — skipped")
                 continue
+            if (dataset.dataset_id, sources.outcome_key) in blocked_cells:
+                status.warnings.append(
+                    f"{dataset.dataset_id}/{sources.outcome_key}: not extracted — "
+                    f"{blocked_cells[(dataset.dataset_id, sources.outcome_key)]}")
+                continue
             cell = f"{dataset.dataset_id}/{sources.outcome_key}"
+            if only is not None and cell not in only:
+                continue                      # already read in an earlier run; not re-bought here
             if stopped:                       # the cap stops NEW cells; it does not undo old ones
                 exhausted.append(cell)
                 continue
@@ -279,12 +453,16 @@ def _extract_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
     # and is named here: the aligned-cursor curves of Cressman's Fig. 3a were digitised as late
     # adaptation (3.9° beside the misaligned curves' 31.4°) before the map could say which was
     # which.
-    readable = [s for s in sources.sources if s.role in ("value", "unknown")]
+    # WHICH locations may be read is the map's rule, decided in one place so the pipeline and the
+    # map cannot drift apart: what the location IS for this outcome (`role`) and WHOSE numbers are
+    # at it (`sample`). A second copy of that test here is how the two came to disagree before.
+    readable = readable_sources(sources.sources)
     for skipped in sources.sources:
-        if skipped.role not in ("value", "unknown"):
+        why = source_unreadable_reason(skipped)
+        if why:
             status.warnings.append(
-                f"{dataset.dataset_id}/{key}: {skipped.locator[:80]!r} is a {skipped.role} "
-                f"source — kept for the record, not read for the value")
+                f"{dataset.dataset_id}/{key}: {skipped.locator[:80]!r} {why} — kept for the "
+                f"record, not read for the value")
     # the two heterogeneous text readings the vote needs (different model AND different prompt) —
     # bought only when there is something printed to read. A cell whose only source is a figure
     # used to buy three text calls and get three `not_on_these_pages` answers back (critique
@@ -336,13 +514,10 @@ class _CellVerification:
     reopened_source: str = ""
 
 
-def _cell_candidates(candidates: Sequence[Candidate], dataset_id: str,
-                     outcome_key: str) -> list[Candidate]:
-    return [c for c in candidates
-            if c.dataset_id == dataset_id and c.outcome_key == outcome_key]
-
-
-ENSEMBLE = "digitize:ensemble"
+#: the four helpers below live in `canopy.pipeline.rows` now, because the REVIEW layer's rebuild
+#: has to make the same row this stage does (whole-diff H1/H2). They keep their names here so a
+#: caller that knew where they were still finds them.
+_cell_candidates = cell_candidates
 
 
 def vote_candidates(candidates: Sequence[Candidate]) -> list[Candidate]:
@@ -396,18 +571,28 @@ def _reopen_on_better_source(ctx: RunContext, paper: PaperRecord, dataset: Datas
                              sources: OutcomeSources, verdicts: Sequence[VerifierVerdict],
                              cell: Sequence[Candidate], status: PaperStatus
                              ) -> tuple[str, list[Candidate]] | None:
-    """Re-extract ONE source a verifier named, when the mapper already had it and nobody read it."""
-    already = _already_read(cell, sources.sources)
+    """Re-extract ONE source a verifier named, when the mapper already had it and nobody read it.
+
+    Matched against `readable_sources` and not the whole list: a verifier that names the baseline
+    plotted beside the outcome has named a real location, and re-opening on it would buy a
+    reading of the wrong quantity — which is the one thing `readable_sources` exists to stop.
+    """
+    readable = readable_sources(sources.sources)
+    already = _already_read(cell, readable)
     for verdict in verdicts:
         named = (verdict.better_source or "").strip()
         if not named:
             continue
-        source = match_named_source(named, sources.sources)
+        source = match_named_source(named, readable)
         if source is None:
+            kept = match_named_source(named, sources.sources)
+            why = (f"the map keeps that location for the record and not for this outcome's value "
+                   f"({source_unreadable_reason(kept)})" if kept is not None else
+                   f"which is not in the mapper's list for this outcome — acting on it would "
+                   f"mean acting on a location a model invented")
             status.warnings.append(
                 f"{dataset.dataset_id}/{sources.outcome_key}: a verifier named {named!r} as a "
-                f"better source, which is not in the mapper's list for this outcome — not "
-                f"re-opened, because acting on it would mean acting on a location a model invented")
+                f"better source — not re-opened, because {why}")
             continue
         if _source_marker(source) in already:
             continue                     # the cell already read it; re-reading buys nothing
@@ -421,6 +606,91 @@ def _reopen_on_better_source(ctx: RunContext, paper: PaperRecord, dataset: Datas
             f"{dataset.dataset_id}/{sources.outcome_key}: re-opened on {named!r} at the verifier's "
             f"suggestion and it produced no candidate")
     return None
+
+
+def _recheck_orientation(dataset: DatasetSpec, verdict: OrientationVerdict | None,
+                         votes: dict[str, VoteResult],
+                         flags: Sequence[CheckFlag]) -> OrientationVerdict | None:
+    """C3 row 1, run where the numbers it needs finally exist.
+
+    The discard filter compares a reader's own `direction_stated_in_text` with the RESOLVED raw
+    group means. Orientation is decided before any cell of the measure is resolved, so at that
+    point there are no means and the filter is inert — which is why it never fired on a real run.
+    Re-combining the SAME ballots here costs nothing (no model call: `combine_orientation` is
+    pure) and is the first moment the comparison is possible.
+
+    Two guards, both load-bearing:
+
+    * **only against the dataset the readers were asked about.** The verdict is a property of the
+      measure and is reused for every dataset carrying it; another dataset's means are a different
+      comparison, and checking a reader against them would discard whoever read the paper right.
+    * **`third_read` travels with the verdict**, so a measure a bought third read settled by
+      majority is recombined the same way rather than silently falling back to a question.
+
+    Consequently the check runs ONCE per measure. Its outcome is a property of the measure — a
+    reader whose words contradict the numbers it was reading is not trustworthy about that measure
+    anywhere — so `_verify` writes the checked verdict back and every later dataset of the same
+    measure inherits it and takes the early return above.
+
+    What is handed to the filter, exactly:
+
+    * the RAW group means, in this dataset's own A/B assignment, as the vote resolved them.
+      Nothing here orientates them: `higher_is_better` is applied in `resolve_effect`, far later,
+      and a sign applied before the comparison would be the comparison arguing with itself.
+    * `None` — never a default, never the other group's number — for a group that did not resolve.
+      An absent mean disables the filter, which is the safe direction: its only power is to remove
+      a witness.
+    * `open_flags` from the SAME candidate set the means came from, so `series_marker_mismatch` and
+      its family suppress a discard against means that may be the other group's.
+
+    The filter can only remove a witness or abstain, so the worst this can do is turn a decided
+    measure into a question. It can never invent a direction, and "no discard" is exactly today.
+    """
+    if verdict is None or verdict.dataset_id != dataset.dataset_id:
+        return verdict
+    vote_a, vote_b = votes.get("A"), votes.get("B")
+    checked = combine_orientation(
+        verdict.runs, verdict.outcome_key, verdict.measure_name,
+        mean_a=vote_a.mean if vote_a is not None else None,
+        mean_b=vote_b.mean if vote_b is not None else None,
+        open_flags=[f.code for f in flags], third_read=verdict.third_read,
+        dataset_id=verdict.dataset_id)
+    # ALWAYS the checked verdict, never the one it replaces. An equality shortcut on
+    # `(hib, needs_human, agreed)` looks safe — those are the fields anything downstream computes
+    # with — but the verdict is also a RECORD, and the record is what a reviewer reads. Under the
+    # shortcut 11 of the 13 replayed cells kept `means check: no_means` (written when orientation
+    # was decided and there were no means yet) on a cell where the check had since actually run,
+    # or had been suspended because the series identity was disputed. All three pooled cells were
+    # among them. A verdict that says the check could not run, on a cell where it did, is a false
+    # statement about the evidence — and it is the statement someone would rely on to decide the
+    # check had never been wired in at all.
+    return checked
+
+
+#: error codes that must NOT, on their own, buy an adjudicator call. Two rulings, one shape.
+#:
+#: The adjudicator settles VALUE disputes — which of two readings of a number is right — and it
+#: is bought with the whole paper in context. A cell whose only error is something it is
+#: forbidden to decide, or something no model can supply, is already waiting for the person who
+#: will answer it, and the call cannot change the answer.
+#:
+#: * `ORIENTATION_FLAGS` (controller ruling R1): by ruling the adjudicator may not decide a
+#:   direction, so C3's contradiction and its siblings buy nothing.
+#: * `DF_PROVENANCE_FLAGS` (review M5, widened by the fix round's controller ruling): "this t is
+#:   printed with no degrees of freedom" is a fact about the paper. The flags are computed BEFORE
+#:   the call and passed unchanged into `resolve_cell`, so the cell is `needs_human` whatever the
+#:   ruling says. All three members are that one fact under three codes.
+#:
+#: Both come from `canopy.verify.checks` rather than from a list of strings here, so a code added
+#: to either family is excluded here without anyone remembering to. Any OTHER error, a vote
+#: disagreement or a refutation adjudicates exactly as before.
+NO_ADJUDICATION_FLAGS: frozenset[str] = frozenset(ORIENTATION_FLAGS) | frozenset(
+    DF_PROVENANCE_FLAGS)
+
+
+def buys_adjudication(flags: Sequence[CheckFlag]) -> bool:
+    """Does this cell carry an `error` an adjudicator could actually settle?"""
+    return any(f.severity == "error" and f.code not in NO_ADJUDICATION_FLAGS for f in flags)
 
 
 def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
@@ -437,28 +707,44 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
     # …and of the locations the mapper found, only the best-scoring ones do (P5). Extraction has
     # already read them all; this decides which readings the VOTE weighs against each other, so a
     # sentence with no n and no dispersion cannot outvote a figure with SE bars and n printed.
-    ranked = rank_sources(sources.sources, sources)
+    #
+    # Through `readable_sources`, like every other reading. The rank was built over the mapper's
+    # WHOLE list, and `keep_for_vote` holds a candidate back when a HIGHER-SCORING source carries
+    # a dispersion it lacks — so a location the map says nobody may read (C6's `alternate`
+    # operationalization with its own error bars, a `pooled` sample) scored top and evicted the
+    # value the paper printed from the vote. A location no reading may come from cannot be the
+    # reason another reading is not weighed (whole-diff M1).
+    ranked = rank_sources(readable_sources(sources.sources), sources)
     out_rank = [row.to_dict() for row in ranked]
     cell, held_back = keep_for_vote(cell, ranked)
     n_a, n_b = dataset.group_a.n, dataset.group_b.n
-    total_n = (n_a or 0) + (n_b or 0) or None
     out = _CellVerification(orientation=orientation, source_rank=out_rank,
                             held_back=list(held_back))
 
-    flags = run_checks(dataset, key, cell, other_candidates=others, orientation=orientation,
-                       total_n=total_n)
+    # `run_checks`'s participant-total parameter wants the total the PAPER states for this
+    # dataset. This call used to pass `n_a + n_b`, which is not that number — it is the two
+    # analysed group sizes, so every check that compared the two was comparing a value with
+    # itself (review M2: C9's "a stated exclusion explains the shortfall" branch and
+    # `n_sum_mismatch` were both dead in every real run). Nothing on a `StudyMap` records a
+    # stated total yet, so nothing is passed: an argument that is not the thing the parameter
+    # names is worse than a missing one.
+    flags = run_checks(dataset, key, cell, other_candidates=others, orientation=orientation)
     votes = vote_groups(cell, unit_hint=sources.units or outcome_def.units_hint)
 
     # amendment G: the two text extractors disagreed, so buy a third cheap reading — the secondary
-    # model on the prompt variant it has not seen — and let it move that route's median.
+    # model on the prompt variant it has not seen — and let it move that route's median. Through
+    # `readable_sources`, like every other reading: this call passed the mapper's WHOLE list, so
+    # the one reader bought to settle a disagreement was the only one allowed to read a baseline
+    # the other two were kept away from (mapper re-review, amendment G).
     if any(v.needs_third_candidate for v in votes.values()):
-        third = extract_group_stats(ctx.client, paper, ctx.protocol, dataset, key, sources.sources,
+        third = extract_group_stats(ctx.client, paper, ctx.protocol, dataset, key,
+                                    readable_sources(sources.sources),
                                     variant="table_first", model=ctx.models["secondary"])
         if third:
             out.extra_candidates.extend(third)
             cell = [*cell, *third]
             flags = run_checks(dataset, key, cell, other_candidates=others,
-                               orientation=orientation, total_n=total_n)
+                               orientation=orientation)
             votes = vote_groups(cell, unit_hint=sources.units or outcome_def.units_hint)
 
     verifier_verdicts = []
@@ -485,19 +771,28 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                 # one reader wrote past its output limit twice; that is a verdict the cell does
                 # not have, not a reason for the paper to have no verdicts at all. Heuer &
                 # Hegele lost its whole verify stage — 47 candidates, no rows — to one such call.
+                # C8: an infrastructure failure is an ABSENCE, not evidence. Recorded as
+                # `not_run`, it is priced at zero; recorded as `ambiguous` it cost -0.05, so a
+                # cell whose verifier CRASHED scored below one that was never verified at all.
                 verdict = VerifierVerdict(
-                    candidate_id=winner.candidate_id, verdict="ambiguous",
+                    candidate_id=winner.candidate_id, verdict="not_run",
                     reason=f"the verifier's answer was cut off at its output limit twice and "
-                           f"could not be read ({exc}); this candidate is unverified")
-                status.warnings.append(f"{dataset.dataset_id}/{key}: verifier truncated on "
-                                       f"{winner.candidate_id} — cell left unverified")
+                           f"could not be read ({exc}); no verdict was produced, so this "
+                           f"candidate is unverified — which is not evidence against it")
+                status.warnings.append(
+                    f"{dataset.dataset_id}/{key}: verifier truncated at its output limit on "
+                    f"{winner.candidate_id} — no verdict was produced, so it is recorded as "
+                    f"not_run and the cell is unverified rather than doubted")
             except LLMError as exc:
                 verdict = VerifierVerdict(
-                    candidate_id=winner.candidate_id, verdict="ambiguous",
+                    candidate_id=winner.candidate_id, verdict="not_run",
                     reason=f"the verifier could not be run ({type(exc).__name__}: "
-                           f"{str(exc)[:160]}); this candidate is unverified")
-                status.warnings.append(f"{dataset.dataset_id}/{key}: verifier failed on "
-                                       f"{winner.candidate_id} ({type(exc).__name__})")
+                           f"{str(exc)[:160]}); no verdict was produced, so this candidate is "
+                           f"unverified — which is not evidence against it")
+                status.warnings.append(
+                    f"{dataset.dataset_id}/{key}: verifier failed on {winner.candidate_id} "
+                    f"({type(exc).__name__}) — no verdict was produced, so it is recorded as "
+                    f"not_run and the cell is unverified rather than doubted")
             verifier_verdicts.append(verdict)
             if verdict.verdict != "refuted":
                 break
@@ -512,23 +807,31 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
     # already found: a re-open on a page number a model invented would be worse than not looking.
     reopened = _reopen_on_better_source(ctx, paper, dataset, sources, verifier_verdicts, cell,
                                         status)
+    extra_flags: list[CheckFlag] = []
     if reopened is not None:
         named, extra = reopened
         out.reopened_source = named
         out.extra_candidates.extend(extra)
         cell = [*cell, *vote_candidates(extra)]
-        flags = run_checks(dataset, key, cell, other_candidates=others, orientation=orientation,
-                           total_n=total_n)
-        flags.append(CheckFlag(
+        extra_flags.append(CheckFlag(
             code="reopened_on_better_source", severity=CHECK_SEVERITY["reopened_on_better_source"],
             message=(f"a verifier named {named!r} as a better source for this outcome and "
                      f"extraction was re-opened on it (one hop, once)"),
             candidate_ids=sorted(c.candidate_id for c in vote_candidates(extra))))
+        flags = [*run_checks(dataset, key, cell, other_candidates=others,
+                             orientation=orientation), *extra_flags]
         votes = vote_groups(cell, unit_hint=sources.units or outcome_def.units_hint)
 
+    # C3 row 1: the vote and the checks are final, so the resolved means the discard filter needs
+    # finally exist. Free (no model call), and it can only take a witness away.
+    checked = _recheck_orientation(dataset, orientation, votes, flags)
+    if checked is not orientation:
+        orientation = out.orientation = checked
+        flags = [*run_checks(dataset, key, cell, other_candidates=others,
+                             orientation=orientation), *extra_flags]
+
     disagreed = any(v.agreement == "disagree" for v in votes.values())
-    errors = any(f.severity == "error" for f in flags)
-    if disagreed or refuted or errors:
+    if disagreed or refuted or buys_adjudication(flags):
         out.adjudication = adjudicate(
             ctx.client, paper, dataset, sources, cell, verdicts=verifier_verdicts, flags=flags,
             model=ctx.models["adjudicator"], protocol=ctx.protocol, outcome_def=outcome_def,
@@ -542,25 +845,83 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
     return out
 
 
+def _orientation_state(verdict: OrientationVerdict | None) -> tuple:
+    """What a re-check could have CHANGED about a direction — the fields a reader is warned about.
+
+    `notes` is included because that is where the check records a discard and its own state
+    (`ran` / `no_means` / `disputed`); `agreed` and `higher_is_better` are the decision itself.
+    """
+    if verdict is None:
+        return ()
+    return (verdict.higher_is_better, verdict.needs_human, verdict.agreed, verdict.notes)
+
+
 def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: list[Candidate],
             file_id: str, status: PaperStatus) -> list[Verdict]:
-    if ctx.resume and stage_done(ctx.out_dir, paper.sha256, "verify"):
-        payload = read_stage(ctx.out_dir, paper.sha256, "verify")
-        status.stages["verify"] = "skipped"
-        candidates.extend(Candidate.model_validate(c)
-                          for c in payload.get("extra_candidates", []))
-        return [Verdict.model_validate(v) for v in payload["verdicts"]]
-
     keys = ctx.outcome_keys()
+    study = _answered_map(ctx, paper, study)
+    # C6/C7 again, at the stage that BUYS the direction of a measure. The extraction gate already
+    # skips a blocked cell, so it produces no candidate and no verifier or digitiser call follows
+    # — but the two orientation reads are per (outcome, measure), not per candidate, and were
+    # spent anyway on a dataset nobody has agreed to include.
+    blocked_datasets, blocked_cells = extraction_blocks(study)
     verdicts: list[Verdict] = []
     extra: list[Candidate] = []
     orientations: dict[tuple[str, str], OrientationVerdict] = {}
     adjudications: list[dict[str, Any]] = []
     source_ranks: dict[str, Any] = {}
     reopens = 0
+    only: set[tuple[str, str]] | None = None
+
+    if ctx.resume and stage_done(ctx.out_dir, paper.sha256, "verify"):
+        payload = read_stage(ctx.out_dir, paper.sha256, "verify")
+        verdicts = [Verdict.model_validate(v) for v in payload["verdicts"]]
+        extra = [Candidate.model_validate(c) for c in payload.get("extra_candidates", [])]
+        # the same rule as the extract stage's, one stage on: this stage is not done while a cell
+        # that now HAS candidates has no verdict. Without it an answer acted on by the resumed
+        # extract stage produced candidates and no row, which is the same dead end one layer up.
+        only = {(c.dataset_id, c.outcome_key) for c in [*candidates, *extra]
+                if c.dataset_id not in blocked_datasets and c.outcome_key in keys
+                and (c.dataset_id, c.outcome_key) not in blocked_cells} - {
+                    (v.dataset_id, v.outcome_key) for v in verdicts}
+        if not only:
+            status.stages["verify"] = "skipped"
+            candidates.extend(extra)
+            return verdicts
+        status.warnings.append(
+            f"{len(only)} newly extracted cell(s) had no verdict "
+            f"({', '.join(f'{d}/{k}' for d, k in sorted(only))}) — the verify stage was "
+            f"re-entered for those cells only")
+        # the directions an earlier run already decided, in the shape the stage file stores them
+        # (`"<outcome>|<measure>"`), so a measure that has a verdict is never re-bought
+        orientations = {(name.split("|", 1)[0], name.split("|", 1)[1] if "|" in name else ""):
+                        OrientationVerdict.model_validate(value)
+                        for name, value in (payload.get("orientation") or {}).items()}
+        adjudications = list(payload.get("adjudications") or [])
+        source_ranks = dict(payload.get("source_rank") or {})
+        reopens = int(payload.get("reopens") or 0)
+
     for dataset in study.datasets:
+        if dataset.dataset_id in blocked_datasets:
+            continue
         for sources in dataset.outcomes:
             if sources.outcome_key not in keys:
+                continue
+            if (dataset.dataset_id, sources.outcome_key) in blocked_cells:
+                continue
+            if only is not None and (dataset.dataset_id, sources.outcome_key) not in only:
+                continue                      # verified in an earlier run; nothing is re-bought
+            cell = _cell_candidates([*candidates, *extra], dataset.dataset_id,
+                                    sources.outcome_key)
+            if not cell:
+                # nothing was extracted for this cell, so there is no value to sign, nothing for
+                # a verifier to check and no verdict worth writing. The two orientation reads are
+                # per (outcome, measure) rather than per candidate, so without this they were
+                # bought anyway: a dataset un-blocked here but never extracted spent two calls
+                # and wrote two empty verdicts whose only content was a direction (review H2).
+                status.warnings.append(
+                    f"{dataset.dataset_id}/{sources.outcome_key}: no candidate was extracted for "
+                    f"this cell, so no direction was bought and no verdict was written")
                 continue
             # spec §3.3(5): the direction of a measure is decided once per (outcome, measure) by
             # two independent agents — not once per value.
@@ -571,10 +932,24 @@ def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: li
                     models=(ctx.models["primary"], ctx.models["secondary"]),
                     protocol=ctx.protocol, outcome=ctx.protocol.outcome(sources.outcome_key),
                     pdf_file_id=file_id or None)
-            cell = _cell_candidates([*candidates, *extra], dataset.dataset_id,
-                                    sources.outcome_key)
             result = _verify_cell(ctx, paper, dataset, sources, cell, [*candidates, *extra],
                                   file_id, orientations[measure], status)
+            if result.orientation is not None:
+                # C3 row 1 may have discarded a reader once this cell's means existed. That is a
+                # fact about the MEASURE, so every later dataset carrying it inherits the checked
+                # verdict rather than the one the readers were first scored on, and the stage file
+                # records what was actually used.
+                if _orientation_state(result.orientation) != _orientation_state(
+                        orientations[measure]):
+                    # by STATE, not by identity: `_recheck_orientation` returns a fresh object
+                    # whenever the dataset matches, so an identity test said "changed" about
+                    # every measure of every paper, always — a warning that fires unconditionally
+                    # is a warning a reader learns to skip (whole-diff L1).
+                    status.warnings.append(
+                        f"{dataset.dataset_id}/{sources.outcome_key}: the direction of "
+                        f"{sources.measure_name or sources.outcome_key!r} was re-checked against "
+                        f"the resolved means and changed — {result.orientation.notes}")
+                orientations[measure] = result.orientation
             extra.extend(result.extra_candidates)
             verdicts.extend(result.verdicts)
             reopens += result.reopens
@@ -596,18 +971,66 @@ def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: li
     return verdicts
 
 
-#: on the ROW, so a sensitivity analysis can pool with and without the rows whose dispersion the
-#: code built rather than the paper stated (task 16 P6: the critique's amendment to the statistic)
-DISPERSION_APPROXIMATED = "dispersion_approximated"
+#: the columns `human_review_queue.csv` carries, in order. `write_rows` passes
+#: `extrasaction="ignore"` to `csv.DictWriter`, so a key `review_entry` publishes and this list
+#: omits is dropped from the file in silence — which is how C11's three columns came to exist on
+#: the dict, in the JSON and in the HTML table, and nowhere in the CSV a reviewer opens (M1).
+REVIEW_QUEUE_COLUMNS: tuple[str, ...] = (
+    "paper_id", "dataset_id", "outcome_key", "group", "confidence",
+    #: C11: the score, how far it was from the line that decided the bucket, and which line —
+    #: empty on a cell whose bucket the score did not decide (M3)
+    "confidence_score", "confidence_margin", "nearest_boundary",
+    "route", "reason", "impact_abs_delta_pooled", "candidates")
+
+def cells_for_review(verdicts: Sequence[Verdict], held: Sequence[EffectSizeRecord],
+                     exclusions: Sequence[Mapping[str, Any]] = ()) -> list[Verdict]:
+    """Every cell that belongs in `human_review_queue`, by three rules — not one.
+
+    The queue is built from CELLS and read by the review page and `questions_for_run`, so a cell
+    missing from it is a question nobody is asked. Three things put one there, and the last two
+    exist because a row is something that holds:
+
+    1. the cell's own bucket is `needs_human`;
+    2. the ROW is held by a rule that lives on the row and on neither cell — the conversion gate
+       and C9's `|d|` screen both are, because both need the number the conversion produced. Such
+       a row was refused, drawn hollow, and named nowhere a reviewer works. `not_convertible` is
+       deliberately excluded: that row is a paper that did not report enough, it is recorded in
+       `exclusions`, and the two findings are kept apart;
+    3. …and for a row carrying a `ROW_REFUSAL_CODES` flag, BOTH cells, whether or not one of them
+       has a finding of its own. Rule 2 subtracts the cells that are held in their own right,
+       which is right for an ordinary cell finding — the healthy sibling has no question — and
+       wrong here: neither cell can be released while the row's denominator is in doubt, so
+       leaving the sibling out drops it the moment the first one is answered.
+
+    Minus one: a cell a PERSON excluded is settled, not outstanding. The decision is on the record
+    and in the exclusion table, and counting it as awaiting review counts it for ever.
+
+    These are the rules `canopy.pipeline.overrides._rewrite` applies when it re-pools, and they
+    live here so a fresh `canopy run` and a re-pool of it name the same cells: a queue that
+    changes when a reviewer answers something unrelated is a queue nobody can work down.
+    """
+    cells_held = {(v.dataset_id, v.outcome_key) for v in verdicts if v.needs_human}
+    row_held = {(r.dataset_id, r.outcome_key) for r in held
+                if r.route != "not_convertible"} - cells_held
+    row_held |= {(r.dataset_id, r.outcome_key) for r in held
+                 if set(r.flags) & ROW_REFUSAL_CODES}
+    gone_datasets = {str(e.get("dataset_id") or "") for e in exclusions
+                     if e.get("decider") == HUMAN_DECIDER and not e.get("outcome_key")}
+    gone_cells = {(str(e.get("dataset_id") or ""), str(e.get("outcome_key") or ""))
+                  for e in exclusions
+                  if e.get("decider") == HUMAN_DECIDER and e.get("outcome_key")}
+    out: list[Verdict] = []
+    for verdict in verdicts:
+        key = (verdict.dataset_id, verdict.outcome_key)
+        if not (verdict.needs_human or key in row_held):
+            continue
+        if verdict.dataset_id in gone_datasets or key in gone_cells:
+            continue
+        out.append(verdict)
+    return out
 
 
-def _approximation_flags(cell: Sequence[Candidate]) -> list[str]:
-    """Row flags for anything in this cell whose dispersion is an approximation, not a reading."""
-    kinds = {str((c.pixel_provenance or {}).get("dispersion_approximation") or "")
-             for c in cell if c.extractor_id == ENSEMBLE}
-    named = sorted(k for k in kinds if k)
-    return [DISPERSION_APPROXIMATED, *[f"{DISPERSION_APPROXIMATED}:{k}" for k in named]] \
-        if named else []
+_approximation_flags = approximation_flags
 
 
 def sample_key(dataset: DatasetSpec, paper_id: str) -> str:
@@ -631,42 +1054,32 @@ def sample_key(dataset: DatasetSpec, paper_id: str) -> str:
     return f"{paper_id}|{experiment}"
 
 
-def _statistic_values(candidates: Sequence[Candidate]) -> StatisticValues | None:
-    """The best statistic the paper printed for this contrast — t/F first, then p."""
-    stats = [c for c in candidates if c.kind == "test_statistic" and c.status == "found"
-             and c.admissible]
-    ranked = sorted(stats, key=lambda c: ({"t": 0, "F": 1, "p": 2}.get(str(c.stat_type), 3),
-                                          c.candidate_id))
-    for cand in ranked:
-        if cand.stat_value is not None or cand.p_value is not None:
-            return StatisticValues(
-                stat_type=cand.stat_type or "unknown", value=cand.stat_value, df=cand.df,
-                df1=cand.df1, df2=cand.df2, tails=cand.tails, p_kind=cand.p_kind or "unknown",
-                p_value=cand.p_value, design=cand.design, direction=cand.direction)
-    return None
-
-
-def _reported_values(candidates: Sequence[Candidate]) -> ReportedValues | None:
-    for cand in candidates:
-        if cand.kind == "reported_d" and cand.status == "found" and cand.reported_value is not None:
-            return ReportedValues(value=cand.reported_value, scale=cand.reported_scale,
-                                  standardizer=cand.standardizer, ci_low=cand.reported_ci_low,
-                                  ci_high=cand.reported_ci_high,
-                                  positive_means=cand.positive_means)
-    return None
+_statistic_values = statistic_values
+_reported_values = reported_values
 
 
 def _resolve(ctx: RunContext, paper: PaperRecord, study: StudyMap,
              candidates: Sequence[Candidate], verdicts: Sequence[Verdict],
              status: PaperStatus) -> list[EffectSizeRecord]:
+    keys = ctx.outcome_keys()
     if ctx.resume and stage_done(ctx.out_dir, paper.sha256, "resolve"):
         payload = read_stage(ctx.out_dir, paper.sha256, "resolve")
-        status.stages["resolve"] = "skipped"
-        return [EffectSizeRecord.model_validate(r) for r in payload["records"]]
+        records = [EffectSizeRecord.model_validate(r) for r in payload["records"]]
+        # the same rule again, at the last stage: not done while a cell that now has verdicts has
+        # no record. This stage buys nothing — it is arithmetic over the verdicts — so it is
+        # recomputed in full rather than merged, which cannot drift from a fresh run.
+        missing = {(v.dataset_id, v.outcome_key) for v in verdicts} - {
+            (r.dataset_id, r.outcome_key) for r in records}
+        if not missing:
+            status.stages["resolve"] = "skipped"
+            return records
+        status.warnings.append(
+            f"{len(missing)} newly verified cell(s) had no resolved row "
+            f"({', '.join(f'{d}/{k}' for d, k in sorted(missing))}) — the resolve stage was "
+            f"re-run over every verdict this paper now has")
 
-    keys = ctx.outcome_keys()
     by_cell = {(v.dataset_id, v.outcome_key, v.group): v for v in verdicts}
-    prepared: list[tuple[DatasetSpec, str, ResolvedValues]] = []
+    cells: list[tuple[DatasetSpec, str, Verdict, Verdict]] = []
     for dataset in study.datasets:
         for sources in dataset.outcomes:
             key = sources.outcome_key
@@ -678,32 +1091,17 @@ def _resolve(ctx: RunContext, paper: PaperRecord, study: StudyMap,
                 status.warnings.append(f"{dataset.dataset_id}/{key}: verification produced no "
                                        f"verdict for both groups — not resolved")
                 continue
-            cell = _cell_candidates(candidates, dataset.dataset_id, key)
-            values = ResolvedValues.from_verdicts(
-                verdict_a, verdict_b, test_statistic=_statistic_values(cell),
-                reported=_reported_values(cell))
-            values.flags = sorted(set(values.flags)
-                                  | set(multi_group_flags(dataset, ctx.settings.multi_group_policy))
-                                  | set(_approximation_flags(cell)))
-            prepared.append((dataset, key, values))
+            cells.append((dataset, key, verdict_a, verdict_b))
 
-    # rows in one paper that share a control arm are not independent (Cochrane 16.5.4)
-    shared: dict[tuple[str, str], list[int]] = {}
-    for index, (dataset, key, _) in enumerate(prepared):
-        if dataset.shared_control:
-            shared.setdefault((dataset.cluster_id or paper.sha256, key), []).append(index)
-    for indices in shared.values():
-        if len(indices) < 2:
-            continue
-        adjusted = apply_shared_control([prepared[i][2] for i in indices],
-                                        ctx.settings.shared_control_strategy)
-        for position, index in enumerate(indices):
-            if position < len(adjusted):
-                dataset, key, _ = prepared[index]
-                prepared[index] = (dataset, key, adjusted[position])
+    # the printed statistic, the printed effect size, the row's own policy flags and the
+    # shared-control adjustment (Cochrane 16.5.4) — in `pipeline.rows`, because the review layer
+    # rebuilds the same row after every human answer and must build the SAME row (whole-diff H1).
+    prepared = prepare_rows(cells, candidates, ctx.settings,
+                            cluster_of=lambda d: d.cluster_id or paper.sha256)
 
     records: list[EffectSizeRecord] = []
-    for dataset, key, values in prepared:
+    for row in prepared:
+        dataset, key, values = row.dataset, row.outcome_key, row.values
         record = resolve_effect(dataset, ctx.protocol.outcome(key), values, ctx.settings)
         record.paper_id = paper.sha256
         record.cluster_id = record.cluster_id or paper.sha256
@@ -784,6 +1182,42 @@ def _run_paper(ctx: RunContext, group: PaperGroup) -> PaperResult:
             emit(ctx.progress, "map", label, "excluded", cost_so_far=ctx.client.total_cost(),
                  message="eligible, but no dataset was mapped")
             return result
+        # C7: a dataset the adjudicator rejected on a named protocol rule is never extracted, so
+        # it reaches no resolver and no row — and until now it reached no table either. "Rejected
+        # -> recorded in exclusions" is the half that makes the decision auditable: the rule it
+        # was rejected under and the paper's own words it rests on, in the run's own record.
+        #
+        # Built from the ANSWERED map, because a person may exclude a dataset too (C4/C7's
+        # `include_dataset` question, answered `exclude`). Such a row must not be attributed to the
+        # adjudicator: the review log says who answered the question, and the record has to say
+        # who decided, not merely that something did.
+        # WHO decided, from the RECORD of the decision — the review log, which is where a
+        # person's answer to the C7 question lives. The only test available before was whether the
+        # cited rule was the "no rule named" placeholder, so every reviewer who CITED the protocol
+        # was written down as the adjudicator: a person's judgement attributed to a model, and an
+        # exclusion the table then listed twice (whole-diff L5 / re-review N2). Deliberately NOT a
+        # new field on `DatasetSpec`: the study map is dumped verbatim into the map-adjudicator's
+        # prompt, so a field added there changes that prompt and re-buys the call for every paper.
+        by_hand = {str(answer.get("dataset_id") or "")
+                   for answer in _map_answers(paper_ctx, paper)
+                   if answer.get("kind") == "include_dataset"
+                   and str(answer.get("decision") or "").strip().lower() == "exclude"}
+        for dataset in _answered_map(paper_ctx, paper, study).datasets:
+            if dataset.included:
+                continue
+            result.exclusions.append({
+                "paper_id": group.sha256, "filename": status.filename,
+                "dataset_id": dataset.dataset_id, "stage": "map",
+                "reason": "map_adjudication:dataset_rule",
+                "quote": dataset.exclusion_quote,
+                # a person decided it if the LOG says so — or if the rule cited is the
+                # placeholder only `apply_map_answers` writes, which is the one case the log is
+                # not needed for and the only one the old test covered.
+                "decider": (HUMAN_DECIDER
+                            if dataset.dataset_id in by_hand
+                            or dataset.exclusion_rule.strip() == HUMAN_EXCLUSION_RULE
+                            else MAP_ADJUDICATOR),
+                "detail": dataset.exclusion_rule})
         emit(ctx.progress, "map", label, "done", cost_so_far=ctx.client.total_cost(),
              message=f"{len(study.datasets)} datasets")
 
@@ -1029,9 +1463,8 @@ def _write_outputs(ctx: RunContext, manifest: RunManifest, results: Sequence[Pap
         outputs.update({f"{outcome.key}.{k}": v for k, v in artefacts.items()})
         per_outcome[outcome.key] = {"pooled": pooled, "outputs": artefacts, "rows": primary,
                                     "needs_human_rows": held}
-        for verdict in verdicts:
-            if verdict.outcome_key != outcome.key or not verdict.needs_human:
-                continue
+        for verdict in cells_for_review([v for v in verdicts if v.outcome_key == outcome.key],
+                                        held, exclusions):
             record = by_dataset.get((verdict.dataset_id, verdict.outcome_key))
             paper_id = record.paper_id if record is not None else ""
             review.append(review_entry(verdict, paper_id=paper_id, candidates=candidates,
@@ -1054,8 +1487,7 @@ def _write_outputs(ctx: RunContext, manifest: RunManifest, results: Sequence[Pap
     if manifest.human_review_queue:
         outputs.update({f"human_review_queue.{k}": v for k, v in write_rows(
             manifest.human_review_queue, out / "human_review_queue",
-            ["paper_id", "dataset_id", "outcome_key", "group", "confidence", "route", "reason",
-             "impact_abs_delta_pooled", "candidates"], formats=("csv", "json")).items()})
+            REVIEW_QUEUE_COLUMNS, formats=("csv", "json")).items()})
         # …and the same cells as QUESTIONS: the picture the tool read, the answers it is choosing
         # between, and why it could not decide — what a reviewer actually wants to be shown
         try:

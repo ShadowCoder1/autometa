@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import csv
 import math
+import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -308,7 +310,8 @@ def test_a_two_group_t_converts_and_says_so():
     values = ResolvedValues(
         higher_is_better=False,
         test_statistic=StatisticValues(stat_type="t", value=5.25, df=22.0,
-                                      design="independent_t", direction="a_greater"))
+                                      design="independent_t", direction="a_greater",
+                                      contrast_kind="groups"))
     record = resolve_effect(dataset(), LATE, values, StatsSettings())
     assert record.route == "test_statistic"
     assert record.d == pytest.approx(-es.d_from_t(5.25, 12, 12), abs=1e-9)
@@ -319,22 +322,35 @@ def test_a_mixed_design_f_is_kept_but_not_converted():
     values = ResolvedValues(
         higher_is_better=False,
         test_statistic=StatisticValues(stat_type="F", value=7.58, df1=1.0, df2=22.0,
-                                      design="mixed_main_effect", direction="b_greater"))
+                                      design="mixed_main_effect", direction="b_greater",
+                                      contrast_kind="groups"))
     record = resolve_effect(dataset(), LATE, values, StatsSettings())
     assert record.route == "not_convertible" and record.d is None and record.es is None
     assert "mixed_main_effect" in record.not_convertible_reason
+    # P-B: the reason names aggregation scope, not the false "different error term"
+    assert "averaged over" in record.not_convertible_reason
+    assert "error term" not in record.not_convertible_reason
     assert "not_convertible" in record.flags
     assert record.inputs["stat_value"] == 7.58
 
 
-def test_a_one_way_between_f_converts():
+def test_a_one_way_between_f_with_no_recorded_factors_is_blocked_by_default():
+    """C5, fail-closed: an F whose model nobody described is refused even when the design label
+    allows it and the error df match exactly.
+
+    A mixed main effect's between-subjects error df are ALSO n_a + n_b - 2 (Heuer's F(1,38) with
+    20/20), so the degrees of freedom cannot tell a one-way ANOVA from a main effect averaged over
+    eight targets. Only the design label separates them, and a label is what the fail-closed rule
+    declines to trust: absence of evidence about the model's factors is evidence of risk.
+    """
     values = ResolvedValues(
         higher_is_better=True,
         test_statistic=StatisticValues(stat_type="F", value=7.58, df1=1.0, df2=22.0,
-                                      design="one_way_between", direction="a_greater"))
+                                      design="one_way_between", direction="a_greater",
+                                      contrast_kind="groups"))
     record = resolve_effect(dataset(), LATE, values, StatsSettings())
-    assert record.route == "test_statistic"
-    assert record.d == pytest.approx(es.d_from_f(7.58, 12, 12, 1), abs=1e-9)
+    assert record.route == "not_convertible" and record.d is None
+    assert "within-subject factors were not recorded" in record.not_convertible_reason
 
 
 def test_a_statistic_with_no_stated_direction_cannot_be_signed():
@@ -351,7 +367,8 @@ def test_a_p_value_converts_through_its_t():
     values = ResolvedValues(
         higher_is_better=True,
         test_statistic=StatisticValues(stat_type="p", p_value=0.03, p_kind="exact", df=22.0,
-                                      design="independent_t", direction="a_greater"))
+                                      design="independent_t", direction="a_greater",
+                                      contrast_kind="groups"))
     record = resolve_effect(dataset(), LATE, values, StatsSettings())
     assert record.route == "p_value"
     assert record.d == pytest.approx(es.d_from_p(0.03, 12, 12, True, 1), abs=1e-9)
@@ -370,7 +387,7 @@ def test_a_reported_hedges_g_is_used_as_printed():
     values = ResolvedValues(
         higher_is_better=True,
         reported=ReportedValues(value=0.62, scale="hedges_g", standardizer="pooled_sd_between",
-                                positive_means="a_greater"))
+                                positive_means="a_greater", contrast_kind="groups"))
     record = resolve_effect(dataset(), LATE, values, StatsSettings(estimator="hedges"))
     assert record.route == "reported_d"
     assert record.g == pytest.approx(0.62, abs=1e-9)
@@ -382,9 +399,46 @@ def test_a_within_participant_effect_size_is_refused():
     values = ResolvedValues(
         higher_is_better=True,
         reported=ReportedValues(value=0.62, scale="cohens_d", standardizer="dz_paired",
-                                positive_means="a_greater"))
+                                positive_means="a_greater", contrast_kind="groups"))
     record = resolve_effect(dataset(), LATE, values, StatsSettings())
     assert record.route == "not_convertible" and "dz_paired" in record.not_convertible_reason
+
+
+def test_a_printed_effect_size_for_a_test_against_a_constant_is_refused():
+    """F5 / P-B, end to end: "the aftereffect differed from zero, d = 1.30" is not the contrast.
+
+    `contrast_kind` was carried on the `Candidate` and read by nobody on this route, so a d of
+    1.30 for a one-sample test against zero pooled as the between-group effect. A printed effect
+    size always has a contrast behind it, and that is the field that records it.
+    """
+    values = ResolvedValues(
+        higher_is_better=True,
+        reported=ReportedValues(value=1.30, scale="cohens_d", standardizer="pooled_sd_between",
+                                positive_means="a_greater", contrast_kind="against_constant"))
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.route == "not_convertible" and record.d is None
+    assert "constant" in record.not_convertible_reason
+
+
+def test_a_printed_effect_size_whose_contrast_nobody_recorded_is_refused_rather_than_assumed():
+    """The default is the refusing one, as it is for a test statistic."""
+    values = ResolvedValues(
+        higher_is_better=True,
+        reported=ReportedValues(value=1.30, scale="cohens_d", standardizer="pooled_sd_between",
+                                positive_means="a_greater"))
+    assert values.reported.contrast_kind == "unknown"
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.route == "not_convertible" and record.d is None
+    assert "nobody recorded" in record.not_convertible_reason
+
+
+def test_a_printed_effect_size_for_the_two_groups_still_converts():
+    values = ResolvedValues(
+        higher_is_better=True,
+        reported=ReportedValues(value=1.30, scale="cohens_d", standardizer="pooled_sd_between",
+                                positive_means="a_greater", contrast_kind="groups"))
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.route == "reported_d" and record.d == pytest.approx(1.30, abs=1e-9)
 
 
 # --------------------------------------------------------------------------- precedence
@@ -393,7 +447,7 @@ def test_the_precedence_list_decides_when_several_routes_exist():
         test_statistic=StatisticValues(stat_type="t", value=5.25, df=22.0,
                                       design="independent_t", direction="a_greater"),
         reported=ReportedValues(value=-1.7, scale="cohens_d", standardizer="pooled_sd_between",
-                                positive_means="b_greater"))
+                                positive_means="b_greater", contrast_kind="groups"))
     record = resolve_effect(dataset(), LATE, values, StatsSettings())
     assert record.route == "text_mean_sd"
     assert set(record.routes_available) >= {"text_mean_sd", "test_statistic", "reported_d"}
@@ -403,7 +457,8 @@ def test_the_precedence_list_decides_when_several_routes_exist():
 def test_a_protocol_may_reorder_the_precedence():
     values = bock_values(
         test_statistic=StatisticValues(stat_type="t", value=5.25, df=22.0,
-                                      design="independent_t", direction="a_greater"))
+                                      design="independent_t", direction="a_greater",
+                                      contrast_kind="groups"))
     settings = StatsSettings(route_precedence=["test_statistic", "text_mean_sd"])
     record = resolve_effect(dataset(), LATE, values, settings)
     assert record.route == "test_statistic"
@@ -413,7 +468,8 @@ def test_a_route_the_caller_did_not_offer_is_not_used():
     values = bock_values(
         route_available=["test_statistic"],
         test_statistic=StatisticValues(stat_type="t", value=5.25, df=22.0,
-                                      design="independent_t", direction="a_greater"))
+                                      design="independent_t", direction="a_greater",
+                                      contrast_kind="groups"))
     record = resolve_effect(dataset(), LATE, values, StatsSettings())
     assert record.route == "test_statistic"
     assert "text_mean_sd" in record.routes_rejected
@@ -423,9 +479,10 @@ def test_a_route_that_fails_its_gate_falls_through_to_the_next():
     values = ResolvedValues(
         higher_is_better=False,
         test_statistic=StatisticValues(stat_type="F", value=7.58, df1=1.0, df2=22.0,
-                                      design="mixed_main_effect", direction="b_greater"),
+                                      design="mixed_main_effect", direction="b_greater",
+                                      contrast_kind="groups"),
         reported=ReportedValues(value=-1.7, scale="cohens_d", standardizer="pooled_sd_between",
-                                positive_means="a_greater"))
+                                positive_means="a_greater", contrast_kind="groups"))
     record = resolve_effect(dataset(), LATE, values, StatsSettings())
     assert record.route == "reported_d"
     assert "test_statistic" in record.routes_rejected
@@ -436,7 +493,8 @@ def test_routes_passed_over_are_listed_with_their_reason():
     values = ResolvedValues(
         higher_is_better=True,
         test_statistic=StatisticValues(stat_type="t", value=5.25, df=22.0,
-                                       design="independent_t", direction="a_greater"))
+                                       design="independent_t", direction="a_greater",
+                                       contrast_kind="groups"))
     record = resolve_effect(dataset(), LATE, values, StatsSettings())
     assert record.route == "test_statistic"
     for skipped in ("text_mean_sd", "table", "text_mean_se_ci", "figure"):
@@ -693,3 +751,176 @@ def test_resolving_never_changes_the_values_it_was_given():
     before = values.model_dump()
     resolve_effect(dataset(), LATE, values, StatsSettings())
     assert values.model_dump() == before
+
+
+# ------------------------------------------------- the conversion gate: whose question does this answer?
+def test_a_statistic_with_no_recorded_contrast_is_refused_by_the_conversion_gate():
+    """P-B, code-side: `contrast_kind` is a required extractor field and `unknown` is a refusal.
+
+    Nothing today reaches this — the run's statistic route converts no cell — but the moment a
+    loosening opens one, "this is the two groups" would otherwise be enforced only by the model
+    that wrote the label.
+    """
+    values = ResolvedValues(
+        higher_is_better=False,
+        test_statistic=StatisticValues(stat_type="t", value=5.25, df=22.0,
+                                       design="independent_t", direction="a_greater"))
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.route == "not_convertible" and record.d is None
+    assert "nobody recorded" in record.not_convertible_reason
+
+
+def test_a_test_against_zero_is_refused_even_when_the_extractor_mislabelled_its_design():
+    values = ResolvedValues(
+        higher_is_better=False,
+        test_statistic=StatisticValues(stat_type="t", value=5.25, df=22.0,
+                                       design="independent_t", direction="a_greater",
+                                       contrast_kind="against_constant"))
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.route == "not_convertible" and record.d is None
+    assert "constant" in record.not_convertible_reason
+
+
+def test_a_chi_square_is_refused_instead_of_being_square_rooted_like_an_f():
+    """P-B: "A chi2 is never a `value` source for a continuous outcome."
+
+    Route availability already refuses to call a chi2 a `test_statistic` route; the conversion
+    itself had no guard, so a chi2 that reached `_from_statistic` by any other path fell through
+    to the F branch and was square-rooted like one.
+    """
+    from canopy.pipeline.resolve import _from_statistic
+    from canopy.stats.effect_sizes import NotConvertible
+
+    stat = StatisticValues(stat_type="chi2", value=7.58, df=22.0, design="independent_t",
+                           direction="a_greater", contrast_kind="groups")
+    values = ResolvedValues(higher_is_better=True, test_statistic=stat)
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.route == "not_convertible" and record.d is None
+    assert "no t or F statistic" in record.routes_rejected["test_statistic"]
+    with pytest.raises(NotConvertible) as exc:
+        _from_statistic(values, dataset(), StatsSettings(), {}, [], as_p=False)
+    assert "no conversion" in str(exc.value) and "chi-square" in str(exc.value)
+
+
+def test_a_chi_square_with_an_exact_p_is_refused_by_every_route():
+    """F1, reproduced from the review: the p route walked around the chi2 refusal.
+
+    `available_routes` offered `p_value` for any statistic carrying a p, and `_from_statistic`
+    ran the `as_p` branch BEFORE the chi2 guard, so chi2(1) = 7.58, p = .006 on 12/12 became
+    d = 1.2414 — a number invented out of a contingency table. The guard belongs where the
+    conversion starts, and the route must not be offered at all for a statistic that is not a
+    t, an F or a p.
+    """
+    from canopy.pipeline.resolve import _from_statistic
+    from canopy.stats.effect_sizes import NotConvertible
+
+    stat = StatisticValues(stat_type="chi2", value=7.58, df=22.0, design="independent_t",
+                           direction="a_greater", contrast_kind="groups", p_kind="exact",
+                           p_value=0.006, tails=2)
+    values = ResolvedValues(higher_is_better=True, test_statistic=stat)
+    routes, reasons = available_routes(values)
+    assert "p_value" not in routes and "test_statistic" not in routes
+    assert "chi2" in reasons["p_value"] or "not a t" in reasons["p_value"]
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.route == "not_convertible" and record.d is None
+    for as_p in (True, False):
+        with pytest.raises(NotConvertible) as exc:
+            _from_statistic(values, dataset(), StatsSettings(), {}, [], as_p=as_p)
+        assert "chi-square" in str(exc.value)
+
+
+def test_a_chi_square_with_an_exact_p_and_no_degrees_of_freedom_is_refused_too():
+    """The same input with `df=None` — the review's second reproduction, which converted with
+    flags `['aggregation_scope_matched', 'df_missing']`."""
+    stat = StatisticValues(stat_type="chi2", value=7.58, df=None, design="one_way_between",
+                           direction="a_greater", contrast_kind="groups", p_kind="exact",
+                           p_value=0.006, tails=2, within_factors=["condition"],
+                           outcome_averages_over=["condition"])
+    values = ResolvedValues(higher_is_better=True, test_statistic=stat)
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.route == "not_convertible" and record.d is None
+
+
+def test_a_statistic_of_no_recorded_kind_is_refused_on_the_p_route_as_well():
+    """`stat_type: unknown` has no formula either way: the p route is not a way around that."""
+    stat = StatisticValues(stat_type="unknown", value=7.58, df=22.0, design="independent_t",
+                           direction="a_greater", contrast_kind="groups", p_kind="exact",
+                           p_value=0.006, tails=2)
+    values = ResolvedValues(higher_is_better=True, test_statistic=stat)
+    routes, _ = available_routes(values)
+    assert routes == []
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.route == "not_convertible" and record.d is None
+
+
+def test_a_main_effect_averaged_over_a_factor_this_outcome_keeps_is_refused_with_the_factor_named():
+    """C5 end to end through the resolver: the reason a reviewer reads names the factor."""
+    values = ResolvedValues(
+        higher_is_better=True,
+        test_statistic=StatisticValues(stat_type="t", value=2.1, df=22.0,
+                                       design="independent_t", direction="a_greater",
+                                       contrast_kind="groups",
+                                       within_factors=["target direction (8 levels)"],
+                                       outcome_averages_over=["block"]))
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.route == "not_convertible" and record.d is None
+    assert "target direction (8 levels)" in record.not_convertible_reason
+
+
+def test_the_same_statistic_converts_when_the_outcome_asks_for_that_average():
+    values = ResolvedValues(
+        higher_is_better=True,
+        test_statistic=StatisticValues(stat_type="t", value=2.1, df=22.0,
+                                       design="independent_t", direction="a_greater",
+                                       contrast_kind="groups",
+                                       within_factors=["target direction (8 levels)"],
+                                       outcome_averages_over=["target direction"]))
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.route == "test_statistic"
+    assert record.d == pytest.approx(es.d_from_t(2.1, 12, 12), abs=1e-9)
+
+
+# ------------------------------- the row-level refusals, as ONE constant the review layer reads
+def test_every_row_level_refusal_the_resolver_can_add_is_in_the_exported_set():
+    """Consistency item 1 (questions area, fix round 3, concern 1).
+
+    A row refusal is the case where BOTH cells read as fine, so every rule that asks "may this
+    cell be released?" has to consult the row. The review layer does that against
+    `ROW_REFUSAL_CODES`; if `_finish` could add a code that is not in it, the review layer would
+    release cells under a row the resolver refused — silently, because the row is still held and
+    nothing says the cells disagree with it.
+
+    So `_add_row_refusal` is the only writer, it refuses an unlisted code, and this reads the
+    source to prove `_finish` has no second way to put a flag on the record.
+    """
+    import inspect
+
+    from canopy.models import EffectSizeRecord
+    from canopy.pipeline.resolve import ROW_REFUSAL_CODES, _add_row_refusal, _finish
+
+    body = inspect.getsource(_finish)
+    # everything before the first gate is the CONVERSION's own provenance (`median_iqr_conversion`,
+    # `range_to_sd`, …) — recorded, never holding. From the first gate on, the row's bucket is
+    # being decided, and the only thing that may add a code there is the guarded writer.
+    deciding = body[body.index("conversion_gate_bucket("):]
+    writes = [line.strip() for line in deciding.splitlines()
+              if "record.flags" in line and line.strip().startswith("record.flags")]
+    assert writes == [], f"_finish assigns record.flags outside _add_row_refusal: {writes}"
+    added = re.findall(r"_add_row_refusal\(record,\s*([A-Za-z_][\w.]*)\)", body)
+    assert added, "no row refusal is added at all — has the screen moved?"
+    resolved = [getattr(sys.modules["canopy.pipeline.resolve"], name) for name in added]
+    assert set(resolved) <= ROW_REFUSAL_CODES, sorted(set(resolved) - ROW_REFUSAL_CODES)
+
+    with pytest.raises(KeyError):
+        _add_row_refusal(EffectSizeRecord(), "a_code_the_review_layer_never_heard_of")
+
+
+def test_the_review_layer_reads_the_resolvers_set_rather_than_a_copy_of_it():
+    """The same object, not two sets with the same members today: a mirror is a list kept in sync
+    by hand, and the first code added to one and not the other is the bug this pins."""
+    from canopy.pipeline.overrides import ROW_REFUSALS
+    from canopy.pipeline.resolve import ROW_REFUSAL_CODES
+    from canopy.verify.confidence import ROW_REFUSAL_CODES as declared
+
+    assert ROW_REFUSAL_CODES is declared
+    assert ROW_REFUSALS is declared

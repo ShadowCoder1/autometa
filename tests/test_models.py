@@ -341,3 +341,26 @@ def test_load_env_does_not_leak_key(capsys):
 
     load_env()                      # must not print anything
     assert capsys.readouterr().out == ""
+
+
+# --------------------------------------------------------------- C8: the two verdict literals
+def test_every_verifier_state_round_trips_through_the_cell_verdict():
+    """H3: `Verdict.verifier_verdict` must hold everything `VerifierVerdict.verdict` can say.
+
+    `_verifier_summary` copies the verifier's state onto the cell verdict, and `CanopyModel` does
+    not validate on assignment — so a member the cell's literal lacks is written happily, dumped
+    happily, and then raises on the FIRST `--resume`, after the whole run has been paid for. C8's
+    `no_value_printed` was exactly that. The two literals are compared here rather than listed, so
+    a member added to one and not the other fails at the model instead of on a reviewer's resume.
+    """
+    import typing
+
+    from canopy.models import VerifierVerdict
+
+    states = typing.get_args(VerifierVerdict.model_fields["verdict"].annotation)
+    holds = typing.get_args(Verdict.model_fields["verifier_verdict"].annotation)
+    assert set(states) <= set(holds), (
+        f"a verifier can report {sorted(set(states) - set(holds))}, which no Verdict can hold")
+    for state in states:
+        verdict = Verdict(verifier_verdict=state)
+        assert Verdict.model_validate(verdict.model_dump(mode="json")).verifier_verdict == state

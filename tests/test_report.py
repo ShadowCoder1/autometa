@@ -699,6 +699,69 @@ def test_footer_does_not_claim_a_prediction_interval_it_could_not_compute(gold_r
     assert "prediction interval: HTS" in lines
 
 
+def test_the_review_table_prints_the_margin_and_the_line_it_belongs_to():
+    """Review L2: the HTML column C11 added had no test at all. A cell whose bucket the score did
+    not decide prints an em dash rather than a distance from a line it never approached (M3)."""
+    from canopy.report.html import human_review_table
+
+    table = human_review_table([
+        {"paper_id": "p1", "dataset_id": "d1", "outcome_key": "late_adaptation", "group": "A",
+         "reason": "one route only", "confidence_margin": 0.0100,
+         "nearest_boundary": "auto_accept", "impact_abs_delta_pooled": 0.2, "candidates": []},
+        {"paper_id": "p1", "dataset_id": "d2", "outcome_key": "late_adaptation", "group": "B",
+         "reason": "the direction of this measure is unresolved", "confidence_margin": None,
+         "nearest_boundary": "", "impact_abs_delta_pooled": 0.1, "candidates": []}])
+    assert ">Margin<" in table
+    assert "0.0100 from auto_accept" in table
+    held = table[table.index("d2"):]
+    assert "from auto_accept" not in held and "\u2014" in held
+
+
+def test_the_footer_says_z_when_the_hartung_knapp_adjustment_had_nothing_to_adjust(settings):
+    """Review M4. The R2 guard falls back to the ordinary random-effects SE and the normal `z`
+    quantile, and records why — and the footer went on printing "CI from t(k-1), Hartung-Knapp"
+    over a normal-z interval, which is a statement about the method that is simply false. A note
+    nobody reads, beside a sentence the fallback falsifies, is worse than no note."""
+    import numpy as np
+
+    from canopy.report.theme import conventions_footer
+
+    yi, vi = np.array([-0.5, -0.5, -0.5]), np.array([0.04, 0.04, 0.04])
+    fell_back = random_effects(yi, vi, method=settings.tau2_method, hakn=True)
+    assert fell_back.hakn_fallback and fell_back.hakn is True     # the premise: it fell back
+    lines = "\n".join(conventions_footer(settings, fell_back, k_papers=3, k_datasets=3))
+    assert "CI from z" in lines
+    assert "nothing to adjust" in lines and fell_back.hakn_fallback in lines
+    assert "CI from t(k\u22121), Hartung\u2013Knapp" not in lines
+
+    # the control: a pool where the adjustment applied still says so
+    applied = random_effects(np.array([-0.4, -0.6, -0.2]), vi, method=settings.tau2_method,
+                             hakn=True)
+    assert not applied.hakn_fallback
+    ok = "\n".join(conventions_footer(settings, applied, k_papers=3, k_datasets=3))
+    assert "Hartung\u2013Knapp" in ok and "nothing to adjust" not in ok
+
+
+def test_the_methods_paragraph_does_not_call_a_z_statistic_a_t(settings, gold_rows, protocol,
+                                                               tmp_path):
+    """The same falsehood one layer up: `html.methods_paragraph` prints `t = ...` off
+    `pooled.hakn`, which records what was ASKED for rather than what was used."""
+    import numpy as np
+
+    from canopy.report.html import methods_paragraph
+
+    yi, vi = np.array([-0.5, -0.5, -0.5]), np.array([0.04, 0.04, 0.04])
+    fell_back = random_effects(yi, vi, method=settings.tau2_method, hakn=True)
+    manifest = _manifest(tmp_path, protocol.hash())
+    manifest.settings = settings
+    results = {"late_adaptation": {"pooled": fell_back, "rows": gold_rows[:3],
+                                   "needs_human_rows": []}}
+    text = methods_paragraph(manifest, protocol, results)
+    pooled_sentence = next(line for line in text.splitlines() if "pooled" in line and "CI" in line)
+    assert "z = " in pooled_sentence and "t = " not in pooled_sentence, pooled_sentence
+    assert "nothing to adjust" in pooled_sentence
+
+
 def local_links(page: str) -> list[str]:
     """Every in-run target the page asks a browser to fetch, decoded the way a browser would."""
     out: list[str] = []

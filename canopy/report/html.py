@@ -144,12 +144,18 @@ def human_review_table(queue: Sequence[Mapping[str, Any]]) -> str:
             f"{' (' + str(c.get('route')) + ')' if c.get('route') else ''}"
             for c in candidates if isinstance(c, Mapping)) or "—"
         value = entry.get("impact_abs_delta_pooled")
+        margin = entry.get("confidence_margin")
+        boundary = entry.get("nearest_boundary") or ""
         rows.append([entry.get("paper_id", ""), entry.get("dataset_id", ""),
                      entry.get("outcome_key", ""), entry.get("group", ""),
                      entry.get("reason", ""), summary,
+                     # C11: "0.0000 from accept_with_note" is the difference between a cell the
+                     # evidence held back and one the rounding did.
+                     "—" if margin is None
+                     else f"{_num(margin, 4)}{' from ' + boundary if boundary else ''}",
                      "—" if value is None else _num(value, 3)])
-    return _table(["Paper", "Dataset", "Outcome", "Group", "Why", "Candidates", "|Δ pooled|"],
-                  rows, numeric=(6,))
+    return _table(["Paper", "Dataset", "Outcome", "Group", "Why", "Candidates", "Margin",
+                   "|Δ pooled|"], rows, numeric=(7,))
 
 
 def _links(outputs: Mapping[str, Any], run_dir: Path, keys: Sequence[str]) -> str:
@@ -250,7 +256,11 @@ def methods_paragraph(manifest: RunManifest, protocol: Protocol,
             f"(a further {len(held)} were held for human review). The pooled "
             f"{estimator_label(settings)} was {pooled.estimate:.2f} "
             f"({settings.ci_level * 100:g}% CI {pooled.ci_low:.2f} to {pooled.ci_high:.2f}; "
-            f"{'t' if pooled.hakn else 'z'} = {pooled.z:.2f}, p {theme.fmt_p(pooled.p)}), with "
+            f"{'t' if pooled.hakn and not pooled.hakn_fallback else 'z'} = {pooled.z:.2f}, "
+            f"p {theme.fmt_p(pooled.p)}"
+            + (f"; the Hartung–Knapp adjustment was requested but had nothing to adjust: "
+               f"{pooled.hakn_fallback}" if pooled.hakn_fallback else "")
+            + f"), with "
             f"τ² = {pooled.tau2:.3f}, I² = {100 * pooled.I2:.1f}% and a "
             f"{settings.ci_level * 100:g}% prediction interval of {pi_low:.2f} to {pi_high:.2f}"
             f"{f' (df = {pi_df})' if isinstance(pi_df, int) else ''}.")

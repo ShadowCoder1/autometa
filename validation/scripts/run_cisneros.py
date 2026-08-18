@@ -40,19 +40,35 @@ HELDOUT_TAG = "validation-heldout-v1"
 
 
 # ----------------------------------------------------------------------------- the corpus
-def discover(dirs: Sequence[Path]) -> list[Path]:
+def discover(paths_in: Sequence[Path]) -> list[Path]:
+    """Every PDF named by these paths — a folder is scanned, a PDF file IS the paper.
+
+    Naming files rather than folders is how a caller says "these papers and no others". `--demo`
+    needs exactly that: its corpus is the papers the offline fake has canned answers for, and
+    scanning their parent folder silently enrolled whatever else happened to be sitting in
+    `tests/fixtures/pdfs/` — a paper the fake would then answer with a DIFFERENT paper's numbers.
+    """
     paths: list[Path] = []
-    for directory in dirs:
-        directory = Path(directory).expanduser()
-        if not directory.exists():
-            print(f"! paper folder not found, skipping: {directory}")
+    for entry in paths_in:
+        entry = Path(entry).expanduser()
+        if entry.is_file():
+            if entry.suffix.lower() == ".pdf":
+                paths.append(entry)
+            else:
+                print(f"! not a PDF, skipping: {entry}")
             continue
-        paths.extend(sorted(p for p in directory.rglob("*.pdf") if p.is_file()))
+        if not entry.exists():
+            print(f"! paper folder not found, skipping: {entry}")
+            continue
+        paths.extend(sorted(p for p in entry.rglob("*.pdf") if p.is_file()))
     return paths
 
 
 def unique_papers(dirs: Sequence[Path]) -> list[Any]:
-    """The unique papers of the corpus, as `PaperGroup`s (representative + duplicates)."""
+    """The unique papers of the corpus, as `PaperGroup`s (representative + duplicates).
+
+    `dirs` may name folders, PDF files, or both (see `discover`).
+    """
     from canopy.ingest.dedupe import dedupe_pdfs
 
     return dedupe_pdfs(list(discover(dirs)))
@@ -184,10 +200,10 @@ def main(argv: Sequence[str] | None = None) -> int:
               f"({payload['n_dev']} dev, {payload['n_heldout']} held out)")
         return 0
 
-    if args.demo:                                          # the demo corpus is the fixture PDFs
-        from validation.scripts._fake import demo_pdfs
+    if args.demo:            # the demo corpus is the fixture PDFs the fake has answers FOR —
+        from validation.scripts._fake import demo_pdfs   # named one by one, not by their folder
 
-        dirs = sorted({p.parent for p in demo_pdfs()})
+        dirs = demo_pdfs()
 
     groups = unique_papers(dirs)
     if args.demo:

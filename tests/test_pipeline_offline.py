@@ -33,6 +33,22 @@ RECORD_HINT = ("fixture not recorded yet — run: CANOPY_LIVE=1 CANOPY_RECORD=1 
 
 
 # ============================================================================ state helpers
+def test_the_fakes_own_answers_are_not_degenerate_replies():
+    """The fake must fail the way a model fails, never the way a stub does.
+
+    `canopy.llm.client.degenerate_reply` classifies a justification shorter than 40 characters as
+    a reply that did not happen (C12), and every real orientation ballot in the run carries 403 to
+    1172 characters. When this fixture's canned justification was 38 characters long, both readers
+    and both C12 re-issues came back `not_run`, the orientation abstained on every measure, and
+    the offline run produced no pooled row and no forest plot — a fixture defect that reads
+    exactly like a broken pipeline.
+    """
+    from canopy.llm.client import degenerate_reply
+
+    assert degenerate_reply(ORIENTATION_REASON) == []
+    assert len(ORIENTATION_REASON) >= 403           # the shortest clean ballot in the real run
+
+
 def test_atomic_write_leaves_no_partial_file(tmp_path, monkeypatch):
     """A run killed mid-write must not leave a stage file that `--resume` reads as complete."""
     import os
@@ -263,6 +279,22 @@ class FakeSpec:
                 "groups": groups}
 
 
+#: What a real orientation ballot looks like. Every clean ballot in `runs/rerun-fixed` runs 403 to
+#: 1172 characters of reasoning (`tests/fixtures/runs/orientation_ballots.json`); the four that do
+#: not are the four C12 classifies as `not_run`. A canned 38-character reply is therefore not a
+#: cheap answer, it is a DEGENERATE one, and the fake was manufacturing the exact failure the
+#: detector exists to catch — four `not_run` ballots per measure, an abstaining orientation, and a
+#: run with no pooled row. The fake has to fail the way a model fails, not the way a stub does.
+ORIENTATION_REASON = (
+    "The outcome is a direction error: the angular distance between the movement the participant "
+    "made and the target direction, reported in degrees. The methods define it as an unsigned "
+    "deviation, so zero is a perfect movement and every larger number is a movement further from "
+    "the target — there is no reading on which a bigger error is a better performance. The paper "
+    "prints the elderly group's value above the young group's on the same axis, so on the raw "
+    "scale group A is the greater of the two."
+)
+
+
 def _request_text(request: LLMRequest) -> str:
     """Everything textual in a request — the base64 document blocks are skipped."""
     parts: list[str] = [str(request.system or "")]
@@ -360,7 +392,7 @@ def fake_router(specs: "list[FakeSpec]"):
         if "raw_value_semantics" in props:
             return {"raw_value_semantics": "higher_more_error", "higher_is_better": "lower",
                     "direction_stated_in_text": "a_greater", "quotes": [quote],
-                    "reason": "a direction error is worse when larger"}
+                    "reason": ORIENTATION_REASON}
         raise AssertionError(f"the fake has no answer for schema {sorted(props)}")
     return route
 
@@ -697,6 +729,12 @@ def test_a_truncated_verifier_leaves_the_cell_unverified_not_the_paper_dead(
     verify = json.loads((out / "papers" / paper.paper_id[:12] / "verify.json").read_text())
     assert verify["verdicts"], "the paper still has verdicts"
     assert all(v["verifier_verdict"] in ("ambiguous", "not_run") for v in verify["verdicts"])
+    # C8: the record says the call did not happen, rather than that the reading is doubtful. An
+    # `ambiguous` here cost the cell 0.05, so a cell whose verifier CRASHED scored below one that
+    # was never verified at all.
+    assert any(v["verifier_verdict"] == "not_run" for v in verify["verdicts"])
+    bare = [vv for v in verify["verdicts"] for vv in v["verifiers"] if vv["verdict"] == "not_run"]
+    assert bare and all("cut off at its output limit" in vv["reason"] for vv in bare)
     rows = list(csv.DictReader((out / "results" / "extraction_table_all.csv").open()))
     assert rows, "and it still has rows"
 
@@ -1142,3 +1180,97 @@ def test_a_figure_only_cell_does_not_buy_three_text_calls(tmp_path):
     # a source of a kind nobody recognised is a location a human has to route: still worth reading
     assert _has_printed_source([Source(kind=SourceKind.unknown, page=4, locator="fitted model")])
     assert _has_printed_source([]) is False
+
+
+# --------------------------------------------------------- C7/C6: an unsettled map buys no reader
+def _extraction_calls(request: LLMRequest) -> bool:
+    """True when this request is an extraction — a reader, a statistic pass or a digitiser."""
+    props = _properties(request)
+    return bool(request.tools) or "statistics" in props or "groups" in props
+
+
+def test_a_dataset_only_one_agent_mapped_is_not_extracted_while_its_inclusion_is_open(
+        tmp_path, papers_dir, fake_specs):
+    """C7, asserted on the call count rather than on the flag.
+
+    Bock 2005's tracking-only control sample was mapped by the primary alone; the cross-check
+    rejected it in prose citing Dataset Rule 3; `needs_adjudication` did not include dataset count,
+    so nothing turned the objection into a decision and the pipeline extracted, digitised,
+    verified and signed `d = -2.9610` from a source `source_rank` had scored 2/6.
+    """
+    from canopy.pipeline.run import run_pipeline
+
+    router = fake_router(fake_specs)
+    seen = {"extraction_calls": 0}
+
+    def crosscheck_finds_no_dataset(request: LLMRequest) -> Any:
+        payload = router(request)
+        if _extraction_calls(request):
+            seen["extraction_calls"] += 1
+        if isinstance(payload, dict) and "roster_error_bars" in payload:
+            payload = {**payload, "datasets": []}          # the second agent maps nothing
+        return payload
+
+    client = LLMClient(provider=FakeProvider([crosscheck_finds_no_dataset]), allow_live=True,
+                       cache_dir=None)
+    out = tmp_path / "run"
+    manifest = run_pipeline(papers_dir, PROTOCOL, out, client=client, concurrency=1)
+    assert seen["extraction_calls"] == 0                   # nothing was bought against the question
+    paper = manifest.papers[0]
+    study = json.loads((out / "papers" / paper.paper_id[:12] / "map.json").read_text())["study"]
+    assert [q["kind"] for q in study["open_questions"]] == ["include_dataset"]
+    extract = json.loads((out / "papers" / paper.paper_id[:12] / "extract.json").read_text())
+    assert extract["candidates"] == []
+    assert [w for w in paper.warnings if "not extracted" in w and "include_dataset" in w], \
+        paper.warnings
+
+
+def test_an_alternate_measure_is_kept_on_the_record_and_never_read_for_the_value(
+        tmp_path, papers_dir, fake_specs):
+    """C6: one outcome carries one measure; the loser is demoted, not deleted, and not read.
+
+    `3570e4ce2a9c:d1 late_adaptation` in the real run names two operationalizations in one
+    `measure_name` and lists value locations measuring `endpoint` and `change_from_baseline`; the
+    cell came back carrying `metric_mixed`, `unit_mismatch` and `value_outside_axis`.
+    """
+    from canopy.pipeline.run import run_pipeline
+
+    router = fake_router(fake_specs)
+    seen: dict[str, int] = {"digitize_calls": 0}
+
+    def two_measures(request: LLMRequest) -> Any:
+        payload = router(request)
+        props = _properties(request)
+        if request.tools:
+            seen["digitize_calls"] += 1
+        if props == {"datasets", "notes"} and payload.get("datasets"):
+            for d in payload["datasets"]:
+                for o in d.get("outcomes") or []:
+                    twin = dict(o["sources"][0])
+                    twin["locator"] = "Results, the other operationalization"
+                    twin["analysis_metric"] = "change_from_baseline"
+                    o["sources"] = list(o["sources"]) + [twin]
+                    o["measure_name"] += "; alternatively the change from baseline"
+        if "error_bar_rulings" in props:                   # the adjudicator settles it, once
+            payload = {**payload, "measure_rulings": [
+                {"dataset_index": 1, "outcome_key": "late_adaptation", "verdict": "winner",
+                 "winning_analysis_metric": "endpoint",
+                 "winner_quote": "the mean of the last block",
+                 "loser_quote": "the change from baseline", "rationale": "the window names the "
+                                                                        "last block"}]}
+        return payload
+
+    client = LLMClient(provider=FakeProvider([two_measures]), allow_live=True, cache_dir=None)
+    out = tmp_path / "run"
+    manifest = run_pipeline(papers_dir, PROTOCOL, out, client=client, concurrency=1)
+    paper = manifest.papers[0]
+    study = json.loads((out / "papers" / paper.paper_id[:12] / "map.json").read_text())["study"]
+    roles = {s["analysis_metric"]: s["role"] for d in study["datasets"] for o in d["outcomes"]
+             for s in o["sources"]}
+    assert roles["change_from_baseline"] == "alternate" and roles["endpoint"] == "value"
+    assert not study["open_questions"]                     # settled, so extraction went ahead
+    extract = json.loads((out / "papers" / paper.paper_id[:12] / "extract.json").read_text())
+    assert extract["candidates"]                           # the winner WAS read
+    assert not [c for c in extract["candidates"]
+                if "other operationalization" in str(c.get("locator", ""))]
+    assert [w for w in paper.warnings if "alternate source" in w], paper.warnings

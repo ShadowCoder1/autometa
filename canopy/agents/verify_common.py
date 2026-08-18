@@ -18,6 +18,7 @@ from ..llm.costs import register_file_pages
 from ..models import (Candidate, CheckFlag, DatasetSpec, OutcomeDef, OutcomeSources, Protocol,
                       VerifierVerdict)
 from .extract_common import SYSTEM, clip, enum_schema, groups_text, outcome_text, prompt_fingerprint
+from .mapper import source_unreadable_reason
 
 __all__ = ["SYSTEM", "clip", "enum_schema", "prompt_fingerprint", "outcome_prompt", "groups_prompt",
            "measure_prompt", "candidate_text", "candidates_text", "evidence_text", "whole_paper",
@@ -96,8 +97,16 @@ def measure_prompt(outcome: OutcomeSources | None) -> str:
     if outcome.analysis_metric != "unknown":
         lines.append(f"WHAT THE NUMBER IS RELATIVE TO: {outcome.analysis_metric}")
     for source in outcome.sources[:6]:
+        # WHY a location is on the list, when it is not a place the value may be read. Without
+        # this a C6 `alternate` operationalization and a `pooled`-sample table were listed exactly
+        # like the outcome's own figure, so a reader asked what this paper measures was pointed at
+        # a rival measure as if it were the same one (whole-diff L6). A `value` location of this
+        # contrast's own sample prints as it always did, so a map that carries no such location
+        # produces a byte-identical prompt.
+        why = source_unreadable_reason(source)
         lines.append(f"LOCATION: page {source.page} | {source.kind.value}"
-                     f"{' | ' + clip(source.locator, 120) if source.locator else ''}")
+                     f"{' | ' + clip(source.locator, 120) if source.locator else ''}"
+                     f"{' | NOT A PLACE THIS MEASURE IS READ: ' + clip(why, 160) if why else ''}")
     return "\n".join(lines)
 
 

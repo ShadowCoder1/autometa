@@ -24,14 +24,16 @@ from typing import Any, Iterable, Sequence
 
 from ..models import (Candidate, CheckFlag, DatasetSpec, DispersionType, GroupSpec,
                       OrientationVerdict, OutcomeSources, Source)
-from ..stats.effect_sizes import cohens_d
+from ..stats.effect_sizes import CONVERTIBLE_DESIGNS, cohens_d
 from .figures import (CAL_STATUSES, FIGURE_KINDS, axis_limits, calibration_status, is_figure,
                       routes_agree)
 from .grounding import ROW_ONLY, SIGN_NOTE, is_short_quote
 
 __all__ = ["run_checks", "sign_check", "codes", "CHECK_SEVERITY", "GROUP_LABEL_MISMATCH_NOTE",
            "ROW_ONLY_MARKER", "SIGN_NOTE_MARKER", "SEVERITY_RANK", "MIN_N", "MAX_PLAUSIBLE_D",
-           "AXIS_TESTABLE"]
+           "AXIS_TESTABLE", "ORIENTATION_FLAGS", "DF_PROVENANCE_FLAGS", "DISPUTED_MEANS_FLAGS",
+           "orientation_note",
+           "CHECK_SEVERITY_PREFIXES", "severity_of", "DF_SHORTFALL_TOLERANCE", "best_statistic"]
 
 #: the marker `canopy.agents.extract_common.group_label_check` writes into a candidate's notes when
 #: the label the extractor echoed belongs to the *other* group (tests/test_checks.py pins it).
@@ -41,8 +43,58 @@ GROUP_LABEL_MISMATCH_NOTE = "group label mismatch"
 ROW_ONLY_MARKER = f"{ROW_ONLY}:"
 SIGN_NOTE_MARKER = f"{SIGN_NOTE} for "
 
+#: An `OrientationVerdict` carries no flag list of its own, so `combine_orientation` records the
+#: codes it decided on in the verdict's `notes`, bracketed, and `_check_outcome` reads them back
+#: out to where `canopy.verify.confidence` can weigh them — the same note-marker contract
+#: `GROUP_LABEL_MISMATCH_NOTE` and `ROW_ONLY_MARKER` above use. Brackets keep them out of prose.
+ORIENTATION_FLAGS: tuple[str, ...] = ("orientation_reader_contradicts_values",
+                                      "orientation_single_witness", "orientation_by_majority",
+                                      "orientation_direction_conflict")
+
+#: C9 codes about the printed DEGREES OF FREEDOM. Both are errors — a statistic whose provenance
+#: to these two groups is unverified may not pool — but none of them is a VALUE dispute, which is
+#: the only thing the adjudicator is for. "This t is printed with no df" is a fact about the paper,
+#: and no model can supply a number the paper does not print; asking one buys the adjudicator
+#: model with the whole paper in context for a cell that is held whatever it answers (review M5).
+#: Excluded from the adjudication trigger for exactly the reason `ORIENTATION_FLAGS` is, and
+#: exported as a name so that the trigger cannot drift from the codes.
+#:
+#: `test_stat_missing_df` is the third (controller ruling, fix round 1): it says the same thing as
+#: `df_missing` about the same statistic — a t or F printed with no degrees of freedom at all —
+#: and it is the code that fires on the very failing input C9 was written against, so leaving it
+#: out left the ruling inert on the commonest shape it exists for. It is the third member of
+#: `UNVERIFIED_CONTRAST_FLAGS` for the same reason.
+DF_PROVENANCE_FLAGS: tuple[str, ...] = ("df_missing", "df_shortfall_unexplained",
+                                        "test_stat_missing_df")
+
+#: The deterministic orientation check compares a reader's stated direction against the RESOLVED
+#: raw means, so it must not fire while WHICH SERIES IS WHICH is itself in dispute: under any of
+#: these the means it would judge the reader against may be the other group's (ADVERSARIAL round 2
+#: on C3). The check abstains instead of discarding. `group_label_swapped` is here for the same
+#: reason as `series_transposed` and nothing weaker: it is an `error` saying the label an
+#: extractor echoed belongs to the OTHER group, so a discard run against those means throws out
+#: the reader that read the paper correctly.
+DISPUTED_MEANS_FLAGS: frozenset[str] = frozenset({"series_marker_mismatch", "series_transposed",
+                                                  "axis_conflict", "group_label_swapped"})
+
+
+def orientation_note(code: str, message: str) -> str:
+    """One bracketed orientation note, as `combine_orientation` writes it into `verdict.notes`."""
+    if code not in ORIENTATION_FLAGS:                # pragma: no cover - programming error
+        raise KeyError(f"{code!r} is not an orientation note code")
+    return f"[{code}] {message}"
+
 MIN_N = 2                       # a group of one has no within-group variance
-MAX_PLAUSIBLE_D = 3.0           # |d| above this is nearly always a transcription error
+#: |d| above this is nearly always a wrong DENOMINATOR — an SE printed as an SD, a within-subject
+#: error bar read as a between-subject one, the other group's spread. C9 makes it forcing rather
+#: than a warning: the numerator is usually fine, so the arithmetic looks plausible all the way
+#: down and only the size of the answer gives it away. Live corpus check: Bock d2 late adaptation
+#: sits at |d| = 2.9610, just under the line, so nothing in the nine-paper run changes today.
+MAX_PLAUSIBLE_D = 3.0
+#: how far printed degrees of freedom may sit from n_a + n_b - 2 when the shortfall is EXPLAINED
+#: (a stated exclusion that also reduces the participant total, or an n nobody printed). When it
+#: is not explained, exact equality is required — see `_check_conversion_gate`.
+DF_SHORTFALL_TOLERANCE = 2.0
 SE_SD_TOLERANCE = 0.05          # relative gap allowed between SE·√n and a reported SD
 CI_ASYMMETRY_TOLERANCE = 0.05   # relative gap allowed between the two halves of an interval
 SD_NEAR_ZERO_RATIO = 1e-3       # dispersion this small next to the mean reads as "no variance"
@@ -73,7 +125,22 @@ CHECK_SEVERITY: dict[str, str] = {
     "dispersion_unknown": "warn",
     "dispersion_missing": "warn",
     "test_stat_missing_df": "error",
-    "effect_implausible": "warn",
+    #: ceiling item C9. The first two are errors because both mean the row must not pool:
+    #: `df_missing` says nothing establishes that the printed statistic is the contrast between
+    #: THESE two groups (a post-hoc from a three-group analysis prints the same t), and
+    #: `df_shortfall_unexplained` says the printed df contradicts the analysed group sizes and the
+    #: paper offers no reason for the gap.
+    "df_missing": "error",
+    "df_shortfall_unexplained": "error",
+    #: …and `implausible_dispersion` is an EARLY WARNING here, not the ruling (review H1). The
+    #: binding screen is `confidence.dispersion_plausibility_bucket`, on the resolved |d| that
+    #: reaches the plot: this one can only see raw candidates, before the vote, before the
+    #: adjudicator and before any SE/IQR/range conversion, so on the majority shape in the live
+    #: corpus it is blind while the resolver is not. It stays because it is the cheapest place to
+    #: NAME the suspect denominator to a reviewer — and it is a `warn` because an early warning
+    #: that also withheld the cell bought an adjudicator call whose own answer this check would
+    #: then never screen (M5).
+    "implausible_dispersion": "warn",
     # --- is it the number we asked for
     "quote_not_grounded": "error",
     "quote_short": "info",
@@ -87,6 +154,11 @@ CHECK_SEVERITY: dict[str, str] = {
     "unit_incoherent": "warn",
     "dispersion_type_conflict": "warn",
     "dispersion_type_from_legend": "warn",
+    #: the named panel could not be isolated from its neighbours, so the reader was handed the
+    #: union crop. DOUBT, not evidence of error: the value may be perfectly right, and the
+    #: axis-identity, overlay and verifier nets still apply to it. Doubt caps; contradiction
+    #: withholds — so this is a `warn` in `CAPPING_FLAGS`, never a hold.
+    "panel_not_isolated": "warn",
     "duplicate_across_outcomes": "warn",
     "figure_n_mismatch": "warn",
     "reopened_on_better_source": "warn",
@@ -95,6 +167,20 @@ CHECK_SEVERITY: dict[str, str] = {
     "points_undercount": "warn",
     # --- can it be used at all
     "orientation_unknown": "warn",
+    #: how the direction of this measure was settled, when it was not simply two agreeing readers
+    #: (ceiling items C3, C12 and the P-A residue). The last three do not say the direction is
+    #: WRONG: each says a reviewer should see how thin the agreement behind it was.
+    #:
+    #: `orientation_reader_contradicts_values` is the exception and is an `error`: the reader the
+    #: deterministic check discarded is the one that made the ONLY mechanically checkable claim on
+    #: this measure, and it said the opposite of what this cell's own resolved means say. What is
+    #: in question afterwards is the VALUES, not merely how well corroborated the direction is, so
+    #: it holds the cell instead of costing it 0.08 that a good score absorbs (fix round F5); it
+    #: sits in `confidence.CONTRADICTING_FLAGS` for the same reason.
+    "orientation_reader_contradicts_values": "error",
+    "orientation_single_witness": "warn",
+    "orientation_by_majority": "warn",
+    "orientation_direction_conflict": "warn",
     "sign_mismatch": "error",
     "figure_error_bar_unknown": "warn",
     "series_identity_conflict": "warn",
@@ -105,6 +191,23 @@ CHECK_SEVERITY: dict[str, str] = {
 }
 
 #: dispersion types that are a spread and must therefore be strictly positive
+#: Codes that carry a measured quantity in their tail (`df_off_by_1`, `df_off_by_1.5`), so the
+#: severity is declared once for the FAMILY. A family is a prefix and nothing more clever: a code
+#: whose severity cannot be found either way is a typo, and `severity_of` raises on it rather than
+#: letting `confidence` weigh an undeclared code as an ordinary warning by accident.
+CHECK_SEVERITY_PREFIXES: dict[str, str] = {"df_off_by_": "warn"}
+
+
+def severity_of(code: str) -> str:
+    """The declared severity of one code, family codes included."""
+    if code in CHECK_SEVERITY:
+        return CHECK_SEVERITY[code]
+    for prefix, severity in CHECK_SEVERITY_PREFIXES.items():
+        if code.startswith(prefix):
+            return severity
+    raise KeyError(f"{code!r} has no declared severity")
+
+
 _POSITIVE_DISPERSIONS = frozenset({DispersionType.SD, DispersionType.SE, DispersionType.IQR,
                                    DispersionType.RANGE})
 _INTERVALS = frozenset({DispersionType.CI95, DispersionType.CI90})
@@ -118,7 +221,7 @@ def codes(flags: Iterable[CheckFlag]) -> list[str]:
 
 # ----------------------------------------------------------------------------- small helpers
 def _flag(out: list[CheckFlag], code: str, message: str, *candidate_ids: str) -> None:
-    out.append(CheckFlag(code=code, severity=CHECK_SEVERITY[code], message=message,
+    out.append(CheckFlag(code=code, severity=severity_of(code), message=message,
                          candidate_ids=[cid for cid in candidate_ids if cid]))
 
 
@@ -181,6 +284,7 @@ def _check_one(cand: Candidate, dataset: DatasetSpec, outcome: OutcomeSources | 
     # …before the `found` gate: a cell that REFUSED to read a categorical axis has no value, and
     # the whole point of the refusal is that it says why rather than going quiet (task 16 P6)
     _check_categorical_x(cand, out)
+    _check_panel_isolation(cand, out)
     _check_dispersion_source(cand, out)
     if cand.kind in ("test_statistic", "reported_d"):
         _check_statistic(cand, dataset, out)
@@ -453,6 +557,25 @@ def _check_dispersion_source(cand: Candidate, out: list[CheckFlag]) -> None:
           cand.candidate_id)
 
 
+def _check_panel_isolation(cand: Candidate, out: list[CheckFlag]) -> None:
+    """The digitiser named a panel that ingestion could not isolate (`panel_not_isolated`).
+
+    The union crop is still READ — refusing would be worse, and the axis-identity rules repaired
+    exactly this figure once — but the row has to say that the picture the reader was handed is
+    wider than the panel the map asked for, so a neighbouring panel's ladder is in the frame. That
+    is a reason to look, not a reason to withhold: `confidence.CAPPING_FLAGS` caps it below
+    automatic acceptance and floors it at `ACCEPT_WITH_NOTE`.
+    """
+    provenance = cand.pixel_provenance or {}
+    if not provenance.get("panel_not_isolated"):
+        return
+    _flag(out, "panel_not_isolated",
+          str(provenance.get("needs_review_reason")
+              or "the panel this cell names could not be isolated from its neighbours, so the "
+                 "reading was made on the whole figure"),
+          cand.candidate_id)
+
+
 def _check_categorical_x(cand: Candidate, out: list[CheckFlag]) -> None:
     """A value averaged across a categorical x axis, or the refusal to invent one (task 16 P6)."""
     provenance = cand.pixel_provenance or {}
@@ -484,6 +607,112 @@ def _check_statistic(cand: Candidate, dataset: DatasetSpec, out: list[CheckFlag]
               f"{cand.stat_type} = {cand.stat_value} was printed without degrees of freedom, so "
               f"the design behind it cannot be checked against the analysed group sizes ({sizes})",
               cand.candidate_id)
+
+
+def _error_df(cand: Candidate) -> float | None:
+    """The degrees of freedom a t or F contrast is tested on: `df`, or an F's ERROR df (`df2`)."""
+    if cand.df is not None:
+        return float(cand.df)
+    if cand.stat_type == "F" and cand.df2 is not None:
+        return float(cand.df2)
+    return None
+
+
+def _shortfall_is_explained(dataset: DatasetSpec) -> str:
+    """Why a df that is not exactly n_a + n_b - 2 may still be this contrast (C9), or `""`.
+
+    ONE reason, because it is the only one anything on the record can carry: an n that was never
+    printed. The mapper inferred it, so `n_a + n_b - 2` is itself an estimate and demanding
+    equality against it would refuse papers for the extractor's uncertainty.
+
+    C9 licensed a second — a participant total the paper STATES, larger than the analysed group
+    sizes, so at least `gap` people were excluded after being tested. That branch was deleted
+    rather than left standing (review M2): nothing in a `StudyMap` records a stated participant
+    total, and the orchestrator's only call passed `n_a + n_b` back in as one, which made
+    `excluded` identically zero. A documented rule wired to a constant is worse than an absent
+    one — it reads as live in the code and in the acceptance test, and refuses papers in the run.
+    Restoring it is MAPPER work: a field for the participant total the paper prints, extracted
+    with its quote, and then this function takes it again. Until that exists, `t(37)` at
+    n = 20/20 with a stated single dropout is REFUSED — fail-closed, a fill-rate cost and never a
+    wrong number.
+
+    Everything else — and in particular a paper that simply prints df two below what its own
+    stated group sizes imply — is NOT explained. `F(1,36)` at n = 20/20 is the shape of a
+    two-covariate ANCOVA reported as a one-way, and the ±2 tolerance admitted it silently.
+    """
+    if not (dataset.group_a.n_evidence.strip() and dataset.group_b.n_evidence.strip()):
+        return ("at least one analysed group size was inferred rather than printed, so "
+                "n_a + n_b - 2 is itself an estimate")
+    return ""
+
+
+#: how a t, an F and a p rank when a cell prints more than one: a t is the most direct statement
+#: of the contrast, a p the least (it has lost the statistic's own precision)
+_STAT_RANK = {"t": 0, "F": 1, "p": 2}
+
+
+def best_statistic(candidates: Sequence[Candidate]) -> Candidate | None:
+    """The one statistic a row would be converted FROM, or `None` when a cell prints none.
+
+    One selection rule, in one place, used by both the check that screens a statistic and the
+    orchestrator that resolves the row from it (`canopy.pipeline.run._statistic_values`). Two
+    copies is how the gate came to hold a cell for the degrees of freedom of a statistic the row
+    never used: a paper printing an unrelated one-way F beside the outcome raised `df_missing` on
+    a cell that resolves from a printed t (review L4).
+    """
+    stats = [c for c in candidates
+             if c.kind == "test_statistic" and c.status == "found" and c.admissible]
+    ranked = sorted(stats, key=lambda c: (_STAT_RANK.get(str(c.stat_type), 3), c.candidate_id))
+    return next((c for c in ranked if c.stat_value is not None or c.p_value is not None), None)
+
+
+def _check_conversion_gate(candidates: Sequence[Candidate], dataset: DatasetSpec,
+                           out: list[CheckFlag]) -> None:
+    """C9: price the conversion gate's own flags, on the cell, before any statistic route runs.
+
+    `canopy.stats.effect_sizes.convertibility` answers "may this become an SMD?" while the effect
+    size is being built — long after this module has scored the two cells, and its answer reaches
+    the row as a flag string that changes no bucket. Two of its outcomes are not bookkeeping:
+
+    * **no degrees of freedom at all.** `convertibility` returns ok with `df_missing`. But a paper
+      printing "t = 5.25, p < .001" as a post-hoc from a three-group ANOVA prints exactly that,
+      and nothing in the number says which two groups it compares. Unverified provenance to THESE
+      two groups may not pool, so it is an error here.
+    * **a df that contradicts the analysed group sizes.** Exact equality, unless the shortfall is
+      explained (`_shortfall_is_explained`) — in which case it is admitted, named with the size of
+      the gap, and capped by `confidence.conversion_gate_bucket` rather than accepted.
+    """
+    expected: float | None = None
+    if dataset.group_a.n is not None and dataset.group_b.n is not None:
+        expected = float(dataset.group_a.n + dataset.group_b.n - 2)
+    # only the statistic the ROW would convert from, not every statistic the paper prints near
+    # this outcome (review L4) — a cell held for a number nothing would have used is a fill-rate
+    # cost with no correctness behind it
+    for cand in [c for c in [best_statistic(candidates)] if c is not None]:
+        if cand.stat_type not in ("t", "F") or cand.design not in CONVERTIBLE_DESIGNS:
+            continue
+        df = _error_df(cand)
+        if df is None:
+            _flag(out, "df_missing",
+                  f"{cand.stat_type} = {cand.stat_value} is printed with no degrees of freedom, "
+                  f"so nothing establishes that it is the comparison of these two groups rather "
+                  f"than a post-hoc from a larger analysis", cand.candidate_id)
+            continue
+        if expected is None:
+            continue
+        gap = abs(df - expected)
+        if gap == 0:
+            continue
+        why = _shortfall_is_explained(dataset)
+        if why and gap <= DF_SHORTFALL_TOLERANCE:
+            _flag(out, f"df_off_by_{gap:g}",
+                  f"the printed degrees of freedom ({df:g}) are {gap:g} from n_a + n_b - 2 = "
+                  f"{expected:g}, which this paper explains: {why}", cand.candidate_id)
+        else:
+            _flag(out, "df_shortfall_unexplained",
+                  f"the printed degrees of freedom ({df:g}) do not equal n_a + n_b - 2 = "
+                  f"{expected:g} and the paper explains no shortfall, so this statistic was not "
+                  f"computed on these two groups as analysed", cand.candidate_id)
 
 
 def _dispersion_conflict(cand: Candidate, outcome: OutcomeSources | None
@@ -705,27 +934,54 @@ def _check_duplicates(found: Sequence[Candidate], others: Sequence[Candidate],
 
 def _check_effect_size(found: Sequence[Candidate], dataset: DatasetSpec,
                        out: list[CheckFlag]) -> None:
-    """Spec §3.3(1): |d| ≤ 3 — computed here only to flag a transcription error, never stored."""
-    usable = {}
+    """Spec §3.3(1) + C9: |d| ≤ 3 — computed here to screen the DENOMINATOR, never stored.
+
+    The flag names the dispersions and not the effect, because the effect is not what is wrong.
+    Two means eight standard deviations apart are almost never two means eight standard deviations
+    apart: they are two means divided by an error bar that is a standard error, or a within-subject
+    normalisation, or the other group's. Which is why this fires whatever the route agreement
+    says — six readers can agree perfectly on a number that was divided by the wrong thing.
+    """
+    usable: dict[str, tuple[Candidate, float]] = {}
     for group in ("A", "B"):
-        rows = [c for c in found
-                if c.group == group and c.dispersion_type is DispersionType.SD
-                and c.mean is not None and c.dispersion_value is not None
-                and c.dispersion_value > 0 and (c.n or 0) >= MIN_N]
+        rows = [(c, sd) for c in found if c.group == group and c.mean is not None
+                for sd in [_sd_like(c)] if sd is not None]
         if rows:
             usable[group] = rows[0]
     if set(usable) != {"A", "B"}:
         return
-    a, b = usable["A"], usable["B"]
+    (a, sd_a), (b, sd_b) = usable["A"], usable["B"]
     try:
-        d = cohens_d(a.mean, a.dispersion_value, a.n, b.mean, b.dispersion_value, b.n)
+        d = cohens_d(a.mean, sd_a, a.n, b.mean, sd_b, b.n)
     except ValueError:                                   # pragma: no cover - guarded above
         return
     if abs(d) > MAX_PLAUSIBLE_D:
-        _flag(out, "effect_implausible",
+        _flag(out, "implausible_dispersion",
               f"these values imply |d| = {abs(d):.2f}, above the plausibility threshold of "
-              f"{MAX_PLAUSIBLE_D:g} — usually a mis-read row or a wrong dispersion type",
+              f"{MAX_PLAUSIBLE_D:g}. The suspect number is the denominator: the pooled SD of "
+              f"{sd_a:g} (group A) and {sd_b:g} (group B) against "
+              f"means of {a.mean:g} and {b.mean:g}. An SE printed as an SD, a within-subject "
+              f"error bar or the other group's spread all look exactly like this",
               a.candidate_id, b.candidate_id)
+
+
+def _sd_like(cand: Candidate) -> float | None:
+    """This candidate's spread as a standard deviation, when it IS one or converts arithmetically.
+
+    An SE with an n converts exactly (`SD = SE × √n`) and costs nothing to include — and SE is the
+    modal shape in the live corpus (32 against 25 SD among the 57 `found` group_stats candidates
+    that carry either), so a screen that looked only at `SD` was blind on the majority of real
+    readings (review H1). Everything else (IQR, range, an interval) needs a distributional
+    assumption `canopy.stats.conversions` makes on the ROW, where the binding screen now is.
+    """
+    value, n = cand.dispersion_value, (cand.n or 0)
+    if value is None or value <= 0 or n < MIN_N:
+        return None
+    if cand.dispersion_type is DispersionType.SD:
+        return float(value)
+    if cand.dispersion_type is DispersionType.SE:
+        return float(value) * math.sqrt(n)
+    return None
 
 
 def sign_check(direction: str, mean_a: float | None, mean_b: float | None,
@@ -769,6 +1025,13 @@ def _check_outcome(outcome: OutcomeSources | None, orientation: OrientationVerdi
         _flag(out, "orientation_unknown",
               "nobody has established the direction of this measure (does a larger raw value mean "
               "more of the construct?), so the sign of any effect size is undecided")
+    if orientation is not None:
+        for code in ORIENTATION_FLAGS:              # what `combine_orientation` already decided
+            marker = f"[{code}]"
+            if marker in (orientation.notes or ""):
+                said = [part.split(marker, 1)[1].strip()
+                        for part in (orientation.notes or "").split("; ") if marker in part]
+                _flag(out, code, said[0] if said and said[0] else code.replace("_", " "))
     if outcome is None:
         return
     for source in outcome.sources:
@@ -795,7 +1058,9 @@ def run_checks(dataset: DatasetSpec, outcome_key: str, candidates: Sequence[Cand
     `other_candidates` are this paper's candidates for *other* outcomes — the cross-outcome rules
     (duplicated numbers, mixed analysis metric) need them. `orientation` overrides the mapper's
     reading of the measure's direction once Task 8's orientation agents have ruled. `total_n` is a
-    participant total the paper states for this dataset, if one was found.
+    participant total the paper states for this dataset, if one was found — nothing produces one
+    today (review M2: no `StudyMap` field records it), so `n_sum_mismatch` waits for the mapper
+    to grow one rather than being fed the analysed sizes back as if they were the paper's total.
     """
     outcome = _outcome(dataset, outcome_key)
     flags: list[CheckFlag] = []
@@ -810,6 +1075,7 @@ def run_checks(dataset: DatasetSpec, outcome_key: str, candidates: Sequence[Cand
     _check_unit_coherence(found, flags)
     _check_duplicates(found, others, flags)
     _check_effect_size(found, dataset, flags)
+    _check_conversion_gate(candidates, dataset, flags)
     _check_outcome(outcome, orientation, flags)
 
     if orientation is not None:

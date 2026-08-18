@@ -58,6 +58,9 @@ class MetaResult:
     converged: bool = True
     yi: np.ndarray = field(default_factory=lambda: np.array([]))
     vi: np.ndarray = field(default_factory=lambda: np.array([]))
+    #: non-empty when the Hartung-Knapp adjustment could not be applied and the ordinary
+    #: random-effects standard error was used instead. Empty on every ordinary pool.
+    hakn_fallback: str = ""
 
     def as_dict(self) -> dict:
         d = asdict(self)
@@ -285,13 +288,26 @@ def random_effects(yi, vi, method: Tau2Method = "REML", hakn: bool = False, leve
     I2_tau = float(tau2 / (tau2 + s2)) if (tau2 + s2) > 0 else 0.0
     H2 = float((tau2 + s2) / s2) if s2 > 0 else float("nan")
 
+    hakn_fallback = ""
     if hakn:
         # Hartung–Knapp: var = Σ w (y-μ)² / ((k−1) Σ w); t(k−1)
         var_hk = float(np.sum(w * (yi - mu) ** 2) / ((k - 1) * sw))
         se_used = float(np.sqrt(var_hk))
-        q = sps.t.ppf(1 - (1 - level) / 2, k - 1)
-        stat = mu / se_used
-        p = float(2 * sps.t.sf(abs(stat), k - 1))
+        if not np.isfinite(se_used) or se_used == 0.0:
+            # Every row sits exactly on the pooled estimate (k identical effect sizes), so HK's
+            # between-study term is zero and its statistic is 0/0. That is not an infinitely
+            # precise result — it is an adjustment with nothing to adjust. Fall back to the
+            # ordinary random-effects SE and say so on the record. Raising here killed the WHOLE
+            # RUN at the pooling step, after every paper had already been paid for.
+            hakn_fallback = "se_used was zero (all rows identical); standard SE used"
+            se_used = se
+            q = sps.norm.ppf(1 - (1 - level) / 2)
+            stat = mu / se_used if se_used else 0.0
+            p = float(2 * sps.norm.sf(abs(stat)))
+        else:
+            q = sps.t.ppf(1 - (1 - level) / 2, k - 1)
+            stat = mu / se_used
+            p = float(2 * sps.t.sf(abs(stat), k - 1))
     else:
         se_used = se
         q = sps.norm.ppf(1 - (1 - level) / 2)
@@ -320,7 +336,8 @@ def random_effects(yi, vi, method: Tau2Method = "REML", hakn: bool = False, leve
                       Q_p=Q_p, I2=I2_meta, I2_tau=I2_tau, H2=H2, weights=w / sw, weights_pct=100 * w / sw,
                       weights_raw=w, pi_low=float(pi_low), pi_high=float(pi_high), pi_df=k - 2,
                       pi_low_z=float(pi_low_z), pi_high_z=float(pi_high_z), pi_low_v=float(pi_low_v),
-                      pi_high_v=float(pi_high_v), hakn=hakn, level=level,
+                      pi_high_v=float(pi_high_v), hakn=hakn, hakn_fallback=hakn_fallback,
+                      level=level,
                       tau2_ci_low=lb, tau2_ci_high=ub, iterations=iters, converged=conv, yi=yi, vi=vi)
 
 

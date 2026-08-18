@@ -122,3 +122,48 @@ def test_prediction_interval_conventions():
     assert (lo, hi) == pytest.approx((-1.036270, 1.331745), abs=2e-5) and df == 3
     lo, hi, df = prediction_interval(r, "z")      # metafor / meta 'S'
     assert (lo, hi) == pytest.approx((-0.581454, 0.876928), abs=2e-5)
+
+
+def test_hartung_knapp_with_identical_rows_pools_instead_of_dividing_by_zero():
+    """Controller ruling. `var_hk = Sum w (y - mu)^2 / ((k-1) Sum w)` is exactly 0 when every row
+    sits on the pooled estimate, and `mu / se_used` then raised `ZeroDivisionError` — at the
+    POOLING step, after every paper in the run had already been paid for.
+
+    Two identical effect sizes is not contrived: two papers reporting the same `d` do it, and
+    `hakn: true` is what the validation protocol sets. Zero between-study spread is not infinite
+    precision, it is an adjustment with nothing to adjust, so the ordinary random-effects standard
+    error is used and the fallback is named on the result.
+    """
+    import numpy as np
+
+    from canopy.stats.meta import random_effects
+
+    yi = np.array([-0.5, -0.5, -0.5])
+    vi = np.array([0.04, 0.04, 0.04])
+    result = random_effects(yi, vi, method="REML", hakn=True)     # must not raise
+
+    assert result.hakn_fallback == "se_used was zero (all rows identical); standard SE used"
+    assert result.as_dict()["hakn_fallback"] == result.hakn_fallback   # it reaches pooled.json
+    assert result.estimate == pytest.approx(-0.5)
+    plain = random_effects(yi, vi, method="REML", hakn=False)
+    assert result.se == pytest.approx(plain.se)                   # the standard RE SE, as ruled
+    assert (result.ci_low, result.ci_high) == pytest.approx((plain.ci_low, plain.ci_high))
+    assert np.isfinite(result.p) and np.isfinite(result.z)
+    assert result.hakn is True                                    # what was ASKED for is recorded
+
+
+def test_an_ordinary_hartung_knapp_pool_carries_no_fallback_note():
+    """The negative control: the note appears only when the adjustment could not be applied, so a
+    reader can trust its absence."""
+    import numpy as np
+
+    from canopy.stats.meta import random_effects
+
+    yi = np.array([-0.5, -0.2, -0.9])
+    vi = np.array([0.04, 0.05, 0.06])
+    adjusted = random_effects(yi, vi, method="REML", hakn=True)
+    plain = random_effects(yi, vi, method="REML", hakn=False)
+
+    assert adjusted.hakn_fallback == ""
+    assert plain.hakn_fallback == ""
+    assert adjusted.se != pytest.approx(plain.se)     # the adjustment really was applied

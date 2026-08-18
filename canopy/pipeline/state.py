@@ -224,6 +224,12 @@ def review_entry(verdict: Verdict, *, paper_id: str, candidates: Sequence[Candid
         "paper_id": paper_id, "dataset_id": verdict.dataset_id,
         "outcome_key": verdict.outcome_key, "group": verdict.group,
         "confidence": verdict.confidence, "route": verdict.route,
+        # C11: how far this cell's score was from the line that decided its bucket, and which
+        # line. A cell 0.0000 from the boundary was not decided by the evidence, and a reviewer
+        # working down the queue has no way to see that from the bucket name.
+        "confidence_score": verdict.confidence_score,
+        "confidence_margin": verdict.confidence_margin,
+        "nearest_boundary": verdict.nearest_boundary,
         "reason": "; ".join(r for r in reasons if r) or "held for human review",
         "candidates": [{"candidate_id": c.candidate_id, "value": c.mean,
                         "dispersion_value": c.dispersion_value,

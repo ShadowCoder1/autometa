@@ -67,12 +67,24 @@ ErrorBarAgreement = Literal["agreed", "conflict", "unconfirmed"]
 #: the groups can be read here; `baseline` — a pre-manipulation or control series that could
 #: correct the value but is not the value (an aligned-cursor curve beside the rotated one, a
 #: pre-test beside a post-test); `context` — a location that defines the window, names the
-#: blocks, or reports a test with no group values. Only `value` sources are read for the number.
-SourceRole = Literal["value", "baseline", "context", "unknown"]
+#: blocks, or reports a test with no group values; `alternate` — a location that measures the
+#: SAME outcome by a second operationalization that lost the map-stage `which_measure` decision
+#: (C6: one outcome carries one measure) — as does a location carrying NO metric at all when a
+#: measure settlement withheld it, since "this location states no metric" is not evidence that it
+#: states the winning one. An `alternate` is kept on the record with the quote that demoted it and
+#: is never read for a value — it is not a `context` location, and nothing may treat "not `value`"
+#: as "`context`". Only `value` sources are read for the number.
+SourceRole = Literal["value", "baseline", "context", "alternate", "unknown"]
 WhiskerDefinition = Literal["min_max", "iqr_1_5", "percentile_5_95", "sd", "se", "ci", "unknown"]
 TestDesign = Literal["independent_t", "one_way_between", "mixed_main_effect", "interaction",
                      "ancova", "paired", "welch", "unknown"]
 PKind = Literal["exact", "less_than", "greater_than", "ns", "unknown"]
+#: WHAT a printed test statistic contrasts (P-B). Only `groups` — exactly group A versus group B
+#: on this outcome — can stand in for the two group means. `against_constant` is a test of one
+#: group against zero or any other fixed value (its df can equal n_a + n_b - 2 and it still is not
+#: the contrast); `interaction` is a product term; `within` is a within-subject effect. `unknown`
+#: means nobody recorded it, which is refused in code rather than assumed to be `groups`.
+ContrastKind = Literal["groups", "against_constant", "interaction", "within", "unknown"]
 Standardizer = Literal["pooled_sd_between", "dz_paired", "glass_delta", "partial_eta", "unknown"]
 ReportedScale = Literal["cohens_d", "hedges_g", "glass_delta", "partial_eta_squared", "unknown"]
 Direction = Literal["a_greater", "b_greater", "unknown"]
@@ -199,6 +211,16 @@ class Citation(CanopyModel):
     first_author: str = ""
 
 
+#: WHOSE numbers a location reports — the people the value at it describes. `both_groups` is this
+#: contrast's own two groups, reported separately; `one_group` is one arm's own analysis;
+#: `pooled` is the two combined, or a wider/narrower sample that is not the pair (an age-collapsed
+#: analysis, a subgroup); `other` is a different set of people again; `unknown` is the honest
+#: absence, which reads. Only `both_groups`/`unknown` are read for a cell's value: Bock's
+#: adaptation magnitude `A=(I-F)/I` is computed over the POOLED seniors and sat in the map as a
+#: `value` location for a two-group cell, with no field in which to say so.
+SourceSample = Literal["both_groups", "one_group", "pooled", "other", "unknown"]
+
+
 class Source(CanopyModel):
     """Where a number lives in the paper (the mapper finds these; extractors read them)."""
 
@@ -223,6 +245,10 @@ class Source(CanopyModel):
     #: correction" was read as the outcome itself once (Cressman's aligned-cursor curves, 3.9°,
     #: beside the misaligned curves' 31.4°) — the map knew, and had no field to say it in.
     role: SourceRole = "value"
+    #: whose numbers these are (see `SourceSample`). A `value` location whose sample is not this
+    #: contrast's two groups is kept on the record and NOT read for the cell's value.
+    sample: SourceSample = "unknown"
+    sample_note: str = ""                       # the words that say whose numbers these are
     notes: str = ""
 
 
@@ -245,6 +271,10 @@ class OutcomeSources(CanopyModel):
     operationalization: str = ""
     analysis_metric: AnalysisMetric = "unknown"
     sources: list[Source] = Field(default_factory=list)
+    #: C6: when the map named two measures for one outcome, the map-stage ruling that chose one —
+    #: the winning metric and the verbatim quotes for winner and loser. Empty when nothing was
+    #: disputed; a dispute nobody could settle becomes a `which_measure` question instead.
+    measure_ruling: str = ""
 
 
 class RosterDecision(CanopyModel):
@@ -279,6 +309,12 @@ class DatasetSpec(CanopyModel):
     chosen_pair_rationale: str = ""
     moderators: dict[str, str] = Field(default_factory=dict)
     outcomes: list[OutcomeSources] = Field(default_factory=list)
+    #: C7: a dataset only one of the two mapping agents proposed is an INCLUSION question, settled
+    #: at the map stage. `included=False` means the adjudicator rejected it on a named protocol
+    #: rule (quoted below) — the dataset stays on the record and is never extracted.
+    included: bool = True
+    exclusion_rule: str = ""                    # the protocol rule the rejection cited
+    exclusion_quote: str = ""                   # the paper's own words the rejection rests on
     notes: str = ""
 
     def outcome(self, key: str) -> OutcomeSources:
@@ -286,6 +322,24 @@ class DatasetSpec(CanopyModel):
             if o.outcome_key == key:
                 return o
         raise KeyError(f"dataset {self.dataset_id} has no outcome {key!r}")
+
+
+class MapQuestion(CanopyModel):
+    """A question the MAP could not settle, which no extraction may be bought against.
+
+    Two kinds today: `include_dataset` (C7 — only one mapping agent proposed this dataset and the
+    adjudicator cited no protocol rule to reject it) and `which_measure` (C6 — one outcome, two
+    measures, and the protocol's window fits both). Both are answered by a person; until then the
+    cell they name is not read, because buying an extraction against an unsettled question is how
+    a rejected dataset produced a fully signed effect size.
+    """
+
+    kind: Literal["include_dataset", "which_measure"]
+    dataset_id: str = ""
+    outcome_key: str = ""                       # empty for a whole-dataset question
+    question: str = ""
+    options: list[str] = Field(default_factory=list)
+    quotes: list[str] = Field(default_factory=list)
 
 
 class StudyMap(CanopyModel):
@@ -300,6 +354,8 @@ class StudyMap(CanopyModel):
     roster: list[RosterDecision] = Field(default_factory=list)  # one per ingested figure/table
     disagreements: list[str] = Field(default_factory=list)     # cross-check diffs
     needs_human: list[str] = Field(default_factory=list)       # cells no two agents agreed on
+    #: map-stage questions that BLOCK extraction of the cell they name (C6, C7)
+    open_questions: list[MapQuestion] = Field(default_factory=list)
     notes: str = ""
     model: str = ""
     prompt_version: str = ""
@@ -350,6 +406,20 @@ class Candidate(CanopyModel):
     p_value: float | None = None
     design: TestDesign = "unknown"
     direction: Direction = "unknown"
+    #: what the statistic contrasts (P-B). Refused in `canopy.stats` unless `groups`.
+    contrast_kind: ContrastKind = "unknown"
+    #: the within-subject factors of the model this statistic came from, each with its number of
+    #: levels as the paper states it ("target direction (8 levels)"). A main effect from a model
+    #: containing them estimates the group contrast AVERAGED OVER every one of their levels, so
+    #: an empty list is not "there were none" — it is "nobody recorded any" (C5 fails closed).
+    within_factors: list[str] = Field(default_factory=list)
+    #: the factors the OUTCOME's own measurement window averages over, read off the protocol.
+    #: A within-subject factor that is not in this list is a factor the outcome does not average
+    #: over, so the statistic answers a different question than the cell asks.
+    outcome_averages_over: list[str] = Field(default_factory=list)
+    #: the quantity the model was fitted to, in the paper's words ("per-subject mean of the eight
+    #: target directions"), so a reader can check the estimand without re-reading the paper
+    model_fitted_to: str = ""
     admissible: bool = True
     admissible_reason: str = ""
 
@@ -398,7 +468,13 @@ class VerifierVerdict(CanopyModel):
     """One adversarial reader's attempt to refute one candidate (Task 8)."""
 
     candidate_id: str = ""
-    verdict: Literal["confirmed", "refuted", "ambiguous"] = "ambiguous"
+    #: `not_run` and `no_value_printed` are ABSENCES, not doubts (ceiling C8): the first says the
+    #: call never produced a verdict (truncated output, transport failure), the second that the
+    #: paper prints no independent value for this cell. `canopy.verify.confidence` prices both at
+    #: zero rather than as evidence against the reading, so an infrastructure failure can no longer
+    #: score a cell BELOW one that was never scheduled.
+    verdict: Literal["confirmed", "refuted", "ambiguous", "not_run",
+                     "no_value_printed"] = "ambiguous"
     reason: str = ""
     alt_mean: float | None = None
     alt_dispersion_value: float | None = None
@@ -466,6 +542,16 @@ class Adjudication(CanopyModel):
 class OrientationRun(CanopyModel):
     """What one model answered about the direction of one measure."""
 
+    #: C12: this reply was not a reply (a stub, raw serialisation debris, a decoding loop). The
+    #: detector in `canopy.llm.client.degenerate_reply` decides it; recording it here means a
+    #: replayed `verify.json` says so on the record instead of being re-derived from the prose.
+    not_run: bool = False
+    #: C3 row 1: the deterministic check found this reader's own stated direction contradicted by
+    #: the resolved raw means, so its vote on the polarity was removed. Recorded per READER for the
+    #: same reason `not_run` is: the summary field on the verdict collapses two readers into one
+    #: answer, so the sentence the reviewer has to arbitrate — "the reader said group A came out
+    #: higher" — is not recoverable from it once the two readers disagreed (whole-diff L3).
+    discarded: bool = False
     higher_is_better: bool | None = None
     raw_value_semantics: RawValueSemantics = "unknown"
     direction_stated_in_text: Direction = "unknown"
@@ -486,13 +572,31 @@ class OrientationVerdict(CanopyModel):
 
     outcome_key: str = ""
     measure_name: str = ""
+    #: which dataset the readers were actually asked about.
+    #:
+    #: C3's contradiction check — a reader's own stated direction against the resolved raw group
+    #: means — runs **ONCE**, on this dataset and no other. Its outcome (a discard, and therefore
+    #: possibly an abstention) is a property of the **MEASURE**, not of the cell that happened to
+    #: expose it: a reader whose words contradict the numbers it was reading is not a reader whose
+    #: ballot can be trusted about that measure anywhere. So later datasets carrying the same
+    #: measure **inherit the checked verdict** and are **not** re-checked against their own means —
+    #: another dataset's means are a different comparison, and running the filter against them
+    #: would throw out whichever reader read THIS paper correctly.
+    dataset_id: str = ""
     higher_is_better: bool | None = None
     raw_value_semantics: RawValueSemantics = "unknown"
+    #: C3 rule 5: the summary field above cannot hold two answers, so a disagreement collapses it to
+    #: `"unknown"`. This keeps each reader's own answer, which is what a reviewer needs.
+    raw_value_semantics_by_model: dict[str, str] = Field(default_factory=dict)
     direction_stated_in_text: Direction = "unknown"
     quotes: list[str] = Field(default_factory=list)
     reason: str = ""
     agreed: bool = False
     needs_human: bool = True
+    #: P-A: a third read was bought for this measure, so a recombination of `runs` must settle by
+    #: majority exactly as the original call did. Without it a re-run of `combine_orientation` over
+    #: the same three ballots would silently downgrade a settled measure to a question.
+    third_read: bool = False
     runs: list[OrientationRun] = Field(default_factory=list)
     llm_call_ids: list[str] = Field(default_factory=list)
     notes: str = ""
@@ -511,7 +615,12 @@ class Verdict(CanopyModel):
     vote_tolerance: float | None = None
     #: the two text extractors disagreed — the orchestrator owes this cell a third cheap candidate
     needs_third_candidate: bool = False
-    verifier_verdict: Literal["confirmed", "refuted", "ambiguous", "not_run"] = "not_run"
+    #: every state `VerifierVerdict.verdict` can report, because `_verifier_summary` copies it
+    #: here verbatim. `CanopyModel` does not validate on assignment, so a member missing from this
+    #: literal is written and dumped without complaint and then raises on the first `--resume` —
+    #: after the whole run has been paid for. Pinned by `test_models.py`.
+    verifier_verdict: Literal["confirmed", "refuted", "ambiguous", "not_run",
+                              "no_value_printed"] = "not_run"
     verifier_reason: str = ""
     verifiers: list[VerifierVerdict] = Field(default_factory=list)
     reopens: int = 0
@@ -520,6 +629,11 @@ class Verdict(CanopyModel):
     flags: list[CheckFlag] = Field(default_factory=list)
     confidence: ConfidenceBucket = "needs_human"
     confidence_score: float | None = None
+    #: C11: how far this score is from the bucket boundary nearest it, and which boundary that is.
+    #: A cell 0.0000 from the line that decided it was not decided by the evidence, and a reviewer
+    #: reading the queue cannot see that from the score alone.
+    confidence_margin: float | None = None
+    nearest_boundary: str = ""
     confidence_reasons: list[str] = Field(default_factory=list)
     needs_human: bool = False
     # resolved values

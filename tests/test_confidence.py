@@ -508,6 +508,22 @@ def test_the_two_doubt_families_are_disjoint_and_every_code_belongs_to_exactly_o
         assert code in CHECK_SEVERITY, f"{code} is not a code any check can raise"
 
 
+def test_every_orientation_doubt_is_in_a_family_and_says_why(): 
+    """Review L3. Three of the four `ORIENTATION_FLAGS` are in a doubt family with a reason line;
+    the fourth, `orientation_direction_conflict`, was in neither — so unlike its siblings it was
+    deducted in the generic warn bucket ABOVE the R2 floor, could withhold a cell on its own at
+    the margin, and printed to the reviewer as a bare code with no explanation. It says the same
+    kind of thing they do: how thin the agreement about the DIRECTION was, which is a reason to
+    look, never on its own evidence that the number is wrong."""
+    from canopy.verify.checks import ORIENTATION_FLAGS
+    from canopy.verify.confidence import CAP_REASONS, CAPPING_FLAGS, CONTRADICTING_FLAGS
+
+    for code in ORIENTATION_FLAGS:
+        assert (code in CAPPING_FLAGS) ^ (code in CONTRADICTING_FLAGS), code
+        assert code in CAP_REASONS and len(CAP_REASONS[code]) > 40, code
+    assert "orientation_direction_conflict" in CAPPING_FLAGS
+
+
 def test_a_flag_that_says_this_may_be_a_different_quantity_withholds_the_cell():
     """No amount of agreement about a number establishes that it is the right number.
 
@@ -522,6 +538,26 @@ def test_a_flag_that_says_this_may_be_a_different_quantity_withholds_the_cell():
         bucket, _points, reasons = _score(_cal_flags(code, 4))
         assert bucket == "needs_human", f"{code} did not withhold the cell"
         assert any(code in r for r in reasons), code
+
+
+def test_a_reader_the_numbers_contradict_withholds_the_cell_instead_of_costing_it_points():
+    """Fix round F5 (orientation area). The deterministic orientation check discards the ONE
+    reader that made a checkable claim about this cell's numbers — the reader whose own words say
+    the opposite of what the resolved means say. What is in doubt afterwards is the values, not
+    just how well corroborated the direction is, so the code belongs with the contradictions: it
+    is exempt from the `accept_with_note` floor and it forces a human.
+    """
+    from canopy.verify.checks import CHECK_SEVERITY
+    from canopy.verify.confidence import CAPPING_FLAGS, CONTRADICTING_FLAGS
+
+    code = "orientation_reader_contradicts_values"
+    assert code in CONTRADICTING_FLAGS and code not in CAPPING_FLAGS
+    assert CHECK_SEVERITY[code] == "error"
+    flags = [CheckFlag(code=code, severity=CHECK_SEVERITY[code], message=code,
+                       candidate_ids=[f"c{i}"]) for i in range(2)]
+    bucket, _points, reasons = _score(flags)
+    assert bucket == "needs_human"
+    assert any(code in reason for reason in reasons)
 
 
 def test_a_pile_of_contradictions_is_not_floored_at_accept_with_note():
@@ -701,3 +737,384 @@ def test_the_gate_says_plainly_when_it_had_nothing_to_evaluate():
     assert ok is False and delta is None
     assert any("could not be evaluated" in r for r in reasons), reasons
     assert not any("route(s) read both groups" in r for r in reasons), reasons
+
+
+# =========================================================== ceiling C8 + C11 (one change) + C9
+# C8: an agent that could not be run is an ABSENCE, not a "don't know".
+# C11: publish the margin, with the band re-derived AFTER C8.
+# C9:  price the conversion gate's own flags before any statistic route.
+from canopy.verify.confidence import (BUCKET_BOUNDARIES, CONVERTED_ROUTES, DECIDED_BY_A_HAIR,
+                                      MARGIN_BAND, NOT_RUN, NO_VALUE_PRINTED,
+                                      confidence_margin, conversion_gate_bucket, verifier_state)
+
+#: exactly the shape `pipeline/run.py` writes when `verify_candidate` raised `TruncatedOutput` or
+#: `LLMError` — no model, no prompt version, no call id, because there was no call
+TRUNCATED = VerifierVerdict(
+    candidate_id="a", verdict="ambiguous",
+    reason="the verifier's answer was cut off at its output limit twice and could not be read "
+           "(response hit max_tokens=8000); this candidate is unverified")
+
+
+def _two_readers():
+    return vote([text_cand("a", 31.51), text_cand("b", 31.51, model=SONNET)])
+
+
+def _absence(candidate_id="a"):
+    """A verifier that RAN and reported that the paper prints no independent value here."""
+    return VerifierVerdict.model_construct(
+        **{**VerifierVerdict(candidate_id=candidate_id, verdict="ambiguous", model=SONNET,
+                             prompt_version="verifier/1@f78d94c0", llm_call_id="deadbeef",
+                             reason="the paper never prints a numeric value for this cell").__dict__,
+           "verdict": NO_VALUE_PRINTED})
+
+
+# --------------------------------------------------------------------------- C8
+def test_a_verifier_that_could_not_be_run_is_not_a_doubt():
+    """The whole of C8: a failed call must cost exactly what a call nobody made costs."""
+    never_scheduled = confidence(_two_readers(), [], [], None, orientation=ORIENTED)
+    failed = confidence(_two_readers(), [TRUNCATED], [], None, orientation=ORIENTED)
+    assert failed[1] == never_scheduled[1]
+    assert failed[0] == never_scheduled[0]
+    assert any("could not be run" in r and "unchanged" in r for r in failed[2])
+    assert not any("could not settle it either way" in r for r in failed[2])
+
+
+def test_the_failure_is_named_on_the_record_not_swallowed():
+    _, _, reasons = confidence(_two_readers(), [TRUNCATED], [], None, orientation=ORIENTED)
+    assert any("cut off at its output limit" in r for r in reasons)
+
+
+def test_a_verifier_that_looked_and_could_not_tell_still_costs_its_penalty():
+    """C8 removes a mis-classification, not the ambiguous penalty itself."""
+    looked = VerifierVerdict(candidate_id="a", verdict="ambiguous", model=SONNET,
+                             prompt_version="verifier/1@f78d94c0", llm_call_id="deadbeef",
+                             reason="the table row could be either group")
+    plain = confidence(_two_readers(), [], [], None, orientation=ORIENTED)[1]
+    assert confidence(_two_readers(), [looked], [], None, orientation=ORIENTED)[1] == \
+        round(plain - 0.05, 4)
+
+
+def test_the_paper_printing_no_value_is_a_completed_check_not_an_ambiguity():
+    """A successful cross-check whose answer is "there is nothing here to check against"."""
+    plain = confidence(_two_readers(), [], [], None, orientation=ORIENTED)
+    absent = confidence(_two_readers(), [_absence()], [], None, orientation=ORIENTED)
+    assert absent[1] == plain[1] and absent[0] == plain[0]
+    assert any("prints no independent value" in r and "unchanged" in r for r in absent[2])
+
+
+def test_verifier_state_reads_the_record_not_the_label():
+    assert verifier_state(TRUNCATED) == NOT_RUN
+    assert verifier_state(VerifierVerdict(candidate_id="a", verdict="ambiguous", model=SONNET,
+                                          llm_call_id="x")) == "ambiguous"
+    assert verifier_state(_absence()) == NO_VALUE_PRINTED
+
+
+def test_a_failed_call_never_outranks_a_verdict_an_agent_produced():
+    from canopy.verify.confidence import _verifier_summary
+    confirmed = VerifierVerdict(candidate_id="a", verdict="confirmed", model=SONNET,
+                                llm_call_id="x", reason="page 3 prints it")
+    assert _verifier_summary([TRUNCATED, confirmed], {"a"})[0] == "confirmed"
+    assert _verifier_summary([TRUNCATED], {"a"})[0] == NOT_RUN
+    assert _verifier_summary([], {"a"})[0] == NOT_RUN
+
+
+# --------------------------------------------------------------------------- C11
+def test_the_margin_is_published_on_every_cell():
+    _, score, reasons = confidence(_two_readers(), CONFIRMED, [], None, orientation=ORIENTED)
+    line = next(r for r in reasons if "margin" in r)
+    distance, boundary, _ = confidence_margin(score)
+    assert f"{distance:.4f}" in line and boundary in line
+
+
+@pytest.mark.parametrize("score, distance, boundary, labelled", [
+    (0.4500, 0.0000, "accept_with_note", True),      # pooled by nothing at all
+    (0.7400, 0.0100, "auto_accept", True),           # held back by a hundredth
+    (0.4800, 0.0300, "accept_with_note", True),      # exactly on the band
+    (0.6000, 0.1500, "accept_with_note", False),     # decided by neither
+])
+def test_a_cell_within_a_hair_of_any_boundary_it_cleared_is_labelled(score, distance, boundary,
+                                                                     labelled):
+    assert confidence_margin(score) == (distance, boundary, labelled)
+
+
+def test_the_band_catches_the_boundary_a_cell_missed_as_well_as_the_one_it_cleared():
+    """A cell at 0.74 is as decided by a hair as one at 0.45 — against AUTO_ACCEPT, not for it."""
+    assert confidence_margin(0.74)[1] == "auto_accept"
+    assert confidence_margin(0.76)[1] == "auto_accept"
+    assert BUCKET_BOUNDARIES == {"accept_with_note": ACCEPT_WITH_NOTE, "auto_accept": AUTO_ACCEPT}
+
+
+def test_the_caps_are_not_boundaries():
+    """Every capped cell lands exactly ON its ceiling, so a margin against it would say nothing."""
+    from canopy.verify.confidence import ADJUDICATED_CAP, SINGLE_ROUTE_CAP
+    assert ADJUDICATED_CAP not in BUCKET_BOUNDARIES.values()
+    assert SINGLE_ROUTE_CAP not in BUCKET_BOUNDARIES.values()
+    assert confidence_margin(0.70)[2] is False
+
+
+# ------------------------------------------------- C8 + C11 together: the post-C8 regression
+#: The six cells this run pooled, at the scores they reach ONCE C8 stops charging the verifier
+#: penalty to an absence — replayed offline from `runs/rerun-fixed/*/verify.json` (Cressman d1
+#: late/aftereffect and Bock d1 late, both groups each). v1 of this item claimed the band would
+#: make all six "visibly marginal"; after C8 not one of them is inside it, and this asserts the
+#: number so the claim can never go stale again.
+POST_C8_POOLED_SCORES = (0.50, 0.50, 0.51, 0.51, 0.52, 0.52)
+
+
+@pytest.mark.parametrize("score", POST_C8_POOLED_SCORES)
+def test_after_c8_no_pooled_cell_is_decided_by_a_hair(score):
+    distance, boundary, labelled = confidence_margin(score)
+    assert boundary == "accept_with_note"
+    assert 0.05 - 1e-9 <= distance <= 0.07 + 1e-9
+    assert labelled is False
+
+
+def test_before_c8_two_of_those_cells_sat_exactly_on_the_line():
+    """The history C11 documents: at 0.4500 the bucket was decided by nothing at all."""
+    for score in (0.45, 0.45, 0.46, 0.46, 0.47, 0.47):
+        assert confidence_margin(score)[2] is (score <= ACCEPT_WITH_NOTE + MARGIN_BAND)
+    assert confidence_margin(0.45) == (0.0, "accept_with_note", True)
+
+
+def test_the_hair_label_is_its_own_state_not_a_sentence_a_reader_must_parse():
+    """Review L1: the first cut of this fed a cell that scores 0.70 — five hundredths outside the
+    band — so it asserted `<= 1` against zero lines and passed with C11 deleted. Both inputs here
+    are INSIDE the band, one on each side of the boundary, and the assertion is `== 1`."""
+    warn = [CheckFlag(code="n_mismatch", severity="warn", message="x", candidate_ids=["a"])]
+    missed, score, reasons = confidence(_two_readers(), [], warn, None, orientation=ORIENTED)
+    assert score == 0.72 and missed == "accept_with_note"      # 0.03 short of auto_accept
+    hairs = [r for r in reasons if r.startswith(DECIDED_BY_A_HAIR)]
+    assert len(hairs) == 1 and "misses auto_accept" in hairs[0]
+
+    three = [CheckFlag(code=code, severity="warn", message="x", candidate_ids=["a"])
+             for code in ("n_mismatch", "unit_mismatch", "sd_near_zero")]
+    cleared, score, reasons = confidence(_two_readers(), CONFIRMED, three, None,
+                                         orientation=ORIENTED)
+    assert score == 0.76 and cleared == "auto_accept"          # 0.01 the other side of the line
+    hairs = [r for r in reasons if r.startswith(DECIDED_BY_A_HAIR)]
+    assert len(hairs) == 1 and "clears auto_accept" in hairs[0]
+
+
+# --------------------------------------------------------------------------- C9
+def _stat(**kwargs):
+    base = dict(candidate_id="cT", dataset_id="ds1", outcome_key="late_adaptation",
+                kind="test_statistic", stat_type="t", stat_value=5.25, design="independent_t",
+                grounded=True, model=OPUS, quote="the difference was significant, t = 5.25, "
+                                                 "p < .001")
+    base.update(kwargs)
+    return Candidate(**base)
+
+
+def test_a_three_group_post_hoc_with_no_df_does_not_pool():
+    """The failing input C9 was written against: t = 5.25, p < .001, n = 12/12, no df printed.
+
+    `convertibility` returns ok with `df_missing`, so before C9 the row converted and pooled on a
+    statistic nothing established belongs to these two groups.
+    """
+    from canopy.verify.checks import codes, run_checks
+
+    flags = run_checks(dataset(), "late_adaptation", [text_cand("a", 31.51), _stat()])
+    assert "df_missing" in codes(flags)
+    bucket, _, reasons = confidence(_two_readers(), CONFIRMED, flags, None, orientation=ORIENTED)
+    assert bucket == "needs_human"
+    assert any("df_missing" in r for r in reasons)
+
+
+def test_an_f_with_only_a_numerator_df_reached_the_row_unflagged_before_c9():
+    """`test_stat_missing_df` fires only when df, df1 AND df2 are all None, so `F(1, ?)` passed
+    every check there was — this is the case C9's cell-level half exists for."""
+    from canopy.verify.checks import codes, run_checks
+
+    flags = run_checks(dataset(), "late_adaptation",
+                       [text_cand("a", 31.51),
+                        _stat(stat_type="F", stat_value=27.6, df1=1.0, design="one_way_between")])
+    assert "test_stat_missing_df" not in codes(flags)
+    assert confidence(_two_readers(), CONFIRMED, flags, None, orientation=ORIENTED)[0] == \
+        "needs_human"
+
+
+def test_df_missing_caps_the_bucket_and_not_the_score():
+    """"Below auto_accept" still includes accept_with_note, which POOLS. Assert the bucket."""
+    for start in ("auto_accept", "accept_with_note"):
+        bucket, reasons = conversion_gate_bucket(start, "test_statistic", ["df_missing"])
+        assert bucket == "needs_human", start
+        assert reasons and "THESE two groups" in reasons[0]
+
+
+def test_the_conversion_gate_only_fires_on_a_route_that_converted_a_statistic():
+    assert conversion_gate_bucket("auto_accept", "means_sd", ["df_missing"])[0] == "auto_accept"
+    assert "test_statistic" in CONVERTED_ROUTES and "p_value" in CONVERTED_ROUTES
+
+
+def test_an_explained_df_shortfall_is_allowed_but_never_automatic():
+    bucket, reasons = conversion_gate_bucket("auto_accept", "t_stat", ["df_off_by_1"])
+    assert bucket == "accept_with_note" and "df_off_by_1" in reasons[0]
+    assert conversion_gate_bucket("accept_with_note", "t_stat", ["df_off_by_1"])[0] == \
+        "accept_with_note"
+
+
+# ------------------------------------ C9's |d| screen, on the number that reaches the plot
+def _row(candidates, *, adjudication=None, flags=None):
+    """The candidates carried the whole way a real cell travels: checks, vote, adjudication,
+    `resolve_cell`, `ResolvedValues`, `resolve_effect`. Returns `(row, verdict_a, verdict_b)`.
+
+    Written as a route rather than as a call to one function on purpose (review H1): the C9 screen
+    was specified on the RESOLVED |d| and implemented on a pair of raw SD candidates, and no test
+    that stops at the cell can tell the two apart.
+    """
+    from canopy.models import OutcomeDef, StatsSettings
+    from canopy.pipeline.resolve import ResolvedValues, resolve_effect
+    from canopy.verify.checks import run_checks
+    from canopy.verify.vote import vote_groups
+
+    flags = run_checks(dataset(), "late_adaptation", candidates) if flags is None else flags
+    votes = vote_groups(candidates)
+    cells = {group: resolve_cell(dataset(), "late_adaptation", group, candidates,
+                                 vote_result=votes.get(group), verdicts=CONFIRMED, flags=flags,
+                                 adjudication=adjudication, orientation=ORIENTED, n_a=12, n_b=12)
+             for group in ("A", "B")}
+    values = ResolvedValues.from_verdicts(cells["A"], cells["B"], higher_is_better=False)
+    outcome = OutcomeDef(key="late_adaptation", label="late adaptation",
+                         definition="directional error at the end of the block")
+    return resolve_effect(dataset(), outcome, values, StatsSettings()), cells["A"], cells["B"]
+
+
+def test_an_se_pair_whose_conversion_implies_an_impossible_d_is_refused():
+    """C9 acceptance, route 1 — the modal shape in the live corpus (32 of the 57 `found`
+    group_stats candidates carrying a spread type carry SE, against 25 SD). A = 10 ± 0.5 SE and
+    B = 40 ± 0.5 SE at n = 12 convert to SDs of 1.732, which implies |d| = 17.3. Screening
+    SD-typed candidates only never saw it, and the row pooled at `accept_with_note` with both
+    cells at `auto_accept`."""
+    se = [text_cand("a1", 10.0, dispersion_value=0.5, dispersion_type=DispersionType.SE),
+          text_cand("a2", 10.0, dispersion_value=0.5, dispersion_type=DispersionType.SE,
+                    model=SONNET),
+          text_cand("b1", 40.0, dispersion_value=0.5, dispersion_type=DispersionType.SE,
+                    group="B"),
+          text_cand("b2", 40.0, dispersion_value=0.5, dispersion_type=DispersionType.SE,
+                    group="B", model=SONNET)]
+    row, cell_a, _ = _row(se)
+    assert abs(row.d) > 3.0
+    assert row.confidence == "needs_human", (row.d, cell_a.confidence)
+    assert "implausible_dispersion" in row.flags
+    # the screen's OWN line names the two dispersions `_mean_sd` used and where they came from
+    said = next(step for step in row.conversion_steps if "implausible_dispersion" in step)
+    assert "1.732" in said and "SE 0.5" in said and "17.3" in said
+
+
+def test_the_screen_reads_the_voted_value_not_the_first_candidate_in_the_list():
+    """C9 acceptance, route 2 — group A's first SD-typed candidate is sane (38 ± 5) while the two
+    agreeing readers say 10 ± 0.5. Screening `rows[0]` compared 38 against 40 (|d| = 0.56) and
+    passed the cell; the vote pooled 10 against 40, i.e. |d| = 60."""
+    mixed = [text_cand("a0", 38.0, dispersion_value=5.0),
+             text_cand("a1", 10.0, dispersion_value=0.5, model=SONNET),
+             text_cand("a2", 10.0, dispersion_value=0.5, model="claude-haiku-5"),
+             text_cand("b0", 40.0, dispersion_value=0.5, group="B"),
+             text_cand("b1", 40.0, dispersion_value=0.5, group="B", model=SONNET)]
+    row, cell_a, _ = _row(mixed)
+    assert cell_a.mean == 10.0 and cell_a.dispersion_value == 0.5     # what the vote resolved
+    assert round(row.d, 1) == 60.0
+    assert row.confidence == "needs_human"
+
+
+def test_a_dispersion_the_adjudicator_supplied_is_screened_like_any_other():
+    """C9 acceptance, route 3 — the candidates are plausible (10 ± 5 against 12 ± 5, |d| = 0.4)
+    and the adjudicator rules that the 5 was the range and the SD is 0.4. The screen ran inside
+    `run_checks`, i.e. before the ruling existed, so the ruled value was never looked at."""
+    ok = [text_cand("a1", 10.0, dispersion_value=5.0),
+          text_cand("a2", 10.4, dispersion_value=5.0, model=SONNET),
+          text_cand("b1", 12.0, dispersion_value=5.0, group="B"),
+          text_cand("b2", 12.4, dispersion_value=5.0, group="B", model=SONNET)]
+    quote = ("the aligned group reached 10.0 degrees of directional error at the end of the "
+             "block, and the misaligned group reached the value printed beside it")
+    ruling = Adjudication(
+        dataset_id="ds1", outcome_key="late_adaptation", needs_human=False,
+        rationale="the 5 is the range; the SD is 0.4",
+        groups=[AdjudicatedGroup(group="A", mean=10.0, dispersion_value=0.4,
+                                 dispersion_type=DispersionType.SD, n=12,
+                                 chosen_candidate_ids=["a1"], quote=quote, grounded=True,
+                                 reason="table 2"),
+                AdjudicatedGroup(group="B", mean=12.0, dispersion_value=0.4,
+                                 dispersion_type=DispersionType.SD, n=12,
+                                 chosen_candidate_ids=["b1"], quote=quote, grounded=True,
+                                 reason="table 2")])
+    row, _, _ = _row(ok, adjudication=ruling)
+    assert round(row.d, 1) == 5.0
+    assert row.confidence == "needs_human"
+
+
+def test_a_plausible_row_keeps_the_bucket_its_cells_earned():
+    """The control: the same route with a believable denominator is not touched by the screen."""
+    fine = [text_cand("a1", 10.0, dispersion_value=5.0),
+            text_cand("a2", 10.0, dispersion_value=5.0, model=SONNET),
+            text_cand("b1", 12.0, dispersion_value=5.0, group="B"),
+            text_cand("b2", 12.0, dispersion_value=5.0, group="B", model=SONNET)]
+    row, _, _ = _row(fine)
+    assert abs(row.d) < 3.0
+    assert row.confidence != "needs_human"
+    assert "implausible_dispersion" not in row.flags
+
+
+def test_the_cell_level_screen_is_an_early_warning_and_no_longer_decides_alone():
+    """Means 10/40 with SDs of 5 imply |d| = 6: six readers can agree on a wrong denominator.
+
+    The cell-level check keeps firing — it is the cheapest place to SAY it, and it names the
+    denominator for the reviewer — but it is a `warn` now, because the binding screen is on the
+    resolved value and an early warning that also withholds bought an adjudicator call for a
+    denominator dispute the adjudicator's own answer would then not be screened for (M5)."""
+    from canopy.verify.checks import CHECK_SEVERITY, codes, run_checks
+
+    huge = [text_cand("a", 10.0, dispersion_value=5.0),
+            text_cand("b", 10.0, dispersion_value=5.0, model=SONNET),
+            text_cand("c", 40.0, dispersion_value=5.0, group="B"),
+            text_cand("d", 40.0, dispersion_value=5.0, group="B", model=SONNET)]
+    flags = run_checks(dataset(), "late_adaptation", huge)
+    assert "implausible_dispersion" in codes(flags)
+    assert CHECK_SEVERITY["implausible_dispersion"] == "warn"
+    row, _, _ = _row(huge, flags=flags)
+    assert row.confidence == "needs_human"           # …and the row is still refused
+
+
+# ---------------------------------------------------------- C11 (M3): whose decision was it
+def _a_cell_forced_by_an_error():
+    """A cell whose bucket an `error` flag decided, with a score well above the line."""
+    return [text_cand("a", 31.51), text_cand("b", 31.51, model=SONNET)]
+
+
+def test_a_cell_the_score_did_not_decide_publishes_no_margin():
+    """Review M3. C11's rule is "within 0.03 of any boundary the CELL CLEARED". A cell held by an
+    error, a refutation, a contradiction or an unresolved direction cleared nothing — its score
+    decided none of it — and printing "margin 0.2500 clears auto_accept (0.75)" beside it tells a
+    reviewer sorting the queue that a held cell cleared the top boundary by a quarter.
+    """
+    from canopy.verify.confidence import DECIDED_BY_A_HAIR
+
+    pair = _a_cell_forced_by_an_error()
+    flags = [CheckFlag(code="sd_nonpositive", severity="error", message="the SD is 0")]
+    bucket, score, reasons = confidence(vote(pair), CONFIRMED, flags, None, orientation=ORIENTED)
+    assert bucket == "needs_human" and score >= ACCEPT_WITH_NOTE     # the score said "pool it"
+    assert not any("clears" in r or "misses" in r for r in reasons), reasons
+    assert not any(DECIDED_BY_A_HAIR in r for r in reasons)
+    assert any("not decided by the score" in r for r in reasons), reasons
+
+    verdict = resolve_cell(dataset(), "late_adaptation", "A", pair, vote_result=vote(pair),
+                           verdicts=CONFIRMED, flags=flags, orientation=ORIENTED, n_a=12, n_b=12)
+    assert verdict.confidence == "needs_human"
+    assert verdict.confidence_margin is None and verdict.nearest_boundary == ""
+
+
+def test_a_cell_the_score_did_decide_still_publishes_its_margin():
+    """The control, including the cell the score sent to a human on its own: there the margin is
+    a real statement about which side of the line the evidence landed."""
+    pair = _a_cell_forced_by_an_error()
+    bucket, score, reasons = confidence(vote(pair), CONFIRMED, [], None, orientation=ORIENTED)
+    assert bucket != "needs_human"
+    assert any("clears" in r or "misses" in r for r in reasons)
+    verdict = resolve_cell(dataset(), "late_adaptation", "A", pair, vote_result=vote(pair),
+                           verdicts=CONFIRMED, flags=[], orientation=ORIENTED, n_a=12, n_b=12)
+    assert verdict.confidence_margin is not None and verdict.nearest_boundary
+
+    # …and a cell the SCORE sent to a human keeps its margin too — the score decided that bucket
+    thin = [text_cand("a", 31.51, grounded=False)]
+    low, low_score, low_reasons = confidence(vote(thin), (), [], None, orientation=ORIENTED)
+    assert low == "needs_human" and low_score < ACCEPT_WITH_NOTE
+    assert any("misses" in r or "clears" in r for r in low_reasons), low_reasons

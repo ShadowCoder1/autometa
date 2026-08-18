@@ -27,12 +27,19 @@ from typing import Any, Iterable, NamedTuple, Sequence
 from ..models import (Adjudication, Candidate, CheckFlag, ConfidenceBucket, DatasetSpec,
                       DispersionType, OrientationVerdict, VerifierVerdict, Verdict)
 from ..stats.effect_sizes import cohens_d, pooled_sd, se_smd
-from .checks import run_checks
+from .checks import MAX_PLAUSIBLE_D, run_checks
 from .grounding import is_short_quote
 from .vote import VoteResult, digitizer_path, is_figure_route, modality, vote
 
 __all__ = ["confidence", "resolve_cell", "figure_gate", "AUTO_ACCEPT", "ACCEPT_WITH_NOTE",
-           "DELTA_D_LIMIT", "DIGITIZATION_SE_SHARE", "SINGLE_ROUTE_CAP", "ADJUDICATED_CAP"]
+           "DELTA_D_LIMIT", "DIGITIZATION_SE_SHARE", "SINGLE_ROUTE_CAP", "ADJUDICATED_CAP",
+           "partial_mean_readers", "PARTIAL_READ_MISSING_MEAN",
+           "verifier_state", "NOT_RUN", "NO_VALUE_PRINTED", "NO_EVIDENCE_VERDICTS",
+           "confidence_margin", "MARGIN_BAND", "DECIDED_BY_A_HAIR", "BUCKET_BOUNDARIES",
+           "BUCKET_NOT_SCORED",
+           "conversion_gate_bucket", "CONVERTED_ROUTES", "UNVERIFIED_CONTRAST_FLAGS",
+           "DF_SHORTFALL_PREFIX", "dispersion_plausibility_bucket", "IMPLAUSIBLE_DISPERSION",
+           "ROW_REFUSAL_CODES"]
 
 AUTO_ACCEPT = 0.75              # at or above this the pipeline pools the row without a human
 ACCEPT_WITH_NOTE = 0.45         # below this a human decides
@@ -49,6 +56,56 @@ EXTRA_ROUTE_BONUS, EXTRA_ROUTE_CAP = 0.05, 0.10
 DISAGREE_PENALTY = 0.20
 GROUNDED_BONUS, SHORT_QUOTE_BONUS, UNGROUNDED_PENALTY = 0.15, 0.05, 0.30
 CONFIRMED_BONUS, AMBIGUOUS_PENALTY = 0.20, 0.05
+
+#: ---------------------------------------------------------------- C8: what a verifier RECORD is
+#: `ambiguous` is a reader that looked at the paper and could not tell. It costs 0.05 because it
+#: is a doubt about the reading. Two other things used to be written into that same word, and
+#: neither is a doubt about anything:
+#:
+#: `not_run` — no agent produced a verdict at all. `pipeline/run.py` records a `VerifierVerdict`
+#:   when the call raised `TruncatedOutput` or `LLMError`, so the failure is on the record and the
+#:   cell is not silently unverified — but a transport error, an output cut off at its token limit
+#:   and an exhausted budget are facts about this laptop, not about the paper. A cell whose only
+#:   verifier failed must score exactly what a cell whose verifier was never scheduled scores.
+#: `no_value_printed` — an agent DID run and reported, successfully, that the paper prints no
+#:   independent value for this cell. That is a completed cross-check whose answer is "there is
+#:   nothing here to check this against": the reading is exactly as corroborated as it was before
+#:   the check ran, and charging it 0.05 punishes a paper for publishing a figure without a table.
+#:
+#: Both move the score by ZERO and both say so in the reasons, because a reviewer must be able to
+#: tell "nothing contradicted this" from "nobody looked".
+NOT_RUN, NO_VALUE_PRINTED = "not_run", "no_value_printed"
+NO_EVIDENCE_VERDICTS: frozenset[str] = frozenset({NOT_RUN, NO_VALUE_PRINTED})
+
+#: ------------------------------------------------------------------------ C11: publish the margin
+#: The two thresholds that decide a bucket. A cell sitting within `MARGIN_BAND` of either one was
+#: decided by a hair, whichever side of it the cell fell on: 0.4500 pools by 0.0000 and 0.7400
+#: fails to auto-accept by 0.0100, and both facts belong on the record rather than in the head of
+#: whoever reads the score. The caps (`SINGLE_ROUTE_CAP`, `ADJUDICATED_CAP`) are deliberately NOT
+#: boundaries here — a capped cell lands exactly ON its ceiling by construction, so every one of
+#: them would carry a margin of 0.0000 and the label would mean "this cell was capped", which the
+#: cap reason already says.
+BUCKET_BOUNDARIES: dict[str, float] = {"accept_with_note": ACCEPT_WITH_NOTE,
+                                       "auto_accept": AUTO_ACCEPT}
+MARGIN_BAND = 0.03
+DECIDED_BY_A_HAIR = "decided_by_a_hair"
+
+#: ------------------------------------------------- C9: the conversion gate's own flags, priced
+#: Routes whose value is a printed test statistic turned into a standardised mean difference.
+#: Both vocabularies are here on purpose: `canopy.pipeline.resolve` names the route it *tried*
+#: (`test_statistic`, `p_value`) and `canopy.stats.effect_sizes` names the route it *took*
+#: (`t_stat`, `f_stat`, `p_value`), and the gate has to fire on either.
+CONVERTED_ROUTES: frozenset[str] = frozenset({"test_statistic", "statistic", "p_value",
+                                              "t_stat", "f_stat"})
+#: Flags that say the statistic's provenance TO THESE TWO GROUPS was never established. A paper
+#: printing "t = 5.25, p < .001" as a post-hoc from a three-group ANOVA satisfies every arithmetic
+#: check there is; nothing in it says the 5.25 is the contrast this row pools. `convertibility`
+#: raises `df_missing` and passes, and `canopy.verify.checks` raises the cell-level counterparts.
+UNVERIFIED_CONTRAST_FLAGS: frozenset[str] = frozenset({"df_missing", "test_stat_missing_df",
+                                                       "df_shortfall_unexplained"})
+#: `df_off_by_1` and friends: a shortfall the paper EXPLAINS (a stated exclusion that also reduces
+#: n, or an n that was inferred rather than printed). Allowed, never automatic.
+DF_SHORTFALL_PREFIX = "df_off_by_"
 WARN_PENALTY, WARN_CAP = 0.08, 0.24
 INFO_PENALTY, INFO_CAP = 0.01, 0.03
 MAD_SHARE, SIGMA_SHARE, SPREAD_PENALTY = 0.05, 0.10, 0.05
@@ -81,6 +138,27 @@ CAPPING_FLAGS: frozenset[str] = frozenset({
     #: A soft doubt about a shape vocabulary — the *transposition* it used to share a code with
     #: is `series_transposed`, below, because the two have opposite consequences.
     "series_marker_mismatch",
+    #: how thin the agreement behind the measure's DIRECTION was (ceiling items C3 / C12 / the
+    #: P-A residue, raised in `canopy.verify.checks`). Neither says the direction is wrong — one
+    #: says a single ballot set it after the other was re-issued or discarded, the other says a
+    #: majority of three did. Both are reasons for a reviewer to look, which is why they cap
+    #: rather than convict: `orientation.higher_is_better is None` is what withholds a cell.
+    "orientation_single_witness",
+    "orientation_by_majority",
+    #: …and the third of the same kind (review L3): the two readers read the paper's own sentence
+    #: about which group came out higher in OPPOSITE directions, so `sign_check` has nothing left
+    #: to compare the extracted numbers with. It is a statement about how thin the agreement on
+    #: the direction was, not evidence that this number is the wrong number — its sibling
+    #: `orientation_reader_contradicts_values` is the one that says the numbers themselves are in
+    #: question, and that one is a contradiction. In neither family it was deducted in the generic
+    #: warn bucket ABOVE the floor, so unlike its three siblings it could withhold a cell on its
+    #: own at the margin, and it printed as a bare code with nothing said to the reviewer.
+    "orientation_direction_conflict",
+    #: the named panel could not be isolated from its neighbours, so the reader was handed the
+    #: union crop and a neighbouring panel's ladder was in the frame. Doubt about the SCALE, not
+    #: evidence that this number came from somewhere else — the axis-identity, overlay and
+    #: verifier nets all still apply — so it caps like its neighbours here rather than withholding.
+    "panel_not_isolated",
 })
 
 #: `CONTRADICTING_FLAGS` — **"this may be a different quantity."** Each one is evidence that the
@@ -100,6 +178,12 @@ CONTRADICTING_FLAGS: frozenset[str] = frozenset({
     #: the readers answered off different value axes and one cluster was kept — a value off the
     #: wrong ladder is wrong by a factor, and keeping the majority does not prove it was right
     "axis_conflict",
+    #: the reader that made the only checkable claim about this measure says the opposite of what
+    #: this cell's resolved means say. It is the one contradiction the orientation stage can
+    #: measure, and it is about the NUMBERS (which group is higher), not about how thin the
+    #: agreement on the direction was — so it belongs here rather than beside its three
+    #: `orientation_*` neighbours in `CAPPING_FLAGS` (fix round F5).
+    "orientation_reader_contradicts_values",
 })
 
 #: A code belongs to exactly one of the two, and every one of them tells the reviewer why it
@@ -154,6 +238,9 @@ NON_FORCING_ERRORS: frozenset[str] = frozenset({"calibration_refuted"})
 #: actual doubt, and names the comparison that was really made rather than the one it would be
 #: nice to have made
 CAP_REASONS: dict[str, str] = {
+    "panel_not_isolated": ("the named panel could not be isolated from its neighbours; the "
+                           "reading was made on the whole figure and is capped below automatic "
+                           "acceptance"),
     "quote_row_only": ("the numbers are somewhere in the named table row but not in the column "
                        "this reading claims, so they may be the other group's"),
     "calibration_single_witness": ("only one witness calibrated this figure's axis, so the scale "
@@ -179,6 +266,21 @@ CAP_REASONS: dict[str, str] = {
                                     "determined by the map, so nothing independent confirms it"),
     "axis_conflict": ("the readers answered off different value axes and only one of them was "
                       "pooled, so which ladder this number is on rests on a majority"),
+    "orientation_single_witness": ("the direction of this measure was set by one ballot, because "
+                                   "the only other reader did not produce a usable one — so the "
+                                   "sign of this effect rests on a witness nothing corroborated"),
+    "orientation_by_majority": ("the direction of this measure was settled by a majority of "
+                                "three readers rather than by two that agreed, so one reader "
+                                "read the paper the other way and was outvoted"),
+    "orientation_direction_conflict": ("the readers read the paper's own sentence about which "
+                                       "group came out higher in opposite directions, so nothing "
+                                       "the paper states is left for the sign check to compare "
+                                       "the extracted numbers with"),
+    "orientation_reader_contradicts_values": ("a reader states which group came out higher on "
+                                              "this measure and this cell's resolved means say "
+                                              "the opposite, so the reader that made the one "
+                                              "checkable claim about these numbers was discarded "
+                                              "— and the numbers themselves are in question"),
 }
 
 
@@ -338,6 +440,161 @@ def figure_gate(candidates: Sequence[Candidate], n_a: int | None, n_b: int | Non
     return ok, delta, share, reasons
 
 
+# ------------------------------------------------------- C8 / C11 / C9: three public rulings
+def verifier_state(verdict: VerifierVerdict) -> str:
+    """What a verifier record IS — which is not always what its `verdict` field says (C8).
+
+    A verdict is recorded only when an agent produced one. When the call raised `TruncatedOutput`
+    or `LLMError`, `pipeline/run.py` writes a `VerifierVerdict` so the failure is on the record
+    and the warning reaches the manifest — but that record names no model, no prompt version and
+    no call id, because there was no call. Nothing else in the pipeline can produce a verdict with
+    all three empty: every real one carries them (verified against all 14 verdicts in
+    `runs/rerun-fixed`, where exactly the two truncated Heuer records are bare).
+
+    So the structural fact is read here rather than the label, and the label wins when it is
+    already one of the honest ones — which is what lets the extractor and `run.py` start writing
+    `not_run` / `no_value_printed` directly without this function changing again.
+    """
+    if verdict.verdict in NO_EVIDENCE_VERDICTS:
+        return verdict.verdict
+    if not (verdict.llm_call_id or verdict.model or verdict.prompt_version):
+        return NOT_RUN
+    return verdict.verdict
+
+
+def confidence_margin(score: float) -> tuple[float, str, bool]:
+    """`(margin, nearest_boundary, decided_by_a_hair)` for one score (C11).
+
+    `margin` is the UNSIGNED distance to the nearest bucket boundary and `nearest_boundary` names
+    it, so "0.4500, pooled by 0.0000" and "0.7400, held back by 0.0100" are both sayable. Ties go
+    to the lower boundary, which is the one such a cell cleared.
+    """
+    nearest, margin = min(BUCKET_BOUNDARIES.items(), key=lambda kv: (abs(score - kv[1]), kv[1]))
+    distance = round(abs(score - margin), 4)
+    return distance, nearest, distance <= MARGIN_BAND
+
+
+#: what `confidence` says instead of a margin when the score decided nothing (C11 / review M3)
+BUCKET_NOT_SCORED = ("this cell was held by the evidence, not by its score, so the score is not "
+                     "compared with any boundary: the bucket was not decided by the score")
+
+
+class _Scored(tuple):
+    """`(bucket, score, reasons)` — plus WHO decided the bucket.
+
+    Every caller unpacks the three-tuple `confidence` has always returned, and this is one. The
+    fourth fact rides alongside because `resolve_cell` cannot recover it: a `needs_human` cell may
+    have been forced by an error at a score of 1.0 or sent there by a score of 0.20, and only the
+    second of those has a margin worth publishing.
+    """
+
+    forced_human: bool
+
+    def __new__(cls, bucket: ConfidenceBucket, score: float, reasons: list[str], *,
+                forced_human: bool) -> "_Scored":
+        self = super().__new__(cls, (bucket, score, reasons))
+        self.forced_human = forced_human
+        return self
+
+
+def _margin_reason(score: float) -> str:
+    distance, nearest, hair = confidence_margin(score)
+    cleared = score >= BUCKET_BOUNDARIES[nearest]
+    side = "clears" if cleared else "misses"
+    line = (f"margin {distance:.4f} {side} {nearest} ({BUCKET_BOUNDARIES[nearest]:.2f})")
+    if not hair:
+        return line
+    return (f"{DECIDED_BY_A_HAIR}: {line} — this cell is inside {MARGIN_BAND:.2f} of the line "
+            f"that decided it, so which side it landed on is not a finding about the paper")
+
+
+def conversion_gate_bucket(bucket: ConfidenceBucket, route: str, flags: Sequence[str]
+                           ) -> tuple[ConfidenceBucket, list[str]]:
+    """The bucket a row keeps once the conversion gate's own flags are priced (C9).
+
+    Called by whoever resolves a ROW (`canopy.pipeline.resolve`), because the gate's flags are
+    raised while the effect size is being built, after this module has scored the two cells. It is
+    a cap on the BUCKET and not on the score on purpose: "below `auto_accept`" still includes
+    `accept_with_note`, which pools, so a score cap could never withhold the row it exists to
+    withhold. Nothing whose provenance to these two groups is unverified may pool.
+    """
+    if route not in CONVERTED_ROUTES:
+        return bucket, []
+    codes = list(flags)
+    unverified = sorted(set(codes) & UNVERIFIED_CONTRAST_FLAGS)
+    shortfall = sorted(c for c in codes if c.startswith(DF_SHORTFALL_PREFIX))
+    if unverified:
+        return "needs_human", [
+            f"{', '.join(unverified)}: this row was converted from a printed test statistic and "
+            f"nothing establishes that the statistic is the comparison of THESE two groups — a "
+            f"post-hoc from a three-group analysis reports the same t. A human decides"]
+    if shortfall and bucket == "auto_accept":
+        return "accept_with_note", [
+            f"{', '.join(shortfall)}: the printed degrees of freedom do not equal n_a + n_b - 2 "
+            f"and the shortfall is explained, so the conversion is allowed but never automatic"]
+    return bucket, []
+
+
+#: the code the ROW carries when its resolved |d| fails the plausibility screen. Same code the
+#: cell-level early warning uses, because it is the same doubt about the same denominator — a
+#: reviewer who has learned what it means at one level has learned it at both.
+IMPLAUSIBLE_DISPERSION = "implausible_dispersion"
+
+#: EVERY code the resolver can put on a ROW that neither cell carries — the findings that are
+#: about the number the CONVERSION produced, so they cannot exist until both cells are in.
+#:
+#: This is a contract with the review layer, which is why it is one constant and not two lists.
+#: A row refusal is exactly the case where both cells read as fine, so every rule that asks "is
+#: this cell releasable?" has to consult the row first: `canopy.pipeline.overrides` imports this
+#: set to decide a rebuilt bucket, to refuse an answer that would release such a cell, and to
+#: keep BOTH of the row's cells in the review queue; `canopy.pipeline.run` uses it for the same
+#: queue rule on a fresh run. A second copy of the membership in the review layer is a set kept
+#: in sync by hand, and the first code that was added to one and not the other would release
+#: cells under a refused row again (questions area, fix round 3, concern 1).
+#:
+#: `resolve._add_row_refusal` is the only writer and it refuses a code that is not here, so the
+#: set cannot fall behind the resolver — `tests/test_resolve.py` pins that both ways.
+ROW_REFUSAL_CODES: frozenset[str] = frozenset({IMPLAUSIBLE_DISPERSION})
+
+
+def dispersion_plausibility_bucket(bucket: ConfidenceBucket, d: float | None, *,
+                                   denominator: str = "", route: str = ""
+                                   ) -> tuple[ConfidenceBucket, list[str]]:
+    """The bucket a row keeps once its RESOLVED `|d|` has been screened (C9, second half).
+
+    DECISION-v2 §C9 specifies this on the **resolved** `|d|`, "separately and independently of
+    route", and that is the only place it can be honest: the number that reaches the plot is post
+    vote, post adjudication and post unit conversion, and none of those three existed when
+    `canopy.verify.checks` screened the raw candidates. Screening candidates instead missed
+    (review H1, each executed): an SE-typed pair whose SE→SD conversion implies |d| = 17.3 — SE is
+    the MODAL shape in the live corpus, 32 against 25 SD of the 57 `found` group_stats
+    candidates that carry either — a group whose
+    first SD-typed candidate was sane while the two agreeing readers were not, and a dispersion
+    the adjudicator itself supplied. All three pooled, one of them with both cells at
+    `auto_accept`.
+
+    Two means eight standard deviations apart are almost never two means eight standard deviations
+    apart: they are two means divided by a standard error, a within-subject error bar, a range, or
+    the other group's spread. The numerator is usually fine, so the arithmetic looks plausible all
+    the way down and only the size of the answer gives it away — which is why the cell-level check
+    remains as an early warning (it is the cheapest place to SAY it) and this one binds.
+
+    `denominator` is what the caller actually divided by, in the caller's own words, so the
+    reviewer reads the two dispersions the conversion used rather than the ones the paper printed.
+    """
+    if d is None or not math.isfinite(d) or abs(d) <= MAX_PLAUSIBLE_D:
+        return bucket, []
+    names = denominator or (f"the row was converted through {route!r}, which has no dispersion of "
+                            f"its own" if route else "")
+    return "needs_human", [
+        f"{IMPLAUSIBLE_DISPERSION}: the resolved values imply |d| = {abs(d):.2f}, above the "
+        f"plausibility threshold of {MAX_PLAUSIBLE_D:g}. The suspect number is the denominator"
+        + (f" — {names}" if names else "") +
+        f". An SE printed as an SD, a within-subject error bar, a range read as a spread or the "
+        f"other group's dispersion all look exactly like this, and the screen is on the value "
+        f"that reaches the plot rather than on any one reading of it. A human decides"]
+
+
 # ----------------------------------------------------------------------------- confidence
 def _grounding(vote_result: VoteResult, candidates: Sequence[Candidate] | None,
                settled: Adjudication | None) -> tuple[bool | None, bool]:
@@ -391,6 +648,40 @@ def _agreeing_model_families(result: VoteResult,
     return sorted(families)
 
 
+#: C10: which half of a reading is missing. The distinct reason below is keyed on THIS value and
+#: never on "there is a partial read at all" — a scatter of individual subjects has no whisker to
+#: read, and five routes honestly reporting no error bar (Cressman d1 aftereffect, a pooled cell)
+#: are an absent feature of the picture, not a reader that came back empty-handed.
+PARTIAL_READ_MISSING_MEAN = "mean"
+
+
+def partial_mean_readers(group: str | None,
+                         candidates: Sequence[Candidate] | None) -> list[str]:
+    """Readers that read this figure for THIS group and returned a spread but no mean (C10).
+
+    Such a reader is not a family that never looked: it looked, it answered, and its answer had a
+    hole in it. It is still not a witness to the mean — `_agreeing_model_families` counts only
+    readers that produced the quantity being corroborated, and that rule is what stops a cell
+    pooling on one reader — but the cell must not print the sentence a genuinely single-family
+    cell prints, because the two call for different actions (re-ask this reader for this one
+    number, versus find a second reader at all).
+    """
+    out: list[str] = []
+    for cand in candidates or []:
+        entries = (cand.pixel_provenance or {}).get("partial_read") or []
+        for entry in entries if isinstance(entries, (list, tuple)) else []:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("group") != group:
+                continue
+            if entry.get("missing") != PARTIAL_READ_MISSING_MEAN:
+                continue
+            name = str(entry.get("model") or entry.get("route") or "").strip()
+            if name and name not in out:
+                out.append(name)
+    return out
+
+
 def _witness_families(result: VoteResult, candidates: Sequence[Candidate] | None) -> set[str]:
     """Every model family behind the agreeing readings — from the route keys and from inside them.
 
@@ -442,7 +733,13 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
 
     adjudicated_value = settled and any(g.mean is not None for g in adjudication.groups)
     if vote_result.agreement == "none" and not adjudicated_value:
-        return "needs_human", 0.0, ["no value was resolved for this cell"]
+        # `_Scored`, not a bare tuple: this cell's bucket was decided by the EVIDENCE (there is
+        # none), not by the score, so `resolve_cell` must publish no margin and no nearest
+        # boundary for it. A plain tuple made `forced_human` read False, and every "no value was
+        # resolved" cell in the queue carried "0.45 from accept_with_note" — a claim about a
+        # decision the score never made (whole-diff L2, the M3-margin ruling's own rule).
+        return _Scored("needs_human", 0.0, ["no value was resolved for this cell"],
+                       forced_human=True)
 
     routes = _agreeing_routes(vote_result)
     score = BASE_SCORE[_base_kind(routes)]
@@ -484,8 +781,17 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
                            f"different failure mode, which is what agreement is for "
                            f"(+{AGREE_BONUS:.2f})")
         else:
-            reasons.append("only one independent route produced this value, so it cannot be "
-                           "accepted by vote")
+            empty_handed = partial_mean_readers(vote_result.group, candidates)
+            if empty_handed:
+                # C10 (b): textually distinct from the genuine single-family line below, because
+                # the cheapest repair is different — re-ask THIS reader for THIS one number.
+                reasons.append(
+                    f"a second model family read this figure and returned a spread but no mean "
+                    f"for group {vote_result.group or '?'} ({', '.join(empty_handed)}), so the "
+                    f"value rests on one reader — a half-answer, not a family that never looked")
+            else:
+                reasons.append("only one independent route produced this value, so it cannot be "
+                               "accepted by vote")
     else:
         score -= DISAGREE_PENALTY
         forced_human = True
@@ -505,8 +811,10 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
         reasons.append(f"every quote behind this value is printed in the paper "
                        f"(+{GROUNDED_BONUS:.2f})")
 
-    # --- the adversarial verifier
-    kinds = {v.verdict for v in verdicts}
+    # --- the adversarial verifier. `verifier_state` and not `.verdict`, because a record that
+    # names no model, no prompt version and no call id is an infrastructure failure written down,
+    # not a reader who looked (C8): it is priced at zero, and said out loud.
+    kinds = {verifier_state(v) for v in verdicts}
     if "refuted" in kinds:
         forced_human = True
         reasons.append("a verifier refuted this reading — a human decides")
@@ -517,6 +825,16 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
     elif "ambiguous" in kinds:
         score -= AMBIGUOUS_PENALTY
         reasons.append(f"the verifier could not settle it either way (-{AMBIGUOUS_PENALTY:.2f})")
+    if NOT_RUN in kinds:
+        failures = sorted({(v.reason or "no reason recorded").strip()
+                           for v in verdicts if verifier_state(v) == NOT_RUN})
+        reasons.append(f"a verifier for this cell could not be run, so this reading is "
+                       f"unverified rather than doubted and the score is unchanged (0.00): "
+                       + "; ".join(failures))
+    if NO_VALUE_PRINTED in kinds:
+        reasons.append("a verifier ran and reported that the paper prints no independent value "
+                       "for this cell — a completed cross-check with nothing to check against, "
+                       "so the score is unchanged (0.00)")
 
     # --- spread
     value = vote_result.mean if vote_result.mean is not None else 0.0
@@ -641,26 +959,38 @@ def confidence(vote_result: VoteResult, verdicts: Sequence[VerifierVerdict] = ()
                            f"be accepted automatically, so it stops at {ADJUDICATED_CAP:.2f}")
 
     score = round(max(0.0, min(1.0, score)), 4)
+    # --- C11: publish the margin — but only where the SCORE decided the bucket. C11's rule is
+    # "within 0.03 of any boundary the cell CLEARED", and a cell held by an error, a refutation, a
+    # contradiction or an unresolved direction cleared nothing: its score is a number the decision
+    # never consulted. Publishing a distance for it printed "margin 0.2500 clears auto_accept" in
+    # the review queue beside a held cell — the exact claim about "which side it landed on" that
+    # C11 exists to make checkable, made about a cell where the score landed on no side at all
+    # (review M3).
     if forced_human:
-        return "needs_human", score, reasons
+        reasons.append(BUCKET_NOT_SCORED)
+        return _Scored("needs_human", score, reasons, forced_human=True)
+    reasons.append(_margin_reason(score))
     if score >= AUTO_ACCEPT:
-        return "auto_accept", score, reasons
+        return _Scored("auto_accept", score, reasons, forced_human=False)
     if score >= ACCEPT_WITH_NOTE:
-        return "accept_with_note", score, reasons
+        return _Scored("accept_with_note", score, reasons, forced_human=False)
     reasons.append(f"score {score:.2f} is below {ACCEPT_WITH_NOTE:.2f}")
-    return "needs_human", score, reasons
+    return _Scored("needs_human", score, reasons, forced_human=False)
 
 
 # ----------------------------------------------------------------------------- resolve_cell
-_VERIFIER_ORDER = {"refuted": 0, "ambiguous": 1, "confirmed": 2}
+#: worst first. The two no-evidence states rank BELOW `confirmed` — a cell with one failed call
+#: and one confirmation was confirmed, and a cell with nothing but failed calls summarises as
+#: `not_run`, which is the same word `_verifier_summary` already used for "no verdicts at all".
+_VERIFIER_ORDER = {"refuted": 0, "ambiguous": 1, "confirmed": 2, NOT_RUN: 3, NO_VALUE_PRINTED: 3}
 
 
 def _verifier_summary(verdicts: Sequence[VerifierVerdict], ids: set[str]) -> tuple[str, str]:
     relevant = [v for v in verdicts if not v.candidate_id or v.candidate_id in ids]
     if not relevant:
-        return "not_run", ""
-    worst = min(relevant, key=lambda v: _VERIFIER_ORDER.get(v.verdict, 1))
-    return worst.verdict, worst.reason
+        return NOT_RUN, ""
+    worst = min(relevant, key=lambda v: _VERIFIER_ORDER.get(verifier_state(v), 1))
+    return verifier_state(worst), worst.reason
 
 
 def _route_name(routes: Sequence) -> str:
@@ -726,10 +1056,18 @@ def resolve_cell(dataset: DatasetSpec, outcome_key: str, group: str,
         verdict.orientation_evidence = "; ".join(
             part for part in (orientation.reason, *orientation.quotes) if part)
 
-    bucket, score, reasons = confidence(result, verdict.verifiers, flag_list, adjudication,
-                                        candidates=list(candidates), n_a=n_a, n_b=n_b,
-                                        orientation=orientation)
+    scored = confidence(result, verdict.verifiers, flag_list, adjudication,
+                        candidates=list(candidates), n_a=n_a, n_b=n_b, orientation=orientation)
+    bucket, score, reasons = scored
     verdict.confidence, verdict.confidence_score, verdict.confidence_reasons = bucket, score, reasons
+    # C11: the same numbers `confidence()` already publishes in prose, as fields — so the review
+    # CSV and the report can sort and filter on them instead of a reviewer parsing a sentence.
+    # Left empty on a cell whose bucket the score did not decide (M3): "0.2500 from auto_accept"
+    # sorts and filters as a claim about a decision, and on such a cell no such decision was made.
+    if getattr(scored, "forced_human", False):
+        verdict.confidence_margin, verdict.nearest_boundary = None, ""
+    else:
+        verdict.confidence_margin, verdict.nearest_boundary, _ = confidence_margin(score)
     verdict.needs_human = bucket == "needs_human"
     return verdict
 
