@@ -58,6 +58,7 @@ from .grounding import is_short_quote as _is_short_quote
 from .units import unit_key
 
 __all__ = ["vote", "vote_groups", "VoteResult", "RouteValue", "route_key", "locator_key",
+           "figure_reference", "figure_of",
            "modality", "digitizer_path", "LOCATOR_CONFLICT", "LOCATOR_CONFLICT_NOTE",
            "LOCATOR_DROPPED",
            "model_family", "precision_tolerance", "figure_tolerance", "candidate_tolerance",
@@ -115,6 +116,46 @@ LOCATOR_CONFLICT_NOTE = ("the readings that agreed were taken at different place
 _LOCATOR_CHARS = 72
 
 
+#: a figure reference in a locator or a caption — "Fig. 1", "Figure 12", "figs 3". The words are
+#: matched case-insensitively because a locator is a model's own prose, not a publisher's setting.
+_FIGURE_WORD = r"(?:fig(?:ure)?s?\.?)"
+_ANY_FIGURE = re.compile(_FIGURE_WORD + r"\s*\d+(?!\d)", re.I)
+_FIGURE_NUMBER = re.compile(r"\d+")
+
+
+def _figure_token(text: str) -> str:
+    """`"fig01"`, `"Fig. 1A"`, `"Figure 1"` → `"fig1"` — one spelling for one figure.
+
+    The number is what identifies a figure; everything else is how somebody wrote it down.
+    Ingestion's own ids are zero-padded (`fig01`) and a model's locator is not (`Fig. 1A`), so
+    without this the same figure under two spellings reads as two figures and a real conflict
+    goes unnoticed.
+    """
+    digits = _FIGURE_NUMBER.search(str(text or ""))
+    return f"fig{int(digits.group(0))}" if digits else ""
+
+
+def figure_reference(locator: str) -> str:
+    """The figure a locator names, normalised ("Fig 3, top-right…" → "fig3"), or "".
+
+    Anchored to a figure WORD: a locator says "point at x = A3" and "row 3", and a bare number is
+    not a figure reference.
+    """
+    match = _ANY_FIGURE.search(str(locator or ""))
+    return _figure_token(match.group(0)) if match else ""
+
+
+def figure_of(cand: Candidate) -> str:
+    """WHICH figure this reading was taken from — ingestion's own id when the digitiser recorded
+    one, otherwise the figure the locator names. "" when neither says.
+
+    Both are normalised through `_figure_token`, so `pixel_provenance["figure_id"] == "fig01"` and
+    a locator that says "Fig. 1A" are the same figure rather than two.
+    """
+    recorded = _figure_token(str((cand.pixel_provenance or {}).get("figure_id") or ""))
+    return recorded or figure_reference(cand.locator)
+
+
 def locator_key(cand: Candidate) -> str:
     """Which PLACE in a figure this reading was taken at — eight hex characters, or "".
 
@@ -126,6 +167,15 @@ def locator_key(cand: Candidate) -> str:
     corroborating each other, and `vote` refuses to average them.
 
     Only a figure reading has one, and only when it says where it looked.
+
+    **The key is the locator TEXT, so two spellings of one place are two keys.** "Fig. 1A, third
+    point" and "Figure 1, panel A, x = A3" are the same panel and would be read here as two, which
+    `_locator_conflict` could then report as a conflict that is not one. Keying on the parsed
+    (figure, panel letter) instead would fix that and cost more than it saves: it would also merge
+    Cressman's "Fig. 3b, LEFT y axis" and "Fig. 3b, RIGHT y axis" — one panel, two ladders, two
+    genuinely different quantities — into one route whose members would then be averaged. A false
+    conflict is a cell a human looks at; a false merge is a number nobody checks. So the text
+    stands, and the hazard is written down rather than traded for a worse one.
     """
     if modality(cand).split(":", 1)[0] not in _LOCATED_MODALITIES:
         return ""
@@ -418,24 +468,38 @@ def _best_cluster(routes: Sequence[RouteValue]) -> list[RouteValue]:
 
 def _locator_conflict(cluster: Sequence[RouteValue],
                       rows: Sequence[Candidate]) -> dict[str, tuple[str, list[float]]]:
-    """The places the winning routes read, keyed by locator — empty unless there are two of them.
+    """Two places in ONE figure among the winning routes, keyed by locator — else empty.
 
     A cluster is a set of routes that agree within tolerance, and a figure tolerance is wide: on
     Langan's Fig. 1 it is 7.5°, which comfortably covers the 4° between the young adults' panel
-    and the older adults'. So "they agree" says nothing here. Two panels are two quantities, and
-    an agreement that spans them is a coincidence of scale, not corroboration.
+    and the older adults'. So "they agree" says nothing about two panels of one picture, and an
+    agreement that spans them is a coincidence of scale rather than corroboration.
+
+    **Within one figure**, and the qualification is the whole point. Two readings of two DIFFERENT
+    figures that land on the same number are the corroboration this vote exists to reward — the
+    quantity was plotted twice and measured twice and the answers match. Wang's Fig 3 and Fig 4
+    each carry the gradual group's aftereffect, agreeing to 0.1; calling that a conflict would
+    withhold a value two independent pictures established, and say so in a note that is false.
+    A place whose figure nothing identifies stays in its own "" group and still fails closed
+    against the other unidentified places, because "we do not know which picture this came from"
+    is not evidence that it came from a second one.
     """
-    places: dict[str, tuple[str, list[float]]] = {}
+    places: dict[tuple[str, str], tuple[str, list[float]]] = {}
     for route in cluster:
         for position in route.positions:
             key = locator_key(rows[position])
             if not key:
                 continue
             _text, values = places.setdefault(
-                key, (" ".join(rows[position].locator.split()), []))
+                (figure_of(rows[position]), key),
+                (" ".join(rows[position].locator.split()), []))
             if route.value is not None and route.value not in values:
                 values.append(route.value)
-    return places if len(places) > 1 else {}
+    counts = Counter(figure for figure, _key in places)
+    conflicting = {figure for figure, seen in counts.items() if seen > 1}
+    if not conflicting:
+        return {}
+    return {key: value for (figure, key), value in places.items() if figure in conflicting}
 
 
 def _locator_conflict_note(places: dict[str, tuple[str, list[float]]]) -> str:

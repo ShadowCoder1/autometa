@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 from canopy.models import Candidate, DispersionType, SourceKind
-from canopy.verify.vote import (VoteResult, figure_tolerance, locator_key, modality,
+from canopy.verify.vote import (VoteResult, figure_of, figure_tolerance, locator_key, modality,
                                 model_family, precision_tolerance, route_key, vote,
                                 vote_groups)
 from tests.helpers import nine
@@ -511,3 +511,21 @@ def test_duplicate_ids_under_two_locators_are_all_considered_and_ids_keep_their_
     res = vote(cands)
     assert res.n_candidates_considered == len(cands)
     assert all(isinstance(i, str) for i in res.agreeing_ids + res.disagreeing_ids)
+
+
+def test_two_figures_that_agree_are_corroboration_not_a_conflict():
+    """Fix round 1, MAJOR 2. The conflict is about two places in ONE picture.
+
+    Wang 2011 plots the gradual group's aftereffect in Fig 3 and again in Fig 4, and the digitiser
+    read both: -2.85 and -3.45, agreeing to 0.1. That is the corroboration the vote exists to
+    reward — the quantity was drawn twice and measured twice — not the panel-boundary coincidence
+    `locator_conflict` is for. Treating it as a conflict withheld a value two independent pictures
+    established, and told the reviewer the readings came from "the same figure", which is false.
+    """
+    cands = [c for c in nine.candidates("592b3b55a318")
+             if c.dataset_id == "592b3b55a318:d2" and c.outcome_key == "aftereffect"
+             and c.group == "B" and c.extractor_id.endswith("ensemble")]
+    assert len({figure_of(c) for c in cands}) == 2, "the fixture no longer spans two figures"
+    res = vote(cands)
+    assert res.agreement == "agree" and res.method != "locator_conflict"
+    assert res.mean == pytest.approx(-3.15, abs=0.01)

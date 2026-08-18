@@ -30,10 +30,32 @@ from typing import Any, Mapping, Sequence
 
 from ..models import Candidate, CheckFlag
 from .checks import CHECK_SEVERITY
-from .vote import LOCATOR_DROPPED, locator_key
+from .vote import _ANY_FIGURE, _FIGURE_WORD, LOCATOR_DROPPED, figure_reference, locator_key
 
 __all__ = ["panel_assignments", "locator_panel", "panel_mismatch", "panel_groups",
-           "apply_panel_check", "LOCATOR_DROPPED"]
+           "apply_panel_check", "figure_reference", "LOCATOR_DROPPED"]
+
+#: the digitiser's own consensus candidate, and the only digitised reading the vote ever sees.
+#: The constant's owner is `canopy.pipeline.rows.ENSEMBLE`; the literal is repeated here rather
+#: than imported because `verify` is the layer BELOW `pipeline` and must not depend on it.
+_ENSEMBLE = "digitize:ensemble"
+
+
+def _votable(cand: Candidate) -> bool:
+    """A reading the vote could actually weigh.
+
+    Two filters stand between a cell's candidates and the vote, and this check has to know about
+    both. `run.vote_candidates` keeps one figure reading per group — the digitiser's ensemble,
+    never its per-route samples — and `vote._usable` keeps only a `found` `group_stats` with a
+    mean. A reading that fails either can never carry the cell, so counting it as "this group has
+    a reading from its own panel" is how the set-aside branch empties a cell it was written to
+    protect: on Langan's aftereffect cell every reading on the young adults' own panel was either
+    `ambiguous` or a raw route sample, and the group's one usable number was dropped in favour of
+    them.
+    """
+    return (cand.kind == "group_stats" and cand.status == "found" and cand.mean is not None
+            and (not cand.extractor_id.startswith("digitize:")
+                 or cand.extractor_id == _ENSEMBLE))
 
 _LABEL_JUNK = re.compile(r"[^a-z0-9]+")
 #: a label this short matches too much to be evidence of anything ("SD", "n", "A")
@@ -72,11 +94,10 @@ def _names_group(category: Any, names: Sequence[str]) -> bool:
 _PANEL_IN_CAPTION = re.compile(
     r"\(\s*([A-Za-z])\s*\)\s*([^()]{0,60}?)(?=\s*(?:[,;.]|\band\b|\(|$))")
 
-_FIGURE_WORD = r"(?:fig(?:ure)?s?\.?)"
-#: the caption's own printed label, so a locator can be anchored to the figure it names
+#: the caption's own printed label, so a locator can be anchored to the figure it names.
+#: `_FIGURE_WORD` and `_ANY_FIGURE` live in `verify.vote` — the lower layer, which needs them to
+#: tell one figure from another before it calls two places a conflict.
 _CAPTION_LABEL = re.compile(r"^\W*(" + _FIGURE_WORD + r"\s*\d+)", re.I)
-#: any figure reference, for a locator whose figure label was not handed to us
-_ANY_FIGURE = re.compile(_FIGURE_WORD + r"\s*\d+(?!\d)", re.I)
 #: "Fig. 1A" — the letter ABUTS the label. A letter after a space is a word ("Fig. 2 a mean of"),
 #: not a panel, which is why the bare form is never accepted.
 _ABUTTING = re.compile(r"^([A-Za-z])(?![A-Za-z0-9])")
@@ -213,6 +234,11 @@ def apply_panel_check(cell: Sequence[Candidate], caption: str,
     with only the wrong panel's reading keeps it and is flagged: dropping would leave the cell
     empty on the strength of a caption regex, and a contradiction a human reads is better than a
     hole nobody sees. A group whose readings name no panel is untouched.
+
+    "A reading from its own panel" means one that could CARRY the cell — see `_votable`. Counting
+    the rest defeats the second branch entirely, because the readings on a group's own panel are
+    routinely the ambiguous ones and the raw route samples: the cell is then emptied under a flag
+    whose message says its own panel's readings stand.
     """
     bound = panel_groups(caption, vocab)
     if not bound:
@@ -224,10 +250,15 @@ def apply_panel_check(cell: Sequence[Candidate], caption: str,
     for group in sorted({c.group for c in cell if c.group}):
         wrong = [i for i, c in enumerate(cell)
                  if c.group == group and panels[i] in bound and bound[panels[i]] != group]
+        # `right` is VOTABLE-only and `wrong` is not, deliberately. What decides the branch is
+        # whether this group has a reading from its OWN panel that could carry the cell; marking
+        # a wrong-panel reading that could never vote anyway costs nothing and keeps the record.
         right = [i for i, c in enumerate(cell)
-                 if c.group == group and panels[i] in bound and bound[panels[i]] == group]
-        if not wrong:
-            continue
+                 if c.group == group and _votable(c)
+                 and panels[i] in bound and bound[panels[i]] == group]
+        wrong_votable = [i for i in wrong if _votable(cell[i])]
+        if not wrong_votable:
+            continue                    # nothing that could carry the vote is at stake
         theirs = ", ".join(sorted({panels[i] for i in wrong}))
         ids = sorted({cell[i].candidate_id for i in wrong})
         if right:
@@ -242,8 +273,9 @@ def apply_panel_check(cell: Sequence[Candidate], caption: str,
                 code="locator_reads_set_aside",
                 severity=CHECK_SEVERITY["locator_reads_set_aside"],
                 message=(f"the caption gives panel {mine} to group {group} and panel {theirs} to "
-                         f"another group; {len(wrong)} reading(s) taken off panel {theirs} were "
-                         f"set aside, and the {len(right)} taken off panel {mine} stand"),
+                         f"another group; {len(wrong_votable)} reading(s) taken off panel "
+                         f"{theirs} were set aside, and the {len(right)} taken off panel {mine} "
+                         f"stand"),
                 candidate_ids=ids))
         else:
             flags.append(CheckFlag(

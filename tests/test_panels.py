@@ -55,3 +55,23 @@ def test_langan_young_late_end_to_end_is_minus_20_5():        # Minor 23: the tw
     assert {f.code for f in flags} == {"locator_reads_set_aside"}
     res = vote([c for c in kept if c.extractor_id.endswith("ensemble")])
     assert abs(res.mean + 20.5) < 0.1
+
+
+def test_a_group_whose_own_panel_has_no_votable_read_keeps_its_number():
+    """Fix round 1, MAJOR 1. The second branch exists so a caption regex cannot empty a cell.
+
+    Langan's `aftereffect` young-adult cell has four readings on panel A — the panel the caption
+    gives this group — and every one of them is either `ambiguous` or a raw per-route sample that
+    `vote_candidates` strips. Counting them as "this group has its own panel" dropped the one
+    reading that could carry the cell and left it with no value at all, under a CAPPING flag whose
+    message said the opposite. The group has no VOTABLE reading of its own panel, so nothing is
+    set aside: the 6.0 stands and a CONTRADICTING flag holds the row for a human.
+    """
+    cell = [c for c in nine.candidates("d1f2946e7e81")
+            if c.dataset_id == "d1f2946e7e81:d1" and c.outcome_key == "aftereffect"
+            and c.group == "B"]
+    kept, flags = apply_panel_check(cell, CAPTION, VOCAB)
+    assert {f.code for f in flags} == {"locator_panel_mismatch"}
+    assert len(kept) == len(cell), "a reading was set aside and the cell has nothing left"
+    res = vote([c for c in kept if c.extractor_id.endswith("ensemble")])
+    assert res.mean == 6.0
