@@ -1369,3 +1369,22 @@ def test_answering_a_question_that_does_not_exist_is_a_404(cloned):
     response = api.post(f"/api/runs/{run_id}/questions/999/answer", headers=auth(token),
                         json={"option": "v1"})
     assert response.status_code == 404
+
+
+def test_every_run_file_an_image_points_at_carries_the_runs_token():
+    """A run's files are served behind its token, and an `<img>` sends no headers.
+
+    The questions page built its evidence image straight from `q.image.url`, so the browser
+    asked for the crop without a token, got a 401, and the reviewer was asked "which plotted
+    series is this group?" beside a broken-image icon — the one question kind that is useless
+    without the picture.
+    """
+    import re
+
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    # every src:/href: that carries a URL built from the API goes through withToken(...)
+    for match in re.finditer(r"(?:src|href):\s*([^,}\n]+)", app_js):
+        value = match.group(1).strip()
+        if "/api/" in value or value.endswith(".url") or value in ("url", "imageUrl"):
+            assert "withToken" in value or value == "imageUrl", value
+    assert "var imageUrl = withToken(q.image.url);" in app_js

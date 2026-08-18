@@ -865,9 +865,13 @@
     ]);
     var body = h("div", { cls: "q-body" });
     if (q.image && q.image.url) {
-      var img = h("img", { cls: "q-image", attrs: { src: q.image.url, alt: q.where || "evidence",
+      // every run file is served behind the run's own token — an <img> carries no headers, so
+      // the token has to be in the URL. Without it the browser gets a 401 and the reviewer is
+      // asked "which series is this?" beside a broken-image icon.
+      var imageUrl = withToken(q.image.url);
+      var img = h("img", { cls: "q-image", attrs: { src: imageUrl, alt: q.where || "evidence",
         loading: "lazy" } });
-      body.appendChild(h("a", { attrs: { href: q.image.url, target: "_blank", rel: "noopener" } },
+      body.appendChild(h("a", { attrs: { href: imageUrl, target: "_blank", rel: "noopener" } },
         [img]));
     }
     var right = h("div", { cls: "q-right" });
