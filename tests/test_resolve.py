@@ -24,7 +24,7 @@ from canopy.models import (DatasetSpec, DispersionType, GroupSpec, OutcomeDef, S
 from canopy.pipeline.resolve import (GroupValues, ReportedValues, ResolvedValues, StatisticValues,
                                      apply_shared_control, available_routes, multi_group_flags,
                                      resolve_effect, resolve_effect_with_fallback)
-from canopy.pipeline.rows import cell_candidates, fallback_values, prepare_row_values
+from canopy.pipeline.rows import ENSEMBLE, cell_candidates, fallback_values, prepare_row_values
 from canopy.stats import effect_sizes as es
 from tests.helpers import nine
 
@@ -983,3 +983,50 @@ def test_rows_that_already_convert_are_untouched():
     for r in nine.records():
         if r.route != "not_convertible":
             assert "precedence_override" not in r.flags   # only not_convertible rows fall back
+
+
+def test_a_read_the_panel_check_set_aside_is_not_an_alternative():
+    """Fix round 1, finding 1. D2's caption check marks a reading whose panel the caption gives to
+    the OTHER group (`pixel_provenance["locator_dropped"]`), and the mark is on the CANDIDATE so
+    that every caller of the vote honours it, not only the orchestrator that filtered its own list.
+    The fallback is such a caller: `run._resolve` and `overrides._prepare` both hand it the full
+    candidate list with the marks still on it. Un-honoured, the override's "pair" could be one
+    group's real read plus another group's panel — a wrong effect size that D1 then admits into the
+    best-guess line by rule."""
+    from canopy.verify.vote import LOCATOR_DROPPED
+
+    p, ds, primary, alts = _cell("3570e4ce2a9c", "3570e4ce2a9c:d1", "late_adaptation", False)
+    assert alts, "the cell has a pair to begin with, so setting it aside is what this measures"
+
+    def set_aside(cand):
+        if cand.extractor_id != ENSEMBLE:
+            return cand
+        marked = cand.model_copy(deep=True)
+        marked.pixel_provenance = {**marked.pixel_provenance,
+                                   LOCATOR_DROPPED: "the caption gives panel a to the other group"}
+        return marked
+
+    cell = [set_aside(c) for c in cell_candidates(nine.candidates("3570e4ce2a9c"),
+                                                  "3570e4ce2a9c:d1", "late_adaptation")]
+    assert fallback_values(cell, primary, p.stats) == []
+    rec = resolve_effect_with_fallback(ds, p.outcome("late_adaptation"), primary,
+                                       fallback_values(cell, primary, p.stats), p.stats)
+    assert rec.route == "not_convertible" and "precedence_override" not in rec.flags
+
+
+def test_a_row_that_converted_from_a_printed_statistic_is_never_overridden():
+    """Fix round 1, finding 2. `group_statistics_missing` says the GROUP routes were unavailable —
+    it does not say the row got no effect size. A paper that prints means with no spread and a t
+    beside them converts through `test_statistic`, and `figure` outranks `test_statistic` in the
+    default precedence, so the rank guard alone would have swapped a released row's number for a
+    digitised one and held it. D1 is scoped to a value that converts to NOTHING."""
+    p, ds, primary, alts = _cell("3570e4ce2a9c", "3570e4ce2a9c:d1", "late_adaptation", False)
+    assert alts, "the figure pair the fallback would otherwise have taken is there"
+    primary.test_statistic = StatisticValues(stat_type="t", value=2.1, df=38.0,
+                                             design="independent_t", direction="a_greater",
+                                             contrast_kind="groups")
+    rec = resolve_effect_with_fallback(ds, p.outcome("late_adaptation"), primary, alts, p.stats)
+    assert rec.route == "test_statistic" and "precedence_override" not in rec.flags
+    assert "group_statistics_missing" in rec.flags     # raised, but on its own not a trigger
+    assert rec.model_dump() == resolve_effect(ds, p.outcome("late_adaptation"), primary,
+                                              p.stats).model_dump()

@@ -720,11 +720,13 @@ def resolve_effect_with_fallback(dataset: DatasetSpec, outcome_def: OutcomeDef,
     record (`route_overridden_from`, `precedence_override_reason`), and the flag
     `precedence_override` so a reader can find every one of them. Nothing is released by this.
 
-    Three conditions, all necessary. `group_statistics_missing` says the four group routes were
-    never available — the override only ever restores a route precedence could not reach, so it
-    can never demote a row that converted. An unresolved orientation still refuses: an effect size
-    nobody can sign is not improved by measuring it more precisely. And a row the resolver already
-    refused (`ROW_REFUSAL_CODES`) stays refused — the fallback is not a way around a screen.
+    Four conditions, all necessary. The row got no effect size at all: `group_statistics_missing`
+    says the four group routes were unavailable, and it does NOT say the row converted to nothing
+    — a printed t beside a spreadless mean still converts — so the route is tested too, and the
+    override can never demote a row that has a number. An unresolved orientation still refuses: an
+    effect size nobody can sign is not improved by measuring it more precisely. And a row the
+    resolver already refused (`ROW_REFUSAL_CODES`) stays refused — the fallback is not a way
+    around a screen.
 
     `alternatives` come from `rows.fallback_values`, which is where the pairing rules live (same
     locator, same unit, one reading per route). The first that converts wins, and the ordering is
@@ -752,7 +754,15 @@ def resolve_effect_with_fallback(dataset: DatasetSpec, outcome_def: OutcomeDef,
 
 
 def _may_fall_back(record: EffectSizeRecord, primary: ResolvedValues) -> bool:
-    """May this row be rebuilt from a candidate pair? The three conditions of D1, in one place."""
+    """May this row be rebuilt from a candidate pair? The conditions of D1, in one place."""
+    # D1 is scoped to a value that converts to NOTHING. `group_statistics_missing` says the four
+    # GROUP routes were unavailable — it does not say the row got no effect size: a paper that
+    # prints means with no spread and a t beside them converts through `test_statistic`, which
+    # `figure` outranks in the default precedence. Without this line the rank guard below would
+    # have taken a released row's number away and held the row, on a flag about a route that was
+    # never used (review finding 2).
+    if record.route != "not_convertible":
+        return False
     if GROUP_STATISTICS_MISSING not in record.flags:
         return False
     if primary.higher_is_better is None or primary.group_a is None or primary.group_b is None:

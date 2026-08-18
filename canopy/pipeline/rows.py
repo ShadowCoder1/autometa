@@ -30,7 +30,7 @@ from typing import Callable, Collection, Mapping, Sequence
 from ..models import Candidate, DatasetSpec, StatsSettings, Verdict
 from ..verify.checks import best_statistic
 from ..verify.units import same_unit
-from ..verify.vote import locator_key, modality
+from ..verify.vote import LOCATOR_DROPPED, locator_key, modality
 from .resolve import (GROUP_ROUTES, GroupValues, ReportedValues, ResolvedValues,
                       StatisticValues, apply_shared_control, available_routes, multi_group_flags)
 
@@ -196,6 +196,24 @@ def _some_spread(values: GroupValues) -> bool:
             or (values.ci_low is not None and values.ci_high is not None))
 
 
+def _normalised(locator: str) -> str:
+    return " ".join((locator or "").split()).casefold()
+
+
+def _same_place(cand_a: Candidate, cand_b: Candidate) -> bool:
+    """Were these two readings taken at the same place? The locator KEY, or the locator text.
+
+    `vote.locator_key` is the hash of the normalised locator, so for a figure reading a shared key
+    already IS a shared place. For every other modality it is `""` by D2's design — a sentence
+    that names no place is not a second place — which would leave "the same (modality, key)" true
+    of group A read from one sentence and group B from another. The text is compared directly
+    there, so a pair is never assembled out of two different paragraphs.
+    """
+    if locator_key(cand_a):
+        return True
+    return _normalised(cand_a.locator) == _normalised(cand_b.locator)
+
+
 def _reading(cand: Candidate, settled: GroupValues | None) -> GroupValues | None:
     """One candidate as one group's numbers, or `None` when it is not a whole set of them."""
     values = GroupValues.from_candidate(cand)
@@ -212,6 +230,22 @@ def _reading(cand: Candidate, settled: GroupValues | None) -> GroupValues | None
     return values
 
 
+def _first_reading(cands: Sequence[Candidate], settled: GroupValues | None
+                   ) -> tuple[Candidate, GroupValues] | None:
+    """The first of one group's candidates that IS a whole set of numbers, with the candidate.
+
+    Not simply the first candidate: `_reading` refuses one that brought no spread or no n, and
+    taking the first and stopping would discard the whole pair when a later reading of the same
+    route and place is complete. The candidate travels back with the values because the unit and
+    the locator are checked between the two readings the pair was actually built from.
+    """
+    for cand in cands:
+        values = _reading(cand, settled)
+        if values is not None:
+            return cand, values
+    return None
+
+
 def fallback_values(cell: Sequence[Candidate], primary: ResolvedValues,
                     settings: StatsSettings) -> list[ResolvedValues]:
     """The candidate PAIRS this row could be built from instead — D1's alternatives, in order.
@@ -220,10 +254,15 @@ def fallback_values(cell: Sequence[Candidate], primary: ResolvedValues,
     for the vote's own reasons.
 
     * **One reading per group per route** (`vote_candidates`), so the digitiser's five measurement
-      paths are one alternative and not five.
-    * **The same locator** (`vote.locator_key`), because two panels of one figure are two
-      quantities: Langan's Fig. 1 plots the young adults in panel A and the older adults in panel
-      B, and a "pair" spanning both is a difference between two different pictures.
+      paths are one alternative and not five; and per group the FIRST of them that is a whole set
+      of numbers, so an incomplete first candidate does not discard a complete second one.
+    * **Nothing the panel check set aside** (`vote.LOCATOR_DROPPED`), which is where the vote
+      itself drops them (`verify.vote._usable`): a reading whose panel the caption gives to the
+      other group is that group's number, not a second reading of this one (D2).
+    * **The same locator** (`vote.locator_key`, and the locator text where a modality has no key),
+      because two panels of one figure are two quantities: Langan's Fig. 1 plots the young adults
+      in panel A and the older adults in panel B, and a "pair" spanning both is a difference
+      between two different pictures.
     * **The same unit** (`verify.units.same_unit`), because a mean in degrees minus a mean in
       per-cent is not an effect size.
     * **Ordered by the protocol's `route_precedence`**, so that when more than one pair converts
@@ -235,19 +274,23 @@ def fallback_values(cell: Sequence[Candidate], primary: ResolvedValues,
     "these are the pairs that exist", which is why a reading whose dispersion type nobody recorded
     is still listed — it is a real pair, and the refusal it earns should come from one place.
     """
-    readings: dict[tuple[str, str], dict[str, Candidate]] = {}
+    readings: dict[tuple[str, str], dict[str, list[Candidate]]] = {}
     for cand in vote_candidates(cell):
         if cand.kind != "group_stats" or cand.status != "found" or cand.group not in ("A", "B"):
             continue
-        readings.setdefault((modality(cand), locator_key(cand)), {}).setdefault(cand.group, cand)
+        if (cand.pixel_provenance or {}).get(LOCATOR_DROPPED):
+            continue        # verify.panels gave this panel to the other group (D2)
+        readings.setdefault((modality(cand), locator_key(cand)), {}) \
+                .setdefault(cand.group, []).append(cand)
 
     out: list[ResolvedValues] = []
     for pair in readings.values():
-        cand_a, cand_b = pair.get("A"), pair.get("B")
-        if cand_a is None or cand_b is None or not same_unit(cand_a.unit, cand_b.unit):
+        read_a = _first_reading(pair.get("A", ()), primary.group_a)
+        read_b = _first_reading(pair.get("B", ()), primary.group_b)
+        if read_a is None or read_b is None:
             continue
-        group_a, group_b = _reading(cand_a, primary.group_a), _reading(cand_b, primary.group_b)
-        if group_a is None or group_b is None:
+        (cand_a, group_a), (cand_b, group_b) = read_a, read_b
+        if not same_unit(cand_a.unit, cand_b.unit) or not _same_place(cand_a, cand_b):
             continue
         out.append(ResolvedValues(
             dataset_id=primary.dataset_id, outcome_key=primary.outcome_key,
