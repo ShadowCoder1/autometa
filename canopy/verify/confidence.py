@@ -127,6 +127,11 @@ CAPPING_FLAGS: frozenset[str] = frozenset({
     #: an average across a categorical axis the protocol ASKED for, with a dispersion the code
     #: approximated: a declared transformation whose spread is not the paper's own
     "collapsed_across_x",
+    #: …and its opposite number (D3): the value is the ONE point at the x category the source
+    #: names, so the spread IS the paper's own band and nothing was approximated — what is thin
+    #: here is corroboration, because a series with one point in the frame has no neighbouring
+    #: point to agree with it. A reviewer should see the figure; the number is not in question.
+    "categorical_point_read",
     #: extraction was re-opened on a source the verifier named, so a model chose the location
     "reopened_on_better_source",
     #: no ladder for the value axis could be built at all: the numbers rest on the readers' own
@@ -265,6 +270,9 @@ CAP_REASONS: dict[str, str] = {
                             "readers and nothing checked it"),
     "collapsed_across_x": ("this is an average across a categorical axis and its dispersion is an "
                            "approximation, not the paper's own"),
+    "categorical_point_read": ("this is the single plotted point at the x category the locator "
+                               "names rather than an average across the axis, so there is one "
+                               "point per group and nothing else on the axis corroborates it"),
     "reopened_on_better_source": ("extraction was re-opened on a source the verifier named, so "
                                   "the location itself was decided by a model"),
     "series_identity_conflict": ("both groups resolve to the same plotted marker, so this number "

@@ -171,6 +171,10 @@ CHECK_SEVERITY: dict[str, str] = {
     "reopened_on_better_source": "warn",
     "collapsed_across_x": "warn",
     "categorical_x_unsupported": "warn",
+    #: the value is the ONE point at the x category the source names (D3). Nothing here says the
+    #: number is wrong — it says the cell rests on a single plotted point rather than on a series,
+    #: which is a reason for a reviewer to look at the figure. `warn`, and a cap in `confidence`.
+    "categorical_point_read": "warn",
     "points_undercount": "warn",
     # --- can it be used at all
     "orientation_unknown": "warn",
@@ -583,9 +587,24 @@ def _check_panel_isolation(cand: Candidate, out: list[CheckFlag]) -> None:
           cand.candidate_id)
 
 
+#: `digitizer.CATEGORICAL_POINT_AT_CATEGORY`, spelled here so this layer does not import the
+#: digitiser (and, with it, OpenCV) to read one word out of a provenance dict. The pair is pinned
+#: by `tests/test_digitizer.py::test_a_point_at_category_read_is_capped_and_says_why`, which
+#: builds the provenance from the digitiser's own constant and asserts this check fires on it.
+CATEGORICAL_POINT_AT_CATEGORY = "point_at_category"
+
+
 def _check_categorical_x(cand: Candidate, out: list[CheckFlag]) -> None:
-    """A value averaged across a categorical x axis, or the refusal to invent one (task 16 P6)."""
+    """A value averaged across a categorical x axis, read at one category of it, or the refusal
+    to invent either (task 16 P6, D3)."""
     provenance = cand.pixel_provenance or {}
+    if provenance.get("categorical_x_role") == CATEGORICAL_POINT_AT_CATEGORY:
+        _flag(out, "categorical_point_read",
+              f"this value is the single plotted point at the x category this cell's locator "
+              f"names, not an average across the axis "
+              f"({provenance.get('categorical_x_role_why') or 'the locator named one category'})"
+              f" — one point per group, so nothing on the axis corroborates it",
+              cand.candidate_id)
     if provenance.get("categorical_x_unsupported"):
         _flag(out, "categorical_x_unsupported",
               str(provenance.get("needs_review_reason")

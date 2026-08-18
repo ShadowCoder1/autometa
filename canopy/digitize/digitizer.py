@@ -27,7 +27,7 @@ from ..ingest.pdf import (FigureRegion, MIN_PANEL_NUMERIC, PanelRegion, PaperRec
 from ..llm.client import LLMClient
 from ..models import (Candidate, DatasetSpec, DigitizeSettings, DispersionType, Source,
                       SourceKind)
-from ..verify.panels import _label_key, _labels_are_the_same, _names_group
+from ..verify.panels import _label_key, _labels_are_the_same, _MIN_LABEL_CHARS, _names_group
 from .calibrate import AxisCalibration, fit_axis, pair_ticks, pixel_resolution, \
     px_to_value, value_to_px
 from .overlay import draw_overlay
@@ -119,6 +119,24 @@ class RouteSample:
         d["extractor_id"] = self.extractor_id
         d["n_tool_calls"] = len(self.tool_calls)
         return d
+
+
+#: the stages that may take a route sample out of the ensemble. Recorded on the sample and
+#: carried into `pixel_provenance["dropped_by"]`, because "why is there no value here" was
+#: answered by a hard-coded string for a year: a categorical drop printed as "dropped by overlay
+#: verification", and an audit of a nulled cell went looking at the overlay layer, which had done
+#: nothing to it. A stage that drops a reading says so under its own name.
+DROPPED_BY_AXIS = "axis_identity"
+DROPPED_BY_CATEGORICAL = "categorical_x"
+DROPPED_BY_OVERLAY = "overlay_verify"
+DROPPED_BY_LEGIBILITY = "legibility"
+
+
+def _drop(sample: "RouteSample", stage: str, reason: str) -> None:
+    """Take a route sample out of the ensemble, naming the stage that did it and why."""
+    sample.dropped = True
+    sample.drop_reason = reason
+    sample.extra["dropped_by"] = stage
 
 
 @dataclass
@@ -827,10 +845,24 @@ def _readout_plan(models: Sequence[str], n_readouts: int) -> list[ReadoutSpec]:
 MEAN_OF_POINT_SD = "mean_of_point_sd"
 
 
-#: the three answers `_categorical_role` can give, and what each one means for the read
+#: the four answers `_categorical_role` can give, and what each one means for the read
 CATEGORICAL_GROUPS = "groups"           # the x categories ARE the comparison arms
 CATEGORICAL_CONDITIONS = "conditions"   # the outcome is the average across the categories
+#: the series are the groups and the SOURCE names one of the x categories: the point at that
+#: category is this group's value. Neither of the two above — nothing is averaged (there is one
+#: point per series to average), and the categories do not name the groups (they name the
+#: conditions), which is why the two rules that came before it both produced nothing here.
+CATEGORICAL_POINT_AT_CATEGORY = "point_at_category"
 CATEGORICAL_UNRESOLVED = "unknown"      # nothing said which, so nothing may be averaged
+
+#: how a locator can name a position on the x axis instead of quoting the category's name. Only
+#: phrases that name a POSITION count: a bare "left" is prose about where a panel sits, and a
+#: locator saying so is not a locator naming a category.
+POSITIONAL_X_PHRASES = ("left side of the x axis", "left-most", "leftmost", "first", "last",
+                        "right-most", "rightmost")
+#: the category a locator quotes or brackets: `'without strategy'`, `"block 20"`, `(pre-test)`
+_LOCATOR_PHRASE = re.compile(r"'([^']{2,60})'|\"([^\"]{2,60})\"|\(([^()]{2,60})\)")
+_WORD_RE = re.compile(r"[a-z0-9]+")
 
 #: The vocabulary question — *do these words name this group?* — is asked in two places now: here,
 #: to decide whether a categorical x axis IS the comparison, and in `verify.panels`, to decide
@@ -840,21 +872,137 @@ CATEGORICAL_UNRESOLVED = "unknown"      # nothing said which, so nothing may be 
 #: still reachable under their old names here, for the callers and tests that knew them.
 
 
-def _categorical_role(target: TargetSpec | None, readings: Sequence[Any]
-                      ) -> tuple[str, str]:
-    """`(role, why)` — are this figure's x categories the CONDITIONS or the GROUPS themselves?
+def _locator_phrases(locator: str) -> list[str]:
+    """Every phrase a locator quotes or brackets — the places it names something verbatim."""
+    out: list[str] = []
+    for match in _LOCATOR_PHRASE.finditer(str(locator or "")):
+        phrase = next(g for g in match.groups() if g is not None).strip()
+        if phrase:
+            out.append(phrase)
+    return out
 
-    `x_axis_kind: "categorical"` conflates two opposite figure shapes. On one, each series runs
-    across the axis and the review wants the average across it. On the other, the axis IS the
-    comparison — one bar per group — and averaging across it computes `(A + B) / 2` for both arms,
-    annihilating the contrast and reporting Cohen's d = 0.0 with every route in perfect agreement.
-    No number distinguishes them; the CATEGORY NAMES do.
+
+def _agreed_x_read(readings: Sequence[Any]) -> str:
+    """The one x position every series was read at, when they all name the same one.
+
+    A positional phrase in the locator ("the left-most point") says WHERE without saying WHAT, so
+    on its own it is not a category. It becomes one when the readers, independently, all say they
+    read at the same place — and "without strategy" and "without strategy (left end of x axis)"
+    are the same place, which is why this is `_labels_are_the_same` and not string equality.
+    """
+    reads = [str(getattr(row, "x_read", "") or "").strip()
+             for reading in readings for row in getattr(reading, "groups", ())
+             if str(getattr(row, "x_read", "") or "").strip()]
+    if not reads:
+        return ""
+    shortest = min(reads, key=len)
+    return shortest if all(_labels_are_the_same(shortest, r) for r in reads) else ""
+
+
+def _locator_category(locator: str, readings: Sequence[Any]) -> str:
+    """The x category this locator names, or `""` — a phrase it quotes, or a position it points
+    at that every reader agrees on.
+
+    A position is only a category once it lands on one. "The left-most point" beside readers who
+    all say they read "every point on the x axis" names no category at all: taking their word for
+    it there would turn an eight-point series into a point read, which is the opposite mistake to
+    the one D3 exists to fix. So when the readers listed categories, the position has to match one
+    of them; only a reading that listed none is taken at its word.
+    """
+    if not str(locator or "").strip():
+        return ""
+    labels = [str(p.x_label).strip() for reading in readings
+              for row in getattr(reading, "groups", ()) for p in getattr(row, "points", ())
+              if str(getattr(p, "x_label", "") or "").strip()]
+    for phrase in _locator_phrases(locator):
+        for label in labels:
+            if _labels_are_the_same(phrase, label):
+                return label
+    if not any(phrase in str(locator).lower() for phrase in POSITIONAL_X_PHRASES):
+        return ""
+    agreed = _agreed_x_read(readings)
+    if not agreed or not labels:
+        return agreed
+    return next((label for label in labels if _labels_are_the_same(agreed, label)), "")
+
+
+def _vocab_words(names: Sequence[str]) -> set[str]:
+    """The words a group is called by, long enough to tell one group from another."""
+    out: set[str] = set()
+    for name in names:
+        out |= {w for w in _WORD_RE.findall(str(name or "").lower())
+                if len(w) >= _MIN_LABEL_CHARS}
+    return out
+
+
+def _series_names_its_group(label_read: Any, own: Sequence[str], other: Sequence[str]) -> bool:
+    """Does this series' description name its OWN arm, and not the other one?
+
+    `_names_group` asks whether two LABELS are the same thing; a series description is not a
+    label — "dashed purple (older non-instructed)" names a line style, a colour and a condition
+    besides the group, so nothing in it spells "older adults". What separates the two arms is the
+    vocabulary one of them has and the other does not, so that is what is looked for, on whole
+    words: "young" must not answer for "younger" by being a piece of it.
+    """
+    if _names_group(label_read, own) and not _names_group(label_read, other):
+        return True
+    words = set(_WORD_RE.findall(str(label_read or "").lower()))
+    mine, theirs = _vocab_words(own), _vocab_words(other)
+    return bool(words & (mine - theirs)) and not (words & (theirs - mine))
+
+
+def _locatable_point(row: Any, category: str) -> bool:
+    """Can this series' value be pinned to the named category, without picking one of several?"""
+    if not row.points:
+        return row.mean is not None      # the reader gave one number and said where it read it
+    if len(row.points) == 1:
+        return True
+    return len([p for p in row.points if _labels_are_the_same(p.x_label, category)]) == 1
+
+
+def _series_are_the_groups(readings: Sequence[Any], vocab: dict[str, tuple[str, ...]],
+                           category: str) -> str:
+    """How ONE reader told the two arms apart, when both of its series name their own group only
+    and each of them has a value at `category`.
+
+    Both halves are asked of the same reading on purpose: a reader that distinguished the arms
+    and a different reader that read at the named category are not, together, a reader that did
+    both, and the value D3 takes comes from a single read-out.
+    """
+    for reading in readings:
+        rows = {g: reading.group(g) for g in GROUPS}
+        if any(rows[g] is None for g in GROUPS):
+            continue
+        if not all(_locatable_point(rows[g], category) for g in GROUPS):
+            continue
+        reads = {g: str(getattr(rows[g], "label_read", "") or "").strip() for g in GROUPS}
+        if not all(reads.values()) or _label_key(reads["A"]) == _label_key(reads["B"]):
+            continue
+        if all(_series_names_its_group(reads[g], vocab[g], vocab[other])
+               for g, other in (("A", "B"), ("B", "A"))):
+            return f"{reads['A']!r} and {reads['B']!r}"
+    return ""
+
+
+def _categorical_role(target: TargetSpec | None, readings: Sequence[Any], *,
+                      locator: str = "") -> tuple[str, str]:
+    """`(role, why)` — what ARE this figure's x categories, and what does that make the read?
+
+    `x_axis_kind: "categorical"` conflates three different figure shapes. On the first, each
+    series runs across the axis and the review wants the average across it. On the second, the
+    axis IS the comparison — one bar per group — and averaging across it computes `(A + B) / 2`
+    for both arms, annihilating the contrast and reporting Cohen's d = 0.0 with every route in
+    perfect agreement. On the third the series are the groups and the categories are conditions,
+    and the source names ONE of those conditions: the point there is the value, and there is
+    nothing to average because each series has one point in the frame. No number distinguishes
+    the three; the CATEGORY NAMES and the LOCATOR do.
 
     So the question asked here is the only one that can settle it: *do the categories the readers
     named map onto the groups the protocol is comparing?* If they do, each category is a group's
     own value and must be read as that group's; if they demonstrably do not (and there is more
-    than one of them), they are conditions and collapsing is right. Anything else is unresolved,
-    and an unresolved cell produces no number rather than a wrong one.
+    than one of them), they are conditions — and then it matters whether the locator picked one
+    of them out. Anything else is unresolved, and an unresolved cell produces no number rather
+    than a wrong one.
 
     Evidence, most authoritative first:
 
@@ -862,7 +1010,10 @@ def _categorical_role(target: TargetSpec | None, readings: Sequence[Any]
     2. a reader listed categories matching BOTH group labels — the axis carries both arms;
     3. each group's own points are one category matching that group's own label;
     4. each group's `x_read` names its own group's label and not the other's;
-    5. some series has two or more categories, none of which names either group.
+    5. `locator` names one x category, the two series name the two groups, and no reader came
+       back with two or more categories that name the groups — the point at that category is
+       this group's value (D3);
+    6. some series has two or more categories, none of which names either group.
     """
     if target is not None and target.categorical_x in (CATEGORICAL_GROUPS,
                                                        CATEGORICAL_CONDITIONS):
@@ -882,6 +1033,9 @@ def _categorical_role(target: TargetSpec | None, readings: Sequence[Any]
     # label matching a single category says nothing about what the axis IS
     both_labelled = all(vocab.values())
     conditions_seen: list[str] = []
+    #: how many categories one series named that name a group — rule 5 is only reachable while
+    #: this stays below two, which is rule 2's evidence and rule 2 wins it
+    group_labelled_points = 0
     for reading in readings:
         rows = {g: reading.group(g) for g in GROUPS}
         for group, row in rows.items():
@@ -890,6 +1044,9 @@ def _categorical_role(target: TargetSpec | None, readings: Sequence[Any]
             categories = [p.x_label for p in row.points if str(p.x_label or "").strip()]
             hits = {g: [c for c in categories if _names_group(c, vocab[g])]
                     for g in GROUPS if vocab[g]}
+            group_labelled_points = max(
+                group_labelled_points,
+                len({_label_key(c) for cs in hits.values() for c in cs}))
             if both_labelled and all(hits.get(g) for g in GROUPS):
                 named = ", ".join(sorted({c for cs in hits.values() for c in cs}))
                 return CATEGORICAL_GROUPS, (
@@ -915,6 +1072,21 @@ def _categorical_role(target: TargetSpec | None, readings: Sequence[Any]
                 return CATEGORICAL_GROUPS, (
                     f"each group was read at its own category on the x axis "
                     f"({reads['A']!r}, {reads['B']!r})")
+    # D3, ranked above the conditions fallback: the categories are conditions, but the SOURCE
+    # named one of them, and the series in front of the reader are the two groups. There is no
+    # axis left to average over — each series has one point in the frame, at the category that
+    # was asked for — so collapsing it produces nothing and dropping the pixel routes for
+    # "reading one point" throws away the only routes that read the right point. It fires only
+    # when the protocol permitted the collapse in the first place; without that permission the
+    # figure is not being read across an axis at all and the ordinary path applies.
+    if getattr(target, "collapse_across_x", False) and both_labelled and group_labelled_points < 2:
+        category = _locator_category(locator, readings)
+        series = _series_are_the_groups(readings, vocab, category) if category else ""
+        if category and series:
+            return CATEGORICAL_POINT_AT_CATEGORY, (
+                f"the source names one x category ({category!r}) and the two series are the "
+                f"groups themselves ({series}) — the point at that category IS this group's "
+                f"value, and there is no second point of it on the axis to average with")
     if conditions_seen:
         return CATEGORICAL_CONDITIONS, conditions_seen[0]
     return CATEGORICAL_UNRESOLVED, ("nothing in the readings says whether the x categories are "
@@ -954,6 +1126,29 @@ def _row_at_own_category(row: Any, names: Sequence[str]) -> Any:
     return _replace(row, mean=chosen.mean,
                     error_half_length=(row.error_half_length if row.error_half_length is not None
                                        else chosen.error_half_length))
+
+
+def _row_at_locator_category(row: Any, category: str) -> Any:
+    """The group's row with `mean`/`error_half_length` taken from the category the SOURCE names.
+
+    The sibling of `_row_at_own_category`, keyed on the locator's category rather than on the
+    group's label: here the categories are conditions and the series are the groups, so what
+    picks the point out is which condition was asked for. A reader that came back with exactly
+    one point came back with that one, and `mean` — which the read-out prompt asks to be the
+    series as a whole — is used only when no point can be matched.
+    """
+    from dataclasses import replace as _replace
+
+    if not row.points:
+        return row
+    mine = [p for p in row.points if _labels_are_the_same(p.x_label, category)]
+    chosen = mine[0] if len(mine) == 1 else (row.points[0] if len(row.points) == 1 else None)
+    if chosen is None or chosen.mean is None:
+        return row
+    return _replace(row, mean=chosen.mean,
+                    error_half_length=(chosen.error_half_length
+                                       if chosen.error_half_length is not None
+                                       else row.error_half_length))
 
 
 def _collapse_points(row: Any) -> tuple[float | None, float | None, int]:
@@ -1011,9 +1206,12 @@ def _unmeasured_cap_side(text: str) -> str | None:
 
 
 def _samples_from_readout(reading: ReadOut, collapse: bool = False,
-                          target: TargetSpec | None = None) -> list[RouteSample]:
-    role, role_why = (_categorical_role(target, [reading]) if collapse
+                          target: TargetSpec | None = None,
+                          locator: str = "") -> list[RouteSample]:
+    role, role_why = (_categorical_role(target, [reading], locator=locator) if collapse
                       else (CATEGORICAL_CONDITIONS, ""))
+    category = (_locator_category(locator, [reading])
+                if role == CATEGORICAL_POINT_AT_CATEGORY else "")
     # the guarantee that no cell can report the same mean for both arms out of the same points:
     # when both series come back with identical categories at identical heights, one series was
     # read twice, and averaging either of them is averaging the contrast away
@@ -1041,6 +1239,12 @@ def _samples_from_readout(reading: ReadOut, collapse: bool = False,
                     f"{', '.join(str(p.x_label) for p in row.points[:4])}) can be matched to "
                     f"group {group} ({label!r}), so no value is taken from it").strip("; "))
             row = resolved
+            collapse_here = False
+        elif collapse and role == CATEGORICAL_POINT_AT_CATEGORY:
+            # the categories are conditions, the source named one of them, and this series has
+            # its point there. Nothing is averaged and nothing is approximated: the spread that
+            # travels with the value is the paper's own band at that category.
+            row = _row_at_locator_category(row, category)
             collapse_here = False
         else:
             collapse_here = collapse
@@ -1112,6 +1316,7 @@ def _samples_from_readout(reading: ReadOut, collapse: bool = False,
                    "unmeasured_cap": unmeasured,
                    "categorical_x_role": role if collapse else "",
                    "categorical_x_role_why": role_why if collapse else "",
+                   "categorical_x_category": category,
                    "axis_direction_note": reading.axis_direction_note}))
     return out
 
@@ -1650,10 +1855,9 @@ def _reconcile_axes(samples: list[RouteSample], target: TargetSpec) -> dict[str,
                                 f"which no other reader named — kept because group "
                                 f"{sample.group} has no other reading").strip("; ")
                 continue
-            sample.dropped = True
-            sample.drop_reason = (
-                f"read off {str(sample.extra['axis_read'])!r}, while the ensemble is on "
-                f"{str(keep[0].extra['axis_read'])!r} — two value axes are not one number")
+            _drop(sample, DROPPED_BY_AXIS,
+                  f"read off {str(sample.extra['axis_read'])!r}, while the ensemble is on "
+                  f"{str(keep[0].extra['axis_read'])!r} — two value axes are not one number")
             dropped.append(sample.extractor_id)
     info["axis_agreement"] = "conflict"
     info["axis_kept"] = str(keep[0].extra["axis_read"])
@@ -2028,6 +2232,11 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     if panel_info.get("uncalibrated"):
         return _panel_uncalibrated(fig, target, paper, source, dataset, crop, panel_info, result)
     text = caption if caption is not None else (fig.caption or "")
+    # WHERE in the figure the map sent us. On a categorical x axis this is evidence about the
+    # quantity itself — a locator that names one of the categories is asking for the point there,
+    # not for the average across them (D3) — so it travels with the read-outs, not just with the
+    # candidates that come out at the end.
+    locator = source.locator if source is not None else ""
     # the `digitize:` prefix is what `canopy.llm.costs.stage_of` attributes to the
     # digitiser when the run reports where its money went
     key = f"digitize:{cell_key or f'{paper.sha256[:12]}/{fig.id}/{target.outcome_key}'}"
@@ -2047,7 +2256,8 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
                            sample=spec.sample, view=view,
                            cell_key=f"{key}/D/{spec.variant}{suffix}")
         readouts.append(reading)
-        fresh = _samples_from_readout(reading, collapse=target.collapse_across_x, target=target)
+        fresh = _samples_from_readout(reading, collapse=target.collapse_across_x, target=target,
+                                      locator=locator)
         _mark_illegible(reading, fresh)          # C2: legibility is reported, then acted on
         samples.extend(fresh)
 
@@ -2079,20 +2289,21 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     pixel_samples = _samples_from_coords(coord, core, pixel_cal, cal_source)
     # --- path B: raster CV, matched by the nearest VLM coordinate
     pixel_samples += _samples_from_raster(coord, core, pixel_cal, cal_source)
-    cat_role, cat_role_why = ((_categorical_role(target, voting(readouts)))
+    cat_role, cat_role_why = ((_categorical_role(target, voting(readouts), locator=locator))
                               if target.collapse_across_x else (CATEGORICAL_CONDITIONS, ""))
-    if target.collapse_across_x and cat_role != CATEGORICAL_GROUPS:
+    if (target.collapse_across_x
+            and cat_role not in (CATEGORICAL_GROUPS, CATEGORICAL_POINT_AT_CATEGORY)):
         # a pixel route resolves ONE datum; when the outcome is the mean of every datum on the
         # axis its answer is a different number and must not enter the ensemble. When the x
-        # categories ARE the groups there is nothing to average: one datum per group is exactly
-        # the quantity, and dropping these routes threw away correct readings.
+        # categories ARE the groups — or when the source named the one category to read at —
+        # there is nothing to average: one datum per group is exactly the quantity, and dropping
+        # these routes threw away correct readings.
         for pixel in pixel_samples:
-            pixel.dropped = True
-            pixel.drop_reason = (
+            _drop(pixel, DROPPED_BY_CATEGORICAL, (
                 "this route reads one point, and the outcome is the average across the "
                 f"categorical x axis ({cat_role_why})" if cat_role == CATEGORICAL_CONDITIONS else
                 "this route reads one point, and nothing has established whether the x categories "
-                f"are conditions to average across or the groups themselves ({cat_role_why})")
+                f"are conditions to average across or the groups themselves ({cat_role_why})"))
     samples.extend(pixel_samples)
 
     _, tick_spacing = _tick_stats(pixel_cal)
@@ -2211,8 +2422,8 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
                         samples[idx].extra["overlay_disputed"] = (
                             f"{v.verdict} at a borrowed x — {v.reason}")
                         continue
-                    samples[idx].dropped = True
-                    samples[idx].drop_reason = f"overlay verify: {v.verdict} — {v.reason}"
+                    _drop(samples[idx], DROPPED_BY_OVERLAY,
+                          f"overlay verify: {v.verdict} — {v.reason}")
                     dropped += 1
             verify_log[-1]["dropped_samples"] = dropped
             if not dropped or not any(s.usable for s in samples):
@@ -2497,8 +2708,7 @@ def _mark_illegible(reading: ReadOut, samples: list[RouteSample]) -> None:
     else:
         return
     for sample in samples:
-        sample.dropped = True
-        sample.drop_reason = why
+        _drop(sample, DROPPED_BY_LEGIBILITY, why)
         sample.extra[ILLEGIBLE] = True
 
 #: how a locator names a panel: "Fig. 3a", "Figure 2, panel a", "(b)", "panel B"
@@ -2915,7 +3125,8 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
                 notes=("; ".join(x for x in (s.notes, s.drop_reason) if x)),
                 provenance={**base, "route_sample": s.to_dict(),
                             "tool_calls": summarize_tool_calls(s.tool_calls),
-                            "dropped": s.dropped},
+                            "dropped": s.dropped,
+                            "dropped_by": str(s.extra.get("dropped_by", ""))},
                 call_id=(s.call_ids[-1] if s.call_ids else ""), model=s.model))
 
         live = [s for s in mine if s.usable]
@@ -2929,6 +3140,9 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
                 provenance={**base, "needs_review": True, "needs_review_reason": reason,
                             "per_route": [s.to_dict() for s in mine],
                             "dropped_samples": [s.to_dict() for s in mine if s.dropped],
+                            "dropped_by": ", ".join(sorted({str(s.extra.get("dropped_by", ""))
+                                                            for s in mine if s.dropped}
+                                                           - {""})),
                             "tool_calls": _aggregate_tool_calls(mine)},
                 call_id=_verify_call_id(base), model=""))
             continue
@@ -3045,6 +3259,8 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
                                               else None))),
             "needs_review_reason": "; ".join(reasons),
             "dropped_samples": [s.to_dict() for s in mine if s.dropped],
+            "dropped_by": ", ".join(sorted({str(s.extra.get("dropped_by", ""))
+                                            for s in mine if s.dropped} - {""})),
         }
         out.append(_candidate(
             mean, error, group=group, sample=None, target=target, fig=fig, paper=paper,
@@ -3095,17 +3311,25 @@ def _absent_status(mine: Sequence[RouteSample]) -> tuple[str, str]:
     """Why a group has no value — and, crucially, whether that means the datum is not on the page.
 
     `not_on_these_pages` is a claim about the PAPER: the models looked and the quantity is not in
-    this figure. Losing every route to overlay verification is a claim about US: the datum is there,
-    we could not read it reliably. That is `ambiguous`, and conflating the two would let a failed
-    read silently exclude a study from the meta-analysis.
+    this figure. Losing every route to a drop is a claim about US: the datum is there, we could
+    not read it reliably. That is `ambiguous`, and conflating the two would let a failed read
+    silently exclude a study from the meta-analysis.
+
+    WHICH stage dropped them is the second thing this line has to get right, and for a year it
+    did not: the cause was hard-coded to "overlay verification" whatever had actually happened,
+    so Vachon's Fig 4 — nulled by the categorical rule, untouched by the overlay layer — reported
+    the overlay as its cause and sent a whole-run audit to the wrong stage. Every sample's own
+    `drop_reason` is named here instead, distinct ones joined in the order they were dropped.
     """
     if not mine:
         return "ambiguous", "no route sample was produced for this group"
     if any(s.dropped for s in mine):
         dropped = [s.extractor_id for s in mine if s.dropped]
-        return "ambiguous", ("every usable route sample was dropped by overlay verification "
-                             f"({', '.join(dropped)}); the datum is on the page but we could not "
-                             f"read it reliably")
+        reasons = list(dict.fromkeys(s.drop_reason.strip() for s in mine
+                                     if s.dropped and s.drop_reason.strip()))
+        why = "; ".join(reasons) or "no stage recorded why"
+        return "ambiguous", (f"every usable route sample was dropped ({', '.join(dropped)}): "
+                             f"{why}; the datum is on the page but we could not read it reliably")
     if all(s.status == "not_on_these_pages" for s in mine):
         return "not_on_these_pages", "every route reported this group is not plotted in this figure"
     return "ambiguous", "no route produced a value for this group"

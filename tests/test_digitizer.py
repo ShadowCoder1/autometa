@@ -892,9 +892,12 @@ def test_absent_status_separates_not_on_the_page_from_unreadable():
     status, why = _absent_status(absent)
     assert status == "not_on_these_pages" and "not plotted" in why
 
-    dropped = [RouteSample(route="C", group="A", mean=1.0, dropped=True, drop_reason="x")]
+    dropped = [RouteSample(route="C", group="A", mean=1.0, dropped=True,
+                           drop_reason="overlay verify: wrong_series — it is group B's mark")]
     status, why = _absent_status(dropped)
-    assert status == "ambiguous" and "overlay verification" in why
+    # the CAUSE is the sample's own drop reason, never a hard-coded stage: an audit that reads
+    # "dropped by overlay verification" about a categorical drop is sent down the wrong path
+    assert status == "ambiguous" and "overlay verify: wrong_series" in why
 
     assert _absent_status([])[0] == "ambiguous"
 
@@ -930,7 +933,10 @@ def test_digitize_is_ambiguous_not_absent_when_verification_drops_every_route(ba
         assert ensemble[group].mean is None
         prov = ensemble[group].pixel_provenance
         assert prov["needs_review"] is True
-        assert "overlay verification" in prov["needs_review_reason"]
+        # the cause is the samples' own drop reason and the stage that set it, never a
+        # hard-coded string: this cell really was dropped by the overlay layer, and it says so
+        assert "overlay verify: wrong_series" in prov["needs_review_reason"]
+        assert prov["dropped_by"] == "overlay_verify"
         assert prov["dropped_samples"] and prov["tool_calls"]
 
 
@@ -2283,6 +2289,137 @@ def test_an_explicit_categorical_x_of_groups_skips_the_refusal_without_the_colla
     assert ens["A"].mean == pytest.approx(31.5, abs=0.6)
     assert ens["B"].mean == pytest.approx(12.25, abs=0.6)
     assert not any(c.pixel_provenance.get("categorical_x_unsupported") for c in out.candidates)
+
+
+# ------------------------------------------------- D3: a point read AT the category the locator names
+#: the real locator the mapper wrote for Vachon's Fig 4, non-instructed arms
+LOC = ("Fig 4, left side of the x axis ('without strategy'), dashed purple line/point "
+       "(older non-instructed)")
+
+
+def _vachon():
+    """The two non-instructed read-outs of Vachon Fig 4, rebuilt from the recorded values.
+
+    One point per series, at the category the locator names — the shape that used to be nulled
+    twice over: `_collapse_points` wants two points and had one, and the pixel routes that DID
+    read the bars (15.8948 / 15.1316) were dropped as "reading one point".
+    """
+    from tests.helpers.digitize_replay import readout, target
+
+    t = target(group_a_label="older adults", group_b_label="younger adults",
+               collapse_across_x=True)
+    r = readout("claude-opus-5", "direct", [
+        {"group": "A", "label_read": "dashed purple (older non-instructed)",
+         "x_read": "without strategy", "points": [("without strategy", 15.89, 3.18)],
+         "mean": 15.89, "error_half_length": 3.18},
+        {"group": "B", "label_read": "dashed red (younger non-instructed)",
+         "x_read": "without strategy", "points": [("without strategy", 15.13, 1.85)],
+         "mean": 15.13, "error_half_length": 1.85}])
+    return t, [r]
+
+
+def test_point_at_named_category_is_not_collapsed():
+    from canopy.digitize import digitizer as dz
+
+    t, rs = _vachon()
+    role, why = dz._categorical_role(t, rs, locator=LOC)
+    assert role == dz.CATEGORICAL_POINT_AT_CATEGORY, why
+
+
+def test_vachon_groups_keep_their_values_and_status_found():
+    from tests.helpers.digitize_replay import samples_for
+
+    t, rs = _vachon()
+    s = {x.group: x for x in samples_for(rs, t, locator=LOC)}
+    assert abs(s["A"].mean - 15.89) < 0.05 and abs(s["B"].mean - 15.13) < 0.05
+    assert s["A"].status == s["B"].status == "found"
+    assert "collapsed_across_x" not in s["A"].extra.get("flags", [])
+    assert s["A"].extra["categorical_x_role"] == "point_at_category"
+    # the spread is the paper's own band at that category, not a mean of point SDs
+    assert s["A"].error == pytest.approx(3.18) and s["B"].error == pytest.approx(1.85)
+    assert not s["A"].extra.get("collapsed_across_x")
+    assert not s["A"].extra.get("dispersion_approximation")
+
+
+def test_conditions_axis_still_collapses():
+    from canopy.digitize import digitizer as dz
+    from tests.helpers.digitize_replay import readout, samples_for, target
+
+    t = target(group_a_label="older", group_b_label="younger", collapse_across_x=True)
+    r = readout("claude-opus-5", "direct", [
+        {"group": "A", "label_read": "open circles (older)", "x_read": "",
+         "points": [(str(i), v, 1.0) for i, v in
+                    enumerate([-23, -25, -27, -29.5, -26, -28, -27.5, -30])],
+         "mean": None, "error_half_length": None}])
+    s = samples_for([r], t, locator="Figure 2, panel a ('adaptive shift')")[0]
+    assert abs(s.mean + 27.0) < 0.5 and s.extra["categorical_x_role"] == dz.CATEGORICAL_CONDITIONS
+
+
+def test_unresolved_axis_still_yields_nothing():
+    from tests.helpers.digitize_replay import readout, samples_for, target
+
+    t = target(group_a_label="older", group_b_label="younger", collapse_across_x=True)
+    r = readout("m", "direct", [
+        {"group": "A", "label_read": "line", "x_read": "", "points": [("c1", 3.0, 0.5)],
+         "mean": 3.0, "error_half_length": 0.5}])
+    assert samples_for([r], t, locator="Fig 3, at the left")[0].mean is None
+
+
+def test_point_at_category_keeps_pixel_routes(bar_figure, tmp_path):
+    """A one-point route reading a one-point quantity is exactly right, so nothing is dropped."""
+    from canopy.digitize.digitizer import CATEGORICAL_POINT_AT_CATEGORY
+
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    payload = _group_chart_payload([("without strategy", 15.89, 3.18)],
+                                   [("without strategy", 15.13, 1.85)],
+                                   x_read="without strategy")
+    payload["groups"][0]["label_read"] = "dashed purple (old non-instructed)"
+    payload["groups"][1]["label_read"] = "dashed red (young non-instructed)"
+    provider = _scripted(payload, _coord_payload(bar_figure, view.scale))
+    target = replace(TARGET, collapse_across_x=True)
+    source = CATEGORICAL_SOURCE.model_copy(update={"locator": LOC})
+    out = digitize(_client(provider), paper, fig, target, source=source,
+                   dataset=DATASET, out_dir=tmp_path, result=True)
+    ens = _ensembles(out)
+    assert ens["A"].pixel_provenance["categorical_x_role"] == CATEGORICAL_POINT_AT_CATEGORY
+    assert not ens["A"].pixel_provenance.get("collapsed_across_x")
+    pixels = [s for s in out.samples if s.route in ("B", "C")]
+    assert pixels and all(not s.dropped and not s.drop_reason for s in pixels)
+
+
+def test_absent_status_names_the_real_drop_cause():
+    from canopy.digitize import digitizer as dz
+
+    s = dz.RouteSample(route="C", group="A", dropped=True, drop_reason=(
+        "this route reads one point, and nothing has established whether the x categories are "
+        "conditions to average across or the groups themselves"))
+    status, why = dz._absent_status([s])
+    assert status == "ambiguous" and "overlay verification" not in why and "x categories" in why
+
+
+def test_a_point_at_category_read_is_capped_and_says_why():
+    """The cell is under-corroborated, not contradicted: one point, one reader per route."""
+    from canopy.digitize.digitizer import CATEGORICAL_POINT_AT_CATEGORY
+    from canopy.verify.checks import codes, run_checks
+    from canopy.verify.confidence import CAPPING_FLAGS, CAP_REASONS
+    from canopy.models import (Candidate, DatasetSpec as DS, GroupSpec as GS, OutcomeSources)
+
+    dataset = DS(dataset_id="d1", cluster_id="p", group_a=GS(label="older adults", n=20),
+                 group_b=GS(label="younger adults", n=20),
+                 outcomes=[OutcomeSources(outcome_key="aftereffect", units="deg")])
+    cand = Candidate(
+        candidate_id="c1", paper_id="p", dataset_id="d1", outcome_key="aftereffect",
+        kind="group_stats", group="A", status="found", source_kind=SourceKind.figure_points,
+        n=20, mean=15.89, dispersion_value=3.18, dispersion_type=DispersionType.CI95, unit="deg",
+        route="figure", extractor_id="digitize:ensemble",
+        pixel_provenance={"categorical_x_role": CATEGORICAL_POINT_AT_CATEGORY,
+                          "categorical_x_role_why": "the locator names one x category"},
+        locator=LOC)
+    flags = run_checks(dataset, "aftereffect", [cand])
+    assert "categorical_point_read" in codes(flags)
+    assert "categorical_point_read" in CAPPING_FLAGS
+    assert CAP_REASONS["categorical_point_read"]
 
 
 def test_the_sign_of_two_panels_of_one_paper_is_read_off_the_figure_not_assumed(bar_figure,
