@@ -1748,7 +1748,11 @@ def test_a_value_location_reporting_a_pooled_sample_is_not_read_for_the_cell():
 
 
 @pytest.mark.parametrize("sample,readable", [("both_groups", True), ("unknown", True),
-                                             ("one_group", False), ("pooled", False),
+                                             # a panel that plots ONE age group is the ordinary
+                                             # layout (Fig. 1A young / Fig. 1B old): it is read for
+                                             # the group it carries — the first nine-paper run
+                                             # read `one_group` as unreadable and extracted nothing
+                                             ("one_group", True), ("pooled", False),
                                              ("other", False)])
 def test_every_sample_answer_decides_readability_the_same_way(sample, readable):
     source = Source(kind=SourceKind.text_mean_sd, page=4, role="value", sample=sample,
@@ -2043,3 +2047,70 @@ def test_an_answer_that_would_demote_every_location_settles_nothing(paper, proto
         losing_locations=[HEUER_D2_FIGURE, HEUER_D2_PROSE]))
     assert {s.role for s in study.datasets[0].outcomes[0].sources} == {"value"}
     assert [q.kind for q in study.open_questions] == ["which_measure"]
+
+
+
+def test_the_mappers_own_words_do_not_open_a_measure_question_it_already_settled():
+    """The first nine-paper run: "DE (primary); IEE (alternative operationalization)" with IEE's
+    locations already `alternate` bought an adjudication and blocked BOTH late-adaptation cells
+    behind a `which_measure` question the mapper had already answered. The words open the
+    question only while the map still carries two readable candidate measures."""
+    from canopy.agents.mapper import _Conflicts, _diff_measures
+    from canopy.models import DatasetSpec, GroupSpec, OutcomeSources, Source, SourceKind, StudyMap
+    ya = Source(kind=SourceKind.figure_points, page=4, role="value", sample="one_group",
+                figure_id="fig01", locator="Fig. 1A (YA 30° DE), point at x = A3",
+                analysis_metric="endpoint")
+    oa = Source(kind=SourceKind.figure_points, page=4, role="value", sample="one_group",
+                figure_id="fig01", locator="Fig. 1B (OA 30° DE), point at x = A3",
+                analysis_metric="endpoint")
+    iee = Source(kind=SourceKind.figure_points, page=4, role="alternate", sample="one_group",
+                 figure_id="fig01", locator="Fig. 1C (YA 30° IEE), point at x = A3",
+                 analysis_metric="endpoint")
+    outcome = OutcomeSources(
+        outcome_key="late_adaptation",
+        measure_name="direction error (DE), degrees (primary); initial endpoint error (IEE), mm "
+                     "(second, alternative operationalization)",
+        operationalization="Two candidate measures are plotted for the same window: DE and IEE",
+        sources=[ya, oa, iee])
+    dataset = DatasetSpec(dataset_id="p:d1", label="30° rotation",
+                          group_a=GroupSpec(label="older", n=9), group_b=GroupSpec(label="young", n=9),
+                          outcomes=[outcome])
+    study = StudyMap(paper_id="p", datasets=[dataset])
+    conflicts, notes = _Conflicts(), []
+    _diff_measures(study, conflicts, notes)
+    assert conflicts.measures == [] and notes == [], "the mapper answered its own question"
+    # …but the same words with NOTHING demoted still open it (Heuer's Experiment 2 shape)
+    iee_value = iee.model_copy(update={"role": "value", "analysis_metric": "change_from_baseline"})
+    outcome_open = outcome.model_copy(update={"sources": [ya, oa, iee_value]})
+    study_open = StudyMap(paper_id="p", datasets=[dataset.model_copy(update={"outcomes": [outcome_open]})])
+    conflicts, notes = _Conflicts(), []
+    _diff_measures(study_open, conflicts, notes)
+    assert conflicts.measures == [(0, "late_adaptation")]
+
+
+def test_one_measure_left_standing_settles_however_many_locations_read_it():
+    """A young-adults panel and an older-adults panel are two LOCATIONS of one measure; a ruling
+    that leaves only them readable has settled the question even though it demoted nothing."""
+    from canopy.agents.mapper import read_measure_answer
+    from canopy.models import OutcomeSources, Source, SourceKind
+    ya = Source(kind=SourceKind.figure_points, page=4, role="value", figure_id="fig01",
+                locator="Fig. 1A (YA), point at x = A3", analysis_metric="endpoint")
+    oa = Source(kind=SourceKind.figure_points, page=4, role="value", figure_id="fig01",
+                locator="Fig. 1B (OA), point at x = A3", analysis_metric="endpoint")
+    outcome = OutcomeSources(outcome_key="late_adaptation", measure_name="direction error",
+                             sources=[ya, oa])
+    settlement = read_measure_answer(outcome, winning_metric="endpoint")
+    assert settlement.ok and settlement.settles and settlement.losers == []
+    # two measures still readable after a metric-only answer: NOT settled (the Heuer d2 rule)
+    other = Source(kind=SourceKind.text_mean_sd, page=5, role="value",
+                   locator="Results, adaptive shift", analysis_metric="change_from_baseline")
+    two = outcome.model_copy(update={"sources": [ya, oa, other]})
+    assert read_measure_answer(two, winning_metric="endpoint").settles is True  # demotes `other`
+    same_metric = other.model_copy(update={"analysis_metric": "endpoint"})
+    still_two = outcome.model_copy(update={"measure_name": "DE; alternatively adaptive shift",
+                                           "sources": [ya, oa, same_metric]})
+    # the mapper's own words opened this one and nothing was demoted: two operationalizations
+    # sharing one metric are still two measures, so a metric-only answer settles NOTHING (the F2
+    # rule); naming the location does
+    assert read_measure_answer(still_two, winning_metric="endpoint").settles is False
+    assert read_measure_answer(still_two, winning_location="Fig. 1A").settles is True

@@ -1183,10 +1183,19 @@ def _diff_measures(study: StudyMap, conflicts: _Conflicts, disagreements: list[s
             # cannot say whether it reads this outcome's measure or the other one, and it is read
             # for the value unless something says otherwise (F6).
             metricless = _metricless_values(outcome) if metrics else []
-            if not marker and len(metrics) < 2 and not metricless:
+            # The mapper's own words name an alternative — but a mapper that ALSO demoted the
+            # alternative's locations to `alternate` and left one measure among its `value`
+            # locations has answered its own question ("DE (primary); IEE (alternative)", IEE
+            # marked alternate): buying an adjudication and blocking extraction on those words
+            # settled nothing on the first nine-paper run. The words open the question only while
+            # the map still carries two readable candidates.
+            demoted = any(str(getattr(source, "role", "")) == "alternate"
+                          for source in outcome.sources)
+            words_open = bool(marker) and not (demoted and len(metrics) <= 1)
+            if not words_open and len(metrics) < 2 and not metricless:
                 continue
             why = []
-            if marker:
+            if words_open:
                 why.append(f"the map's own words name an alternative ({marker!r})")
             if len(metrics) >= 2:
                 why.append(f"its value locations measure {' and '.join(metrics)}")
@@ -1283,10 +1292,20 @@ def read_measure_answer(outcome: OutcomeSources, *, winning_metric: str = "",
                              "the cell to be read from")
         settlement.settles = False
         return settlement
-    # A settlement that leaves the rival readings readable has settled nothing. One reading left
-    # standing IS a settlement — there is nothing else for the cell to be read from — but anything
-    # more means the map still carries two candidate answers and the question stays open.
-    settlement.settles = bool(losers) or remaining <= 1
+    # A settlement that leaves the rival readings readable has settled nothing. One MEASURE left
+    # standing IS a settlement — however many locations read it (a young-adults panel and an
+    # older-adults panel are two locations of one measure) — but two measures still readable
+    # means the map still carries two candidate answers and the question stays open.
+    lost = {id(source) for source, _ in losers}
+    measures_left = {measure for source, _, measure in readings if id(source) not in lost}
+    # …EXCEPT when the mapper's own words opened the question and nothing was ever demoted:
+    # then two operationalizations may share one metric (Heuer's Experiment 2 prints both as
+    # `change_from_baseline`), one metric-class left is not one measure, and only a demotion
+    # settles it (the F2 rule — settle by location).
+    words_open = bool(named_alternatives(outcome)) and not any(
+        str(getattr(source, "role", "")) == "alternate" for source in outcome.sources)
+    settlement.settles = (bool(losers) or remaining <= 1
+                          or (len(measures_left) <= 1 and not words_open))
     return settlement
 
 
@@ -1785,7 +1804,13 @@ def open_map_questions(study: StudyMap) -> list[MapQuestion]:
 #: `Source.sample` answers that are not the two groups this contrast compares. `unknown` and
 #: `both_groups` are read — `unknown` is the honest absence every map written before the field
 #: existed carries, and refusing on it would stop reading every paper in the corpus.
-UNREADABLE_SAMPLES: frozenset[str] = frozenset({"one_group", "pooled", "other"})
+#: A location whose sample is NOT the two groups this contrast compares is not read for the value:
+#: a pooled analysis (Bock's `A=(I-F)/I` over the pooled seniors) or some other sample. A location
+#: that carries ONE of the two groups is readable — a figure whose panels are one age group each
+#: (Fig. 1A young / Fig. 1B old) is the ordinary layout, and the reader is asked for each group
+#: separately; the run's first nine-paper pass read `one_group` as unreadable and extracted
+#: NOTHING from such a paper, with zero calls and no question, so the rule is written here.
+UNREADABLE_SAMPLES: frozenset[str] = frozenset({"pooled", "other"})
 #: the roles a number may be read at: `value` is the outcome's own number, `unknown` is a role the
 #: mapper did not fill in. `baseline`, `context` and `alternate` are on the record for a reader.
 READABLE_ROLES: frozenset[str] = frozenset({"value", "unknown"})
@@ -1806,7 +1831,7 @@ def source_unreadable_reason(source: Source) -> str:
     sample = str(getattr(source, "sample", "") or "unknown")
     if sample in UNREADABLE_SAMPLES:
         note = _clip(str(getattr(source, "sample_note", "") or ""), 120)
-        return (f"reports the {sample} sample, not the two groups this contrast compares — kept "
+        return (f"reports a {sample} sample, not the two groups this contrast compares — kept "
                 f"for the record, not read for the value" + (f" ({note})" if note else ""))
     return ""
 

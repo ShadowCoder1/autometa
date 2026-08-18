@@ -737,7 +737,7 @@ class _Located:
         self.__dict__.update(kwargs)
 
 
-def test_a_location_that_reports_one_group_or_a_pooled_sample_is_not_read_for_the_cell():
+def test_a_location_that_reports_a_pooled_or_other_sample_is_not_read_for_the_cell():
     """`Source.sample`, via the mapper's own `source_unreadable_reason`. A `value` location whose
     sample is explicitly `one_group`, `pooled` or `other` is evidence about the paper, not about
     THIS contrast: reading it fills the cell with a different set of people. `unknown` and
@@ -749,9 +749,12 @@ def test_a_location_that_reports_one_group_or_a_pooled_sample_is_not_read_for_th
     def located(**kwargs):
         return Source(role="value", kind="text_mean_sd", page=3, locator="Results", **kwargs)
 
-    for value in ("one_group", "pooled", "other"):
+    for value in ("pooled", "other"):
         assert source_unreadable_reason(located(sample=value)), value
-    for value in ("unknown", "both_groups"):
+    # a location that carries ONE of the two groups is read for that group — a young-adults panel
+    # beside an older-adults panel is the ordinary figure; the first nine-paper run read
+    # `one_group` as unreadable and extracted nothing from such a paper, with no question asked
+    for value in ("unknown", "both_groups", "one_group"):
         assert source_unreadable_reason(located(sample=value)) == "", value
 
     readable = readable_sources([located(sample="both_groups"), located(sample="pooled"),
@@ -1050,8 +1053,13 @@ def test_a_cell_with_no_candidate_buys_no_direction(tmp_path):
     out, requests = _offline(tmp_path, router_wrapper=_every_location_is_a_baseline)
     assert _extract_payload(out)["candidates"] == []
     assert _orientation_calls(requests) == []
-    assert _verify_payload(out)["verdicts"] == []
-    assert _records(out) == []
+    # …but the cell is still WRITTEN, value-less and held, so the review queue and the questions
+    # page can ask where its value is. "No verdict worth writing" made a paper's cells vanish
+    # from the first nine-paper run with zero calls and no question — a hold nobody could see.
+    verdicts = _verify_payload(out)["verdicts"]
+    assert verdicts and all(v["mean"] is None and v["confidence"] == "needs_human"
+                            for v in verdicts)
+    assert _records(out) == [] or all(r.get("es") is None for r in _records(out))
 
 
 # ============ controller ruling: an orientation abstention must not buy an adjudication

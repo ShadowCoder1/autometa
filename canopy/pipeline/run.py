@@ -914,14 +914,23 @@ def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: li
             cell = _cell_candidates([*candidates, *extra], dataset.dataset_id,
                                     sources.outcome_key)
             if not cell:
-                # nothing was extracted for this cell, so there is no value to sign, nothing for
-                # a verifier to check and no verdict worth writing. The two orientation reads are
-                # per (outcome, measure) rather than per candidate, so without this they were
-                # bought anyway: a dataset un-blocked here but never extracted spent two calls
-                # and wrote two empty verdicts whose only content was a direction (review H2).
+                # nothing was extracted for this cell: no value to sign, nothing for a verifier
+                # to check, and no direction is bought (the two orientation reads are per
+                # (outcome, measure), so a dataset un-blocked but never extracted used to spend
+                # two calls on empty verdicts — review H2). The cell is still WRITTEN, as two
+                # value-less verdicts, so the review queue and the questions page can ask where
+                # its value is: the first nine-paper run lost a paper's cells with "no verdict
+                # worth writing", zero calls and no question — a hold nobody could see.
                 status.warnings.append(
                     f"{dataset.dataset_id}/{sources.outcome_key}: no candidate was extracted for "
-                    f"this cell, so no direction was bought and no verdict was written")
+                    f"this cell, so no direction was bought; the cell is recorded as unresolved "
+                    f"and asked about")
+                n_a, n_b = dataset.group_a.n, dataset.group_b.n
+                for group in ("A", "B"):
+                    verdicts.append(resolve_cell(
+                        dataset, sources.outcome_key, group, [], vote_result=None, verdicts=[],
+                        flags=[], adjudication=None, orientation=None, other_candidates=[],
+                        n_a=n_a, n_b=n_b))
                 continue
             # spec §3.3(5): the direction of a measure is decided once per (outcome, measure) by
             # two independent agents — not once per value.
