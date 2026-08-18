@@ -1,0 +1,78 @@
+PLOS ONE
+The effect of age on visuomotor learning processes
+58.
+Salomonczyk D, Henriques DYP, Cressman EK. Proprioceptive recalibration in the right and left hands
+following abrupt visuomotor adaptation. Exp Brain Res. 2012; 217: 187–196. https://doi.org/10.1007/
+s00221-011-2985-4
+59.
+Haith AM, Krakauer JW. Theoretical Models of Motor Control and Motor Learning. In: Gollhofer A,
+Taube W, Bo Nielsen J, editors. Routledge Handbook of Motor Control and Motor Learning. Routledge
+Handbooks Online; 2012. pp. 7–28. https://doi.org/10.4324/9780203132746.ch1
+60.
+Synofzik M, Lindner A, Thier P. The Cerebellum Updates Predictions about the Visual Consequences
+of One’s Behavior. Curr Biol. 2008; 18: 814–818. https://doi.org/10.1016/j.cub.2008.04.071
+61.
+Izawa J, Criscimagna-Hemminger SE, Shadmehr R. Cerebellar contributions to reach adaptation and
+learning sensory consequences of action. J Neurosci. 2012; 32: 4230–4239. https://doi.org/10.1523/
+JNEUROSCI.6353-11.2012
+62.
+Mostafa AA, Salomonczyk D, Cressman EK, Henriques DYP. Intermanual transfer and proprioceptive
+recalibration following training with translated visual feedback of the hand. Exp Brain Res. 2014; 232:
+1639–1651. https://doi.org/10.1007/s00221-014-3833-0
+63.
+Anguera JA, Reuter-Lorenz PA, Willingham DT, Seidler RD. Contributions of spatial working memory to
+visuomotor learning. J Cogn Neurosci. 2010; 22: 1917–1930. https://doi.org/10.1162/jocn.2009.21351
+64.
+Albert ST, Jang J, Sheahan H, Teunissen L, Vandevoorde K, Shadmehr R. Asymptotic limits of sensori-
+motor adaptation. bioRxiv. 2019; 868406. https://doi.org/10.1101/868406
+65.
+Wong AL, Marvel CL, Taylor JA, Krakauer JW. Can patients with cerebellar disease switch learning
+mechanisms to reduce their adaptation deficits? Brain J Neurol. 2019; 142: 662–673. https://doi.org/10.
+1093/brain/awy334
+66.
+Simon A, Bock O. The role of cognition for different stages of visuomotor adaptation in younger and
+older adults. Hum Mov Sci. 2017; 52: 215–222. https://doi.org/10.1016/j.humov.2017.02.011
+67.
+Simon A, Bock O. Influence of divergent and convergent thinking on visuomotor adaptation in young
+and older adults. Hum Mov Sci. 2016; 46: 23–29. https://doi.org/10.1016/j.humov.2015.11.020
+68.
+Salomonczyk D, Cressman EK, Henriques DYP. Proprioceptive recalibration following prolonged train-
+ing and increasing distortions in visuomotor adaptation. Neuropsychologia. 2011; 49: 3053–3062.
+https://doi.org/10.1016/j.neuropsychologia.2011.07.006
+69.
+Block HJ, Bastian AJ. Cerebellar involvement in motor but not sensory adaptation. Neuropsychologia.
+2012; 50: 1766–1775. https://doi.org/10.1016/j.neuropsychologia.2012.03.034
+70.
+Block HJ, Bastian AJ. Sensory weighting and realignment: independent compensatory processes. J
+Neurophysiol. 2011; 106: 59–70. https://doi.org/10.1152/jn.00641.2010
+71.
+Mikula L, Gaveau V, Pisella L, Khan AZ, Blohm G. Learned rather than online relative weighting of
+visual-proprioceptive sensory cues. J Neurophysiol. 2018; 119: 1981–1992. https://doi.org/10.1152/jn.
+00338.2017
+72.
+Jones SAH, Fiehler K, Henriques DYP. A task-dependent effect of memory and hand-target on proprio-
+ceptive localization. Neuropsychologia. 2012; 50: 1462–1470. https://doi.org/10.1016/j.
+neuropsychologia.2012.02.031
+73.
+Reuschel J, Ro¨sler F, Henriques DYP, Fiehler K. Spatial Updating Depends on Gaze Direction Even
+after Loss of Vision. J Neurosci. 2012; 32: 2422–2429. https://doi.org/10.1523/JNEUROSCI.2714-11.
+2012
+74.
+Goble DJ, Coxon JP, Wenderoth N, Van Impe A, Swinnen SP. Proprioceptive sensibility in the elderly:
+degeneration, functional consequences and plastic-adaptive processes. Neurosci Biobehav Rev. 2009;
+33: 271–278. https://doi.org/10.1016/j.neubiorev.2008.08.012
+75.
+‘t Hart BM, Ayala MN, Henriques DYP. Proprioception and prediction do not optimally integrate in hand
+localization. San Diego; 2018. Available: https://www.abstractsonline.com/pp8/#!/4649/presentation/
+11269
+76.
+Kitchen NM, Miall RC. Adaptation of reach action to a novel force-field is not predicted by acuity of
+dynamic proprioception in either older or younger adults. bioRxiv. 2020; 2020.07.13.200733. https://doi.
+org/10.1101/2020.07.13.200733
+77.
+Wolpe N, Ingram JN, Tsvetanov KA, Geerligs L, Kievit RA, Henson RN, et al. Ageing increases reliance
+on sensorimotor prediction through structural and functional differences in frontostriatal circuits. Nat
+Commun. 2016; 7: 13034. https://doi.org/10.1038/ncomms13034
+PLOS ONE | https://doi.org/10.1371/journal.pone.0239032
+September 14, 2020
+20 / 20

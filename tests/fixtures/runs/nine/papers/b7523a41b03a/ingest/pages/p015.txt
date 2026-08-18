@@ -1,0 +1,55 @@
+PLOS ONE
+The effect of age on visuomotor learning processes
+localization here is less susceptible to decay (cf.: [51, 68]) and that this especially affects mea-
+surements in older adults. Apart from the methodological differences, Cressman et al., [45]
+also have fewer older participants (9 vs. our 38) which are slightly younger (average 66 years
+vs. 70 years). Consequently, increasing the sample size by roughly four times, combined with
+using a slightly older population in this study perhaps provides the necessary power to detect a
+difference between age groups. Nonetheless, we find that the implicit change in proprioceptive
+hand estimates following learning is at least not smaller than in younger adults, and therefore
+cannot explain possible age-related decline in adaptation, although it may be part of compen-
+sation for age-related changes in other processes.
+Another explanation for increased proprioceptive recalibration in older adults could be that
+older adults rely more on visual over proprioceptive feedback. However, this does not seem to
+be a good explanation for our results. Findings from Block & Bastian [69, 70] show no relation-
+ship between sensory weighing and sensory realignment following training with visual-propri-
+oceptive mismatches in healthy, younger adults [70] and in cerebellar patients as well as their
+age-matched (i.e. older) controls [69]. In addition, other studies measuring estimates of final
+hand positions also fail to find a correlation between hand estimates using multiple modalities
+and the precision or relative reliability of either visual or proprioceptive-only estimates of loca-
+tion [71–73]. While there are studies that suggest that proprioceptive acuity is poorer in older
+adults than younger adults (see [74] for a review), including one that tests felt hand position in
+our own lab [45], the current study, with our much larger sample of participants and larger
+number of proprioceptive trials, does not find that older adults are less precise in their esti-
+mates of hand position prior to training with a rotated cursor [75]. Moreover, when compared
+across all these older and younger adults, the size of proprioceptive recalibration does not cor-
+relate at all with the amount of variance in hand-estimates [75]. Together, these studies dem-
+onstrate that a possibly greater reliance on vision resulting in greater proprioceptive
+recalibration in older adults cannot simply be explained by poorer proprioceptive sensitivity
+[76]. Further studies are required to understand the factors that influence the amount of pro-
+prioceptive recalibration.
+Updated prediction with age.
+Motor learning does not only lead to changes in implicit
+processes such as proprioceptive estimates of hand position, but also to updates in predicted
+sensory consequences–a required change to produce implicit adaptation. ‘t Hart and Henri-
+ques [47] found that proprioception accounted for at least half of learning-induced changes in
+hand localization (as originally found by [60, 61] using only an active localization task), com-
+pared to prediction. This partitioning out of predictive and proprioceptive based change is
+consistent with the results of the cerebellar patients in the studies by Izawa et al. [61] and
+Synofzik et al. [60]. Both studies find that the patients show a significant change in active hand
+localization following adaptation, but that the change in hand estimates is smaller than in
+healthy controls. Both studies interpret their result to support the idea that the cerebellum is
+critical for updating the predicted consequences of movements during learning. This leaves
+open the possibility that the remaining localization shift found in the cerebellar patients may
+be due to proprioceptive recalibration, which our lab has shown to also occur in cerebellar
+patients [56]. In the current study, the relative proportion of predicted and perceived changes
+in hand localization was even more skewed than those of ‘t Hart and Henriques [47] (despite
+more training targets and more localization trials), with younger adults showing a change in
+hand localization: 80% of which was due to a change in proprioception and 20% a change in
+prediction. The change in predictive estimates of hand position is further reduced in older
+adults, such that the ~1˚ change is not statistically detectable (although their proprioceptive
+change is 50% larger than that of younger adults). This difference is not significant relative to
+younger adults since the changes for younger adults are also quite small; approximately
+PLOS ONE | https://doi.org/10.1371/journal.pone.0239032
+September 14, 2020
+15 / 20

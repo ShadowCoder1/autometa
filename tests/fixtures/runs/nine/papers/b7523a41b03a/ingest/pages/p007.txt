@@ -1,0 +1,55 @@
+PLOS ONE
+The effect of age on visuomotor learning processes
+session (bottom row of Fig 2), the cursor represented the hand position, but rotated by 30˚
+CW relative to the home position. The first rotated training task included 90 trials while subse-
+quent rotated training tasks consisted of 30 trials to keep adaptation saturated.
+Instructions.
+For both the older and younger adult groups, half of the participants were
+instructed on a strategy to counteract the 30˚ CW cursor rotation, and the other half did not
+get this instruction. Instruction was provided using an animation as well as a verbal explana-
+tion and a clock diagram (used in [29]), where 1 hour represents 30˚ (see https://osf.io/qzhmy/
+). It was ensured that participants understood these instructions; i.e., that they could draw, for
+at least three times, an arrow on a clock illustrating the direction at which they would reach
+when using the provided strategy. The non-instructed participants were told that “the reach
+training tasks will be different as the cursor will not move the same way as it did previously,
+and they will need to compensate for it by figuring out an appropriate strategy”. Both
+instructed and non-instructed participants were also told they would be called upon to use
+their strategy during some subsequent reaches and not use the strategy in other reaches
+(described in detail below).
+No-cursor reaches.
+Participants reached to the same three targets as in the training trials
+(see above) but without visual feedback about the position of their hand (i.e. no cursor). Trials
+were considered complete when participants had moved away from the home position and
+indicated that they had acquired the target by holding their hand still for 500 ms. Then the tar-
+get disappeared, and participants moved the robot handle back to the home position, through
+a constrained channel, to begin the next trial. During the first, aligned session, the no-cursor
+reach tasks involved asking participants to reach nine times in each of four tasks (for a total of
+36 trials; 12 to each target). During the second, rotated session, these no-cursor trials were split
+into two sub-tasks (of nine trials each). In one sub-task, participants viewed the words “No-
+Cursor with Strategy” displayed on the monitor and were required to use the strategy that they
+also used during their recent training with the blue cursor. In the other subtask, participants
+saw the words “No-Cursor without Strategy” and they were asked to not use a compensatory
+strategy and reach as they did in the aligned session (as in [15]). The order of these subtasks
+was counterbalanced between and within each consecutive participant: some started with
+strategy and some without and this order was inverted in subsequent no-cursor tasks for every
+participant. Each pair of subtasks was repeated four times (for a total of 72 trials; 24 to each tar-
+get, 12 of which with and 12 without strategy).
+The results of the no-cursor reaches with and without strategy were compared as per a pro-
+cess dissociation procedure (PDP; see [15]), to determine the levels of explicit and implicit
+learning. The no-cursor reaches without strategy reflect implicit learning (involuntary reach
+aftereffects) while any additional deviation in the direction of no-cursor reaches with strategy
+reflects explicit learning. This procedure was used to determine if participants were aware of
+the nature of the rotation, and could apply the strategy at will, even if they had no visual feed-
+back of their hand. This allowed testing if the instructions lead to explicit learning, and if this
+was different for the two age groups.
+Localization tasks. The localization tasks assessed the participants’ estimated location of
+their unseen hand following reach training, when they either reached with their hand them-
+selves (active localization) or when the robot displaced their hand (passive localization) to the
+white arc (Figs 1C and 2). Both active and passive localization allowed the use of afferent infor-
+mation on hand position. Since participants generated a motor command in active localiza-
+tion, they also had efferent information on hand location in this localization task [16, 47, 49].
+By measuring both, we can tease apart the contribution of (and changes in) afferent and effer-
+ent estimates for hand localization.
+PLOS ONE | https://doi.org/10.1371/journal.pone.0239032
+September 14, 2020
+7 / 20

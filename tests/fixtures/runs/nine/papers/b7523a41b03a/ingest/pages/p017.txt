@@ -1,0 +1,64 @@
+PLOS ONE
+The effect of age on visuomotor learning processes
+Data curation: Chad Michael Vachon, Shanaathanan Modchalingam.
+Formal analysis: Chad Michael Vachon, Bernard Marius ‘t Hart.
+Funding acquisition: Denise Y. P. Henriques.
+Investigation: Chad Michael Vachon, Shanaathanan Modchalingam, Bernard Marius ‘t Hart.
+Methodology: Bernard Marius ‘t Hart, Denise Y. P. Henriques.
+Project administration: Chad Michael Vachon, Shanaathanan Modchalingam, Bernard Mar-
+ius ‘t Hart, Denise Y. P. Henriques.
+Resources: Denise Y. P. Henriques.
+Software: Bernard Marius ‘t Hart.
+Supervision: Bernard Marius ‘t Hart, Denise Y. P. Henriques.
+Validation: Chad Michael Vachon, Shanaathanan Modchalingam, Bernard Marius ‘t Hart,
+Denise Y. P. Henriques.
+Visualization: Chad Michael Vachon, Bernard Marius ‘t Hart.
+Writing – original draft: Chad Michael Vachon.
+Writing – review & editing: Chad Michael Vachon, Shanaathanan Modchalingam, Bernard
+Marius ‘t Hart, Denise Y. P. Henriques.
+References
+1.
+Anguera JA, Reuter-Lorenz PA, Willingham DT, Seidler RD. Failure to engage spatial working memory
+contributes to age-related declines in visuomotor learning. J Cogn Neurosci. 2011; 23: 11–25. https://
+doi.org/10.1162/jocn.2010.21451
+2.
+Bock O, Girgenrath M. Relationship between sensorimotor adaptation and cognitive functions in youn-
+ger and older subjects. Exp Brain Res. 2006; 169: 400–406. https://doi.org/10.1007/s00221-005-0153-
+4
+3.
+Buch ER, Young S, Contreras-Vidal JL. Visuomotor adaptation in normal aging. Learn Mem Cold Spring
+Harb N. 2003; 10: 55–63. https://doi.org/10.1101/lm.50303
+4.
+Heuer H, Hegele M. Adaptation to visuomotor rotations in younger and older adults. Psychol Aging.
+2008; 23: 190–202. https://doi.org/10.1037/0882-7974.23.1.190
+5.
+Heuer H, Hegele M, Su¨lzenbru¨ck S. Implicit and explicit adjustments to extrinsic visuo-motor transfor-
+mations and their age-related changes. Hum Mov Sci. 2011; 30: 916–930. https://doi.org/10.1016/j.
+humov.2010.07.004
+6.
+King BR, Fogel SM, Albouy G, Doyon J. Neural correlates of the age-related changes in motor
+sequence learning and motor adaptation in older adults. Front Hum Neurosci. 2013; 7. https://doi.org/
+10.3389/fnhum.2013.00142
+7.
+Seidler RD. Differential effects of age on sequence learning and sensorimotor adaptation. Brain Res
+Bull. 2006; 70: 337–346. https://doi.org/10.1016/j.brainresbull.2006.06.008
+8.
+Huang HJ, Ahmed AA. Older adults learn less, but still reduce metabolic cost, during motor adaptation.
+J Neurophysiol. 2014; 111: 135–144. https://doi.org/10.1152/jn.00401.2013
+9.
+Trewartha KM, Garcia A, Wolpert DM, Flanagan JR. Fast But Fleeting: Adaptive Motor Learning Pro-
+cesses Associated with Aging and Cognitive Decline. J Neurosci. 2014; 34: 13411–13421. https://doi.
+org/10.1523/JNEUROSCI.1489-14.2014
+10.
+Ferna´ndez-Ruiz J, Hall C, Vergara P, Dı´az R. Prism adaptation in normal aging: Slower adaptation rate
+and larger aftereffect. Cogn Brain Res. 2000; 9: 223–226. https://doi.org/10.1016/S0926-6410(99)
+00057-9
+11.
+Roller CA, Cohen HS, Kimball KT, Bloomberg JJ. Effects of normal aging on visuo-motor plasticity. Neu-
+robiol Aging. 2002; 23: 117–123. https://doi.org/10.1016/s0197-4580(01)00264-0
+12.
+Lei Y, Wang J. The effect of proprioceptive acuity variability on motor adaptation in older adults. Exp
+Brain Res. 2018; 236: 599–608. https://doi.org/10.1007/s00221-017-5150-x
+PLOS ONE | https://doi.org/10.1371/journal.pone.0239032
+September 14, 2020
+17 / 20

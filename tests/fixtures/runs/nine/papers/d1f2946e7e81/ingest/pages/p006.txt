@@ -1,0 +1,453 @@
+J.
+ Langan,
+ R.D.
+ Seidler
+ / Behavioural
+ Brain
+ Research
+ 225 (2011) 160–
+ 168
+165
+ with
+ greater
+ activation
+ during
+ initial
+ learning
+ (run
+ 3)
+ compared
+ to
+ transfer
+ (run
+ 13).
+Anatomical
+ location
+ 
+Brodmann’s
+ area
+ 
+Cluster
+ size
+ 
+Coordinates
+ of
+ peaks
+ 
+Z
+ score
+ superior
+ frontal
+ gyrus
+ 
+BA9
+ 
+103
+ 
+28
+ 42
+ 28
+ 
+3.91
+R
+ cingulate
+ gyrus
+BA32
+ 
+10
+ 
+2
+ 16
+ 42
+ 
+3.18
+Parietal
+ superior
+ parietal
+ lobule
+ 
+BA7
+ 
+47
+ 
+14
+ −62
+ 58
+ 
+3.57
+OA
+ parietal
+ lobe
+BA40
+19
+ 
+20
+ −38
+ 58
+ 
+3.43
+Anatomical
+ location
+ 
+Brodmann’s
+ area
+ 
+Cluster
+ size
+ 
+Coordinates
+ of
+ peaks
+ 
+Z
+ score
+ supplementary
+ motor
+ area
+ 
+BA6
+ 
+19
+ 
+12
+ 24
+ 62
+ 
+4.06
+Parietal
+ postcentral
+ gyrus
+BA2
+ 
+53
+ 
+−58
+ −24
+ 46
+ 
+4.03
+Occipital
+ middle
+ occipital
+ lobule
+ 
+BA19
+ 
+22
+ 
+50
+ −60
+ −6
+ 
+3.46
+OA
+ −16
+ 18
+ 
+3.53
+R
+ paracentral
+ lobule
+ 
+BA4
+ 
+14
+ 
+10
+ −28
+ 76
+ 
+3.57
+ postcentral
+ gyrus
+BA43
+14
+42
+Anatomical
+ location
+ 
+Brodmann’s
+ area
+ 
+Cluster
+ size
+ 
+Coordinates
+ of
+ peaks
+ 
+Z
+ score
+ cingulate
+ gyrus
+ 
+BA32
+ 
+51
+ 
+−16
+ 36
+ −6 
+3.68
+Subcortical
+ putamen
+95
+ 
+−24
+ 12
+ 2 
+3.7
+R
+ caudate
+ nucleus
+ 
+235
+ 
+16
+ 14
+ 2
+ 
+4.66
+Fig.
+ 3.
+ Areas
+ exhibiting
+ greater
+ activation
+ at
+ motor
+ learning
+ than
+ transfer
+ (run
+3
+ > 13).
+ (A)
+ Young
+ adults
+ show
+ greater
+ activation
+ in
+ the
+ right
+ superior
+ frontal
+ gyrus,
+cingulate
+ cortex
+ and
+ parietal
+ lobe
+ during
+ motor
+ learning
+ compared
+ to
+ transfer
+ (run
+3
+ > 13).
+ (B)
+ Older
+ adults
+ show
+ greater
+ activation
+ in
+ the
+ right
+ superior
+ parietal
+ lobe
+during
+ motor
+ learning
+ compared
+ to
+ transfer
+ (run
+ 3
+ >
+ 13).
+tex
+ (Tables
+ 5
+ and
+ 6).
+ Similarly,
+ older
+ adults
+ demonstrated
+ more
+active
+ regions
+ at
+ initial
+ learning
+ compared
+ to
+ transfer
+ that
+ over-
+lapped
+ with
+ their
+ SWM
+ network,
+ suggestive
+ of
+ reduced
+ cognitive
+contributions
+ to
+ motor
+ transfer
+ versus
+ learning
+ (Tables
+ 7
+ and
+ 8).
+Table 2
+Regions
+YA
+Frontal
+ lobe
+R
+ lobe
+R
+Parietal
+ lobe
+R
+Table
+ 3
+Age
+ differences
+ in
+ initial
+ learning
+ activation
+ (run
+ 3).
+YA
+ >
+ OA
+Frontal
+ lobe
+Pre
+ lobe
+L
+ lobe
+R
+ >
+ YA
+Parietal
+ lobe
+R
+Table
+ 4
+Regions
+ exhibiting
+ greater
+ activation
+ for
+ YA
+ than
+ OA
+ at
+ transfer
+ (run
+ 13).
+Frontal
+ lobe
+L
+ regions
+L
+Fig.
+ 4.
+ Age
+ differences
+ in
+ brain
+ activation
+ at
+ initial
+ motor
+ learning.
+ (A)
+ Areas
+ in
+ which
+young
+ adults
+ (YA)
+ exhibit
+ greater
+ activation
+ than
+ older
+ adults
+ (OA)
+ during
+ motor
+learning
+ (run
+ 3).
+ YA
+ demonstrated
+ greater
+ activation
+ in
+ the
+ left
+ postcentral
+ gyrus,
+right
+ superior
+ frontal
+ gyrus
+ and
+ middle
+ occipital
+ lobule
+ compared
+ to
+ OA.
+ Z
+ =
+ 76.
+(B)
+ Areas
+ in
+ which
+ older
+ adults
+ (OA)
+ exhibit
+ greater
+ activation
+ than
+ young
+ adults
+(YA)
+ during
+ motor
+ learning
+ (run
+ 3).
+ OA
+ demonstrated
+ greater
+ activation
+ in
+ the
+ right
+postcentral
+ gyrus
+ and
+ paracentral
+ lobule
+ compared
+ to
+ YA.

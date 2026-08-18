@@ -470,6 +470,13 @@ class CheckFlag(CanopyModel):
     severity: Literal["info", "warn", "error"] = "warn"
     message: str = ""
     candidate_ids: list[str] = Field(default_factory=list)
+    #: what the check MEASURED, for the question a reviewer will be asked to answer with a number.
+    #: D4-lite's `n_before_exclusions` puts `{"recruited", "excluded", "quote"}` here, so the card
+    #: can offer `recruited − excluded` as an option instead of making the reviewer re-read the
+    #: paper for two counts the check has already parsed. Free-form on purpose: the keys belong to
+    #: the check that raised the flag and are documented there, and nothing in `confidence` or the
+    #: resolver branches on them — a finding is weighed by its CODE, never by its detail.
+    detail: dict[str, Any] = Field(default_factory=dict)
 
 
 class VerifierVerdict(CanopyModel):

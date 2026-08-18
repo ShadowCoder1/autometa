@@ -1,0 +1,32 @@
+PLOS ONE
+The effect of age on visuomotor learning processes
+Fig 1. Apparatus and experimental setup. A: Participants moved their right hand while gripping the handle of a two-joint robot manipulandum. Stimuli are produced by
+a downward-facing monitor (top surface) above a reflective surface (middle). The touchscreen panel is located below the reflective surface and just above the robot handle
+(bottom). B: Training task: The three white hollow circles represent the targets. They can either be directly in front of the home position, 45˚ clockwise (CW) or counter
+clockwise (CCW) from it. During the main rotated reach training, the cursor was blue and rotated 30˚ CW (white solid vector) relative to the actual (unseen) hand
+position/direction (black dashed vector). C: Localization task: Using ‘t Hart and Henriques [33] localization task, the unseen right hand was moved to a location along a
+white arc either by participants voluntarily moving their hand or having their hand physically moved by the robot. Once participants returned their right hand to the home
+position, they indicated on the touchscreen with their visible left hand, where their trained right hand had intersected the arc (illustrated by red star).
+https://doi.org/10.1371/journal.pone.0239032.g001
+Motion Technologies Inc., Cambridge, MA, USA). The reflective surface was 14 cm above the
+robot manipulandum and 14 cm below the downward facing monitor (Fig 1A). The chair was
+fixed in its position for the duration of the experiment. Participants were asked to grip a verti-
+cal handle with their right hand. They were instructed to place their right thumb on a screw
+located on top of the robot handle. The handle was attached to the free end of the robot manip-
+ulandum and could be moved on a horizontal plane. A thick black cloth was draped and
+tucked over participants’ right shoulder to ensure that they did not see their right arm.
+Since the reflective surface was located halfway between the monitor and the robot manipu-
+landum, the reflection of the cursor and the targets appeared on the same plane as the thumb
+of the right hand. The reflective surface also occluded the right hand and arm.
+During some tasks, participants used their visible left hand, which was then illuminated by
+a lamp, to respond on a touchscreen panel (Keytec Inc., Garland, TX, USA sampled at a resolu-
+tion of 1440 × 900 pixels) located 2 cm above the robot handle, to indicate the perceived posi-
+tion of their unseen right thumb (Fig 1A and 1C).
+Procedure
+The procedure and set up are similar to our previous study [16], and could be completed in 90
+minutes (excluding breaks and instructions). It includes two experimental sessions (Fig 2),
+and each session had several repetitions of the same four tasks (described in detail below). The
+first session (illustrated on the top row of Fig 2) measured baseline results where the cursor
+PLOS ONE | https://doi.org/10.1371/journal.pone.0239032
+September 14, 2020
+5 / 20

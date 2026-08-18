@@ -1,0 +1,1656 @@
+J.
+ Langan,
+ R.D.
+ Seidler
+ / Behavioural
+ Brain
+ Research
+ 225 (2011) 160–
+ 168
+161
+the
+ right
+ dorsolateral
+ prefrontal
+ cortex
+ and
+ bilateral
+ inferior
+ pari-
+etal
+ lobules
+ [12].
+ There
+ was
+ no
+ neural
+ overlap
+ between
+ late
+ learning
+and
+ SWM.
+ Thus
+ we
+ found
+ that
+ early
+ but
+ not
+ late
+ learning
+ engages
+SWM
+ processes
+ in
+ young
+ adults,
+ compatible
+ with
+ other
+ work
+ docu-
+menting
+ greater
+ cognitive
+ demands
+ during
+ early
+ learning
+ [13–15].
+In
+ contrast,
+ in
+ a
+ companion
+ study
+ we
+ found
+ that
+ older
+ adults
+ (18
+participants,
+ 71.4
+ ±
+ 4.2
+ years
+ old)
+ had
+ a
+ signiﬁcantly
+ reduced
+ rate
+of
+ early
+ but
+ not
+ late
+ learning
+ in
+ comparison
+ to
+ young
+ adults
+ (18
+participants,
+ 21.1
+ ±
+ 2.5
+ years
+ old
+ [16]).
+ Measures
+ of
+ working
+ mem-
+ory
+ did
+ not
+ correlate
+ with
+ either
+ the
+ early
+ or
+ late
+ learning
+ period
+for
+ older
+ adults.
+ In
+ addition,
+ although
+ older
+ adults
+ recruited
+ the
+right
+ dorsolateral
+ prefrontal
+ cortex
+ and
+ bilateral
+ inferior
+ parietal
+lobules
+ in
+ a
+ comparable
+ fashion
+ to
+ young
+ adults
+ during
+ the
+ SWM
+task,
+ they
+ did
+ not
+ engage
+ these
+ regions
+ during
+ either
+ early
+ or
+ late
+learning.
+ These
+ ﬁndings
+ suggest
+ that
+ older
+ adults
+ do
+ not
+ effectively
+recruit
+ available
+ SWM
+ resources
+ to
+ support
+ early
+ motor
+ learning
+processes.
+The
+ purpose
+ of
+ the
+ current
+ study
+ is
+ to
+ investigate
+ the
+ contri-
+bution
+ of
+ SWM
+ to
+ motor
+ transfer
+ for
+ young
+ and
+ older
+ adults.
+ It
+may
+ be
+ that
+ older
+ adults
+ do
+ not
+ experience
+ difﬁculties
+ at
+ trans-
+fer
+ of
+ learning
+ [8–10]
+ because
+ performance
+ at
+ transfer
+ does
+ not
+require
+ SWM
+ engagement.
+ Therefore,
+ we
+ hypothesize
+ that
+ SWM
+performance
+ measures
+ will
+ be
+ less
+ correlated
+ with
+ motor
+ transfer
+than
+ with
+ motor
+ learning
+ for
+ both
+ age
+ groups.
+ Further,
+ we hypoth-
+esize
+ that
+ both
+ age
+ groups
+ will
+ show
+ reduced
+ activation
+ of
+ brain
+regions
+ that
+ contribute
+ to
+ SWM
+ such
+ as
+ prefrontal
+ and
+ parietal
+cortex
+ at
+ transfer
+ of
+ adaptation
+ versus
+ learning.
+ Determining
+ the
+mechanisms
+ underlying
+ conditions
+ in
+ which
+ older
+ adults
+ exhibit
+preserved
+ performance
+ is
+ an
+ important
+ ﬁrst
+ step
+ towards
+ designing
+targeted
+ interventions
+ to
+ improve
+ motor
+ performance.
+2.
+ Material
+ and
+ methods
+ Participants
+ and
+ procedure
+2.1.
+ (N
+ =
+ 18,
+ 20.8
+ ±
+ 2.5
+ years
+ old,
+ 14.6
+ ±
+ 2.0
+ years
+ education,
+ 10
+ female)
+ and
+older
+Young
+ adults
+ (N
+ =
+ 18,
+ 72.3
+ ±
+ 4.7
+ years
+ old,
+ 15.9
+ ±
+ 2.5
+ years
+ education,
+ 12
+ female)
+ were
+recruited
+ from
+ the
+ University
+ of
+ Michigan
+ (UM)
+ community
+ and
+ through
+ the
+ UM
+ NIH
+Claude
+ D.
+ Pepper
+ Older
+ American’s
+ Independence
+ Center
+ human
+ subjects
+ and
+ assess-
+ment
+ core.
+ All
+ participants
+ signed
+ an
+ Internal
+ Review
+ Board
+ (IRB)
+ approved
+ consent
+form
+ prior
+ to
+ entrance
+ into
+ the
+ study.
+ Participants
+ were
+ right
+ handed
+ (Edinburgh
+Handedness
+ Inventory
+ [17], mean
+ handedness
+ scores:
+ young
+ adults
+ 88.6
+ ±
+ 11.4,
+older
+ adults
+ 80.4
+ ±
+ 13.8),
+ free
+ of
+ contraindications
+ for
+ an
+ fMRI
+ study
+ and
+ scored
+ a
+minimum
+ of
+ 26/30
+ on
+ the
+ Mini
+ Mental
+ State
+ Exam
+ [18]
+ and
+ a
+ minimum
+ of
+ 123/144
+on
+ the
+ Mattis
+ Dementia
+ Rating
+ Scale
+ [19].
+ These
+ participants
+ were
+ separate
+ cohorts
+from
+ those
+ that
+ participated
+ in
+ similar
+ experiments
+ in
+ the
+ laboratory
+ [10,12,16].
+On
+ day
+ one
+ of
+ testing
+ cognitive
+ abilities
+ were
+ assessed
+ through
+ a
+ battery
+ of
+ neu-
+ropsychological
+ tests.
+ Spatial
+ working
+ memory
+ was
+ assessed
+ with
+ Thurston’s
+ card
+rotation
+ task
+ [20]
+ and
+ forward
+ and
+ backward
+ Corsi
+ Block
+ tapping
+ tests
+ [21]. A
+ brief
+description
+ of
+ these
+ tests
+ appears
+ in
+ Table
+ 1.
+ Following
+ this,
+ participants
+ practiced
+the
+ baseline
+ condition
+ for
+ the
+ visuomotor
+ adaptation
+ task
+ and
+ the
+ control
+ condi-
+tion
+ for
+ the
+ spatial
+ working
+ memory
+ task
+ in
+ a mock
+ MRI
+ scanner
+ to
+ become
+ familiar
+with
+ the
+ MRI
+ environment
+ and
+ the
+ experimental
+ protocols.
+ For
+ the
+ adaptation
+ task,
+participants
+ moved
+ a
+ joystick
+ with
+ the
+ dominant
+ hand,
+ and
+ real-time
+ feedback
+ was
+presented
+ as
+ a
+ cursor
+ moving
+ on
+ the
+ display
+ screen.
+ The
+ starting
+ position
+ of
+ the
+ cur-
+Table 1
+Brief
+ description
+ of
+ spatial
+ working
+ memory
+ assessments
+ and
+ measurement
+ units.
+Neuropsychological
+assessment
+Description
+ 
+Measurement
+ unit
+Thurston’s
+ card
+rotation
+Timed
+ task:
+ compare
+ two
+ 2D
+images
+ correct
+Number
+ then
+ state
+ if
+ the
+reference
+ image
+ has
+ been
+rotated
+ without
+ being
+ turned
+over
+Number
+ block
+ tapping
+ 
+The
+ experimenter
+ taps
+ a
+sequence
+ of
+ correct
+trials
+Corsi
+ of
+ blocks
+ and
+ the
+participant
+ must
+ reproduce
+ the
+sequence
+ either
+ in
+ the
+ same
+order
+ (forward)
+ or
+ reverse
+order
+ (backward)
+sor
+ for
+ a given
+ trial
+ was
+ the
+ center
+ of
+ the
+ screen.
+ Targets
+ would
+ appear
+ randomly
+above,
+ below,
+ right
+ or
+ left
+ of
+ the
+ original
+ cursor
+ position.
+ Participants
+ were
+ instructed
+to
+ move
+ the
+ cursor
+ as
+ quickly
+ and
+ accurately
+ as
+ possible
+ to
+ the
+ target,
+ hold
+ the
+ cursor
+in
+ the
+ target
+ until
+ the
+ target
+ disappeared
+ and
+ then
+ release
+ the
+ spring-loaded
+ joystick
+allowing
+ the
+ cursor
+ to
+ return
+ to
+ the
+ original
+ centered
+ position.
+ A
+ trial
+ was
+ deﬁned
+as
+ the
+ time
+ between
+ the
+ appearance
+ and
+ disappearance
+ of
+ the
+ target
+ (2.5
+ s).
+ In
+ a
+single
+ run
+ participants
+ were
+ given
+ two
+ blocks
+ of
+ 12
+ trials
+ (20
+ s
+ visual
+ ﬁxation,
+ block
+of
+ 12
+ trials,
+ 20
+ s visual
+ ﬁxation,
+ block
+ of
+ 12
+ trials,
+ 22
+ s
+ visual
+ ﬁxation).
+ Participants
+practiced
+ three
+ runs
+ of
+ the
+ task
+ in
+ the
+ mock
+ scanner.
+In
+ the
+ spatial
+ control
+ task
+ participants
+ were
+ presented
+ with
+ three
+ closed
+ circles
+on
+ the
+ screen
+ for
+ 500
+ ms.
+ Following
+ a
+ brief
+ retention
+ interval
+ of
+ 250
+ ms,
+ an
+ open
+circle
+ would
+ appear.
+ Participants
+ responded
+ with
+ a
+ button
+ box,
+ pressing
+ the
+ index
+ﬁnger
+ if
+ the
+ open
+ circle
+ was
+ in
+ the
+ same
+ location
+ as
+ one
+ of
+ the
+ closed
+ circles
+ and
+pressing
+ the
+ middle
+ ﬁnger
+ if
+ the
+ circle
+ was
+ in
+ a
+ different
+ location.
+ The
+ open
+ circle
+was
+ presented
+ for
+ 2500
+ ms followed
+ by
+ a ﬁxation
+ screen
+ for
+ 500
+ ms
+ and
+ a
+ blank
+screen
+ for
+ another
+ 500
+ ms.
+ Participants
+ practiced
+ one
+ block
+ of
+ 10
+ trials
+ of
+ the
+ spatial
+control
+ task
+ in
+ the
+ mock
+ scanner.
+The
+ second
+ day
+ of
+ testing
+ was
+ conducted
+ at
+ the
+ UM
+ Functional
+ MRI
+ Laboratory.
+ A
+series
+ of
+ scans
+ were
+ performed
+ using
+ a
+ 3.0
+ T MRI
+ scanner
+ (General
+ Electric,
+ Wauke-
+sha,
+ WI).
+ Participants’
+ heads
+ were
+ comfortably
+ restrained
+ to
+ reduce
+ head
+ movement.
+They
+ wore
+ fMRI
+ compatible
+ mirrored
+ goggles
+ to
+ view
+ a
+ screen
+ for
+ the
+ visual
+ stimuli.
+Participants
+ completed
+ 17
+ runs
+ of
+ the
+ joystick
+ task
+ during
+ scanning.
+ Some
+ of
+ the
+runs
+ included
+ visual
+ rotation
+ of
+ online
+ feedback
+ requiring
+ visuomotor
+ adaptation
+to
+ reach
+ the
+ target
+ (supplemental
+ materials
+ Table
+ S1). Three
+ rotation
+ magnitudes,
+15◦, 30◦and
+ 45◦clockwise
+ rotations
+ of
+ the
+ feedback
+ display
+ about
+ the
+ center
+ of
+ the
+screen,
+ were
+ presented
+ to
+ participants.
+ Each
+ magnitude
+ of
+ visual
+ rotation
+ was
+ given
+for
+ three
+ consecutive
+ runs.
+ Following
+ each
+ magnitude
+ of
+ visual
+ rotation
+ the
+ display
+returned
+ to
+ baseline
+ conditions
+ for
+ two
+ consecutive
+ runs
+ for
+ washout
+ of
+ the
+ adap-
+tation
+ (cf.
+ [10,11]).
+ Participants
+ were
+ presented
+ the
+ visual
+ rotations
+ in
+ one
+ of
+ two
+orders.
+ Presentation
+ order
+ 1
+ (9
+ young
+ adults
+ and
+ 9
+ older
+ adults)
+ received
+ the
+ visual
+rotations
+ in
+ the
+ order
+ of
+ 30◦, 15◦and
+ 45◦. Presentation
+ order
+ 2
+ (a
+ separate
+ group
+ of
+9
+ young
+ adults
+ and
+ 9
+ older
+ adults)
+ received
+ the
+ visual
+ rotations
+ in
+ the
+ order
+ of
+ 45◦,
+15◦and
+ 30◦. Using
+ two
+ presentation
+ orders
+ allowed
+ us
+ to
+ compare
+ participants
+ that
+received
+ the
+ 30◦rotation
+ ﬁrst
+ (order
+ 1)
+ to
+ participants
+ that
+ received
+ the
+ 30◦rotation
+last
+ (order
+ 2)
+ and
+ likewise
+ for
+ the
+ 45◦rotation.
+Following
+ the
+ visuomotor
+ adaptation
+ task
+ participants
+ were
+ presented
+ with
+ the
+same
+ spatial
+ control
+ task
+ that
+ they
+ practiced
+ in
+ the
+ mock
+ scanner.
+ In
+ a
+ single
+ run,
+participants
+ were
+ given
+ four
+ blocks
+ of
+ 10
+ trials
+ interspersed
+ with
+ 20
+ s
+ visual
+ ﬁxation
+periods.
+ Eighty
+ percent
+ of
+ the
+ trials
+ were
+ ‘match’
+ trials
+ in
+ the
+ control
+ task.
+ Partic-
+ipants
+ were
+ also
+ given
+ a
+ SWM
+ task
+ in
+ the
+ scanner,
+ (similar
+ to
+ those
+ used
+ in
+ refs.
+[12,22]).
+ Three
+ closed
+ circles
+ appeared
+ on
+ the
+ screen
+ for
+ 500
+ m. After
+ the
+ 3
+ s reten-
+tion
+ interval
+ the
+ probe
+ set
+ was
+ presented
+ on
+ the
+ screen
+ for
+ 3000
+ ms.
+ Participants
+responded
+ with
+ the
+ index
+ ﬁnger
+ using
+ the
+ button
+ box
+ if
+ the
+ target
+ and
+ probe
+ set
+ were
+in
+ the
+ same
+ conﬁguration,
+ but
+ rotated
+ (match).
+ If
+ the
+ conﬁguration
+ was
+ different,
+participants
+ pressed
+ the
+ middle
+ ﬁnger
+ (non
+ match).
+ Participants
+ performed
+ three
+runs
+ of
+ this
+ task
+ (two
+ blocks
+ of
+ 10
+ trials
+ separated
+ by
+ 20
+ s
+ visual
+ ﬁxation
+ periods).
+Seventy
+ percent
+ of
+ the
+ trials
+ were
+ ‘match’
+ trials.
+ A
+ single-shot
+ gradient-echo
+ reverse
+spiral
+ pulse
+ sequence
+ was
+ also
+ used
+ to
+ acquire
+ the
+ fMRI
+ data.
+ Pulse
+ sequence
+ param-
+eters
+ were
+ TR/TE/FA/FOV
+ of
+ 2000
+ ms/30
+ ms/80/220
+ mm respectively.
+ Forty,
+ 3.2
+ mm
+thick
+ slightly
+ oblique
+ axial
+ slices
+ (no
+ gap)
+ were
+ acquired.
+ High
+ resolution
+ anatomical
+images
+ were
+ also
+ acquired
+ using
+ a
+ T1-weighted
+ gradient-echo
+ pulse
+ sequence
+ with
+the
+ following
+ parameters
+ TR/TE/FA/FOV
+ 200
+ ms/3.7
+ ms/90/220
+ mm and
+ a
+ voxel
+ size
+of
+ 1
+ mm ×
+ 1
+ mm ×
+ 1.2
+ mm.
+ Behavioral
+ data
+ analysis
+2.2.
+ Labview
+ 6.1
+ software
+ (National
+ Instruments)
+ was
+ used
+ to
+ analyze
+ the
+joystick
+Custom
+ data
+ ofﬂine.
+ A
+ dual
+ pass
+ Butterworth
+ digital
+ ﬁlter
+ [23]
+ using
+ a cutoff
+ fre-
+quency
+ of
+ 10
+ Hz
+ was
+ used
+ to
+ ﬁlter
+ the
+ raw
+ data.
+ The
+ resultant
+ joystick
+ path
+ was
+calculated
+ by
+ computing
+ the
+ square
+ root
+ of
+ the
+ sum
+ of
+ the
+ squared
+ X and
+ Y coor-
+dinate
+ data
+ at
+ each
+ time
+ point.
+ The
+ tangential
+ velocity
+ proﬁle
+ was
+ then
+ calculated
+through
+ differentiation.
+ The
+ optimal
+ algorithm
+ of
+ Teasdale
+ et
+ al.
+ [24]
+ was
+ used
+ to
+determine
+ movement
+ onset
+ and
+ offset.
+ Performance
+ on
+ the
+ task
+ was
+ measured
+ by
+reaction
+ time
+ (RT),
+ direction
+ error
+ (DE)
+ and
+ initial
+ endpoint
+ error
+ (IEE).
+ RT
+ was
+ com-
+puted
+ by
+ subtracting
+ the
+ time
+ of
+ the
+ stimulus
+ presentation
+ from
+ the
+ time
+ of
+ the
+onset
+ of
+ movement.
+ DE
+ is
+ determined
+ by
+ the
+ angle
+ between
+ a
+ direct
+ line
+ to
+ the
+target
+ and
+ the
+ spatial
+ position
+ of
+ the
+ cursor
+ at
+ peak
+ velocity.
+ IEE
+ represents
+ the
+ dis-
+tance
+ from
+ the
+ joystick
+ controlled
+ cursor
+ and
+ the
+ target
+ at
+ the
+ end
+ of
+ the
+ ﬁrst
+ ballistic
+movement.
+ The
+ algorithm
+ used
+ to
+ calculate
+ IEE
+ identiﬁes
+ a
+ period
+ of
+ acceleration
+following
+ a
+ period
+ of
+ deceleration
+ or
+ a change
+ in
+ the
+ sign
+ of
+ the
+ velocity.
+ These
+ vari-
+ables
+ were
+ calculated
+ for
+ each
+ trial.
+ To
+ assess
+ rate
+ of
+ change
+ in
+ performance,
+ the
+slopes
+ of
+ DE
+ across
+ initial
+ learning
+ trials
+ (run
+ 3)
+ and
+ motor
+ transfer
+ trials
+ (run
+ 13)
+were
+ determined.
+ For
+ both
+ the
+ spatial
+ control
+ task
+ and
+ the
+ SWM
+ task
+ the
+ average
+percent
+ accuracy
+ and
+ RT
+ for
+ the
+ run
+ was
+ calculated.
+The
+ amount
+ of
+ learning
+ that
+ occurred
+ during
+ the
+ ﬁrst
+ experience
+ with
+ the
+ visuo-
+motor
+ adaptation
+ task
+ was
+ quantiﬁed
+ since
+ total
+ learning
+ may
+ impact
+ the
+ amount
+of
+ transfer.
+ We computed
+ the
+ amount
+ of
+ learning
+ as
+ the
+ amount
+ of
+ actual
+ correction
+that
+ occurred
+ as
+ a
+ percentage
+ of
+ the
+ magnitude
+ of
+ correction
+ necessary
+ to
+ return
+to
+ baseline.
+ The
+ mean
+ of
+ run
+ 13
+ (initial
+ transfer)
+ was
+ divided
+ by
+ the
+ mean
+ of
+ run
+ 3
+(initial
+ learning).
+ A
+ score
+ below
+ 1
+ would
+ represent
+ that
+ learning
+ during
+ the
+ ﬁrst

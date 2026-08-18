@@ -1,0 +1,52 @@
+PLOS ONE
+The effect of age on visuomotor learning processes
+explicit strategies. Either way, explicit, cognitive strategies are necessary to counter larger, but
+not smaller, rotations. For example, using a 75˚ rotation, Heuer and Hegele [27, 37, 38] find
+that fewer older adults show a difference between including and excluding a strategy when
+asked, and when they do, the difference is smaller. Taken together, these studies suggest a
+decreased ability in older adults to spontaneously develop cognitive strategies for larger rota-
+tions [14].
+Several studies propose that the age-related deficits in motor learning may be due to cogni-
+tive decline as a function of age. Earlier work suggests at least three possible cognitive mecha-
+nisms: spatial working memory [1, 65], which could be used when applying a strategy to aim
+for a different location [22]; inhibition [66], which may be necessary to suppress regular,
+unadapted reach planning; and divergent/convergent thinking [67], which may play a role in
+discovering and fine-tuning a cognitive strategy during explicit learning. Our data here can
+not provide or test any partitioning of cognitive mechanisms that do or do not contribute to
+explicit motor learning. But, if fine-tuning of a strategy depends on convergent thinking [67],
+an age-related deficit in convergent thinking is consistent with the smaller benefit of instruc-
+tion we see in older adults’ early adaptation. In their review of this literature, Buszard & Mas-
+ters [18], suggest that indeed the evidence relating cognitive performance and visuomotor
+adaptation performance is weak, but stronger for sequence learning [13]. Sequence learning is
+used to assess skill acquisition rather than what we test here; skill maintenance. Since mainte-
+nance of existing skills is arguably fundamental for everyday life, it could make sense if this fac-
+ulty is prioritized over cognitive mechanisms necessary for larger perturbations and
+acquisition of new skills in advanced age. Despite valuable exploratory work [1, 63, 66, 67], the
+identification of the cognitive processes that are both affected by age and involved in motor
+adaptation and motor learning remains tentative and incomplete.
+Implicit components of adaptation in aging
+The aim of this study is not to investigate the mechanisms underlying explicit, cognitive adap-
+tation, but to test the effects of age on shifts in hand localization and if these are modulated by
+the availability of an explicit strategy. We first look at reach aftereffects and find little to no
+effect of age on without strategy no-cursor reach deviations after training (implicit reach after-
+effects). Since some studies have already found that implicit reach aftereffects are not affected
+by explicit learning [16, 26], it is not surprising that we find little effect of instruction on
+implicit reach aftereffects, except perhaps a slight increase in the without-strategy reach afteref-
+fects in instructed older adults. We also find that both younger and older adults can evoke an
+equal explicit strategy at will in no-cursor reaches. This means that any effects of age on hand
+localization shifts are not due to differences in implicit adaptation and that different effects of
+instruction on hand localization shifts in the two age groups are not due to different availability
+of explicit strategy. Below, we will consider two contributions to shifts in hand localization:
+recalibrated proprioception and updated predictions of sensory consequences.
+Proprioceptive recalibration and aging. In contrast to implicit reach aftereffects, we do
+see a clear effect of age on localization throughout, which seems to be driven by recalibrated
+proprioception, with no evidence of an increase of predicted sensory consequences in older
+adults. While an earlier study from our lab shows proprioceptive recalibration in older and
+younger adults to be the same, roughly 6˚ [45], here we find it is larger in older adults (10.2˚)
+as compared to younger adults (6.3˚). That previous study uses a two-alternative, forced-
+choice paradigm where participants indicate whether their hand was clockwise or counter-
+clockwise from a visual reference with two interleaved staircase procedures across fifty trials to
+find the point of subjective equivalence. It could be that the faster method of measuring hand
+PLOS ONE | https://doi.org/10.1371/journal.pone.0239032
+September 14, 2020
+14 / 20

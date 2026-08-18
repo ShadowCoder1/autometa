@@ -63,7 +63,7 @@ from ..report import (exclusions_table, extraction_table, methods_figure, pool_r
                       write_outcome_outputs, write_rows)
 from ..stats.meta import MetaResult
 from ..verify.checks import (CHECK_SEVERITY, DF_PROVENANCE_FLAGS, ORIENTATION_FLAGS,
-                            run_checks)
+                            n_before_exclusions, run_checks)
 from ..verify.confidence import ROW_REFUSAL_CODES, resolve_cell
 from ..verify.panels import apply_panel_check
 from ..verify.vote import LOCATOR_CONFLICT, LOCATOR_CONFLICT_NOTE, VoteResult, vote_groups
@@ -271,6 +271,49 @@ def _cell_caption(paper: PaperRecord, sources: OutcomeSources) -> str:
                 for figure in [_figure(paper, source.figure_id)]
                 if figure is not None and (figure.caption or "").strip()}
     return captions.pop() if len(captions) == 1 else ""
+
+
+def _page_texts(paper: PaperRecord) -> list[str]:
+    """Every page of the ingested paper as text, page 1 first — the corpus D4-lite reads.
+
+    Free (the ingest stage already wrote the files) and forgiving: a record whose text files are
+    not on this machine yields empty pages rather than failing the verify stage, because a check
+    that cannot read the paper has nothing to say and that is not an error in the run.
+    """
+    out: list[str] = []
+    for page in paper.pages:
+        try:
+            out.append(paper.page_text(page.number))
+        except OSError:
+            out.append("")
+    return out
+
+
+def _analysed_n_flags(pages: Sequence[str], cell: Sequence[Candidate],
+                      vocabulary: Mapping[str, Sequence[str]]) -> list[CheckFlag]:
+    """D4-lite, over one cell's candidates: is a group's n the count before its exclusions?
+
+    ONE flag per (group, size), carrying every candidate that was scored on it. Raised per
+    candidate it would say the same thing five times about one arm of one figure, and
+    `confidence` prices a repeated code once — so the repetition would buy nothing and cost a
+    reviewer the readable version of the finding.
+    """
+    out: list[CheckFlag] = []
+    seen: dict[tuple[str, int], CheckFlag] = {}
+    for cand in cell:
+        if cand.group not in ("A", "B") or cand.n is None:
+            continue
+        key = (str(cand.group), int(cand.n))
+        found = seen.get(key)
+        if found is not None:
+            found.candidate_ids = sorted({*found.candidate_ids, cand.candidate_id})
+            continue
+        flag = n_before_exclusions(pages, cand, vocabulary.get(str(cand.group), ()))
+        if flag is None:
+            continue
+        seen[key] = flag
+        out.append(flag)
+    return out
 
 
 def _group_vocabulary(dataset: DatasetSpec, protocol: Protocol) -> dict[str, list[str]]:
@@ -747,6 +790,12 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
     n_a, n_b = dataset.group_a.n, dataset.group_b.n
     out = _CellVerification(orientation=orientation, source_rank=out_rank,
                             held_back=list(held_back))
+    # D4-lite, before the checks that weigh it: every candidate carries a group size (a digitised
+    # one carries the mapper's), and the paper's own words say whether that size is the one it
+    # recruited or the one it analysed. Free, deterministic, and it repairs nothing — the flag
+    # caps the cell and the reviewer's `group_n` answer supplies the analysed sizes.
+    extra_flags.extend(_analysed_n_flags(_page_texts(paper), cell,
+                                         _group_vocabulary(dataset, ctx.protocol)))
 
     # `run_checks`'s participant-total parameter wants the total the PAPER states for this
     # dataset. This call used to pass `n_a + n_b`, which is not that number — it is the two

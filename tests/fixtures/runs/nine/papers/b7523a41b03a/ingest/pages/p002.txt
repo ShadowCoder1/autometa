@@ -1,0 +1,62 @@
+PLOS ONE
+The effect of age on visuomotor learning processes
+Technology NSERC Operating grant (DYPH) and
+the German Research Foundation (DFG) under
+grant no. HA 6861/2-1 (BMtH). The funders had no
+role in study design, data collection and analysis,
+decision to publish, or preparation of the
+manuscript.
+and age-related cognitive decline may provide partial and interacting explanations. We evoke
+motor adaptation with a visuomotor rotation and primarily test a sensory explanation by gaug-
+ing proprioception-based shifts in hand location estimates, in the context of prediction-based
+shifts of hand location estimates. To test if age-related cognitive decline factors into hand-loca-
+tion estimates, we also manipulate strategy-based adaptation. The goal of this study is to
+understand how aging contributes to changes in all these processes.
+Competing interests: The authors have declared
+that no competing interests exist.
+Older adults can adapt their reaches to altered visual feedback of the hand, but in some
+cases have slower or incomplete learning compared to younger adults. We observe that age-
+related effects are mostly found in studies using larger cursor rotations (such as 60˚ or 90˚),
+where older adults do not adapt at the same rate nor to the same extent as younger adults [1–
+7]. A similar difference between age-groups can be seen in force-field adaptation [8, 9] as well
+as prism adaptation [10] although see [11] for an alternative finding. However, when the visual
+perturbation is small (such as 30˚), age-related differences in initial stages of motor learning
+are less robust: with some studies showing a deficit for older adults [12] and others not [4, 7,
+11, 13], sometimes within the same study [14]. Since larger rotations tend to evoke more
+explicit, cognitive adaptation than smaller rotations do [15–17], age-related cognitive decline
+may explain differences between age groups that are reported with larger rotations [4, 18].
+Here we intend to test if age-related changes in post-adaptation changes in limb-position esti-
+mates are due to age-related sensory changes, which affect the fidelity of error signals, but we
+also test if the availability of cognitive, explicit strategies has any influence on limb-position
+estimates and if this is different in younger and older participants.
+Adaptation is traditionally thought to solely rely on implicit processes, which Stanley &
+Krakauer [19] suggest is a misunderstanding of seminal work, for example on patient H.M.
+[20]. While the idea is older [21], in the last decade or so, explicit processes have been estab-
+lished as a substantial contributor to motor learning, including visuomotor adaptation [4, 22–
+25]. The explicit component of motor learning is often assessed by having participants indicate
+their aiming strategy either on a trial-by-trial basis during adaptation, often verbally [4, 26], or
+indicate their strategy post-adaptation by reaching without a perturbation or cursor [4, 5, 15,
+16, 27, 28]. In addition, explicit instructions about how to compensate for a visual perturbation
+are used to facilitate initial learning [15, 26, 28, 29]. The cognitive nature of the explicit contri-
+bution is further demonstrated by decreased performance when adapting to a force-field while
+doing a secondary, distracting task [30–32] although no clear effect has been shown for visuo-
+motor adaptation [33, 34]. While small perturbations may be compensated for entirely implic-
+itly, perhaps up to ~15˚ of rotation [35], larger perturbations additionally recruit explicit
+mechanisms [17], resulting in cognitively accessible strategies [15, 16]. This also explains why
+the explicit processes emerge early in training when the reaching errors from the perturbation
+are largest and easiest to detect [26]. The resulting reach aftereffects that follow adaptation to
+all sizes of perturbations reflect these implicit motor and likely sensory changes [16, 36]. In
+sum, while explicit and implicit processes both contribute to motor adaptation, explicit pro-
+cesses crucially rely on cognitive abilities which may change with healthy aging.
+Thus, changes in cognitive processes due to healthy aging may affect explicit motor pro-
+cesses [14]. This hypothesis is somewhat supported by the work of [37–39]. Using a verbal
+aiming-strategy report before and after training with a 75˚ rotated cursor, they found that
+older adults used their strategy less, as they underestimated the angles needed to reach to the
+target with the perturbation. However, this group did not find this effect with a 30˚ rotated
+cursor. Some studies suggest that for younger adults, lower spatial working memory or perfor-
+mance on a secondary memory task is correlated with poorer learning rates [1, 30, 40]. From
+this literature [2], it could be inferred [7] that age-related cognitive decline [41, 42] can also
+explain age-related differences in adaptation rates. While Noohi et al. [13] find a lower
+PLOS ONE | https://doi.org/10.1371/journal.pone.0239032
+September 14, 2020
+2 / 20

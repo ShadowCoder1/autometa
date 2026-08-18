@@ -20,6 +20,7 @@ costs it points, an `info` is recorded for the provenance bundle.
 from __future__ import annotations
 
 import math
+import re
 from typing import Any, Iterable, Sequence
 
 from ..models import (Candidate, CheckFlag, DatasetSpec, DispersionType, GroupSpec,
@@ -32,7 +33,8 @@ from .grounding import ROW_ONLY, SIGN_NOTE, is_short_quote
 __all__ = ["run_checks", "sign_check", "codes", "CHECK_SEVERITY", "GROUP_LABEL_MISMATCH_NOTE",
            "ROW_ONLY_MARKER", "SIGN_NOTE_MARKER", "SEVERITY_RANK", "MIN_N", "MAX_PLAUSIBLE_D",
            "AXIS_TESTABLE", "ORIENTATION_FLAGS", "DF_PROVENANCE_FLAGS", "DISPUTED_MEANS_FLAGS",
-           "orientation_note",
+           "orientation_note", "n_before_exclusions", "excluded_count", "EXCLUSION_SPAN",
+           "EXCLUSION_COUNT_SPAN",
            "CHECK_SEVERITY_PREFIXES", "severity_of", "DF_SHORTFALL_TOLERANCE", "best_statistic"]
 
 #: the marker `canopy.agents.extract_common.group_label_check` writes into a candidate's notes when
@@ -111,6 +113,12 @@ CHECK_SEVERITY: dict[str, str] = {
     "n_missing": "warn",
     "n_mismatch": "warn",
     "n_sum_mismatch": "warn",
+    #: D4-lite. The group size this cell was scored on is a size the paper prints BEFORE the
+    #: exclusions it then reports, so the analysed group may be smaller than the row's denominator
+    #: says. A `warn`, and a cap in `confidence`: an n four people too large moves a variance, not
+    #: a mean, and nothing here says the value came from the wrong place. The number is not
+    #: repaired — a reviewer answers with the analysed sizes (`group_n`).
+    "n_before_exclusions": "warn",
     "sd_nonpositive": "error",
     "sd_near_zero": "warn",
     "se_sd_inconsistent": "warn",
@@ -1075,6 +1083,120 @@ def _check_outcome(outcome: OutcomeSources | None, orientation: OrientationVerdi
 
 
 # ----------------------------------------------------------------------------- entry point
+# --------------------------------------------------- D4-lite: an n printed before the exclusions
+#: How far past a printed group size an exclusion sentence may sit and still be about it. The real
+#: case (Vachon 2020) prints the four group sizes in one paragraph and the exclusions in the next,
+#: and a PDF's text layer has no paragraph marks worth trusting — so "the same paragraph or the
+#: next one" is measured in characters, which is a rule that reads the same on every paper.
+EXCLUSION_SPAN = 1200
+#: …and how far from the exclusion cue a number may sit and still be ITS count. Wide enough for
+#: "excluded 4 younger (all from the non-instructed group) and 3 older", narrow enough that the
+#: next sentence's numbers are not read as exclusions.
+EXCLUSION_COUNT_SPAN = 60
+
+#: a size the paper PRINTS: "n = 20", or "20 younger" / "38 older adults" / "12 participants".
+#: Spelled-out counts ("Forty-one younger adults were recruited") are deliberately not matched:
+#: this check only ever speaks about a number a reader can see beside the group it belongs to.
+_GROUP_SIZE = re.compile(
+    r"\bn\s*=\s*(\d+)\b|\b(\d+)\s+(?:young|old|healthy|participant|subject|adult)\w*", re.I)
+#: the words a paper takes people OUT with
+_EXCLUSION_CUE = re.compile(
+    r"\b(?:exclud|remov|withdrew|withdrawn|drop(?:ped)?[- ]?out|discontinued|did not complete"
+    r"|were not included|data (?:were|was) lost)\w*", re.I)
+#: "4 younger", "153 of" — a count and the word immediately after it
+_COUNTED = re.compile(r"\b(\d+)\s+([A-Za-z][\w-]*)")
+#: words every arm of every review shares, so a count standing next to one says nothing about
+#: WHICH group lost it. They are dropped from a group's vocabulary before the count is read.
+_GENERIC_GROUP_WORDS: frozenset[str] = frozenset({
+    "adult", "adults", "participant", "participants", "subject", "subjects", "person", "people",
+    "volunteer", "volunteers", "patient", "patients", "control", "controls", "group", "groups",
+    "arm", "arms", "sample", "samples", "and", "the", "of", "who", "were", "was"})
+
+
+def _group_words(group_terms: Sequence[str]) -> frozenset[str]:
+    """The words that identify THIS arm, out of the review's names for it.
+
+    A dataset's label is a phrase ("non-instructed older adults"), and the words it shares with
+    the other arm — "adults", "participants", "group" — cannot tell one arm's exclusion count from
+    the other's. What is left is the arm's own vocabulary: "older", "young", "healthy".
+    """
+    words = {word for term in group_terms for word in re.split(r"[^\w]+", str(term or "").casefold())
+             if len(word) > 2}
+    return frozenset(words - _GENERIC_GROUP_WORDS)
+
+
+def _sentence(text: str, start: int, end: int) -> str:
+    """The sentence the exclusion was written in, whitespace normalised (a PDF wraps mid-phrase)."""
+    left = text.rfind(".", 0, start) + 1
+    right = text.find(".", end)
+    return " ".join(text[left:(right + 1) if right != -1 else len(text)].split())
+
+
+def excluded_count(text: str, group_terms: Sequence[str]) -> tuple[int | None, str, str]:
+    """How many of THIS arm an exclusion sentence in `text` names — `(count, phrase, sentence)`.
+
+    The count has to stand NEXT TO one of the arm's own words: Heuer 2008 reports that "153 of
+    13,920 trials (1.1%) were excluded" for the younger group, and every part of that sentence
+    except the number itself is a participant exclusion. Requiring "<count> <arm word>" is what
+    separates the two, and it is also what makes the answer usable — a card that offers
+    "recruited − excluded" must have parsed a count that belongs to the group it is offering it
+    for. When no such pair sits beside the cue this returns `(None, "", "")` and the caller says
+    nothing: a cue on its own is not evidence about this arm.
+    """
+    words = _group_words(group_terms)
+    if not words:
+        return None, "", ""
+    for cue in _EXCLUSION_CUE.finditer(text):
+        left = max(0, cue.start() - EXCLUSION_COUNT_SPAN)
+        window = text[left:cue.end() + EXCLUSION_COUNT_SPAN]
+        for match in _COUNTED.finditer(window):
+            if match.group(2).casefold() not in words:
+                continue
+            return (int(match.group(1)), match.group(0).strip(),
+                    _sentence(text, cue.start(), left + match.end()))
+    return None, "", ""
+
+
+def n_before_exclusions(pages: Sequence[str], cand: Candidate,
+                        group_terms: Sequence[str]) -> CheckFlag | None:
+    """D4-lite: is this candidate's `n` the size the paper RECRUITED, not the size it analysed?
+
+    Deterministic, free, and it never repairs anything. The rule is three facts in a row, in the
+    paper's own text: the paper prints this exact number as a group size; it says within the next
+    `EXCLUSION_SPAN` characters that it excluded people; and a count beside that cue belongs to
+    THIS arm. Vachon 2020 is the case it was written from — "non-instructed younger adults
+    (n = 20, 14 female)" in one paragraph, "We excluded 4 younger … participants" in the next, and
+    an analysed group of sixteen behind a row whose variance was computed from twenty.
+
+    What it does NOT do is decide the analysed n. `recruited − excluded` is often right and is
+    exactly what the review card offers, but a paper may break its own totals down further (Vachon
+    excluded 3 older *across two datasets*), so the number a row is rebuilt with comes from a
+    human's `group_n` answer and never from here. The flag caps the cell and asks.
+
+    `group_terms` is the review's vocabulary for this candidate's arm (`run._group_vocabulary`);
+    `pages` is the ingested page text, page 1 first.
+    """
+    if cand.n is None or cand.n < MIN_N or cand.group not in ("A", "B"):
+        return None
+    for text in pages:
+        for size in _GROUP_SIZE.finditer(text):
+            printed = int(size.group(1) or size.group(2))
+            if printed != cand.n:
+                continue
+            count, phrase, quote = excluded_count(
+                text[size.end():size.end() + EXCLUSION_SPAN], group_terms)
+            if count is None:
+                continue
+            return CheckFlag(
+                code="n_before_exclusions", severity=severity_of("n_before_exclusions"),
+                message=(f"n = {printed} is a group size this paper prints before its exclusions: "
+                         f"it then says it excluded {phrase}, so the analysed group may be "
+                         f"{printed - count} rather than {printed} — \"{quote}\""),
+                candidate_ids=[cand.candidate_id],
+                detail={"recruited": printed, "excluded": count, "quote": quote})
+    return None
+
+
 def run_checks(dataset: DatasetSpec, outcome_key: str, candidates: Sequence[Candidate], *,
                other_candidates: Sequence[Candidate] = (),
                orientation: OrientationVerdict | None = None,

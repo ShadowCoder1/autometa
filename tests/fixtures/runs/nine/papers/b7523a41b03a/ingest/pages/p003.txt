@@ -1,0 +1,54 @@
+PLOS ONE
+The effect of age on visuomotor learning processes
+awareness of the perturbation in older adults, this might be an issue with the questionnaire’s
+construct validity, as the same participants show no effect of age on adaptation to a 30˚ rota-
+tion. In a more recent, comprehensive study, Vandevoorde & Orban de Xivry [14] show
+decreased explicit learning in older adults and find that this was compensated with implicit
+learning–which may also explain the findings of Noohi et al. [13]. However, other groups have
+shown that implicit learning is limited [17, 35], so that implicit adaptation may only compen-
+sate for deficits in explicit learning to a limited extent or older adults may have an increased
+capacity for implicit learning. In this study, we will use visuomotor adaptation and first assess
+the extent that aging affects the ability to initially adopt and later maintain explicit strategies
+and then gauge different implicit contributions.
+If a decrease in explicit learning in older adults is compensated by increased implicit learn-
+ing, we should not only be able to measure this in reach aftereffects, but also in shifted esti-
+mates of hand location. Visuomotor adaptation leads to shifts in estimates of hand location,
+that can be based on proprioception and on predicted sensory consequences, and we consider
+both to be implicit. Proprioceptive estimates of hand location have been robustly shown to
+shift, or be recalibrated, following both force-field adaptation [43, 44] and visuomotor adapta-
+tion [45–52] where hand location estimates shift in the direction of the visual feedback on
+hand location by ~20% of the visuomotor distortion [45–52]. In turn, this visually-induced
+change in hand proprioception appears to contribute to changes in motor performance, partic-
+ularly reach aftereffects [53–57]. These changes in proprioception seem to be largely implicit,
+in that they are not affected by instructions [16], or by introducing the rotation abrupt or grad-
+ually [58] Proprioceptive recalibration also does not change with age when using the usual per-
+ceptual reports [45, 56]. Thus, if implicit processes compensate for age-related declines in
+cognitive or sensory processes, this may affect proprioceptive recalibration. While previous
+findings predict that proprioceptive recalibration should not differ between older and younger
+adults, we will test this here with a different measure.
+Like proprioception, efferent-based hand position estimates are an important contributor
+to state estimation and are central to adaptation. In fact, many computational models of motor
+learning specify that predicted sensory consequences based on efferent signals, must be
+updated for implicit motor learning to occur [59]. The amount of change in these state esti-
+mates has been quantified by measuring changes in hand localization following visuomotor
+adaptation [16, 47, 49, 60, 61]. Synofzik et al. [60] and Izawa et al. [61] find that cerebellar
+patients show reduced but substantial adaptation-induced changes in hand location estimates,
+about 50% of those in healthy controls and conclude that the reduction reflects the critical role
+that the cerebellum plays in updating predicted sensory consequences for learning. Further,
+the remaining shifts in hand localization in these patients suggest that the part of these learn-
+ing-induced changes that may be due to proprioceptive recalibration could occur outside the
+cerebellum [56]. The contributions of the afferent and efferent sources of these changes in
+hand localization have been recently investigated in young adults [16, 47, 49, 62]. However, it
+is not clear how predicted estimates of hand location change with healthy aging, or if they are
+more affected by (compensate for) either age-related cognitive- or sensory changes, so that we
+will test this here.
+Here we investigate the extent to which age-related deficits in outcomes of motor learning–
+both reach aftereffects and hand localization shifts–could be explained by the distinct effects of
+age on explicit adaptation and the implicit contributions of shifts in proprioceptive and predic-
+tive estimates of hand locations to implicit adaptation. To do so, we use a 30˚ rotation which
+allows us to evoke explicit learning in half the participants by providing them with instructions
+[16, 29]. This way we can directly assess the differences between adaptation with and without
+explicit contributions, specifically how this affects shifts in hand location estimates. In
+PLOS ONE | https://doi.org/10.1371/journal.pone.0239032
+September 14, 2020
+3 / 20

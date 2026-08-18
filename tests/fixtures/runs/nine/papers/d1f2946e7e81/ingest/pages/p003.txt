@@ -1,0 +1,1390 @@
+162
+J.
+ Langan,
+ R.D.
+ Seidler
+ /
+ Behavioural
+ Brain
+ Research
+ 225 (2011) 160–
+ 168
+df
+visuomotor
+ adaptation
+ positively
+ generalizes
+ to
+ the
+ last
+ visuomotor
+ adaptation.
+Scores
+ greater
+ than
+ 1
+ indicate
+ negative
+ transfer
+ (interference),
+ while
+ 1
+ represents
+equivalent
+ performance
+ at
+ transfer
+ and
+ learning.
+2.3.
+ MRI
+ data
+ analysis
+2.3.1.
+ fMRI
+ data
+The
+ ﬁrst
+ three
+ volumes
+ per
+ run
+ were
+ discarded
+ to
+ allow
+ for
+ signal
+ equilibra-
+tion.
+ High-pass
+ ﬁltering
+ was
+ used
+ to
+ remove
+ low-frequency
+ drift.
+ Motion
+ correction
+was
+ performed
+ using
+ MCFLIRT
+ and
+ the
+ Brain
+ Extraction
+ Tool
+ (BET)
+ was
+ used
+ to
+ strip
+the
+ skull
+ from
+ images
+ (using
+ FSL
+ toolboxes,
+ http://www.fmrib.ox.ac.uk/fsl).
+ Statis-
+tical
+ Parametric
+ Mapping
+ version
+ 5
+ (SPM5)
+ was
+ used
+ for
+ subsequent
+ analyses.
+ A
+mean
+ functional
+ image
+ was
+ created
+ for
+ each
+ participant.
+ All
+ functional
+ and
+ struc-
+tural
+ images
+ were
+ aligned
+ to
+ this
+ functional
+ mean
+ image.
+ The
+ Montreal
+ Neurological
+Institute
+ (MNI)
+ template
+ was
+ used
+ for
+ spatial
+ normalization
+ [25].
+ The
+ structural
+image
+ was
+ normalized
+ to
+ MNI
+ space
+ ﬁrst
+ and
+ the
+ resulting
+ parameters
+ were
+ applied
+to
+ the
+ functional
+ images.
+ Functional
+ images
+ were
+ spatially
+ smoothed
+ using
+ a
+ full
+width
+ at
+ half-maximum
+ 8
+ mm Gaussian
+ smoothing
+ kernel.
+ Four
+ participants
+ were
+removed
+ from
+ the
+ fMRI
+ analyses
+ due
+ to
+ poor
+ co-registration
+ (leaving
+ testing
+ order
+1:9
+ young
+ and
+ older
+ adults;
+ testing
+ order
+ 2:8
+ young
+ and
+ 7
+ older
+ adults).
+ Boxcar
+models
+ synchronized
+ to
+ the
+ effect
+ of
+ interest
+ and
+ convolved
+ with
+ an
+ estimate
+ of
+the
+ hemodynamic
+ response
+ function
+ were
+ used
+ for
+ statistical
+ analyses.
+ A
+ general
+linear
+ model
+ analysis
+ was
+ ﬁrst
+ conducted
+ at
+ an
+ individual
+ level
+ for
+ motor
+ learning
+(run
+ 3)
+ and
+ motor
+ transfer
+ (run
+ 13)
+ contrasting
+ periods
+ of
+ movement
+ with
+ rest.
+ Sec-
+ond
+ level
+ random
+ effects
+ analyses
+ were
+ run
+ for
+ single
+ group
+ whole
+ brain
+ contrasts
+(uncorrected
+ p
+ =
+ .001).
+ Imaging
+ data
+ for
+ older
+ adults
+ in
+ orders
+ 1
+ and
+ 2
+ were
+ com-
+bined
+ to
+ increase
+ power
+ as
+ they
+ demonstrated
+ similar
+ behavior.
+ Similarly,
+ young
+adults
+ in
+ orders
+ 1
+ and
+ 2
+ were
+ also
+ combined
+ (see
+ ref.
+ [11]
+ for
+ justiﬁcation
+ of
+ this
+approach).
+ Contrasts
+ identiﬁed
+ regions
+ of
+ greater
+ or
+ less
+ activation
+ during
+ motor
+learning
+ versus
+ transfer
+ for
+ both
+ young
+ and
+ older
+ adults.
+ To
+ identify
+ regions
+ involved
+in
+ both
+ spatial
+ working
+ memory
+ and
+ visuomotor
+ adaptation,
+ masks
+ of
+ spatial
+ work-
+ing
+ memory
+ activation
+ established
+ with
+ separate
+ cohorts
+ of
+ young
+ and
+ older
+ adults
+in
+ our
+ previous
+ studies
+ [12,16]
+ were
+ applied
+ to
+ the
+ visuomotor
+ adaptation
+ activa-
+tion
+ for
+ both
+ learning
+ and
+ transfer.
+ Applying
+ the
+ mask,
+ within-group
+ analyses
+ were
+used
+ to
+ identify
+ regions
+ where
+ activation
+ was
+ greater
+ at
+ motor
+ learning
+ compared
+ to
+transfer
+ and
+ vice
+ versa
+ (uncorrected
+ p
+ <
+ .001).
+ Between
+ group
+ analyses
+ distinguished
+regions
+ in
+ which
+ young
+ or
+ older
+ adults
+ demonstrated
+ greater
+ or
+ less
+ activation
+ dur-
+ing
+ motor
+ learning
+ and
+ transfer
+ (uncorrected
+ p
+ < .001).
+ The
+ Talairach
+ atlas
+ [26]
+ was
+used
+ to
+ localize
+ signiﬁcant
+ areas
+ of
+ activation.
+2.4.
+ Statistical
+ analyses
+ analyses
+ were
+ conducted
+ in
+ SPSS.
+ Independent
+ t-tests
+ (using
+ the
+ mean
+of
+Statistical
+ trials
+ for
+ each
+ participant)
+ were
+ used
+ to
+ assess
+ differences
+ between
+ age
+ groups
+and
+ transfer
+ orders
+ for
+ the
+ second
+ baseline
+ run
+ (the
+ ﬁrst
+ run
+ was
+ treated
+ as
+ practice
+and
+ not
+ included
+ in
+ statistical
+ analyses).
+ Levene’s
+ test
+ for
+ equality
+ of
+ variances
+ was
+conducted
+ and
+ corrected
+ t-tests
+ were
+ used
+ if
+ equal
+ variances
+ were
+ not
+ assumed.
+To
+ ensure
+ that
+ participants
+ had
+ returned
+ to
+ baseline
+ levels
+ of
+ performance
+ (run
+ 2)
+between
+ each
+ set
+ of
+ adaptation
+ runs,
+ the
+ last
+ 4
+ trials
+ of
+ the
+ baseline
+ run
+ immediately
+preceding
+ the
+ last
+ adaptation
+ run
+ (run
+ 12)
+ were
+ compared
+ to
+ the
+ last
+ 4
+ trials
+ of
+run
+ 2
+ using
+ a
+ paired
+ t-test.
+ We compared
+ performance
+ at
+ learning
+ to
+ performance
+during
+ transfer
+ for
+ the
+ 30◦and
+ 45◦visual
+ rotations
+ using
+ a
+ linear
+ mixed
+ model
+ design
+with
+ a
+ compound
+ symmetric
+ residual
+ covariance
+ structure.
+ Age
+ group,
+ presentation
+order
+ and
+ trial
+ were
+ treated
+ as
+ ﬁxed
+ effects,
+ and
+ all
+ 2-
+ and
+ 3-way
+ interaction
+ terms
+were
+ considered.
+ Correlation
+ analyses
+ were
+ used
+ to
+ assess
+ the
+ relationship
+ between
+motor
+ learning,
+ transfer,
+ neuropsychological
+ test
+ performance
+ and
+ spatial
+ working
+memory
+ task
+ performance.
+ Scores
+ that
+ were
+ greater
+ than
+ 2.5
+ standard
+ deviations
+outside
+ of
+ the
+ mean
+ were
+ considered
+ as
+ outliers
+ and
+ removed
+ from
+ the
+ analysis.
+3.
+ Results
+3.1.
+ Visuomotor
+ adaptation
+ task
+ performance
+At
+ baseline
+ (run
+ 2),
+ young
+ adults
+ performed
+ better
+ than
+ older
+adults
+ in
+ terms
+ of
+ RT
+ and
+ IEE
+ (p
+ <
+ .01);
+ there
+ was
+ no
+ differ-
+ence
+ between
+ groups
+ in
+ DE
+ (t
+ =
+ .98,
+ df
+ =
+ 34,
+ p
+ =
+ .34,
+ supplemental
+materials
+ Table
+ S2). The
+ two
+ testing
+ order
+ groups
+ within
+ young
+and
+ older
+ adults
+ performed
+ similarly
+ on
+ RT,
+ DE
+ and
+ IEE
+ at
+ baseline
+(p
+ >
+ .10).
+To
+ determine
+ whether
+ baseline
+ performance
+ was
+ similar
+ prior
+to
+ the
+ ﬁrst
+ and
+ last
+ visuomotor
+ adaptations,
+ the
+ last
+ four
+ trials
+ of
+runs
+ 2
+ and
+ 12
+ were
+ compared.
+ Young
+ adults
+ in
+ orders
+ 1
+ and
+ 2
+returned
+ to
+ baseline
+ performance
+ for
+ all
+ variables
+ (p
+ >
+ .10
+ between
+runs
+ 2
+ and
+ 12),
+ indicating
+ that
+ the
+ ﬁrst
+ and
+ last
+ adaptive
+ experi-
+ences
+ had
+ similar
+ starting
+ points.
+ Older
+ adults
+ in
+ order
+ 1
+ and
+ 2
+ did
+not
+ return
+ to
+ baseline
+ in
+ terms
+ of
+ RT
+ (t
+ =
+ 2.68,
+ df
+ =
+ 8,
+ p
+ =
+ .03,
+ t
+ =
+ 4.13,
+ =
+ 8,
+ p
+ <
+ .01).
+ Older
+ adults
+ in
+ order
+ 2
+ also
+ failed
+ to
+ return
+ to
+ base-
+line
+ in
+ terms
+ of
+ DE
+ (t
+ =
+ 3.70,
+ df
+ =
+ 8,
+ p
+ =
+ .01).
+ We corrected
+ for
+ this
+by
+ subtracting
+ the
+ baseline
+ DE
+ from
+ adaptation
+ runs
+ to
+ account
+ for
+older
+ adults
+ not
+ returning
+ to
+ baseline
+ levels.
+ Statistical
+ analyses
+ to
+identify
+ age
+ differences
+ in
+ learning
+ and
+ transfer
+ were
+ run
+ on
+ both
+the
+ original
+ and
+ the
+ baseline-corrected
+ data.
+ Since
+ there
+ was
+ no
+difference
+ in
+ the
+ pattern
+ of
+ age,
+ learning,
+ or
+ transfer
+ effects,
+ data
+without
+ baseline
+ correction
+ are
+ reported
+ for
+ both
+ young
+ and
+ older
+adults
+ for
+ ease
+ of
+ interpretation.
+To
+ examine
+ transfer
+ of
+ motor
+ learning,
+ we evaluated
+ differences
+in
+ performance
+ during
+ the
+ ﬁrst
+ and
+ last
+ exposures
+ to
+ a
+ visual
+ rota-
+tion.
+ Analogous
+ to
+ our
+ previous
+ work,
+ experience
+ with
+ a
+ visuomotor
+adaptation
+ was
+ beneﬁcial
+ to
+ subsequent
+ performance
+ [10]. Bene-
+ﬁts
+ were
+ most
+ consistently
+ found
+ for
+ both
+ the
+ 30◦and
+ 45◦visual
+rotations
+ when
+ comparing
+ initial
+ learning
+ (run
+ 3)
+ to
+ initial
+ trans-
+fer
+ (run
+ 13).
+ That
+ is,
+ transfer
+ beneﬁts
+ diminished
+ with
+ additional
+task
+ practice.
+ Thus,
+ the
+ following
+ behavioral
+ and
+ imaging
+ statistics
+reported
+ are
+ based
+ on
+ the
+ initial
+ learning
+ and
+ transfer
+ runs
+ (runs
+ 3
+and
+ 13,
+ respectively).
+df
+3.2.
+ Amount
+ of
+ learning
+Older
+ 
+adults
+ 
+demonstrated
+ 
+a
+ 
+lower
+ 
+amount
+ 
+of
+ 
+learning
+compared
+ to
+ young
+ adults
+ (mean
+ learning
+ percentages
+ across
+ con-
+ditions
+ for
+ older
+ adults
+ ranged
+ from
+ 9
+ to
+ 27%
+ and
+ for
+ young
+ adults
+33
+ to
+ 64%,
+ DE
+ (t
+ =
+ 2.4,
+ df
+ =
+ 33,
+ p
+ =
+ .02),
+ IEE
+ (t
+ =
+ 2.30,
+ df
+ =
+ 34,
+ p
+ =
+ .03).
+It
+ is
+ notable
+ that,
+ although
+ older
+ adults
+ demonstrated
+ less
+ learning
+than
+ young
+ adults,
+ they
+ exhibited
+ equivalent,
+ or
+ even
+ greater,
+ sav-
+ings
+ at
+ transfer
+ of
+ learning
+ on
+ some
+ of
+ the
+ performance
+ variables
+(see
+ below).
+ Thus
+ it
+ appears
+ that
+ the
+ magnitude
+ of
+ learning
+ that
+occurred
+ did
+ not
+ directly
+ inﬂuence
+ transfer
+ performance.
+3.3.
+ Transfer
+ to
+ 30◦visuomotor
+ adaptation
+Young
+ and
+ older
+ adults
+ demonstrated
+ reduced
+ DE
+ at
+ transfer
+ to
+the
+ 30◦rotation
+ compared
+ to
+ initial
+ learning
+ to
+ the
+ same
+ extent
+(Fig.
+ 1A
+ and
+ B,
+ main
+ effect
+ for
+ presentation
+ order,
+ F(1,32.20) =
+ 5.83,
+p
+ =
+ .02).
+ Similarly,
+ both
+ groups
+ decreased
+ IEE
+ at
+ motor
+ transfer
+(Fig.
+ 1C
+ and
+ D,
+ main
+ effect
+ for
+ presentation
+ order,
+ F(1,31.56) =
+ 3.35,
+p
+ <
+ .01).
+ However,
+ young
+ adults
+ demonstrated
+ greater
+ transfer
+ for
+IEE
+ than
+ older
+ adults
+ (age
+ group
+ ×
+ presentation
+ order
+ interaction,
+F(1,31.56) =
+ 3.98,
+ p
+ =
+ .05).
+ RT
+ was
+ similar
+ for
+ both
+ groups
+ and
+ did
+ not
+change
+ at
+ transfer
+ compared
+ to
+ initial
+ learning
+ (Fig.
+ 1E
+ and
+ F).
+3.4.
+ Transfer
+ to
+ 45◦visuomotor
+ adaptation
+Older
+ adults
+ demonstrated
+ a
+ larger
+ beneﬁt
+ from
+ prior
+ training
+compared
+ to
+ young
+ adults
+ in
+ terms
+ of
+ reducing
+ DE
+ at
+ motor
+ trans-
+fer
+ to
+ the
+ 45◦rotation
+ (Fig.
+ 2A
+ and
+ B,
+ age
+ group
+ ×
+ presentation
+order
+ interaction,
+ F(1,32.12) =
+ 3.88,
+ p
+ =
+ .05).
+ Overall,
+ young
+ adults
+demonstrated
+ smaller
+ IEE
+ than
+ older
+ adults
+ (main
+ effect
+ for
+ age,
+F(1,31.87) =
+ 13.99,
+ p
+ <
+ .01).
+ Neither
+ group
+ demonstrated
+ a
+ change
+ in
+IEE
+ at
+ transfer
+ with
+ respect
+ to
+ initial
+ learning
+ (Fig.
+ 2C
+ and
+ D;
+ no
+ sig-
+niﬁcant
+ main
+ effect
+ or
+ interactions
+ with
+ presentation
+ order).
+ There
+was
+ a
+ trend
+ for
+ RT
+ to
+ diminish
+ at
+ transfer
+ (Fig.
+ 2E
+ and
+ F,
+ main
+ effect
+for
+ presentation
+ order,
+ F(1,31.93) =
+ 2.98,
+ p
+ =
+ .09).
+3.5.
+ Spatial
+ working
+ memory
+ contributions
+ to
+ motor
+ learning
+ and
+transfer
+Young
+ adults
+ performed
+ better
+ on
+ the
+ spatial
+ working
+ memory
+assessments
+ than
+ the
+ older
+ adults
+ (p
+ <
+ .05:
+ card
+ rotation,
+ forward
+and
+ backward
+ Corsi
+ blocks
+ (see
+ supplemental
+ materials
+ Table
+ S3).
+To
+ better
+ understand
+ the
+ contributions
+ of
+ spatial
+ working
+ memory
+to
+ motor
+ learning
+ and
+ transfer,
+ we examined
+ correlations
+ between
+performance
+ on
+ the
+ visuomotor
+ adaptation
+ task
+ during
+ runs
+ 3
+ and

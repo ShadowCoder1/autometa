@@ -1,0 +1,51 @@
+PLOS ONE
+The effect of age on visuomotor learning processes
+20% of the total localization shift reflecting only a 2 to 3˚ shift (Fig 5C and 5F). It may be
+that the proprioceptive recalibration of larger magnitudes in older adults may act as a ceil-
+ing effect or generally mask any further change due to prediction. Nonetheless, given that
+we find no clear age-related effect on updates of predicted estimates–which are implicit by
+nature and not affected by instruction (as shown in [16])–we can not definitively claim
+here that decreased updates in predicted estimates explain age-related effects on motor
+adaptation, but it does remain a possibility. If updates of predicted sensory consequences
+do decrease in old age, this could hint at age-related deficits in the cerebellar contribution
+to motor adaptation. This would also explain the absence of a difference between active
+and passive localization we see in our findings. Conversely, in order to get hand location
+estimates to match visual feedback as much as in younger adults, this might spur an
+increase in proprioceptive recalibration, as we observe in this study.
+The clearest effect we find in this study is the age-related increase in hand-localization shifts in
+older adults that is not modulated by the availability of a strategy. Whether or not this underlies a
+larger reliance on implicit learning or is an effect of reduced proprioceptive acuity in older adults
+remains to be seen. Other perspectives assume a deficit in explicit adaptation that in turn necessi-
+tates a larger reliance on implicit adaptation. However, some studies find that implicit adaptation
+is limited to about what we find here [35], so that implicit learning would not be able to compen-
+sate for loss of explicit adaptation in advanced age. However, with the same paradigm that should
+only result in implicit learning, i.e. no modulation by explicit learning should be possible, older
+adults still adapt more [14]. This hints at another possibility: with advanced age, we have an
+increased capacity for implicit adaptation [77], in turn reducing the need for explicit adaptation
+or we simply forego explicit adaptation as we learn from experience that this is often wasted
+effort. All this work also suggests that the additive nature of the push-pull dynamics between
+explicit and implicit processes that many studies tacitly assume, may just be overly simplistic. For
+example, in the current work, as in some of our other work [16, 36], we can clearly elicit explicit
+adaptation, but this does not modulate implicit adaptation. Here we see that in advanced age, the
+composition of implicit processes contributing to adaptation may change. Of course, with larger
+perturbations, explicit processes are engaged more [16, 17], and this is where age-related deficits
+in motor adaptation are clearer. To overcome this, e.g. for rehabilitation purposes, the focus of
+motor learning research should perhaps be on how to improve or increase implicit contributions
+to motor learning and motor adaptation, especially in an aging population.
+Conclusion
+In this study we keep explicit contributions to motor adaptation comparable in both older and
+younger participants, in order to test age effects on hand localization shifts. We find larger
+hand localization shifts in older adults compared to younger adults, and these are largely due
+to an increase in proprioceptive recalibration. In contrast, updated predictions of sensory con-
+sequences may or may not be lower in older adults but can not explain age differences. Our
+data are in line with the hypothesis that decreased proprioceptive acuity leads to an increase in
+implicit adaptation in advanced age. However, given the slightly slower adoption of the strat-
+egy provided by our instructions, it may also be that with advanced age, people rely more on
+automatic implicit processes rather than effortful explicit learning. Regardless, proprioceptive
+recalibration is increased in older adults, and this shows that aging may lead to subtle, yet
+important changes, in sensorimotor learning and multisensory integration.
+Author Contributions
+Conceptualization: Bernard Marius ‘t Hart, Denise Y. P. Henriques.
+PLOS ONE | https://doi.org/10.1371/journal.pone.0239032
+September 14, 2020
+16 / 20

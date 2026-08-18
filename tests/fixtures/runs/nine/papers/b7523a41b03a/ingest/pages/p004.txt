@@ -1,0 +1,51 @@
+PLOS ONE
+The effect of age on visuomotor learning processes
+particular, we first test if there are any age-related differences in cognitive strategies during
+and after motor adaptation by assessing the impact of instruction in both older and younger
+adults. We also assess whether there are age-related differences in implicit contributions to no-
+cursor reaches. Finally, and most importantly, we test whether aging affects shifts in proprio-
+ceptive and predictive hand location estimates as components of implicit adaptation. Our
+results provide a more comprehensive understanding of how age affects the contributions of
+explicit and implicit processes to visuomotor adaptation, primarily the adaptation-induced
+changes in hand location estimates.
+Methods
+Participants
+Forty-one younger (mean age of 20.9 years, SD = 2.77) and thirty-eight older (mean age of
+70.0 years, SD = 6.78) adults were recruited through various research participant pools at York
+University: the Undergraduate Research Participant Pool (URPP), Kinesiology Undergraduate
+Research Participant Pool (KURE), York Research Participant Pool (YRPP), and also from the
+surrounding community. The participants from the undergraduate research pools were given
+course credit for participation. Older adults who were recruited through the YRPP or the com-
+munity were paid a honorarium and lunch, as required by the YRPP, to compensate for time
+and travel to the university. All participants had normal or corrected-to-normal visual acuity,
+were right handed, and self-reported that they were in good health and were able to under-
+stand the tasks. Participants gave their informed written consent before taking part in the
+study. The York Human Participants Review Sub-committee approved this study (#2014–
+240).
+All participants adapted to a 30˚ visuomotor rotation, however just before the rotated ses-
+sion, half of each age group were given explicit instructions on the nature of the perturbation,
+and a strategy to counter the rotation, while the other half received no instructions. Thus,
+there were four groups: non-instructed younger adults (n = 20, 14 female), instructed younger
+adults (n = 21, 13 female), non-instructed older adults (n = 19, 6 female) and instructed older
+adults (n = 19, 14 female). The instructions were meant to result in a cognitively accessible
+strategy, although participants could also spontaneously develop a cognitive strategy. The dif-
+ference between the instructed and non-instructed groups in the availability of a strategy was
+tested by asking people to reach with or without their strategy–whether or not this strategy was
+obtained from instructions or spontaneously developed. Then finally, we could compare hand
+localization shifts between older and younger adults, gauging the influence of explicit adapta-
+tion on hand localization shifts in the two age groups.
+We excluded 4 younger (all from the non-instructed group) and 3 older (1 non-instructed,
+2 instructed) participants. One older participant didn’t complete the experiment. All other
+excluded participants often “leaned on” the robot manipulandum during the 300 ms pre-reach
+hold period (see below) so that when the handle was released they made a sudden hand move-
+ment toward themselves and away from the targets. That is why, in these participants, reach
+direction relative to the target direction could not be determined for a lot of trials. The data of
+the excluded participants was never fully pre-processed and hence not statistically analyzed
+nor included in the online data set.
+Setup
+Participants were seated in front of a table on a height-adjustable chair so that they could com-
+fortably see and reach to displayed targets projected on a reflective surface from a monitor
+(Samsung 510 N, 60 Hz), located 28 cm above a 2-joint robot manipulandum (Interactive
+PLOS ONE | https://doi.org/10.1371/journal.pone.0239032
+September 14, 2020
+4 / 20

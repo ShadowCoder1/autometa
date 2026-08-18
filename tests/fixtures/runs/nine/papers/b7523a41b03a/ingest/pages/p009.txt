@@ -1,0 +1,33 @@
+PLOS ONE
+The effect of age on visuomotor learning processes
+Fig 3. Learning curves. Lines represent the mean, baseline-corrected angular reach deviations for each group with
+instructed groups as solid lines, and non-instructed groups as dashed lines. To fully counter the rotation, angular reach
+deviations should be 30˚. Shaded areas represent 95% confidence intervals. Dots represent individual participants’ reach
+deviations. A: Mean reach deviations are shown across the first 90 training trials with rotated cursor. B: The mean across
+participants and trials within the initial, second and final trial sets. C, D, E: Individual participants’ reach deviations in the
+first (C), second (D) and final (E) trial set.
+https://doi.org/10.1371/journal.pone.0239032.g003
+rotated-cursor training task (with the reach deviations from the last 15 trials in the initial aligned
+training task subtracted). We performed a 2 x 2 x 3 mixed ANOVA with age (younger and older)
+and instruction (instructed or non-instructed) as between-subject factors and trial set (first, sec-
+ond and final) as a within-subject factor. As shown in Fig 3, all participants’ reach deviations,
+regardless of instruction and age, significantly increased across trial sets (Fig 3B), as required to
+compensate for the cursor rotation. This was verified by a main effect of trial set, F (2, 150) =
+94.81, p < 0.001, η2 = 0.48, There was an interaction between trial set and instruction, F (2, 152)
+= 10.45, p < 0.001, η2 = 0.082, showing that instruction affected the time course of adaption.
+More importantly, there was an interaction between age and instruction, F (1, 75) = 4.63,
+p = 0.035, η2 = 0.022, showing that the ability to use instructions or not across trial sets to com-
+pensate for the perturbation does depend on whether the participant was older or younger.
+As prior research showed that instruction, or explicit strategies, mainly affected adaptation
+during early training [26, 29], we compared age (older and younger) and instruction (instructed
+and non-instructed) for the initial two sets of trials separately in two follow-up ANOVAs. For the
+first trial set, a 2 x 2 ANOVA with instruction (instructed and non-instructed) and age (older and
+younger) on reach deviations. We found a main effect of instruction, F (1, 75) = 32.32, p < 0.001,
+η2 = 0.301, as well as an interaction between age and instruction, F (1, 76) = 4.72, p = 0.033, η2 =
+0.059. In a planned follow-up t-test on reach deviation for the first trial set the older and younger
+instructed participants showed an effect of age, t (33.34) = 2.71, p = 0.011, η2 = 0.16. That is, we
+found that reach deviations in instructed older adults (violet line in Fig 3A & 3B) were one-third
+smaller than those in instructed younger adults (orange line). A second planned t-test on
+PLOS ONE | https://doi.org/10.1371/journal.pone.0239032
+September 14, 2020
+9 / 20

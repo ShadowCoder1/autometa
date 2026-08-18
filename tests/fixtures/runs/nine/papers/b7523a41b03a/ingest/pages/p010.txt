@@ -1,0 +1,38 @@
+PLOS ONE
+The effect of age on visuomotor learning processes
+instructed and non-instructed older adults (Fig 3A & 3B, solid blue and dashed purple lines,
+respectively) showed an effect of instruction within older participants, t (35.96) = 2.06, p = 0.047,
+η2 = 0.106. In summary, in the first three training trials, reach deviations were larger (greater cur-
+sor compensation) for the instructed groups compared to the non-instructed ones, but these
+were not as large for the instructed older adults compared to the instructed younger adults.
+We also tested the age-dependent difference in reach deviations as a function of instruction
+for the second set of trials using a 2 x 2 ANOVA using age (older and younger) and instruction
+(instructed or non-instructed) as between-subject factors. Instruction still led to overall greater
+reach deviations, F (1, 75) = 6.29, p = 0.014, η2 = 0.077, which suggests instructions still pro-
+vided a benefit in training trials 4, 5 and 6. However, this benefit of instructions did not vary
+with age, F (1, 75) = 1.89, p = 0.17, η2 = 0.024. And as illustrated in Fig 3, by the last trial set, all
+groups attained near perfect compensation (reach deviations of roughly 30˚).
+No-cursor reaches
+No cursor reaches were used to assess cognitive awareness of the cursor rotation developed dur-
+ing training with a rotated cursor both as a function of age, instruction (both factors as above) as
+well as strategy use (with strategy or without strategy). First, we determined if adapting to a visuo-
+motor rotation led to changes in no-cursor reach directions, or reach aftereffects, by comparing
+no-cursor reach directions without strategy from the rotated session with no-cursor reach devia-
+tions in the aligned session. As we expected, significant reach aftereffects of approximately 15˚
+did emerge, F (1, 75) = 746.93, p < 0.001, η2 = 0.75. Given that training with a visuomotor rota-
+tion did produce significant changes to no-cursor reaches, i.e. there were reach aftereffects, we
+continued analyzing no-cursor reach deviations with the aligned no-cursor reach deviations sub-
+tracted from both the with-strategy and without-strategy no-cursor reach deviations.
+To confirm similar explicit adaptation in older and younger adults, we ran a 2 x 2 x 2
+ANOVA on reach aftereffects, with age and instruction as between-subjects factors (as used
+above) and strategy use as within-subjects factor (see Fig 4). For adaptation to be consider to
+have an explicit component, it should at least be possible for people to either use that part of
+adaptation (their strategy) at will or not. In other words, for those aware of the cursor rotation,
+Fig 4. Changes in no-cursor reach direction following training. Shown are mean, baseline-corrected angular reach
+deviations in no-cursor reaches for each group, i.e, reach aftereffects, while suppressing (left side) or employing (right
+side) any strategies used during adaptation. Full reach aftereffects would be a ~30˚. Shaded areas and error bars are
+95% confidence intervals. Dots represent individual participants’ reach aftereffects.
+https://doi.org/10.1371/journal.pone.0239032.g004
+PLOS ONE | https://doi.org/10.1371/journal.pone.0239032
+September 14, 2020
+10 / 20

@@ -1,0 +1,631 @@
+166
+J.
+ Langan,
+ R.D.
+ Seidler
+ /
+ Behavioural
+ Brain
+ Research
+ 225 (2011) 160–
+ 168
+ visuomotor
+ adaptation
+ activation
+ during
+ initial
+ learning
+ masked
+ with
+ SWM
+ task
+ activation.
+Anatomical
+ location
+ 
+Brodmann’s
+ area
+ 
+Cluster
+ size
+ 
+Coordinates
+ of
+ peaks
+ 
+Z
+ score
+ middle
+ frontal
+ gyrus
+BA9
+24
+−54
+ 8
+ 38
+ 
+4.68
+L
+ inferior
+ frontal
+ gyrus
+BA6
+ 
+13
+ 
+−52
+ 6
+ 24
+ 
+4.75
+R
+ inferior
+ frontal
+ gyrus
+ 
+BA6
+ 
+113
+ 
+54
+ 6
+ 32
+ 
+4.68
+R
+ inferior
+ frontal
+ gyrus
+BA6
+ 
+50
+ 4
+ 22
+ 
+4.34
+R
+ inferior
+ frontal
+ gyrus
+ 
+BA6
+ 
+46
+ 2
+ 32
+ 
+4.23
+Parietal
+ superior
+ parietal
+ lobule
+ 
+BA7
+ 
+16
+ 
+−18
+ −70
+ 54
+ 
+3.53
+L
+ inferior
+ parietal
+ lobule
+BA19
+23
+−48
+ −68
+ −2
+5.02
+L
+ inferior
+ parietal
+ lobule
+ 
+BA40
+ 
+17
+ 
+−34
+ −48
+ 44
+ 
+3.61
+R
+ superior
+ parietal
+ lobule
+BA7
+ 
+35
+ 
+34
+ −62
+ 54
+ 
+5.24
+R
+ parietal
+ lobule
+ 
+BA40
+ 
+98
+ 
+42
+ −40
+ 44
+ 
+5.59
+R
+ inferior
+ parietal
+ lobule
+ 
+BA40
+ 
+46
+ −44
+ 54
+ 
+5.41
+Occipital
+ middle
+ occipital
+ gyrus
+BA19
+ 
+−42
+ −76
+ −4
+ 
+3.79
+R
+ inferior
+ occipital
+ gyrus
+BA18
+ 
+40
+ 
+40
+ −88
+ −8
+ 
+3.78
+R
+ inferior
+ occipital
+ gyrus
+ 
+BA18
+ 
+36
+ −94
+ −2 
+3.53
+R
+ middle
+ occipital
+ gyrus
+BA19/18
+42
+ −86
+ 2
+ 
+3.63
+Anatomical
+ location
+ 
+Brodmann’s
+ area
+ 
+Cluster
+ size
+ 
+Coordinates
+ of
+ peaks
+ 
+Z
+ score
+ inferior
+ frontal
+ gyrus
+BA44
+99
+54
+ 6
+ 32
+4.45
+R
+ inferior
+ frontal
+ gyrus
+ 
+BA6
+ 
+48
+ 2
+ 26
+ 
+3.56
+R
+ inferior
+ parietal
+ lobule
+BA40
+ 
+27
+ 
+46
+ −44
+ 54
+ 
+4.25
+Parietal
+ inferior
+ parietal
+ lobule
+ 
+BA40
+ 
+42
+ −42
+ 44
+ 
+3.73
+ visuomotor
+ adaptation
+ activation
+ during
+ initial
+ learning
+ masked
+ with
+ SWM
+ task
+ activation.
+Anatomical
+ location
+ 
+Brodmann’s
+ area
+ 
+Cluster
+ size
+ 
+Coordinates
+ of
+ peaks
+ 
+Z
+ score
+ superior
+ parietal
+ lobule
+ 
+BA7
+ 
+82
+ 
+−20
+ −64
+ 56
+ 
+3.49
+L
+ superior
+ parietal
+ lobule
+ 
+BA7
+ 
+−28
+ −56
+ 54
+ 
+3.41
+L
+ inferior
+ parietal
+ lobule
+ 
+BA40
+ 
+194
+ 
+−36
+ −44
+ 54
+ 
+4.00
+L
+ inferior
+ parietal
+ lobule
+BA40
+−48
+Anatomical
+ location
+Brodmann’s
+ area
+Cluster
+ size
+Coordinates
+ of
+ peaks
+Z
+ superior
+ parietal
+ lobule
+ 
+BA7
+ 
+82
+ 
+−30
+ −56
+ 56
+ 
+4.19
+L
+ superior
+ parietal
+ lobule
+ 
+BA7
+ 
+−20
+ −64
+ 56
+ 
+3.59
+L
+ inferior
+ parietal
+ lobule
+ 
+BA40
+ 
+194
+ 
+−36
+ −46
+ 54
+ 
+5.11
+L
+ inferior
+ parietal
+ lobule
+ 
+BA40
+ 
+−45
+ −35
+ 50
+ 
+4.85
+Table
+ 5
+YA
+Frontal
+ lobe
+L
+ lobe
+L
+ lobe
+L
+Table
+ 6
+YA
+ visuomotor
+ adaptation
+ activation
+ during
+ transfer
+ masked
+ with
+ SWM
+ task
+ activation.
+Frontal
+ lobe
+R
+ lobe
+R
+Table
+ 7
+OA
+Parietal
+ lobe
+L
+Table
+ 8
+OA
+ visuomotor
+ adaptation
+ activation
+ during
+ transfer
+ masked
+ with
+ SWM
+ task
+ activation.
+Parietal
+ lobe
+L
+Fig.
+ 5.
+ Areas
+ in
+ which
+ young
+ adults
+ (YA)
+ exhibit
+ more
+ activation
+ than
+ older
+ adults
+(OA)
+ during
+ transfer
+ of
+ learning
+ (run
+ 13).
+ YA
+ demonstrated
+ greater
+ activation
+ in
+ the
+left
+ putamen,
+ right
+ caudate
+ nucleus,
+ and
+ left
+ cingulate
+ gyrus
+ compared
+ to
+ OA.
+ −34
+ 52
+ 
+3.76
+ score
+Neither
+ age
+ group
+ had
+ any
+ regions
+ exhibiting
+ greater
+ activation
+ at
+transfer
+ (run
+ 13)
+ than
+ learning
+ (run
+ 3)
+ which
+ overlapped
+ with
+ their
+respective
+ SWM
+ networks.
+4.
+ Discussion
+The
+ goal
+ of
+ the
+ current
+ study
+ was
+ to
+ determine
+ whether
+ age
+affects
+ the
+ extent
+ to
+ which
+ individuals
+ rely
+ upon
+ spatial
+ working
+memory
+ for
+ motor
+ learning
+ and
+ transfer.
+ Similar
+ to
+ our
+ previous
+results,
+ we
+ found
+ that
+ older
+ adults
+ exhibited
+ equal
+ or
+ even
+ better
+transfer
+ than
+ young
+ adults
+ for
+ some
+ performance
+ variables
+ [10].
+This
+ is
+ particularly
+ striking
+ given
+ that
+ older
+ adults
+ exhibited
+ less
+learning
+ than
+ the
+ young
+ adults
+ and
+ therefore
+ had
+ a
+ theoretically
+ less
+well-formed
+ motor
+ representation
+ to
+ work
+ with
+ at
+ motor
+ transfer.
+We
+ also
+ found
+ that
+ the
+ underlying
+ cognitive
+ and
+ neural
+ correlates
+of
+ motor
+ transfer
+ differed
+ for
+ the
+ two
+ age
+ groups.

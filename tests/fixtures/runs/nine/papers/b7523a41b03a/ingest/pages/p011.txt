@@ -1,0 +1,52 @@
+PLOS ONE
+The effect of age on visuomotor learning processes
+we expect the corresponding no-cursor reach deviations when asked to reach with a strategy
+to be larger than those when asked not to use the strategy. And, for those who are not aware,
+there should be no difference between these two no-cursor reach tasks. We used this process
+dissociation procedure [15, 16] (PDP), to determine whether this measure of awareness varied
+with age. There was a main effect of age F (1, 75) = 5.66, p = 0.02, η2 = 0.07, which could sug-
+gests older adults had larger with- and without-strategy reach aftereffects, and relied more on
+implicit learning. This was not systematically the case however; as Fig 4, and post-hoc tests
+showed (see R notebook), this effect was small and driven solely by the instructed older adults
+reach deviations in the without-strategy condition. We also found an interaction between
+instruction and strategy use, F (1, 75) = 35.56, p < 0.001, η2 = 0.12. This suggests that only
+those given instructions produced larger no-cursor reach deviations when asked to use the
+strategy (right side of Fig 4) when compared to not using the strategy (left side of Fig 4). More
+importantly, we found no difference in this pattern between older adults (blue and purple) and
+younger adults (orange and red), as there was no three-way interaction between age, instruc-
+tion and strategy use on no-cursor reach deviations, F (1, 75) = 2.86, p = 0.09, η2 = 0.012. This
+suggested that the effect of instruction on the availability of an explicit strategy was comparable
+for both age groups.
+In other words, despite smaller reach deviations for instructed older adults during the first
+trial set in rotated training, instructed older adults did evoke the strategy during the no-cursor
+reaches when asked. Crucially, it seemed that older instructed adults could evoke their explicit
+strategy to the same extent as younger instructed adults. This meant that instructions evoked
+explicit learning and they did so equally for younger and older adults.
+Hand localization
+We then tested if afferent and efferent estimates of hand location varied as a function of
+explicit learning and if this was different for older and younger participants (Fig 5). First, we
+confirmed that training with a rotated cursor induced shifts in hand localization using a four-
+way 2 x 2 x 2 x 2 mixed ANOVA that included training session (aligned and rotated session)
+and movement type (active and passive localization) as within-subject factors, and age (older
+and younger) and instruction (instructed and non-instructed) as between-subjects factors.
+There was a main effect of training, F (1, 75) = 231.34, p < .001, η2 = 0.28. This meant that the
+estimated location of the unseen hand in the rotated session was significantly shifted relative
+to the aligned session, and in the direction expected after training with a CW rotated cursor.
+Moreover, training session significantly interacted with movement type, F (1, 75) = 10.01, p =
+.002, η2 = 0.002. Thus, the results replicated prior findings [47] of a significant effect of move-
+ment type; that is, the training-induced shifts in hand localization were larger for active locali-
+zation than for passive localization, confirming an additional contribution to state estimates of
+hand location from updated efferent-based predictions of sensory consequences in active
+localization.
+Given that the rotated cursor training led to a significant change in hand position estimates,
+which in turn varied with movement type, the next step was to test whether age and instruction
+affected this pattern. First, like for the reach aftereffects, we took the difference in localization
+between the rotated session and the aligned session, to calculate hand localization shifts for
+both the active and passive localization tasks (as plotted in Fig 5A, 5B, 5D and 5E). We tested
+whether these shifts in hand-localization varied as a function of age and instruction, using a 2
+x 2 ANOVA for passive localization, where only afferent (proprioceptive) information was
+available (Fig 5B). Older adults (purple and blue lines) produced significantly larger shifts in
+the afferent-based estimates of hand position, almost double that of younger adults (orange
+PLOS ONE | https://doi.org/10.1371/journal.pone.0239032
+September 14, 2020
+11 / 20

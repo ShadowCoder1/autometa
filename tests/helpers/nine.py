@@ -110,3 +110,17 @@ def copy_to(tmp_path: Path) -> Path:
     dest = Path(tmp_path) / "nine"
     shutil.copytree(NINE, dest)
     return dest
+
+
+def page_texts(paper12: str) -> list[str]:
+    """The ingested page text of one paper, page 1 first.
+
+    The stage files record where each page's text was written (`pages/pNNN.txt`), and the fixture
+    carries those files for the two papers that have an `ingest/` record — because a check that
+    reads the paper's own prose (`checks.n_before_exclusions`) can only be tested against prose
+    the paper actually printed. Hand-written pages would agree with whatever pattern the check
+    happens to use, which is the property this fixture exists to refuse.
+    """
+    record = _payload(NINE / "papers" / paper12 / "ingest" / "paper.json")
+    base = NINE / "papers" / paper12 / "ingest"
+    return [(base / page["text_file"]).read_text(encoding="utf-8") for page in record["pages"]]

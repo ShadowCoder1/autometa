@@ -51,6 +51,7 @@ from ..models import (Candidate, DatasetSpec, DispersionType, EffectSizeRecord, 
                       RunManifest, StudyMap, Verdict)
 from ..verify.confidence import ROW_REFUSAL_CODES
 from ..protocol import load_protocol
+from ..stats.conversions import split_control
 from ..report import (dump_json, exclusions_table, extraction_table, pool_rows, prisma_flow,
                       write_html_report, write_outcome_outputs, write_rows)
 from .resolve import ResolvedValues, resolve_effect_with_fallback
@@ -68,7 +69,8 @@ __all__ = ["KINDS", "MAP_KINDS", "MAP_PENDING", "OVERRIDES_FILE", "OverrideRejec
 OVERRIDES_FILE = "overrides.jsonl"
 SUMMARY_FILE = "overrides_applied.json"
 KINDS: tuple[str, ...] = ("value", "mark_reviewed", "exclude_dataset", "eligibility",
-                          "re_extract", "orientation", "include_dataset", "which_measure")
+                          "re_extract", "orientation", "include_dataset", "which_measure",
+                          "group_n")
 #: the two kinds answered at the MAP stage: they decide what may be EXTRACTED, so — except for an
 #: exclusion, which needs no reading — the pipeline applies them on the next `--resume`, not here.
 MAP_KINDS: tuple[str, ...] = ("include_dataset", "which_measure")
@@ -138,7 +140,7 @@ def _validate(payload: Mapping[str, Any]) -> dict[str, Any]:
         "question_id": _text(payload.get("question_id"), 200),
         "justification": justification,
     }
-    if kind in ("value", "mark_reviewed", "exclude_dataset", "re_extract") \
+    if kind in ("value", "mark_reviewed", "exclude_dataset", "re_extract", "group_n") \
             and not record["dataset_id"]:
         raise OverrideRejected(f"a {kind} override needs a dataset_id")
     if kind in ("value", "mark_reviewed", "re_extract") and not record["outcome_key"]:
@@ -220,6 +222,24 @@ def _validate(payload: Mapping[str, Any]) -> dict[str, Any]:
         # rows it matched carry MORE THAN ONE distinct measure name, which is the case that
         # re-signed Tracking RMSE from a decision about Angular pointing error.
         record["measure_name"] = _text(payload.get("measure_name"), 300)
+        record["quote"] = _text(payload.get("quote"), 1000)
+    if kind == "group_n":
+        # D4-lite. How many people were ANALYSED is a fact about the two arms, so it is scoped to
+        # the dataset and to nothing narrower: it holds for every outcome measured on those
+        # people, and a size answered for late adaptation that left the aftereffect on the
+        # recruited count would put two different denominators behind one pair of groups.
+        record["group"] = None
+        record["outcome_key"] = ""
+        for field in ("n_a", "n_b"):
+            value = payload.get(field)
+            try:
+                record[field] = int(value)
+            except (TypeError, ValueError):
+                raise OverrideRejected(f"an analysed-n answer needs {field} as a whole number, "
+                                       f"not {value!r}") from None
+            if record[field] < 1:
+                raise OverrideRejected(f"an analysed-n answer needs {field} of at least 1; "
+                                       f"a group of nobody is an exclusion, not a size")
         record["quote"] = _text(payload.get("quote"), 1000)
     if kind in MAP_KINDS:
         # a map answer is about a dataset nobody has read yet, so it is scoped by ids alone —
@@ -562,6 +582,11 @@ class _RunState:
         self.datasets: dict[str, DatasetSpec] = {}
         self.studies: dict[str, StudyMap] = {}
         self.paper_of: dict[str, str] = {}
+        #: D4-lite: the analysed group sizes a reviewer answered, per dataset. Kept on the STATE
+        #: rather than passed down each applier, because it must reach every later rebuild of
+        #: every row of that dataset — an n answered before a value answer must still be the n the
+        #: value answer's row is built with, whatever order the log happens to be in.
+        self.group_n: dict[str, tuple[int, int]] = {}
         for status in manifest.papers:
             paper_id = status.paper_id
             if stage_done(run_dir, paper_id, "map"):
@@ -746,6 +771,11 @@ def apply_overrides_and_repool(run_dir: str | Path, *, protocol_path: str | Path
         if kind == "orientation":
             ok, why = _apply_orientation(override, records, verdicts, state, protocol,
                                          touched_rows, overruled)
+            (applied if ok else pending).append(override if ok else {**override, "why": why})
+            continue
+        if kind == "group_n":
+            ok, why = _apply_analysed_n(override, records, verdicts, state, protocol,
+                                        touched_rows)
             (applied if ok else pending).append(override if ok else {**override, "why": why})
             continue
         if kind == "value":
@@ -974,6 +1004,58 @@ def _apply_orientation(override: Mapping[str, Any],
     return True, ""
 
 
+def _apply_analysed_n(override: Mapping[str, Any],
+                      records: dict[tuple[str, str], EffectSizeRecord],
+                      verdicts: dict[tuple[str, str, str], Verdict], state: "_RunState",
+                      protocol: Protocol,
+                      touched_rows: set[tuple[str, str]] | None = None) -> tuple[bool, str]:
+    """D4-lite: record the analysed group sizes and rebuild EVERY row of the dataset with them.
+
+    Every row, because how many people were in each arm is not a property of an outcome: the same
+    two groups produced the late-adaptation number and the aftereffect number, and a denominator
+    corrected for one of them and not the other says the study had two different sample sizes.
+    That is also why the sizes go on `_RunState` before the rebuild — a later answer about any
+    cell of this dataset rebuilds its row through `_prepare`, and must build it with the sizes a
+    human has already supplied rather than with the recruited ones the paper printed.
+
+    Nothing here computes the sizes. `checks.n_before_exclusions` says the row's n may be a
+    recruited count and the card offers `recruited − excluded`; which number is the analysed one
+    is the reviewer's answer, on the record with their quote.
+    """
+    dataset_id = str(override.get("dataset_id") or "")
+    dataset = state.datasets.get(dataset_id)
+    if dataset is None:
+        return False, f"no dataset {dataset_id!r} in this run"
+    state.group_n[dataset_id] = (int(override["n_a"]), int(override["n_b"]))
+
+    sizes = {"A": int(override["n_a"]), "B": int(override["n_b"])}
+    touched = 0
+    for key in [k for k in records if k[0] == dataset_id]:
+        outcome_key = key[1]
+        verdict_a = verdicts.get((dataset_id, outcome_key, "A"))
+        verdict_b = verdicts.get((dataset_id, outcome_key, "B"))
+        if verdict_a is None or verdict_b is None:
+            continue
+        # on the CELLS as well as on the row: the extraction table prints each group's n from its
+        # verdict, and a reviewer who has just supplied the analysed sizes must not be shown the
+        # recruited ones beside a row that no longer uses them. It settles nothing else — the
+        # bucket is untouched, because a size is not an answer to whatever is holding the cell.
+        for verdict in (verdict_a, verdict_b):
+            verdict.n = sizes[str(verdict.group)]
+            verdict.overridden_by_human = True
+            verdict.override_justification = override["justification"]
+        records[key] = _rebuild_row(records[key], dataset, verdict_a, verdict_b, protocol,
+                                    outcome_key, override["justification"],
+                                    state=state, verdicts=verdicts)
+        if touched_rows is not None:
+            touched_rows.add(key)
+        touched += 1
+    if not touched:
+        return False, (f"no verified row of dataset {dataset_id!r} in this run to give analysed "
+                       f"group sizes to")
+    return True, ""
+
+
 #: §C4, mandatory: "an override clears ONLY the named blocker". These are the findings a value
 #: answer names, and nothing else is ever retired by one.
 #:
@@ -1136,6 +1218,32 @@ def _derived_bucket(verdict: Verdict, *, mean_answered: bool = False,
     return "accept_with_note"
 
 
+def _apply_group_n(row: PreparedRow, state: "_RunState" | None, siblings: int = 1) -> None:
+    """D4-lite: put the ANALYSED group sizes a reviewer answered on a prepared row.
+
+    Here, rather than in the loop that reads the answer, because `_prepare` is the one funnel
+    every rebuild goes through — a value answer, a direction, a cell marked reviewed — and the analysed
+    n has to be the n each of those rows is built with too. It is applied to the row's values
+    (`prepare_row_values`) and to nothing else: the verdicts keep the n the extractors read, which
+    is what they saw, and the record keeps the size the row was actually divided by.
+
+    AFTER the shared-control adjustment, so the arm a reviewer answered for is re-split the way
+    the run split it (Cochrane 16.5.4). Overwriting a split arm with the whole answered size would
+    hand a control shared between two comparisons its full n back, which shrinks the row's
+    variance and raises its weight — the same un-splitting `pipeline.rows` exists to prevent.
+    """
+    sizes = (state.group_n if state is not None else {}).get(row.dataset.dataset_id)
+    if sizes is None:
+        return
+    n_a, n_b = sizes
+    shared = "shared_control_split" in row.values.flags and siblings > 1
+    for values in (row.values, *row.alternatives):
+        if values.group_a is not None:
+            values.group_a.n = n_a
+        if values.group_b is not None:
+            values.group_b.n = int(round(split_control(n_b, siblings))) if shared else n_b
+
+
 def _prepare(dataset: DatasetSpec, outcome_key: str, verdict_a: Verdict, verdict_b: Verdict,
              protocol: Protocol, *, higher_is_better: bool | None = None,
              state: "_RunState" | None = None,
@@ -1172,10 +1280,11 @@ def _prepare(dataset: DatasetSpec, outcome_key: str, verdict_a: Verdict, verdict
     prepared = prepare_rows(cells, candidates, protocol.stats, cluster_of=cluster_of,
                             directions=directions)
     mine = [row for row in prepared if row.key == (dataset.dataset_id, outcome_key)]
-    if mine:
-        return mine[0]
-    return prepare_rows([(dataset, outcome_key, verdict_a, verdict_b)], candidates,
-                        protocol.stats, cluster_of=cluster_of, directions=directions)[0]
+    row = mine[0] if mine else prepare_rows(
+        [(dataset, outcome_key, verdict_a, verdict_b)], candidates, protocol.stats,
+        cluster_of=cluster_of, directions=directions)[0]
+    _apply_group_n(row, state, len(cells))
+    return row
 
 
 def _rebuild_row(record: EffectSizeRecord, dataset: DatasetSpec, verdict_a: Verdict,

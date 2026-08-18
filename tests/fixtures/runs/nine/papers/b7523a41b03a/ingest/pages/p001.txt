@@ -1,0 +1,74 @@
+PLOS ONE
+RESEARCH ARTICLE
+The effect of age on visuomotor learning
+processes
+Chad Michael Vachon1,2, Shanaathanan Modchalingam1,3, Bernard Marius ‘t HartID1*,
+Denise Y. P. Henriques1,2,3
+1 Centre for Vision Research, York University, Toronto, Ontario, Canada, 2 Department of Psychology, York
+University, Toronto, Ontario, Canada, 3 School of Kinesiology and Health Science, York University, Toronto,
+Ontario, Canada
+a1111111111
+a1111111111
+a1111111111
+a1111111111
+a1111111111
+* thartbm@gmail.com
+Abstract
+Knowing where our limbs are in space is essential for moving and for adapting movements
+to various changes in our environments and bodies. The ability to adapt movements
+declines with age, and age-related cognitive decline can explain a decreased ability to adopt
+and deploy explicit, cognitive strategies in motor learning. Age-related sensory decline
+could also lead to a reduced fidelity of sensory position signals and error signals, each of
+which can affect implicit motor adaptation. Here we investigate two estimates of limb posi-
+tion; one based on proprioception, the other on predicted sensory consequences of move-
+ments. Each is considered a measure of an implicit adaptation process and may be affected
+by both age and cognitive strategies. Both older (n = 38) and younger (n = 42) adults
+adapted to a 30˚ visuomotor rotation in a centre-out reaching task. We make an explicit, cog-
+nitive strategy available to half of participants in each age group with a detailed instruction.
+After training, we first quantify the explicit learning elicited by instruction. Instructed older
+adults initially use the provided strategy slightly less than younger adults but show a similar
+ability to evoke it after training. This indicates that cognitive explanations for age-related
+decline in motor learning are limited. In contrast, training induced much larger shifts of state
+estimates of hand location in older adults compared to younger adults. This is not modulated
+by strategy instructions, and appears driven by recalibrated proprioception, which is almost
+twice as large in older adults, while predictions might not be updated in older adults. This
+means that in healthy aging, some implicit processes may be compensating for other
+changes to maintain motor capabilities, while others also show age-related decline (data:
+https://osf.io/qzhmy).
+OPEN ACCESS
+Citation: Vachon CM, Modchalingam S, ‘t Hart BM,
+Henriques DYP (2020) The effect of age on
+visuomotor learning processes. PLoS ONE 15(9):
+e0239032. https://doi.org/10.1371/journal.
+pone.0239032
+Editor: Sergiy Yakovenko, West Virginia University,
+UNITED STATES
+Received: July 15, 2019
+Accepted: August 31, 2020
+Published: September 14, 2020
+Peer Review History: PLOS recognizes the
+benefits of transparency in the peer review
+process; therefore, we enable the publication of
+all of the content of peer review and author
+responses alongside final, published articles. The
+editorial history of this article is available here:
+https://doi.org/10.1371/journal.pone.0239032
+Copyright: © 2020 Vachon et al. This is an open
+access article distributed under the terms of the
+Creative Commons Attribution License, which
+permits unrestricted use, distribution, and
+reproduction in any medium, provided the original
+author and source are credited.
+Introduction
+Data Availability Statement: All data files are
+available from the Open Science Framework (DOI:
+10.17605/OSF.IO/QZHMY).
+In order to move successfully, we need to know where our limbs are in space. In order to adapt
+our movements to changing circumstances, we should also update how we estimate where our
+limbs are. It has been shown that the ability to adapt movements declines in healthy aging, but
+the effect of age on limb position estimates is still unclear. Both age-related sensory decline
+Funding: This work was supported by a Canadian
+Network for Research and Innovation in Machining
+PLOS ONE | https://doi.org/10.1371/journal.pone.0239032
+September 14, 2020
+1 / 20

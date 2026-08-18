@@ -1884,3 +1884,78 @@ def test_model_written_text_shown_to_a_reviewer_carries_no_markup():
     assert "<" not in cleaned and "antml" not in cleaned
     assert cleaned.startswith("Left y-axis")
     assert _short("a < b and c > d", 40) == "a < b and c > d"      # plain prose is untouched
+
+
+# ------------------------------------------------------------------ D4-lite: the analysed n
+def _nine(tmp_path: Path) -> Path:
+    """A writable copy of the fixture run with its recorded answer cleared.
+
+    The fixture carries one `value` override of its own (Vachon d2's series identity), which is
+    part of what makes it a real run — and it would be counted beside the answer these tests are
+    about, so they start from the log the reviewer they describe would have.
+    """
+    from tests.helpers import nine
+
+    run = nine.copy_to(tmp_path)
+    (run / "overrides.jsonl").unlink(missing_ok=True)
+    return run
+
+
+def test_a_group_n_answer_rebuilds_every_row_of_the_dataset(tmp_path):
+    """Vachon's non-instructed arms were recruited at 19 and 20 and analysed at 18 and 16.
+
+    The answer is one record about the DATASET, and both of its outcomes are rebuilt with it: the
+    two numbers came from the same people, so a denominator corrected for late adaptation and not
+    for the aftereffect would say the study had two different sample sizes.
+    """
+    from canopy.pipeline.overrides import append_override, apply_overrides_and_repool
+
+    run = _nine(tmp_path)
+    append_override(run, {"kind": "group_n", "paper_id": "b7523a41b03a",
+                          "dataset_id": "b7523a41b03a:d1", "n_a": 18, "n_b": 16,
+                          "quote": "We excluded 4 younger (all from the non-instructed group) "
+                                   "and 3 older (1 non-instructed, 2 instructed) participants.",
+                          "justification": "the analysed n, after the stated exclusions"})
+    summary = apply_overrides_and_repool(run)
+    assert summary["applied"] == 1 and not summary["pending"]
+
+    rows = {(r["dataset_id"], r["outcome_key"]): r
+            for r in json.loads((run / "results" / "extraction_table_all.json").read_text())}
+    late = rows[("b7523a41b03a:d1", "late_adaptation")]
+    assert (late["n_a"], late["n_b"]) == (18, 16)
+    assert late["se"] == pytest.approx(0.344, abs=0.002)
+    # the dataset's other outcome is rebuilt too, even though nothing about it was asked
+    assert (rows[("b7523a41b03a:d1", "aftereffect")]["n_a"],
+            rows[("b7523a41b03a:d1", "aftereffect")]["n_b"]) == (18, 16)
+    # …and the paper's OTHER dataset keeps the sizes the mapper read: the answer named one
+    assert (rows[("b7523a41b03a:d2", "late_adaptation")]["n_a"],
+            rows[("b7523a41b03a:d2", "late_adaptation")]["n_b"]) == (19, 21)
+
+
+def test_an_analysed_n_survives_a_later_answer_about_the_same_cell(tmp_path):
+    """The n is a fact about the arms, so the next answer's rebuild must not undo it."""
+    from canopy.pipeline.overrides import append_override, apply_overrides_and_repool
+
+    run = _nine(tmp_path)
+    append_override(run, {"kind": "group_n", "paper_id": "b7523a41b03a",
+                          "dataset_id": "b7523a41b03a:d1", "n_a": 18, "n_b": 16,
+                          "justification": "the analysed n, after the stated exclusions"})
+    append_override(run, {"kind": "mark_reviewed", "paper_id": "b7523a41b03a",
+                          "dataset_id": "b7523a41b03a:d1", "outcome_key": "late_adaptation",
+                          "confidence": "accept_with_note",
+                          "justification": "I have opened the figure and checked this cell"})
+    apply_overrides_and_repool(run)
+    row = next(r for r in json.loads((run / "results" / "extraction_table_all.json").read_text())
+               if r["dataset_id"] == "b7523a41b03a:d1" and r["outcome_key"] == "late_adaptation")
+    assert (row["n_a"], row["n_b"]) == (18, 16)
+
+
+def test_an_analysed_n_the_run_has_no_row_for_is_pending_not_applied(tmp_path):
+    from canopy.pipeline.overrides import append_override, apply_overrides_and_repool
+
+    run = _nine(tmp_path)
+    append_override(run, {"kind": "group_n", "dataset_id": "nobody:d9", "n_a": 3, "n_b": 4,
+                          "justification": "a dataset this run never mapped"})
+    summary = apply_overrides_and_repool(run)
+    assert summary["applied"] == 0 and len(summary["pending"]) == 1
+    assert "nobody:d9" in summary["pending"][0]["why"]

@@ -170,6 +170,12 @@ CAPPING_FLAGS: frozenset[str] = frozenset({
     #: doubt left is that a reader went to the wrong panel at all, which is a reason to look at
     #: the cell, not evidence against the reading that stands (D2).
     "locator_reads_set_aside",
+    #: the group size behind this cell is one the paper prints BEFORE the exclusions it reports,
+    #: so the analysed arm may be smaller than the row's denominator (D4-lite). It caps rather
+    #: than contradicts for the same reason its neighbours do: the MEAN is not in question, the
+    #: value came from where it was asked for, and what an n four people too large moves is the
+    #: variance — a reason to look at the cell, not evidence that the number is another quantity.
+    "n_before_exclusions",
 })
 
 #: `CONTRADICTING_FLAGS` — **"this may be a different quantity."** Each one is evidence that the
@@ -314,6 +320,9 @@ CAP_REASONS: dict[str, str] = {
                                               "the opposite, so the reader that made the one "
                                               "checkable claim about these numbers was discarded "
                                               "— and the numbers themselves are in question"),
+    "n_before_exclusions": ("the group size behind this cell is a number the paper prints before "
+                            "the exclusions it then reports, so the arm that was ANALYSED may be "
+                            "smaller than the denominator this row was divided by"),
 }
 
 

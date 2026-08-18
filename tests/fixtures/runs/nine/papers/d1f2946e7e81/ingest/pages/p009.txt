@@ -1,0 +1,703 @@
+168
+J.
+ Langan,
+ R.D.
+ Seidler
+ /
+ Behavioural
+ Brain
+ Research
+ 225 (2011) 160–
+ 168
+[11] Seidler
+ RD,
+ Noll
+ DC.
+ Neuroanatomical
+ correlates
+ of
+ motor
+ acquisition
+ and
+ motor
+transfer.
+ J Neurophysiol
+ 2008;99(4):1836–45.
+[12]
+ Anguera
+ JA,
+ Reuter-Lorenz
+ PA,
+ Willingham
+ DT,
+ Seidler
+ RD.
+ Contributions
+of
+ 
+spatial
+ 
+working
+ 
+memory
+ 
+to
+ 
+visuomotor
+ 
+learning.
+ 
+J 
+Cogn
+ 
+Neurosci
+2010;22:1917–30.
+[13]
+ Taylor
+ JA,
+ Thoroughman
+ KA.
+ Divided
+ attention
+ impairs
+ human
+ motor
+ adapta-
+tion but
+ not
+ feedback
+ control.
+ J Neurophysiol
+ 2007;98:317–26.
+[14] Taylor
+ JA,
+ Thoroughman
+ KA.
+ Motor
+ adaptation
+ scaled
+ by
+ the
+ difﬁculty
+ of
+ a
+secondary
+ cognitive
+ task.
+ PLoS
+ ONE
+ 2008;3:e2485.
+[15] Eversheim
+ U,
+ Bock
+ O.
+ Evidence
+ for
+ processing
+ stages
+ in
+ skill
+ acquisition:
+ a dual
+task
+ study.
+ Learn
+ Mem
+ 2001;8:183–9.
+[16] Anguera
+ JA,
+ Reuter-Lorenz
+ PA,
+ Willingham
+ DT,
+ Seidler
+ RD.
+ Failure
+ to
+ engage
+spatial
+ working
+ memory
+ contributes
+ to
+ age-related
+ declines
+ in
+ visuomotor
+learning.
+ J Cogn
+ Neurosci
+ 2011;23:11–25.
+[17]
+ Oldﬁeld
+ R.
+ The
+ assessment
+ and
+ analysis
+ of
+ handedness:
+ the
+ Edinburgh
+ Inven-
+tory. Neuropsychologia
+ 1971;9:97–113.
+[18]
+ Folstein
+ MF,
+ Folstein
+ SE,
+ McHugh
+ PR.
+ “Mini-mental
+ state”.
+ A
+ practical
+ method
+for grading
+ the
+ cognitive
+ state
+ of
+ patients
+ for
+ the
+ clinician.
+ J Psychiatr
+ Res
+1975;12:189–98.
+[19] Mattis
+ S.
+ Mental
+ status
+ examination
+ for
+ organic
+ mental
+ syndrome
+ in
+ the
+ elderly
+patient.
+ In:
+ Bellak
+ L,
+ Karasu
+ TB,
+ editors.
+ Geriatric
+ psychiatry.
+ New
+ York:
+ Grune
+&
+ Stratton;
+ 1976.
+ p.
+ 77–121.
+[20]
+ Ekstrome
+ R,
+ French
+ J,
+ Harman
+ H.
+ Manual
+ for
+ kit
+ of
+ factor
+ referenced
+ cognitive
+tests. Princeton,
+ New
+ Jersey:
+ Eductional
+ Testing
+ Service;
+ 1976.
+[21]
+ Corsi
+ P.
+ Human
+ memory
+ and
+ the
+ medial
+ temporal
+ region
+ of
+ the
+ brain.
+ Disser-
+tation
+ Abstracts
+ International
+ 1972
+ (University
+ Microﬁlms
+ No.
+ AAI05-77717).
+[22] Reuter-Lorenz
+ PA,
+ Jonides
+ J,
+ Smith
+ EE,
+ Hartley
+ A,
+ Miller
+ A,
+ Marshuetz
+ C,
+ et
+ al.
+ Age
+differences
+ in
+ the
+ frontal
+ lateralization
+ of
+ verbal
+ and
+ spatial
+ working
+ memory
+revealed
+ by
+ PET.
+ J
+ Cogn
+ Neurosci
+ 2000;12:174–87.
+[23]
+ Winter
+ D.
+ Biomechanics
+ and
+ motor
+ control
+ of
+ human
+ movement.
+ New
+ York:
+Wiley;
+ 1997.
+[24] Teasdale
+ N,
+ Bard
+ C,
+ Fleury
+ M, Young
+ DE,
+ Proteau
+ L.
+ Determining
+ movement
+onsets
+ from
+ temporal
+ series.
+ J Mot
+ Behav
+ 1993;25(2):97–106.
+[25]
+ Mazziotta
+ JC,
+ Toga
+ AW,
+ Evans
+ A,
+ Fox
+ P,
+ Lancaster
+ JA.
+ Probabilistic
+ atlas
+ of
+the human
+ brain
+ –
+ theory
+ and
+ rationale
+ for
+ its
+ development.
+ Neuroimage
+1995;2:89–101.
+[26]
+ Talairach
+ J, Tournoux
+ P.
+ Co-planar
+ stereotaxic
+ atlas
+ of
+ the
+ human
+ brain.
+ 3-
+Dimensional
+ proportional
+ system:
+ an
+ approach
+ to
+ cerebral
+ imaging.
+ New
+ York:
+Thieme
+ Medical
+ Publishers;
+ 1988.
+ Blum
+ J,
+ Lutz
+ K,
+ Jancke
+ L.
+ Coherence
+ and
+ phase
+ locking
+ of
+ intracerebral
+ activation
+during
+ visuo-
+ and
+ audio-motor
+ learning
+ of
+ continuous
+ tracking
+ movements.
+Exp
+ Brain
+ Res
+ 2007;182:59–69.
+[28]
+ Blum
+ J,
+ Lutz
+ K,
+ Pascual-Marqui
+ R,
+ Murer
+ K,
+ Jancke
+ L.
+ Coherent
+ intracerebral
+brain
+ oscillations
+ during
+ learned
+ continuous
+ tracking
+ movements.
+ Exp
+ Brain
+Res
+ 2008;185:443–51.
+[29]
+ Koenigs
+ M, Barbey
+ AK,
+ Postle
+ BR,
+ Grafman
+ J.
+ Superior
+ parietal
+ cortex
+ is
+ crit-
+ical for
+ the
+ manipulation
+ of
+ information
+ in
+ working
+ memory.
+ J Neurosci
+2009;29:14980–6.
+[30] Jonides
+ J,
+ Lewis
+ RL,
+ Nee
+ DE,
+ Lustig
+ CA,
+ Berman
+ MG,
+ Sledge
+ Moore
+ K.
+ The
+ mind
+and
+ brain
+ of
+ short-term
+ memory.
+ Annu
+ Rev
+ Psychol
+ 2008;59:193–224.
+[31] Logan
+ JM,
+ Sanders
+ AL,
+ Snyder
+ AZ,
+ Morris
+ JC,
+ Buckner
+ RL.
+ Under-recruitment
+and
+ nonselective
+ recruitment:
+ dissociable
+ neural
+ mechanisms
+ associated
+ with
+aging.
+ Neuron
+ 2002;33:827–40.
+[32]
+ Langan
+ J,
+ Peltier
+ S,
+ Bo
+ J,
+ Fling
+ BW,
+ Welsh
+ RC,
+ Seidler
+ RD.
+ Functional
+ implications
+of age
+ differences
+ in
+ motor
+ system
+ connectivity.
+ Front
+ Syst
+ Neurosci
+ 2010;4:17.
+[33]
+ Mattay
+ VS,
+ Fera
+ F,
+ Tessitore
+ A,
+ Hariri
+ AR,
+ Das
+ S,
+ Callicott
+ JH,
+ et
+ al.
+ Neurophysio-
+logical
+ correlates
+ of
+ age-related
+ changes
+ in
+ human
+ motor
+ function.
+ Neurology
+2002;584:630–5.
+[34] Talelli
+ P,
+ Ewas
+ A,
+ Waddingham
+ W,
+ Rothwell
+ JC,
+ Ward
+ NS.
+ Neural
+ cor-
+relates
+ of
+ age-related
+ changes
+ in
+ cortical
+ neurophysiology.
+ Neuroimage
+2008;40(4):1772–81.
+[35]
+ Seidler
+ RD,
+ Bernard
+ JA,
+ Burutolu
+ TB,
+ Fling
+ BW,
+ Gordon
+ MT,
+ Gwin
+ JT,
+ et
+ al.
+ Motor
+control
+ and
+ aging:
+ links
+ to
+ age-related
+ brain
+ structural,
+ functional,
+ and
+ bio-
+chemical
+ effects.
+ Neurosci
+ Biobehav
+ Rev
+ 2010;34(5):721–33.
+[36]
+ Seidler
+ RD,
+ Noll
+ DC,
+ Chintalapati
+ P.
+ Bilateral
+ basal
+ ganglia
+ activation
+ associated
+with
+ sensorimotor
+ adaptation.
+ Exp
+ Brain
+ Res
+ 2006;175(3):544–55.
+[37]
+ Falkenstein
+ M,
+ Hielscher
+ H,
+ Dziobek
+ I,
+ Schwarzenau
+ P,
+ Hoormann
+ J,
+ Sunder-
+mann
+ B,
+ et
+ al.
+ Action
+ monitoring,
+ error
+ detection,
+ and
+ the
+ basal
+ ganglia:
+ an
+ ERP
+study.
+ Neuroreport
+ 2001;12:157–61.
+[38]
+ Botvinick
+ MM,
+ Cohen
+ JD,
+ Carter
+ CS.
+ Conﬂict
+ monitoring
+ and
+ anterior
+ cingulate
+cortex:
+ an
+ update.
+ Trends
+ Cogn
+ Sci
+ 2004;8:539–46.
+[39]
+ Seidler
+ RD.
+ Differential
+ transfer
+ processes
+ in
+ incremental
+ visuomotor
+ adapta-
+tion. Motor
+ Control
+ 2005;9:40–58.
+[40]
+ Abeele
+ S,
+ Bock
+ O.
+ Mechanisms
+ for
+ sensorimotor
+ adaptation
+ to
+ rotated
+ visual
+input.
+ Exp
+ Brain
+ Res
+ 2001;139:248–53.
+[41]
+ Abeele
+ S,
+ Bock
+ O.
+ Mechanisms
+ for
+ sensorimotor
+ adaptation
+ to
+ rotated
+ visual
+input:
+ different
+ mechanisms
+ for
+ small
+ versus
+ large
+ rotations.
+ Exp
+ Brain
+ Res
+2001;140:407–10.
+[27]

@@ -1,0 +1,641 @@
+Behavioural
+ Brain
+ Research
+ 225 (2011) 160–
+ 168
+Contents
+ lists
+ available
+ at
+ ScienceDirect
+Behavioural
+ Brain
+ Research
+j
+ ourna
+ l
+ ho
+ me
+ pa
+ ge:
+ www.elsevier.com/locate/bbr
+Age
+ differences
+ in
+ spatial
+ working
+ memory
+ contributions
+ to
+ visuomotor
+adaptation
+Throughout
+ our life span we encounter
+ challenges
+ that require
+ us to adapt to the demands
+ of our
+ chang-
+ing
+ environment;
+ this entails
+ learning
+ new skills.
+ Two primary
+ components
+ of motor skill learning
+ are
+motor
+ acquisition,
+ the initial
+ process
+ of learning
+ the skill, and motor
+ transfer,
+ when
+ learning
+ a new skill
+ is
+beneﬁtted
+ by the overlap with a previously
+ learned
+ one. Older
+ adults typically exhibit
+ declines
+ in motor
+acquisition
+ compared
+ to young
+ adults,
+ but remarkably,
+ do not demonstrate
+ deﬁcits
+ in motor
+ transfer
+ [10].
+Our
+ recent
+ work
+ demonstrates
+ that a failure to engage
+ spatial
+ working
+ memory
+ (SWM)
+ is associated
+ with
+skill
+ learning
+ deﬁcits
+ in older adults
+ [16]. Here,
+ we investigate
+ the role that SWM
+ plays
+ in both motor
+learning
+ and transfer
+ in young
+ and older adults.
+ Both age groups
+ exhibited
+ performance
+ savings,
+ or posi-
+tive
+ transfer, at transfer
+ of learning
+ for some
+ performance
+ variables.
+ Measures
+ of spatial
+ working
+ memory
+performance
+ and reaction
+ time correlated
+ with both
+ motor
+ learning
+ and transfer
+ for young adults. Young
+adults
+ recruited
+ overlapping
+ brain
+ regions
+ in prefrontal,
+ premotor,
+ parietal
+ and
+ occipital
+ cortex
+ for
+ per-
+formance
+ of a SWM and a visuomotor
+ adaptation
+ task, most notably
+ during motor
+ learning,
+ replicating
+our
+ prior ﬁndings
+ [12]. Neural overlap
+ between
+ the SWM task and visuomotor
+ adaptation
+ for the older
+adults
+ was limited
+ to parietal
+ cortex, with minimal
+ changes
+ from
+ motor
+ learning
+ to
+ transfer.
+ Combined,
+these
+ results
+ suggest
+ that age differences
+ in engagement
+ of cognitive
+ strategies
+ have a differential
+ impact
+on
+Research
+ report
+ and
+ transfer
+Jeanne
+ Langan a,c, Rachael
+ D.
+ Seidler a,b,c,∗
+a School
+ of
+ Kinesiology,
+ University
+ of
+ Michigan,
+ Ann
+ Arbor,
+ MI
+ 48109,
+ USA
+b Department
+ of
+ Psychology,
+ University
+ of
+ Michigan,
+ Ann
+ Arbor,
+ MI
+ 48109,
+ USA
+c Institute
+ of
+ Gerontology,
+ University
+ of
+ Michigan,
+ Ann
+ Arbor,
+ MI
+ 48109,
+ USA
+a
+ r
+ t
+ i c l e 
+i n
+ f o
+a
+ b
+ s
+ t
+ r
+ a c t
+Article
+ history:
+Received
+ 18
+ April
+ 2011
+Received
+ in
+ revised
+ form
+ 22
+ June
+ 2011
+Accepted
+ 8
+ July
+ 2011
+Available online 20 July 2011
+Keywords:
+Spatial
+ working
+ memory
+Aging
+Visuomotor
+ adaptation
+Skill
+ acquisition
+Transfer
+ motor
+ learning
+ and transfer.
+1.
+ Introduction
+The
+ ability
+ to
+ adapt
+ to
+ changes
+ in
+ the
+ world
+ around
+ us
+ is
+ an
+essential
+ life
+ skill.
+ Learning
+ a
+ new
+ skill
+ (“motor
+ learning”)
+ and
+modifying
+ it
+ to
+ meet
+ new
+ task
+ demands
+ (“motor
+ transfer”)
+ are
+both
+ important
+ for
+ adaptive
+ motor
+ behavior
+ (reviewed
+ in
+ ref.
+ [1])
+at
+ all
+ stages
+ of
+ life.
+ A
+ large
+ number
+ of
+ studies
+ have
+ documented
+age-related
+ reductions
+ in
+ the
+ rate
+ and
+ magnitude
+ of
+ motor
+ skill
+acquisition
+ (cf.
+ [2–7]).
+ One
+ form
+ of
+ motor
+ learning
+ that
+ has
+ been
+widely
+ studied
+ is
+ sensorimotor
+ adaptation,
+ in
+ which
+ the
+ learner
+modiﬁes
+ their
+ movements
+ to
+ adjust
+ to
+ changes
+ in
+ either
+ sensory
+input
+ or
+ motor
+ output
+ characteristics.
+ A
+ real-world
+ example
+ is
+learning
+ to
+ drive
+ a
+ new
+ car;
+ the
+ magnitude
+ of
+ vehicle
+ movement
+ in
+response
+ to
+ the
+ amount
+ of
+ wheel
+ turn
+ and
+ accelerator
+ depression
+Abbreviations:
+ SWM,
+ spatial
+ working
+ memory;
+ RT,
+ reaction
+ time;
+ DE,
+ directional
+error;
+ IEE,
+ initial
+ endpoint
+ error.
+∗Corresponding
+ author
+ at:
+ 401
+ Washtenaw
+ Ave.,
+ Ann
+ Arbor,
+ MI 48109-2214,
+ USA.
+Tel.:
+ +1
+ 734
+ 615
+ 6224;
+ fax:
+ +1
+ 734
+ 936
+ 1925.
+E-mail
+ address:
+ rseidler@umich.edu
+ (R.D.
+ Seidler).
+0166-4328/$
+ –
+ see
+ front
+ matter ©
+ 
+ 2011 Elsevier B.V. All rights reserved.
+doi:10.1016/j.bbr.2011.07.014
+© 2011 Elsevier B.V. All rights reserved.
+varies
+ across
+ vehicles.
+ Thus,
+ the
+ driver
+ must
+ learn
+ the
+ new
+ mapping
+between
+ his
+ or
+ her
+ actions
+ and
+ the
+ resulting
+ vehicle
+ movements.
+Both
+ young
+ and
+ older
+ adults
+ demonstrate
+ positive
+ motor
+transfer
+ of
+ sensorimotor
+ adaptation
+ [8–10].
+ That
+ is,
+ prior
+ experi-
+ence
+ with
+ one
+ form
+ of
+ adaptation
+ results
+ in
+ better
+ performance
+of
+ another,
+ regardless
+ of
+ age.
+ Given
+ this
+ age
+ dissociation,
+ with
+older
+ adults
+ exhibiting
+ impairments
+ in
+ initial
+ motor
+ learning
+ but
+preserved
+ motor
+ transfer,
+ the
+ underlying
+ neural
+ and
+ cognitive
+ pro-
+cesses
+ of
+ motor
+ learning
+ and
+ transfer
+ may
+ be
+ distinct
+ [11].
+We have
+ recently
+ investigated
+ the
+ mechanisms
+ underlying
+ age
+impairments
+ in
+ sensorimotor
+ adaptation.
+ We administered
+ a
+ bat-
+tery
+ of
+ neuropsychological
+ assessments
+ to
+ both
+ young
+ and
+ older
+adults.
+ In
+ addition,
+ participants
+ performed
+ a
+ manual
+ sensorimotor
+adaptation
+ task
+ and
+ a
+ spatial
+ working
+ memory
+ (SWM)
+ task
+ while
+functional
+ magnetic
+ resonance
+ images
+ were
+ acquired.
+ We found
+that
+ performance
+ on
+ the
+ card
+ rotation
+ task,
+ a
+ measure
+ of
+ SWM,
+ was
+correlated
+ with
+ the
+ rate
+ of
+ early,
+ but
+ not
+ late,
+ learning
+ of
+ a
+ visuo-
+motor
+ adaptation
+ task
+ for
+ young
+ adults
+ (18
+ participants,
+ mean
+ age
+21.1
+ ±
+ 2.5
+ years
+ [12]).
+ There
+ were
+ no
+ correlations
+ between
+ verbal
+working
+ memory
+ measures
+ and
+ either
+ early
+ or
+ late
+ learning.
+ More-
+over,
+ the
+ neural
+ correlates
+ of
+ early
+ learning
+ overlapped
+ with
+ those
+that
+ participants
+ engaged
+ when
+ performing
+ a
+ SWM
+ task,
+ notably
+ in

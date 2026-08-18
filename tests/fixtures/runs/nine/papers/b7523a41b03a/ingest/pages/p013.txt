@@ -1,0 +1,51 @@
+PLOS ONE
+The effect of age on visuomotor learning processes
+in hand position for each age group to zero, older adults showed only 0.84˚ shift, which did
+not significantly differ from 0, t (35) = 1.07, p = 0.15, η2 = 0.032. However, the shifts for youn-
+ger adults, 1.97˚, were significantly different from 0, t (41) = 4.62, p < .001, η2 = 0.481, as
+found by ‘t Hart & Henriques [47]. These results were consistent with the confidence intervals
+shown in Fig 5C. In summary, while older adults showed much greater shifts in afferent-based
+hand localization, or proprioceptive recalibration, than younger adults, they did not show evi-
+dence of a contribution from updates to efferent-based predictions in hand localization.
+Discussion
+In this study, we assess the effects of age on several processes in motor learning. Specifically,
+we gauge the effects of age on implicit shifts in proprioceptive and predictive hand localization
+as well as how these are modulated by explicit, strategy-based adaptation. We find that older
+adults benefit less from explicit instruction during initial adaptation although they demon-
+strate a similar amount of strategy as younger adults when reaching without a cursor after
+training. In contrast, no-cursor reaches without a strategy show no impairments in implicit
+changes for older adults that could contribute to age-related decline in motor learning. In fact,
+instructed older adults show marginally larger without-strategy reach aftereffects. Older adults
+also show clearly larger proprioceptive recalibration, which contributes to increased hand
+localization shifts compared to younger adults, suggesting that specific implicit processes are
+more heavily relied on with advanced age. In addition, while there is an added effect of effer-
+ent-based signals on hand localization shifts in younger adults, this is not detectable in older
+adults. In summary, while we find some suggestion of age-related deficits in the initial use of
+an explicit strategy, we neither find deficit in the ability to evoke the strategy after training, nor
+a clear effect of age on implicit motor changes. Nevertheless, we see age-related implicit
+changes in hand localization, as we find that proprioceptive recalibration is larger in older
+adults.
+Explicit component of adaptation in aging
+Our findings replicate prior research that demonstrates that instruction on how to counteract
+a perturbation can benefit initial adaptation [15, 16, 26–29]. Here we find that the extent of
+this benefit decreases as a function of age by about ⅓(Fig 3). Similarly, Heuer & Hegele [4, 27]
+demonstrate that, when given both instruction and corrective feedback, older adults are less
+able to acquire or apply a cognitive strategy when training to rotate an arrow to match the
+direction they would have to reach to counter a visuomotor rotation. However, since they
+average over performance throughout learning the time course of the effect is unclear. Extend-
+ing this, we show that age-related differences in applying a cognitive strategy are limited to
+only the initial stages of learning (specifically the first set of 3 trials), albeit for a smaller rota-
+tion of 30˚. Our findings seem to indicate that the ability or willingness to adopt a novel
+explicit strategy decreases with age, while the ability to apply a learned strategy is not affected.
+How this affects older participants’ ability to adapt to larger rotations remains to be seen.
+Other age-related deficits might emerge even in the absence of instruction, when perturba-
+tions are large enough [2–7, 10, 63], which has implications for cognitive awareness and pro-
+cessing of the visual perturbation [15, 28]. For smaller rotations (e.g. 30˚ rotation) the findings
+are not consistent: in the absence of instructions some studies find age-related deficits in adap-
+tation [12, 63] while others find no effect [4, 7]. This may be understood if implicit adaptation
+is limited in scope [17, 35, 64]. The increased implicit adaptation in older adults in a task
+designed to only elicit implicit adaptation [14] shows it is also possible that older adults’
+increased capacity for implicit adaptation in turn reduces the overall need and capacity for
+PLOS ONE | https://doi.org/10.1371/journal.pone.0239032
+September 14, 2020
+13 / 20

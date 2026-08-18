@@ -1,0 +1,345 @@
+164
+J.
+ Langan,
+ R.D.
+ Seidler
+ /
+ Behavioural
+ Brain
+ Research
+ 225 (2011) 160–
+ 168
+Fig.
+ 2.
+ Performance
+ measures
+ for
+ the
+ 45◦visuomotor
+ adaptation
+ for
+ both
+ young
+ (YA)
+ and
+ older
+ (OA)
+ adults.
+ (A)
+ YA
+ DE,
+ (B)
+ OA
+ DE,
+ (C)
+ YA
+ IEE,
+ (D)
+ OA
+ IEE,
+ (E)
+ YA
+ RT
+ and
+ (F)
+ OA
+RT.
+3.6.
+ fMRI
+ results
+ lobule
+ greater
+ than
+ older
+ adults
+ at
+ initial
+ learning
+ (Fig.
+ 4A,
+Table
+ 3).
+ Older
+ adults
+ had
+ greater
+ activation
+ in
+ the
+ right
+ postcentral
+gyrus
+ and
+ paracentral
+ lobule
+ than
+ young
+ adults
+ (Fig.
+ 4B,
+ Table
+ 3).
+At
+ transfer
+ of
+ learning,
+ young
+ adults
+ demonstrated
+ greater
+ activa-
+tion
+ in
+ the
+ left
+ putamen
+ and
+ cingulate
+ gyrus
+ and
+ the
+ right
+ caudate
+nucleus
+ than
+ the
+ older
+ adults
+ (Fig.
+ 5,
+ Table
+ 4).
+ There
+ were
+ no
+ regions
+in
+ which
+ older
+ adults
+ exhibited
+ greater
+ activation
+ than
+ the
+ young
+adults
+ at
+ transfer
+ of
+ learning.
+Using
+ the
+ masks
+ of
+ SWM
+ activation
+ for
+ young
+ and
+ older
+ adults
+that
+ we
+ obtained
+ for
+ each
+ age
+ group
+ (with
+ separate
+ cohorts
+ of
+ par-
+ticipants)
+ from
+ Anguera
+ et
+ al.
+ [16], we
+ identiﬁed
+ brain
+ regions
+ that
+were
+ active
+ during
+ visuomotor
+ adaptation
+ and
+ transfer
+ in
+ the
+ cur-
+rent
+ study.
+ Young
+ adults
+ demonstrated
+ more
+ active
+ regions
+ during
+initial
+ learning
+ compared
+ to
+ transfer
+ that
+ overlapped
+ with
+ the
+ SWM
+network,
+ including
+ in
+ the
+ bilateral
+ inferior
+ frontal
+ gyrus,
+ bilateral
+superior
+ and
+ inferior
+ parietal
+ lobules,
+ and
+ regions
+ of
+ occipital
+ cor-
+occipital
+Both
+ young
+ and
+ older
+ adults
+ demonstrated
+ at
+ least
+ partial
+ motor
+savings
+ at
+ transfer
+ of
+ learning.
+ To
+ determine
+ the
+ neural
+ substrates
+of
+ this
+ effect,
+ we
+ ﬁrst
+ contrasted
+ brain
+ activation
+ within
+ each
+ group
+between
+ initial
+ learning
+ (run
+ 3)
+ and
+ transfer
+ (run
+ 13).
+ Young
+ adults
+demonstrated
+ greater
+ activation
+ in
+ the
+ right
+ superior
+ frontal
+ gyrus,
+cingulate
+ gyrus
+ and
+ superior
+ parietal
+ lobule
+ at
+ initial
+ learning
+ com-
+pared
+ to
+ transfer
+ (Fig.
+ 3A,
+ Table
+ 2),
+ similar
+ to
+ what
+ we have
+ reported
+previously
+ with
+ a
+ separate
+ cohort
+ of
+ young
+ adults
+ [11]. Older
+ adults
+demonstrated
+ greater
+ activation
+ in
+ the
+ right
+ superior
+ parietal
+ lob-
+ule
+ (Fig.
+ 3B,
+ Table
+ 2)
+ at
+ initial
+ learning
+ compared
+ to
+ transfer.
+ Neither
+age
+ group
+ demonstrated
+ greater
+ activation
+ at
+ transfer
+ compared
+ to
+initial
+ learning.
+Between
+ groups
+ contrasts
+ revealed
+ that
+ young
+ adults
+ activated
+the
+ left
+ postcentral
+ gyrus,
+ right
+ superior
+ frontal
+ gyrus
+ and
+ middle

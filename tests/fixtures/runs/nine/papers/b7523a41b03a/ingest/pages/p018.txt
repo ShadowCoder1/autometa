@@ -1,0 +1,84 @@
+PLOS ONE
+The effect of age on visuomotor learning processes
+13.
+Noohi F, Boyden NB, Kwak Y, Humfleet J, Mu¨ller MLTM, Bohnen NI, et al. Interactive effects of age and
+multi-gene profile on motor learning and sensorimotor adaptation. Neuropsychologia. 2016; 84: 222–
+234. https://doi.org/10.1016/j.neuropsychologia.2016.02.021
+14.
+Vandevoorde K, Orban de Xivry J-J. Internal model recalibration does not deteriorate with age while
+motor adaptation does. Neurobiol Aging. 2019; 80: 138–153. https://doi.org/10.1016/j.neurobiolaging.
+2019.03.020
+15.
+Werner S, van Aken BC, Hulst T, Frens MA, van der Geest JN, Stru¨der HK, et al. Awareness of sensori-
+motor adaptation to visual rotations of different size. PloS One. 2015; 10: e0123321. https://doi.org/10.
+1371/journal.pone.0123321
+16.
+Modchalingam S, Vachon CM, ‘t Hart BM, Henriques DYP. The effects of awareness of the perturbation
+during motor adaptation on hand localization. PloS One. 2019; 14: e0220884. https://doi.org/10.1371/
+journal.pone.0220884
+17.
+Bond KM, Taylor JA. Flexible explicit but rigid implicit learning in a visuomotor adaptation task. J Neuro-
+physiol. 2015; 113: 3836–3849. https://doi.org/10.1152/jn.00009.2015
+18.
+Buszard T, Masters RSW. Adapting, correcting and sequencing movements: does working-memory
+capacity play a role? Int Rev Sport Exerc Psychol. 2018; 11: 258–278. https://doi.org/10.1080/
+1750984X.2017.1323940
+19.
+Stanley J, Krakauer JW. Motor skill depends on knowledge of facts. Front Hum Neurosci. 2013; 7.
+https://doi.org/10.3389/fnhum.2013.00503
+20.
+Milner B, Corkin S, Teuber H-L. Further analysis of the hippocampal amnesic syndrome: 14-year fol-
+low-up study of H.M. Neuropsychologia. 1968; 6: 215–234. https://doi.org/10.1016/0028-3932(68)
+90021-3
+21.
+Redding GM, Wallace B. Adaptive spatial alignment and strategic perceptual-motor control. J Exp Psy-
+chol Hum Percept Perform. 1996; 22: 379–394. https://doi.org/10.1037//0096-1523.22.2.379
+22.
+Mazzoni P, Krakauer JW. An implicit plan overrides an explicit strategy during visuomotor adaptation. J
+Neurosci Off J Soc Neurosci. 2006; 26: 3642–3645. https://doi.org/10.1523/JNEUROSCI.5317-05.
+2006
+23.
+Taylor JA, Ivry RB. Flexible Cognitive Strategies during Motor Learning. PLOS Comput Biol. 2011; 7:
+e1001096. https://doi.org/10.1371/journal.pcbi.1001096
+24.
+McDougle SD, Ivry RB, Taylor JA. Taking Aim at the Cognitive Side of Learning in Sensorimotor Adap-
+tation Tasks. Trends Cogn Sci. 2016; 20: 535–544. https://doi.org/10.1016/j.tics.2016.05.002
+25.
+Krakauer JW, Hadjiosif AM, Xu J, Wong AL, Haith AM. Motor Learning. Compr Physiol. 2019; 9: 613–
+663. https://doi.org/10.1002/cphy.c170043
+26.
+Taylor JA, Krakauer JW, Ivry RB. Explicit and Implicit Contributions to Learning in a Sensorimotor Adap-
+tation Task. J Neurosci. 2014; 34: 3023–3032. https://doi.org/10.1523/JNEUROSCI.3619-13.2014
+27.
+Hegele M, Heuer H. Age-related variations of visuomotor adaptation result from both the acquisition
+and the application of explicit knowledge. Psychol Aging. 2013; 28: 333–339. https://doi.org/10.1037/
+a0031914
+28.
+Neville K-M, Cressman EK. The influence of awareness on explicit and implicit contributions to visuo-
+motor adaptation over time. Exp Brain Res. 2018; 236: 2047–2059. https://doi.org/10.1007/s00221-
+018-5282-7
+29.
+Benson BL, Anguera JA, Seidler RD. A spatial explicit strategy reduces error but interferes with sensori-
+motor adaptation. J Neurophysiol. 2011; 105: 2843–2851. https://doi.org/10.1152/jn.00002.2011
+30.
+Keisler A, Shadmehr R. A shared resource between declarative memory and motor memory. J Neurosci
+Off J Soc Neurosci. 2010; 30: 14817–14823. https://doi.org/10.1523/JNEUROSCI.4160-10.2010
+31.
+Taylor JA, Thoroughman KA. Motor Adaptation Scaled by the Difficulty of a Secondary Cognitive Task.
+PLoS ONE. 2008;3. https://doi.org/10.1371/journal.pone.0002485
+32.
+Taylor JA, Thoroughman KA. Divided attention impairs human motor adaptation but not feedback con-
+trol. J Neurophysiol. 2007; 98: 317–326. https://doi.org/10.1152/jn.01070.2006
+33.
+Be´dard P, Song J-H. Attention modulates generalization of visuomotor adaptation. J Vis. 2013; 13: 12.
+https://doi.org/10.1167/13.12.12
+34.
+Im HY, Be´dard P, Song J-H. Encoding attentional states during visuomotor adaptation. J Vis. 2015; 15:
+20–20. https://doi.org/10.1167/15.8.20
+35.
+Kim HE, Morehead JR, Parvin DE, Moazzezi R, Ivry RB. Invariant errors reveal limitations in motor cor-
+rection rather than constraints on error sensitivity. Commun Biol. 2018; 1: 1–7. https://doi.org/10.1038/
+s42003-018-0021-y
+PLOS ONE | https://doi.org/10.1371/journal.pone.0239032
+September 14, 2020
+18 / 20

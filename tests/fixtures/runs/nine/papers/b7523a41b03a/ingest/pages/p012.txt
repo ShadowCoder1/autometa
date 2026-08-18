@@ -1,0 +1,34 @@
+PLOS ONE
+The effect of age on visuomotor learning processes
+Fig 5. Training-induced shifts in hand localization. A: Active localization: mean, interpolated angular shift in hand
+localization estimates after training where participants actively moved their unseen right hand to a location of their choosing
+on the white arc (efferent and afferent). B: Passive Localization: Mean shift in angular hand localization estimates after training
+where the unseen right hand is passively moved to the exact location as the active localization task (only afferent). C: Predicted
+sensory consequences: Differences in estimates between active hand localization (efferent and afferent) and passive hand
+localization (afferent only) are interpreted as evidence there are changes in efferent-based estimates of hand location. Shaded
+areas are 95% confidence intervals. D, E, F: Individual participants’ average of the kernel smoothed localization shift at 50˚, 90˚
+and 130˚ (used for statistics) as transparent dots, with the group average and 95% confidence interval as opaque dots and lines,
+for active localization (D), passive localization (E) and the difference between active and passive localization (F) as estimate for
+an added contribution of predicted sensory consequences to hand localization.
+https://doi.org/10.1371/journal.pone.0239032.g005
+and red lines), F (1, 75) = 10.01, p = 0.002, η2 = 0.118, but there was no main effect of instruc-
+tion, F (1, 75) = 0.02, p = 0.87, η2< 0.001, suggesting that explicit learning did not affect affer-
+ent hand localization signals. Lastly, there was no interaction between instruction and age, F
+(1, 75) = 1.63, p = 0.21, η2 = 0.021. Thus, in summary, while older adults showed larger shifts
+in afferent-only hand localization, or proprioceptive recalibration, there was no effect of
+instruction on proprioceptive recalibration, confirming this is a wholly implicit process [16].
+As indicated earlier, the shifts in hand localization were larger in active localization (Fig
+5A) than in passive localization (Fig 5B), likely because this task also includes changes due to
+updated efferent-based or predicted estimates of hand position. However, when we tried to
+isolate the updated predicted or efferent-based estimates by subtracting shifts in hand localiza-
+tion responses in the passive condition (Fig 5B) from those in the active condition (Fig 5A),
+the difference (Fig 5C) and the effect size were small overall. This suggests that the training-
+induced changes in hand estimates in the active localization task (Fig 5A) might be primarily
+due to proprioceptive recalibration (Fig 5B).
+Further, as in the original 4-factor ANOVA a 2 x 2 ANOVA on the difference between
+active and passive localization shifts (as in Fig 5C) using age and instruction as between-sub-
+ject factors, we found no effect of age, F (1, 75) = 1.59, p = 0.19, η2 = 0.02 (nor any other effect
+or interaction). However, when we compared the magnitude of these updated predicted shifts
+PLOS ONE | https://doi.org/10.1371/journal.pone.0239032
+September 14, 2020
+12 / 20

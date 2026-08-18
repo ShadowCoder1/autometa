@@ -935,3 +935,149 @@ def test_the_plausibility_line_still_clears_the_largest_effect_in_the_live_corpu
 
     d = cohens_d(52.49055415155991, 9.15, 12, 27.98296334051485, 7.3, 12)
     assert abs(round(d, 4)) == 2.9610 and abs(d) < MAX_PLAUSIBLE_D
+
+
+# ------------------------------------------------------- D4-lite: an n taken before the exclusions
+#: heuer2008.pdf, verbatim: the Participants paragraph (p. 2) and the data-analysis paragraph
+#: (p. 4). Between them they carry every word D4-lite looks for — two group sizes, a participant
+#: whose data were lost, four who did not finish, and two exclusions — and not one of them is a
+#: recruited count the paper prints as a number the check can read. It is the shape a cue-only
+#: rule fires on, and the check must stay silent on it.
+HEUER_PARTICIPANTS = (
+    'Participants.\n'
+    'Two groups of participants served in the exper-\n'
+    'iment. The younger participants, 10 men and 10 women, were\n'
+    '20\u201329 years old (M \x02 23.3 years, SD \x02 2.6 years). The older\n'
+    'participants, 10 men and 10 women, were 51\u201365 years old (M \x02\n'
+    '56.2 years, SD \x02 3.7 years). All participants were self-declared\n'
+    'right-handers and had normal color vision according to the Ishi-\n'
+    'hara test. The data of 1 additional participant had been lost, and 4\n'
+    'additional participants did not finish the experiment.')
+
+HEUER_TRIAL_EXCLUSIONS = (
+    'For each block of practice trials and each test phase, means were\n'
+    'computed for each participant and each target direction following\n'
+    'a screening for outliers. Movements with durations of less than 200\n'
+    'ms or more than 5,000 ms were considered irregular, as were\n'
+    'movements for which the total trajectory was longer than five\n'
+    'times the amplitude. In the younger group, 153 of 13,920 trials\n'
+    '(1.1%) were excluded from further analyses; in the older group,\n'
+    '406 of 13,896 trials (2.3%) were excluded.')
+
+
+def nine_pages(paper12: str = "b7523a41b03a") -> list[str]:
+    """The ingested page text of one of the fixture run's two papers."""
+    from tests.helpers import nine
+
+    return nine.page_texts(paper12)
+
+
+def vachon(n: int, group: str = "B") -> Candidate:
+    """One of Vachon 2020's real candidates, at the group size the question is about.
+
+    The paper recruited twenty non-instructed younger adults and then excluded four of them, so
+    `n = 20` on a candidate is the count BEFORE the exclusions — the number D4-lite exists to
+    find. Read out of the run's own `extract.json` rather than built here, because the check is
+    handed whatever the extractors produced.
+    """
+    from tests.helpers import nine
+
+    real = next(c for c in nine.candidates("b7523a41b03a")
+                if c.dataset_id == "b7523a41b03a:d1" and c.group == group)
+    return real.model_copy(update={"n": n})
+
+
+def test_a_recruited_n_is_flagged_when_the_exclusions_are_in_the_next_paragraph():
+    """Vachon 2020 prints the four group sizes in one paragraph and the exclusions in the next."""
+    from canopy.verify.checks import n_before_exclusions
+
+    flag = n_before_exclusions(nine_pages(), vachon(20), ["younger", "young"])
+    assert flag is not None and flag.code == "n_before_exclusions"
+    assert "excluded 4 younger" in flag.message
+    assert flag.detail["recruited"] == 20 and flag.detail["excluded"] == 4
+    assert "We excluded 4 younger" in flag.detail["quote"]
+    assert flag.candidate_ids == [vachon(20).candidate_id]
+
+
+def test_the_older_arm_of_the_same_paper_is_flagged_from_its_own_words():
+    """The count belongs to the group whose words sit beside it: 3 older, not 4 younger."""
+    from canopy.verify.checks import n_before_exclusions
+
+    flag = n_before_exclusions(nine_pages(), vachon(19, "A"), ["older", "old"])
+    assert flag is not None
+    assert (flag.detail["recruited"], flag.detail["excluded"]) == (19, 3)
+    assert "excluded 3 older" in flag.message
+
+
+def test_it_is_silent_when_the_paper_never_excludes_anybody():
+    """Anguera 2011 prints its group sizes and no exclusion sentence anywhere in the paper."""
+    from canopy.verify.checks import n_before_exclusions
+    from tests.helpers import nine
+
+    older = next(c for c in nine.candidates("d1f2946e7e81") if c.group == "A")
+    assert n_before_exclusions(nine_pages("d1f2946e7e81"),
+                               older.model_copy(update={"n": 9}), ["older", "old"]) is None
+
+
+def test_it_is_silent_when_the_n_is_not_a_recruited_count():
+    """The analysed n — sixteen of the twenty — matches nothing the paper prints as a size."""
+    from canopy.verify.checks import n_before_exclusions
+
+    assert n_before_exclusions(nine_pages(), vachon(16), ["younger", "young"]) is None
+
+
+def test_a_size_the_paper_never_prints_as_a_number_is_not_a_recruited_count():
+    """Heuer's twenty younger participants are "10 men and 10 women", and its losses are real —
+    but nothing here is a printed size the check can read, so it says nothing rather than
+    guessing which of the numbers in the paragraph is the group's."""
+    from canopy.verify.checks import n_before_exclusions
+
+    pages = [HEUER_PARTICIPANTS, HEUER_TRIAL_EXCLUSIONS]
+    assert n_before_exclusions(pages, vachon(20), ["younger", "young"]) is None
+    assert n_before_exclusions(pages, vachon(20, "A"), ["older", "old"]) is None
+
+
+def test_a_trial_level_exclusion_never_supplies_the_count():
+    """153 of 13,920 trials is not 153 people: no number beside the cue belongs to the group."""
+    from canopy.verify.checks import excluded_count
+
+    assert excluded_count(HEUER_TRIAL_EXCLUSIONS, ["younger", "young"]) == (None, "", "")
+    assert excluded_count(HEUER_TRIAL_EXCLUSIONS, ["older", "old"]) == (None, "", "")
+    # …and Vachon's own sentence, read for each arm in turn, is where the counts do belong
+    count, phrase, quote = excluded_count(
+        "We excluded 4 younger (all from the non-instructed group) and 3 older (1 non-instructed,"
+        "\n2 instructed) participants.", ["non-instructed younger adults"])
+    assert (count, phrase) == (4, "4 younger") and quote.startswith("We excluded 4 younger")
+
+
+def test_the_finding_caps_the_cell_rather_than_contradicting_it():
+    """An n that may be four people too large is a doubt about corroboration, not evidence that
+    the number came from somewhere else — so it caps (D4-lite)."""
+    from canopy.verify.checks import CHECK_SEVERITY
+    from canopy.verify.confidence import CAPPING_FLAGS, CONTRADICTING_FLAGS
+
+    assert "n_before_exclusions" in CAPPING_FLAGS
+    assert "n_before_exclusions" not in CONTRADICTING_FLAGS
+    assert CHECK_SEVERITY["n_before_exclusions"] == "warn"
+
+
+def test_over_two_whole_papers_it_speaks_only_where_the_paper_does():
+    """Every candidate of the fixture run's two ingested papers, through the verify stage's own
+    wiring. Vachon's four arms are all recruited counts and each is flagged once; Anguera 2011
+    prints its sizes and never takes anybody out, so nothing is said about it at all."""
+    from canopy.pipeline.run import _analysed_n_flags, _group_vocabulary
+    from tests.helpers import nine
+
+    protocol = nine.protocol()
+    fired: set[tuple[str, int, int]] = set()
+    for paper12 in ("b7523a41b03a", "d1f2946e7e81"):
+        pages, cands = nine.page_texts(paper12), nine.candidates(paper12)
+        for dataset in nine.study(paper12).datasets:
+            for sources in dataset.outcomes:
+                cell = [c for c in cands if c.dataset_id == dataset.dataset_id
+                        and c.outcome_key == sources.outcome_key]
+                for flag in _analysed_n_flags(pages, cell, _group_vocabulary(dataset, protocol)):
+                    fired.add((dataset.dataset_id, flag.detail["recruited"],
+                               flag.detail["excluded"]))
+    assert fired == {("b7523a41b03a:d1", 19, 3), ("b7523a41b03a:d1", 20, 4),
+                     ("b7523a41b03a:d2", 19, 3), ("b7523a41b03a:d2", 21, 4)}
