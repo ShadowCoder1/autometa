@@ -12,11 +12,13 @@ import pytest
 from canopy.llm.cache import DiskCache, cache_key
 from canopy.llm.client import (
     BudgetExceeded,
+    DEGENERATE_MIN_LEN,
     LLMClient,
     LLMResult,
     MissingFixture,
     RefusalError,
     TruncatedOutput,
+    degenerate_reply,
     image_block,
     pdf_block,
 )
@@ -577,3 +579,108 @@ def test_structured_validates_the_output_schema(tmp_path):
     r = c.structured(model="claude-opus-5", system="s", messages=MSGS, schema=loose,
                      validate_schema=False)               # explicit escape hatch
     assert r.parsed == {"ok": True}
+
+
+# --------------------------------------------------------- C12: a reply that did not happen
+#: Every orientation ballot the three-paper run produced, copied verbatim out of
+#: `runs/rerun-fixed/papers/*/verify.json` (that directory is not in the repo, so the ballots
+#: travel here instead). The detector's whole claim is measured against these 16 and nothing else.
+BALLOTS = json.loads(
+    (Path(__file__).resolve().parent / "fixtures" / "runs" / "orientation_ballots.json").read_text()
+)["ballots"]
+
+#: The four the decision identifies, with the signature each one carries. A ballot that is not in
+#: this table is a real reply, however thin — the detector may not touch it.
+DEGENERATE = {
+    ("bock", "Tracking root mean square error between target and cursor (RMSE)", "claude-opus-5"):
+        ["too_short", "raw_serialisation"],
+    ("cressman", "Hand deviation at peak velocity on no-cursor (aftereffect) reaches, expressed in "
+                 "degrees and as a percentage of the 30° distortion, with aligned-cursor "
+                 "performance as baseline", "claude-opus-5"): ["too_short"],
+    ("cressman", "Mean angular deviation of the hand at peak velocity during reach training with "
+                 "the misaligned (30° CW rotated) cursor", "claude-opus-5"): ["doubled_words"],
+    ("heuer", "Aftereffect (posttest−pretest difference of final movement direction) in the "
+              "open-loop test with cued absence of the visuomotor rotation", "claude-sonnet-5"):
+        ["control_artefacts"],
+}
+
+
+def test_the_run_really_did_produce_sixteen_orientation_ballots():
+    assert len(BALLOTS) == 16
+    assert len({(b["paper"], b["measure_name"], b["model"]) for b in BALLOTS}) == 16
+    assert {b["paper"] for b in BALLOTS} == {"bock", "cressman", "heuer"}
+
+
+@pytest.mark.parametrize("ballot", BALLOTS,
+                         ids=[f"{b['paper']}-{b['model'][7:]}-{len(b['reason'])}" for b in BALLOTS])
+def test_exactly_the_four_degenerate_ballots_are_caught(ballot):
+    """C12 acceptance test (iv). Twelve of these are real justifications between 403 and 951
+    characters with 2-4 quotes each, and one of the four caught is 707 characters with 4 quotes —
+    length and quote count are not what separates them, which is why the earlier `len < 40 or
+    quotes == []` sweep found only one of the three anyone had noticed."""
+    key = (ballot["paper"], ballot["measure_name"], ballot["model"])
+    assert degenerate_reply(ballot["reason"]) == DEGENERATE.get(key, [])
+
+
+def test_the_detector_is_not_just_a_length_test():
+    """Zero false positives on twelve real replies, and the caught set is not the short set."""
+    caught = [b for b in BALLOTS if degenerate_reply(b["reason"])]
+    assert len(caught) == 4
+    clean = [b for b in BALLOTS if not degenerate_reply(b["reason"])]
+    assert min(len(b["reason"]) for b in clean) == 403        # a short real reply survives
+    assert max(len(b["reason"]) for b in caught) == 1172      # a long fake one does not
+    assert sorted(len(b["reason"]) for b in caught) == [11, 37, 707, 1172]
+
+
+def test_a_control_character_from_a_pdf_text_layer_costs_one_call_not_a_cell():
+    """The honest caveat. Heuer's 1172-character ballot is a real argument that happens to quote a
+    `\\x08` out of the PDF's text layer, and the detector calls it degenerate anyway. That is the
+    designed asymmetry: the caller re-issues once, so over-firing costs a ballot, while under-firing
+    costs a pooled cell to a stub that was counted as a witness."""
+    heuer = next(b for b in BALLOTS if degenerate_reply(b["reason"]) == ["control_artefacts"])
+    assert "\x08" in heuer["reason"] and len(heuer["reason"]) > 1000
+    assert degenerate_reply(heuer["reason"].replace("\x08", "")) == []
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("placeholder", ["too_short"]),
+    ("placeholder','reason':'',\"reason\":\"\"}", ["too_short", "raw_serialisation"]),
+    ("", ["too_short"]),
+    ("   \n  ", ["too_short"]),
+    ("a" * (DEGENERATE_MIN_LEN - 1), ["too_short"]),
+    ("a" * DEGENERATE_MIN_LEN, []),
+    ("the reader should report which which group had the higher late-block value here",
+     ["doubled_words"]),
+    ("tabs\tand newlines\nand returns\r are ordinary text quoted out of a pdf, not debris", []),
+    ("an otherwise fine sentence about the measure that carries a stray \\x08 escape", 
+     ["control_artefacts"]),
+    ("a sentence about a measure with an unbalanced { brace left in it by the serialiser",
+     ["raw_serialisation"]),
+])
+def test_the_degenerate_signatures_one_at_a_time(text, expected):
+    assert degenerate_reply(text) == expected
+
+
+def test_a_refusal_long_enough_to_be_a_sentence_is_an_abstention_not_a_non_reply():
+    """Fix round F15, and the controller's ruling on it: `not quotes` was NOT added as a fifth
+    signature.
+
+    This 46-character boilerplate refusal passes the detector, quotes or no quotes, and that is
+    the decision rather than an oversight. A reader that answers "unknown" has ABSTAINED, and C3
+    already refuses to let an abstention settle anything; reclassifying it as a reply that did not
+    happen would open C12's single-witness row instead, and let the OTHER reader set the direction
+    of the measure alone. Over-firing costs one call — this would cost a witness.
+    """
+    reply = "N/A. Not enough information was provided here."
+    assert len(reply) > DEGENERATE_MIN_LEN
+    assert degenerate_reply(reply) == []
+    assert degenerate_reply(reply + " no quotes were supplied with it either") == []
+
+
+def test_the_word_repeat_signature_needs_a_real_repeat():
+    """`\\b(\\w{3,})\\s+\\1\\b` — a word that merely STARTS the same is not a repeat, and repeats
+    shorter than three letters are left alone, because "of of" is a typo a human makes. Three
+    letters and up is a decoding loop, and that is deliberately over-inclusive: it costs a call."""
+    assert degenerate_reply("the value of of the measure is defined in the methods here") == []
+    assert degenerate_reply("the measure measures adaptation and is defined in the methods") == []
+    assert degenerate_reply("the the measure is defined in the methods here") == ["doubled_words"]

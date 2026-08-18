@@ -16,18 +16,23 @@ import pytest
 from canopy.agents import load_prompt
 from canopy.agents.adjudicator import (ADJUDICATE_SCHEMA, PROMPT_VERSION as ADJ_VERSION,
                                        adjudicate)
-from canopy.agents.orientation import (ORIENTATION_SCHEMA, PROMPT_VERSION as ORI_VERSION,
-                                       combine_orientation, orientation, orientation_run)
+from canopy.agents.orientation import (MEANS_CHECK_NOTE, ORIENTATION_SCHEMA,
+                                       PROMPT_VERSION as ORI_VERSION, TIEBREAK_EFFORT,
+                                       TIEBREAK_MODEL, combine_orientation, orientation,
+                                       orientation_run)
 from canopy.agents.verifier import (MAX_REOPENS, PROMPT_VERSION, REFUTATION_TARGETS,
                                     VERIFIER_SCHEMA, verifier_model_for, verify_candidate)
 from canopy.config import MODELS
-from canopy.llm.client import LLMClient
+from canopy.llm.client import REISSUE_CACHE_KEY, LLMClient
 from canopy.llm.costs import PDF_TOKENS_PER_PAGE, clear_file_pages, file_document_tokens
-from canopy.llm.errors import MissingFixture
+from canopy.llm.errors import BudgetExceeded, MissingFixture
 from canopy.llm.providers import FakeProvider
 from canopy.llm.schemas import assert_no_derived_stats, assert_valid_output_schema
 from canopy.models import (Candidate, DatasetSpec, DispersionType, GroupSpec, OrientationRun,
                            OutcomeDef, OutcomeSources, Source, SourceKind, VerifierVerdict)
+from canopy.stats.effect_sizes import smd_from_means
+from canopy.verify.checks import DISPUTED_MEANS_FLAGS, codes, run_checks
+from canopy.verify.vote import model_family
 
 replayed = pytest.mark.replay
 
@@ -425,6 +430,12 @@ def test_the_adjudicator_sees_the_candidates_the_flags_and_the_verdicts(paper, b
 
 
 # ------------------------------------------------------------------ orientation
+#: a justification long enough to be a justification: C12 records a stub reply as `not_run`, and a
+#: fixture whose `reason` is three words would be testing the detector by accident.
+AN_ERROR_MEASURE = ("a completion time counts how long the task took, so a larger number is worse "
+                    "on this measure")
+
+
 def orientation_payload(**overrides):
     payload = {"raw_value_semantics": "higher_more_error", "higher_is_better": "lower",
                "direction_stated_in_text": "a_greater",
@@ -464,8 +475,10 @@ def test_two_agents_that_disagree_need_a_human(paper, bock_dataset):
 
 
 def test_two_unknowns_need_a_human(paper, bock_dataset):
-    payload = orientation_payload(higher_is_better="unknown", raw_value_semantics="unknown",
-                                  reason="the paper never defines the measure")
+    payload = orientation_payload(
+        higher_is_better="unknown", raw_value_semantics="unknown",
+        reason="the paper never defines this measure, and nothing in the methods says which way "
+               "a larger number points")
     verdict, _ = run_orientation(paper, bock_dataset, [payload, payload])
     assert verdict.higher_is_better is None and verdict.needs_human is True
     assert "neither agent" in verdict.notes
@@ -508,12 +521,623 @@ def test_a_single_run_is_recorded_with_its_model_and_prompt(paper, bock_dataset)
 
 
 def test_combine_orientation_is_pure_code():
-    runs = [OrientationRun(higher_is_better=False, model=OPUS, reason="an error measure"),
-            OrientationRun(higher_is_better=False, model=SONNET, reason="an error measure")]
+    runs = [OrientationRun(higher_is_better=False, model=OPUS, reason=AN_ERROR_MEASURE),
+            OrientationRun(higher_is_better=False, model=SONNET, reason=AN_ERROR_MEASURE)]
     verdict = combine_orientation(runs, "screening_time", "completion time")
     assert verdict.higher_is_better is False and verdict.agreed is True
     assert verdict.outcome_key == "screening_time" and verdict.measure_name == "completion time"
 
+
+# ------------------------------------------------- C3 / C12 / P-A: who may decide a direction
+#: The four real cells the ceiling items argue about, as `smd_from_means` inputs. Every "must not
+#: print this number" assertion below is written against the arithmetic, not against a paraphrase.
+BOCK_D1 = (-22.4, 8.3, 12, -27.0, 5.5, 12)          # aftereffect: published -0.537
+BOCK_D2 = (52.4905, 9.15, 12, 27.9830, 7.3, 12)     # tracking RMSE: two agreeing readers, -2.9610
+CRESSMAN_LATE = (31.1, 6.0, 9, 33.1, 10.75, 10)     # pooled at -0.2263, must not move
+ERROR_TYPE_12_6 = (12.0, 2.0, 20, 6.0, 2.0, 20)     # the reviewer's absolute-pointing-error case
+
+REASON = ("the measure is defined in the methods section and the paper says which way a larger "
+          "number points, which is what this answer rests on")
+
+
+def ballot(model=OPUS, higher_is_better=None, raw_value_semantics="unknown",
+           direction_stated_in_text="unknown", reason=REASON):
+    return OrientationRun(higher_is_better=higher_is_better,
+                          raw_value_semantics=raw_value_semantics,
+                          direction_stated_in_text=direction_stated_in_text, reason=reason,
+                          model=model, quotes=["a quote from the paper"])
+
+
+def d_of(values, higher_is_better):
+    return round(smd_from_means(*values, higher_is_better=higher_is_better).d, 4)
+
+
+#: `run_checks` needs a dataset to hang an outcome on; these tests are about the orientation
+#: verdict alone, so it is the emptiest one that exists.
+BARE_DATASET = DatasetSpec(dataset_id="orientation-only")
+
+
+def outcome_flags(verdict):
+    """The check codes an orientation verdict puts in front of `confidence`."""
+    return codes(run_checks(BARE_DATASET, "screening_time", [], orientation=verdict))
+
+
+def orientation_bucket(verdict):
+    """`(bucket, score)` for a cell whose ONLY doubt is how the direction of its measure was set.
+
+    Two clean text readings from two model families: `auto_accept` at 0.80 when the orientation
+    raises nothing at all, so every drop below that here is an orientation code and nothing else.
+    A code that says "reviewed, never automatic" has to move this, and asserting the code alone
+    would not notice if it were dropped from `confidence.CAPPING_FLAGS` tomorrow (F14).
+    """
+    from canopy.verify.confidence import confidence
+    from canopy.verify.vote import vote
+
+    cands = [screening_candidate("A"),
+             screening_candidate("A", candidate_id="second", model=SONNET,
+                                 extractor_id=f"text:narrative_first:{SONNET}")]
+    flags = run_checks(BARE_DATASET, "screening_time", [], orientation=verdict)
+    bucket, score, _reasons = confidence(vote(cands), (), flags, None, candidates=cands,
+                                         n_a=12, n_b=12, orientation=verdict)
+    return bucket, score
+
+
+# --- C3: the check may discard or abstain. It may never choose.
+def test_an_error_type_measure_two_readers_split_on_is_never_signed():
+    """DECISION-v2 C3 test 1 — the 12/6 case that v1's semantics branch printed as +3.0.
+
+    Both readers call the raw scale `higher_more_construct` (the construct IS pointing error), and
+    the guard `|mean| >= 2.5*SD` passes on both groups, so nothing else in the pipeline is standing
+    between this cell and a wrong sign. The verdict has to be an abstention.
+    """
+    verdict = combine_orientation([ballot(OPUS, True, "higher_more_construct"),
+                                   ballot(SONNET, False, "higher_more_construct")],
+                                  "pointing_error", "absolute pointing error (deg)")
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+    assert verdict.agreed is False
+    assert d_of(ERROR_TYPE_12_6, True) == 3.0        # the number v1 would have printed
+    assert "orientation_unknown" in outcome_flags(verdict)
+
+
+def test_the_same_split_on_an_error_semantics_reader_is_also_never_signed():
+    """DECISION-v2 C3 test 2 — flipping the semantics field changes nothing, because no row of the
+    table reads it. Polarity is not a thing arithmetic can recover."""
+    verdict = combine_orientation([ballot(OPUS, True, "higher_more_error"),
+                                   ballot(SONNET, False, "higher_more_error")],
+                                  "pointing_error", "absolute pointing error (deg)")
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+
+
+@pytest.mark.parametrize("semantics", ["higher_more_construct", "higher_more_error",
+                                       "signed_direction", "unknown"])
+def test_bock_tracking_rmse_cannot_be_flipped_by_what_the_readers_call_the_scale(semantics):
+    """DECISION-v2 C3 test 3 — Bock d2, the cell v1's rule 2 would have turned into +2.9610.
+
+    Its two real ballots agree on `hib=False`. Whatever they call the raw scale, the verdict must
+    stay `False` and the effect must stay negative: `raw_value_semantics` appears in no row of the
+    decision table, so there is no branch that can reverse a sign here.
+    """
+    verdict = combine_orientation([ballot(OPUS, False, semantics),
+                                   ballot(SONNET, False, semantics)],
+                                  "late_adaptation", "Tracking RMSE")
+    assert verdict.higher_is_better is False and verdict.agreed is True
+    assert verdict.needs_human is False
+    assert d_of(BOCK_D2, verdict.higher_is_better) == -2.9610
+    assert d_of(BOCK_D2, verdict.higher_is_better) != 2.9610
+
+
+def test_bock_aftereffect_abstains_instead_of_pooling_a_positive_number(paper, bock_dataset):
+    """DECISION-v2 C3 test 4 — the real Bock d1 ballots: opus `signed_direction/False`, sonnet
+    `higher_more_construct/True`, neither stating a direction. Nothing is checkable, so nothing is
+    discarded, so the readers still disagree: ABSTAIN, and buy nothing while doing it."""
+    verdict, provider = run_orientation(paper, bock_dataset, [
+        orientation_payload(higher_is_better="lower", raw_value_semantics="signed_direction",
+                            direction_stated_in_text="unknown", reason=REASON),
+        orientation_payload(higher_is_better="higher", raw_value_semantics="higher_more_construct",
+                            direction_stated_in_text="unknown", reason=REASON)])
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+    assert len(provider.requests) == 2               # zero paid tie-break calls before the question
+    assert d_of(BOCK_D1, True) == 0.6534             # the number this must never reach
+    assert "orientation_unknown" in outcome_flags(verdict)
+
+
+def test_a_discard_never_leaves_the_silent_reader_deciding_alone():
+    """ADVERSARIAL round 2 on C3, the one change that kept the item off the boat.
+
+    opus states `b_greater`, which contradicts the raw means (A = -22.4 is greater than B = -27.0),
+    so row 1 discards it — and the ballot it discards is the one holding the RIGHT answer
+    (`hib=False` gives the published sign). Row 5 must not be reachable from here: the filter can
+    only ever remove a reader that committed to a checkable claim, so handing the measure to the
+    reader that stayed silent would prefer silence to evidence, every time.
+    """
+    verdict = combine_orientation(
+        [ballot(OPUS, False, "signed_direction", "b_greater"),
+         ballot(SONNET, True, "higher_more_construct", "unknown")],
+        "aftereffect", "aftereffect (deg)", mean_a=-22.4, mean_b=-27.0)
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+    assert d_of(BOCK_D1, True) == 0.6534             # what row 5 would have pooled
+    assert d_of(BOCK_D1, False) == -0.6534           # what the DISCARDED reader was right about
+    flags = outcome_flags(verdict)
+    assert "orientation_reader_contradicts_values" in flags
+    assert "orientation_single_witness" not in flags
+    assert "b greater" in verdict.notes and "-22.4" in verdict.notes
+
+
+@pytest.mark.parametrize("code", sorted(DISPUTED_MEANS_FLAGS))
+def test_no_reader_is_discarded_while_which_series_is_which_is_disputed(code):
+    """ADVERSARIAL round 2 change 2 — the discard compares a reader against the RESOLVED means, so
+    it must not fire on a cell whose series identity is open. Bock d1 carries
+    `series_marker_mismatch` today; under swapped series the reader row 1 would throw out is the
+    one that read the paper correctly. `group_label_swapped` joins the set in this fix round: it
+    is an `error` that says the two groups may be the wrong way round, which is the same claim
+    `series_transposed` makes about a figure."""
+    runs = [ballot(OPUS, False, "signed_direction", "b_greater"),
+            ballot(SONNET, True, "higher_more_construct", "unknown")]
+    verdict = combine_orientation(runs, "aftereffect", "aftereffect (deg)", mean_a=-22.4,
+                                  mean_b=-27.0, open_flags=[code])
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+    assert "orientation_reader_contradicts_values" not in outcome_flags(verdict)
+    assert "which series is which is disputed" in verdict.notes
+
+
+def test_a_reader_whose_stated_direction_matches_the_means_is_kept():
+    """Row 2 — the filter has no appetite. A checkable claim that checks out is just a ballot."""
+    verdict = combine_orientation([ballot(OPUS, False, "higher_more_error", "a_greater"),
+                                   ballot(SONNET, False, "higher_more_error", "a_greater")],
+                                  "late_adaptation", "pointing error", mean_a=-22.4, mean_b=-27.0)
+    assert verdict.higher_is_better is False and verdict.agreed is True
+    assert "orientation_reader_contradicts_values" not in outcome_flags(verdict)
+
+
+def test_cressman_late_adaptation_still_pools_unchanged():
+    """DECISION-v2 C3 test 6 — the regression guard on the paper supplying two of three pooled
+    cells. Positive means, two agreeing readers, no stated direction: row 4, untouched."""
+    verdict = combine_orientation([ballot(OPUS, True, "higher_more_construct"),
+                                   ballot(SONNET, True, "higher_more_construct")],
+                                  "late_adaptation", "hand deviation at peak velocity",
+                                  mean_a=31.1, mean_b=33.1)
+    assert verdict.higher_is_better is True and verdict.agreed is True
+    assert verdict.needs_human is False
+    assert d_of(CRESSMAN_LATE, True) == -0.2263
+    assert outcome_flags(verdict) == []
+
+
+def test_an_accepted_reversal_does_not_move_the_pooled_sd():
+    """DECISION-v2 C3 test 7 — sign-flip invariance. Orientation decides a sign and nothing else;
+    if it moved a dispersion it would be arithmetic, and it is not allowed to be."""
+    both = [smd_from_means(*BOCK_D1, higher_is_better=hib) for hib in (True, False)]
+    assert both[0].details["pooled_sd"] == both[1].details["pooled_sd"]
+    assert both[0].details["pooled_sd"] == pytest.approx(7.0406, abs=1e-4)
+    assert both[0].se == both[1].se and both[0].d == -both[1].d
+
+
+def test_two_readers_reading_the_paper_backwards_is_a_flag_not_a_note():
+    """C3 rule 6 — live on Heuer Exp 1a today: opus `a_greater` against sonnet `b_greater`,
+    collapsed to `unknown` with `agreed: true, needs_human: false`, which also silently disables
+    `sign_check`. The disagreement has to reach `confidence`."""
+    verdict = combine_orientation([ballot(OPUS, False, "signed_direction", "a_greater"),
+                                   ballot(SONNET, False, "signed_direction", "b_greater")],
+                                  "late_adaptation", "adaptive shift")
+    assert verdict.agreed is True and verdict.direction_stated_in_text == "unknown"
+    assert "orientation_direction_conflict" in outcome_flags(verdict)
+
+
+def test_a_disagreement_about_the_raw_scale_is_recorded_not_swallowed():
+    """C3 rule 5 — the summary field cannot hold two answers, but it must not eat them either."""
+    verdict = combine_orientation([ballot(OPUS, True, "signed_direction"),
+                                   ballot(SONNET, True, "higher_more_construct")],
+                                  "aftereffect", "aftereffect (deg)")
+    assert verdict.raw_value_semantics == "unknown"
+    assert f"{OPUS}=signed_direction" in verdict.notes
+    assert f"{SONNET}=higher_more_construct" in verdict.notes
+
+
+# --- C12: a degenerate reply is not a witness
+def test_a_stub_reply_is_re_issued_once_and_the_cell_survives_it(paper, bock_dataset):
+    """C12 acceptance test (i) — Cressman's aftereffect, the cell v1's C12 unpooled. The stub is
+    re-asked past the cache, the re-issue is coherent, and the verdict is an ordinary agreement."""
+    verdict, provider = run_orientation(paper, bock_dataset, [
+        orientation_payload(reason="placeholder"),
+        orientation_payload(reason=REASON),
+        orientation_payload(reason=REASON)])
+    assert len(provider.requests) == 3               # two readers, exactly one re-issue
+    keys = [r.key for r in provider.requests]
+    assert keys[0] != keys[1]                   # the re-issue cannot hit the stub's cache entry
+    assert verdict.agreed is True and verdict.needs_human is False
+    assert verdict.higher_is_better is False
+    assert outcome_flags(verdict) == []              # nothing is capped: two real readers spoke
+    # F14: the bucket, not the code list. A re-issue that worked leaves an ordinary agreement, so
+    # this cell is not held back and not capped — that is the Cressman regression this guards.
+    assert orientation_bucket(verdict) == ("auto_accept", 0.80)
+
+
+def test_a_stub_that_stays_a_stub_leaves_one_flagged_witness(paper, bock_dataset):
+    """C12 acceptance test (ii) — the ONLY route to a one-reader verdict. `hib` is set (so the
+    cell is not deleted) and flagged (so it is not reported as an agreement)."""
+    verdict, provider = run_orientation(paper, bock_dataset, [
+        orientation_payload(reason="placeholder"),
+        orientation_payload(reason="placeholder"),
+        orientation_payload(reason=REASON)])
+    assert len(provider.requests) == 3
+    assert verdict.higher_is_better is False and verdict.needs_human is False
+    assert verdict.agreed is False
+    flags = outcome_flags(verdict)
+    assert "orientation_single_witness" in flags and "orientation_unknown" not in flags
+    assert len(verdict.runs) == 3                    # both raw replies stay on the record
+    # F14: the cap C12 names. The cell still POOLS — `accept_with_note` is a pooling bucket — but
+    # it can no longer be accepted without anybody looking at it.
+    assert orientation_bucket(verdict) == ("accept_with_note", 0.70)
+
+
+def test_two_degenerate_replies_are_a_question_not_a_verdict(paper, bock_dataset):
+    """C12 acceptance test (iii) — no coherent ballot survives, so nobody decides."""
+    verdict, provider = run_orientation(paper, bock_dataset,
+                                        [orientation_payload(reason="placeholder")])
+    assert len(provider.requests) == 4               # two readers, one re-issue each, and no more
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+    assert "orientation_unknown" in outcome_flags(verdict)
+    assert "not_run" in verdict.notes
+
+
+def test_a_degenerate_reply_is_re_issued_at_most_once(paper, bock_dataset):
+    """C12 acceptance test (v) — the re-issue is a bounded cost, not a retry loop."""
+    _, provider = run_orientation(paper, bock_dataset,
+                                  [orientation_payload(reason="placeholder")], models=OPUS)
+    assert len(provider.requests) == 2
+    assert provider.requests[0].key != provider.requests[1].key
+
+
+# --- P-A residue: an abstention is not a dissent, and a third read is bought last or never
+def test_a_reader_that_abstained_is_not_recorded_as_a_dissenter():
+    """P-A residue (a). One reader answered, one said "I cannot tell". That is one answer and one
+    abstention — and one answer still does not settle a direction."""
+    verdict = combine_orientation([ballot(OPUS, True, "higher_more_construct"),
+                                   ballot(SONNET, None, "unknown")],
+                                  "aftereffect", "aftereffect (deg)")
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+    assert "disagree" not in verdict.notes
+    assert "one reader never decides" in verdict.notes
+
+
+def test_no_third_read_is_bought_unless_the_caller_asks_for_one(paper, bock_dataset):
+    """P-A: `tiebreak=None` is HEAD — the same two calls, whatever the readers said."""
+    verdict, provider = run_orientation(paper, bock_dataset, [
+        orientation_payload(higher_is_better="lower", raw_value_semantics="signed_direction"),
+        orientation_payload(higher_is_better="higher", raw_value_semantics="signed_direction")])
+    assert verdict.needs_human is True and len(provider.requests) == 2
+
+
+def test_a_third_read_is_bought_only_after_the_free_check_abstains(paper, bock_dataset):
+    """P-A: one extra ballot, at `xhigh`, from a family that failed differently, and what it
+    settles is a MAJORITY — flagged and capped, never reported as an independent agreement."""
+    provider = FakeProvider([
+        orientation_payload(higher_is_better="lower", raw_value_semantics="signed_direction",
+                            reason=REASON),
+        orientation_payload(higher_is_better="higher", raw_value_semantics="signed_direction",
+                            reason=REASON),
+        orientation_payload(higher_is_better="lower", raw_value_semantics="signed_direction",
+                            reason=REASON)])
+    client = LLMClient(provider=provider, cache_dir=None)
+    verdict = orientation(client, paper, bock_dataset, bock_dataset.outcomes[0], (OPUS, SONNET),
+                          outcome=SCREENING, tiebreak=TIEBREAK_MODEL)
+    assert len(provider.requests) == 3
+    assert provider.requests[-1].model == TIEBREAK_MODEL
+    assert provider.requests[-1].effort == TIEBREAK_EFFORT
+    assert model_family(TIEBREAK_MODEL) not in {model_family(OPUS), model_family(SONNET)}
+    assert verdict.higher_is_better is False and verdict.needs_human is False
+    assert verdict.agreed is False                   # 2-1 is not two readers agreeing
+    assert "orientation_by_majority" in outcome_flags(verdict)
+
+
+def test_a_majority_that_read_a_different_scale_is_not_a_majority(paper, bock_dataset):
+    """P-A: the three must share a `raw_value_semantics`, or their 2-1 is a coincidence."""
+    provider = FakeProvider([
+        orientation_payload(higher_is_better="lower", raw_value_semantics="signed_direction",
+                            reason=REASON),
+        orientation_payload(higher_is_better="higher", raw_value_semantics="higher_more_construct",
+                            reason=REASON),
+        orientation_payload(higher_is_better="lower", raw_value_semantics="higher_more_error",
+                            reason=REASON)])
+    client = LLMClient(provider=provider, cache_dir=None)
+    verdict = orientation(client, paper, bock_dataset, bock_dataset.outcomes[0], (OPUS, SONNET),
+                          outcome=SCREENING, tiebreak=TIEBREAK_MODEL)
+    assert len(provider.requests) == 3
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+    assert "do not agree on what the raw scale IS" in verdict.notes
+
+
+def test_a_third_read_that_cannot_be_afforded_leaves_the_question_standing(paper, bock_dataset):
+    """P-A: budget-gated. A tie-break nobody can pay for is an abstention, not a crash — the cell
+    keeps the `orientation` question it already had."""
+    def broke(request):
+        raise BudgetExceeded("the run has spent its budget")
+
+    provider = FakeProvider([
+        orientation_payload(higher_is_better="lower", raw_value_semantics="signed_direction",
+                            reason=REASON),
+        orientation_payload(higher_is_better="higher", raw_value_semantics="signed_direction",
+                            reason=REASON),
+        broke])
+    client = LLMClient(provider=provider, cache_dir=None)
+    verdict = orientation(client, paper, bock_dataset, bock_dataset.outcomes[0], (OPUS, SONNET),
+                          outcome=SCREENING, tiebreak=TIEBREAK_MODEL)
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+    assert "no third read was bought" in verdict.notes
+
+
+def test_a_majority_settled_direction_is_capped_below_automatic_acceptance():
+    """P-A: `orientation_by_majority` is a code `confidence` can see; a cell settled 2-1 by a
+    bought read must be reviewed, never auto-accepted."""
+    verdict = combine_orientation([ballot(OPUS, False, "signed_direction"),
+                                   ballot(SONNET, True, "signed_direction"),
+                                   ballot(TIEBREAK_MODEL, False, "signed_direction")],
+                                  "aftereffect", "aftereffect (deg)", third_read=True)
+    assert verdict.higher_is_better is False and verdict.needs_human is False
+    assert "orientation_by_majority" in outcome_flags(verdict)
+    # F14: "must be reviewed, never auto-accepted" is a BUCKET claim. Asserting the code alone
+    # would not notice if the code left `confidence.CAPPING_FLAGS`.
+    assert orientation_bucket(verdict) == ("accept_with_note", 0.70)
+
+
+def test_a_tie_among_three_readers_is_still_a_question():
+    """An even split is not a majority, whatever it cost to buy."""
+    verdict = combine_orientation([ballot(OPUS, False, "signed_direction"),
+                                   ballot(SONNET, True, "signed_direction"),
+                                   ballot(TIEBREAK_MODEL, None, "signed_direction")],
+                                  "aftereffect", "aftereffect (deg)", third_read=True)
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+    assert "a tie is not a majority" in verdict.notes
+
+
+# ------------------------------------------------- fix round 1: who may decide, once a discard,
+# ------------------------------------------------- a stub or a bought read is in the room
+def test_a_discard_may_not_let_silent_readers_settle_a_direction_the_numbers_checked():
+    """Fix round F1 — the reviewer's executed input, at n = 3, where row 4 used to sign it.
+
+    opus is the only reader that made a checkable claim (`b_greater`, against A = -22.4 > B =
+    -27.0) and it is the one the filter removes; the two readers left never stated a direction at
+    all. Letting them agree +0.6534 into the pool is the sign inversion ADVERSARIAL round 2
+    refused to ship C3 for, reached at n = 3 instead of n = 2 and with a worse outcome — `agreed`,
+    uncapped — than the one the n = 2 rule blocked.
+    """
+    verdict = combine_orientation(
+        [ballot(OPUS, False, "signed_direction", "b_greater"),
+         ballot(SONNET, True, "higher_more_construct"),
+         ballot(TIEBREAK_MODEL, True, "higher_more_construct")],
+        "aftereffect", "aftereffect (deg)", mean_a=-22.4, mean_b=-27.0, third_read=True)
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+    assert verdict.agreed is False
+    assert d_of(BOCK_D1, True) == 0.6534             # the number this must never pool
+    flags = outcome_flags(verdict)
+    assert "orientation_reader_contradicts_values" in flags
+    assert "orientation_unknown" in flags
+    assert "orientation_by_majority" not in flags
+    assert orientation_bucket(verdict)[0] == "needs_human"
+
+
+def test_the_same_three_ballots_without_a_bought_read_are_no_more_able_to_sign_it():
+    """The same shape reached the other way — three named models rather than a tie-break — because
+    the bias the ruling names is in the DISCARD, not in who paid for the third ballot."""
+    verdict = combine_orientation(
+        [ballot(OPUS, False, "signed_direction", "b_greater"),
+         ballot(SONNET, True, "higher_more_construct"),
+         ballot(TIEBREAK_MODEL, True, "higher_more_construct")],
+        "aftereffect", "aftereffect (deg)", mean_a=-22.4, mean_b=-27.0)
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+    assert verdict.agreed is False
+
+
+def test_a_polarity_every_reader_agrees_on_survives_a_discard_and_the_cell_is_still_held():
+    """Fix round F1, the other half of the controller's ruling: a discard is not a veto on a
+    polarity nobody contradicted.
+
+    All three readers say `hib=False`; one of them also states a direction this cell's resolved
+    means contradict. The polarity is recorded — the reviewer's question here is about the VALUES,
+    not about which way the measure points — and the cell is held anyway, by an `error` flag that
+    no score can absorb.
+    """
+    verdict = combine_orientation(
+        [ballot(OPUS, False, "signed_direction", "b_greater"),
+         ballot(SONNET, False, "higher_more_error"),
+         ballot(TIEBREAK_MODEL, False, "higher_more_error")],
+        "aftereffect", "aftereffect (deg)", mean_a=-22.4, mean_b=-27.0)
+    assert verdict.higher_is_better is False
+    assert d_of(BOCK_D1, False) == -0.6534
+    flag = next(f for f in run_checks(BARE_DATASET, "screening_time", [], orientation=verdict)
+                if f.code == "orientation_reader_contradicts_values")
+    assert flag.severity == "error"
+    assert orientation_bucket(verdict)[0] == "needs_human"
+
+
+def test_a_bought_third_read_never_sets_the_direction_alone(paper, bock_dataset):
+    """Fix round F2 — both readers' replies did not happen, twice each, and the only ballot left
+    is the one that was BOUGHT.
+
+    Row 5 exists for C12: ONE ORIGINAL reader decided and its partner's reply did not happen. A
+    third read is not that reader. `orientation_single_witness` caps a cell at `accept_with_note`,
+    which is a POOLING bucket, so this path would have put one model's single ballot behind the
+    sign of a pooled effect.
+    """
+    provider = FakeProvider([orientation_payload(reason="placeholder"),
+                             orientation_payload(reason="placeholder"),
+                             orientation_payload(reason="placeholder"),
+                             orientation_payload(reason="placeholder"),
+                             orientation_payload(reason=REASON)])
+    client = LLMClient(provider=provider, cache_dir=None)
+    verdict = orientation(client, paper, bock_dataset, bock_dataset.outcomes[0], (OPUS, SONNET),
+                          outcome=SCREENING, tiebreak=TIEBREAK_MODEL)
+    assert len(provider.requests) == 5               # two readers, one re-issue each, one third
+    assert provider.requests[-1].model == TIEBREAK_MODEL
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+    flags = outcome_flags(verdict)
+    assert "orientation_single_witness" not in flags
+    assert "orientation_unknown" in flags
+    assert orientation_bucket(verdict)[0] == "needs_human"
+
+
+def test_an_original_reader_may_still_be_a_single_witness_when_its_partner_did_not_reply():
+    """The path row 5 is FOR, kept working: one original reader decided, the other original's
+    reply did not happen. This is C12's route and the only one, and it is what keeps Cressman's
+    two pooled cells pooled."""
+    verdict = combine_orientation(
+        [ballot(OPUS, True, "higher_more_construct", reason="placeholder"),
+         ballot(SONNET, True, "higher_more_construct")],
+        "late_adaptation", "hand deviation at peak velocity", mean_a=31.1, mean_b=33.1)
+    assert verdict.higher_is_better is True and verdict.needs_human is False
+    assert "orientation_single_witness" in outcome_flags(verdict)
+    assert orientation_bucket(verdict)[0] == "accept_with_note"
+
+
+def test_a_third_read_that_settles_a_measure_is_never_reported_as_two_readers_agreeing():
+    """Fix round F3 — the reviewer's executed input. opus names a direction, sonnet abstains, and
+    the bought read agrees with opus about the direction while reading a DIFFERENT raw scale.
+
+    Row 4 was evaluated first, so this came out `agreed=True, needs_human=False, flags=[]`: a
+    verdict that exists only because money was spent, free to reach `auto_accept`, carrying none
+    of P-A's four mandatory conditions. `third_read` now gates before row 4, so the verdict goes
+    through the majority branch — and that branch's shared-scale condition refuses this one.
+    """
+    verdict = combine_orientation([ballot(OPUS, True, "signed_direction"),
+                                   ballot(SONNET, None, "unknown"),
+                                   ballot(TIEBREAK_MODEL, True, "higher_more_error")],
+                                  "aftereffect", "aftereffect (deg)", third_read=True)
+    assert verdict.agreed is False
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+    assert "do not agree on what the raw scale IS" in verdict.notes
+    assert outcome_flags(verdict) == ["orientation_unknown"]
+    assert orientation_bucket(verdict)[0] == "needs_human"
+
+
+def test_a_third_read_that_settles_a_measure_carries_its_flag_and_its_cap():
+    """The same three ballots with P-A's mandatory condition met — one shared `raw_value_
+    semantics` — so the third read really does settle it. What money settled is flagged
+    `orientation_by_majority` and capped below automatic acceptance, never `agreed`."""
+    verdict = combine_orientation([ballot(OPUS, True, "signed_direction"),
+                                   ballot(SONNET, None, "signed_direction"),
+                                   ballot(TIEBREAK_MODEL, True, "signed_direction")],
+                                  "aftereffect", "aftereffect (deg)", third_read=True)
+    assert verdict.higher_is_better is True and verdict.needs_human is False
+    assert verdict.agreed is False
+    assert "orientation_by_majority" in outcome_flags(verdict)
+    assert orientation_bucket(verdict)[0] == "accept_with_note"
+
+
+def test_a_stub_is_not_a_reader_whose_stated_direction_the_numbers_can_contradict():
+    """Fix round F4 — the reviewer's executed input, on the Cressman-aftereffect shape.
+
+    C12 has already said this reply did not happen, so its `direction_stated_in_text` is not a
+    claim anybody made. Running the discard filter over it unpools a correct cell — v1's C12
+    failure mode through the back door — and puts a reader that never replied on the record as
+    having contradicted the paper.
+    """
+    verdict = combine_orientation(
+        [ballot(SONNET, True, "higher_more_construct", "unknown"),
+         ballot(OPUS, True, "higher_more_construct", "a_greater", reason="placeholder")],
+        "late_adaptation", "hand deviation at peak velocity", mean_a=31.1, mean_b=33.1)
+    assert verdict.higher_is_better is True and verdict.needs_human is False
+    assert d_of(CRESSMAN_LATE, True) == -0.2263
+    flags = outcome_flags(verdict)
+    assert "orientation_single_witness" in flags
+    assert "orientation_reader_contradicts_values" not in flags
+    assert f"{OPUS} states" not in verdict.notes     # nobody is accused of a reply they never made
+
+
+def test_two_readers_reading_the_paper_backwards_is_still_a_flag_once_the_means_arrive():
+    """Fix round F7 — C3 rule 6 on the production path, which is now the only path.
+
+    Heuer Exp 1a with the means the integration passes: opus `a_greater`, sonnet `b_greater`,
+    A = 27.7 > B = 18.9. The discard used to consume the conflict — `directions` was taken from
+    the survivors, one direction was left, and the flag never fired — so a flat contradiction
+    between two readers about the paper's own sentence vanished from the record. A discarded
+    reader's VOTE is what the filter removes; what it said about the paper still happened.
+    """
+    verdict = combine_orientation([ballot(OPUS, False, "signed_direction", "a_greater"),
+                                   ballot(SONNET, False, "signed_direction", "b_greater")],
+                                  "late_adaptation", "adaptive shift", mean_a=27.7, mean_b=18.9)
+    assert verdict.direction_stated_in_text == "unknown"
+    flags = outcome_flags(verdict)
+    assert "orientation_direction_conflict" in flags
+    assert "orientation_reader_contradicts_values" in flags
+    assert verdict.higher_is_better is None          # one counting reader is not two
+
+
+def test_a_stub_does_not_get_a_vote_on_what_the_raw_scale_is():
+    """Fix round F10 — the summary field C3 rule 5 exists to protect. One real reader saying
+    `higher_more_error` beside one stub parsed as `unknown` collapsed the summary to "unknown"
+    and appended a per-reader note about a reader that never replied."""
+    verdict = combine_orientation(
+        [ballot(SONNET, False, "higher_more_error"),
+         ballot(OPUS, True, "unknown", reason="placeholder")],
+        "late_adaptation", "pointing error")
+    assert verdict.raw_value_semantics == "higher_more_error"
+    assert verdict.raw_value_semantics_by_model[SONNET] == "higher_more_error"
+    assert "raw_value_semantics per reader" not in verdict.notes
+
+
+@pytest.mark.parametrize("kwargs, state", [
+    (dict(mean_a=31.1, mean_b=33.1), "ran"),
+    (dict(), "no_means"),
+    (dict(mean_a=31.1, mean_b=33.1, open_flags=["series_marker_mismatch"]), "disputed"),
+    (dict(mean_a=31.1, mean_b=33.1, open_flags=["group_label_swapped"]), "disputed"),
+])
+def test_every_verdict_says_whether_the_discard_check_could_run(kwargs, state):
+    """Fix round F11 — an `agreed` verdict used to read identically whether the filter ran and
+    found nothing, the means were missing, or which series is which was in dispute. Those are
+    three different claims about how well this direction was checked, and a reviewer cannot tell
+    a checked cell from an unchecked one without being told."""
+    verdict = combine_orientation([ballot(OPUS, True, "higher_more_construct"),
+                                   ballot(SONNET, True, "higher_more_construct")],
+                                  "late_adaptation", "hand deviation", **kwargs)
+    assert f"{MEANS_CHECK_NOTE}: {state}" in verdict.notes
+    assert verdict.higher_is_better is True          # saying so changes no verdict
+
+
+def test_the_third_reads_first_reply_stays_on_the_record(paper, bock_dataset):
+    """Fix round F12 — the two ordinary readers keep both replies when a stub stays a stub, and
+    the bought read used to have its first reply overwritten by its own re-issue. Its re-issue was
+    also never re-checked, so a doubly-degenerate third read was appended as a silent witness."""
+    provider = FakeProvider([
+        orientation_payload(higher_is_better="lower", raw_value_semantics="signed_direction",
+                            reason=REASON),
+        orientation_payload(higher_is_better="higher", raw_value_semantics="signed_direction",
+                            reason=REASON),
+        orientation_payload(reason="placeholder"),
+        orientation_payload(reason="placeholder")])
+    client = LLMClient(provider=provider, cache_dir=None)
+    verdict = orientation(client, paper, bock_dataset, bock_dataset.outcomes[0], (OPUS, SONNET),
+                          outcome=SCREENING, tiebreak=TIEBREAK_MODEL)
+    assert len(provider.requests) == 4               # two readers, one third read, one re-issue
+    assert [r.model for r in provider.requests[-2:]] == [TIEBREAK_MODEL, TIEBREAK_MODEL]
+    assert provider.requests[-2].key != provider.requests[-1].key
+    assert [r.model for r in verdict.runs].count(TIEBREAK_MODEL) == 2
+    assert all(r.not_run for r in verdict.runs if r.model == TIEBREAK_MODEL)
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+
+
+def test_a_reply_the_record_already_calls_a_non_reply_is_not_re_derived_from_its_prose():
+    """Fix round F13 — `OrientationRun.not_run` was written and never read, while `models.py` says
+    recording it is what makes a replayed `verify.json` state it rather than re-derive it. A
+    replay must not be able to promote a ballot the live run classified as a non-reply back into a
+    witness (a detector that is tuned later would do exactly that)."""
+    stub = ballot(OPUS, True, "higher_more_construct").model_copy(update={"not_run": True})
+    verdict = combine_orientation([stub, ballot(SONNET, True, "higher_more_construct")],
+                                  "late_adaptation", "hand deviation")
+    assert verdict.higher_is_better is True and verdict.agreed is False
+    assert "orientation_single_witness" in outcome_flags(verdict)
+    assert "not_run" in verdict.notes
+
+
+def test_a_reader_that_could_not_tell_never_becomes_a_reply_that_did_not_happen():
+    """Fix round F15's ruling, where it would have bitten: `not quotes` was NOT added to the
+    degeneracy signatures. An honest "I cannot tell" is an ABSTENTION, and if the detector called
+    it a non-reply, row 5 would open and the other reader would set the direction alone."""
+    verdict = combine_orientation(
+        [ballot(OPUS, True, "higher_more_construct"),
+         ballot(SONNET, None, "unknown",
+                reason="N/A. Not enough information was provided here.")],
+        "aftereffect", "aftereffect (deg)")
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+    assert "orientation_single_witness" not in outcome_flags(verdict)
 
 # ------------------------------------------------------------------ replayed Bock 2005
 @replayed

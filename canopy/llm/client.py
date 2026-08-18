@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import threading
 import time
 from collections.abc import Mapping, Sequence
@@ -26,10 +27,56 @@ from .schemas import assert_no_derived_stats, assert_valid_output_schema
 
 __all__ = ["LLMClient", "LLMResult", "LLMCall", "ToolLoopResult", "image_block", "pdf_block",
            "MissingFixture", "RefusalError", "TruncatedOutput", "BudgetExceeded",
-           "LiveCallsDisabled", "ParseError", "LLMError"]
+           "LiveCallsDisabled", "ParseError", "LLMError", "degenerate_reply",
+           "DEGENERATE_MIN_LEN", "REISSUE_CACHE_KEY"]
 
 STREAM_MAX_TOKENS = 16000          # above this the SDK requires streaming
 EPHEMERAL = {"type": "ephemeral"}
+
+
+# ----------------------------------------------------------------------------- degenerate replies
+#: A model's free-text justification is the only evidence that a model actually READ anything. A
+#: reply whose justification is a stub, a fragment of its own serialisation, or a run of repeated
+#: words is not a cheap answer — it is an answer that did not happen, and counting it as a witness
+#: manufactures agreement out of a failed call (ceiling item C12). This says *degenerate*, never
+#: *wrong*: nothing here inspects the answer, only the prose that was supposed to justify it.
+#:
+#: The caller re-issues the call once with `REISSUE_CACHE_KEY` (without it the disk cache hands
+#: back the same malformed reply) and only then falls back. So a false positive costs ONE extra
+#: call and never a cell, which is why these signatures are allowed to over-fire.
+DEGENERATE_MIN_LEN = 40
+#: `cache_key_extra` for the single re-issue: it must miss the cache entry the first reply wrote.
+REISSUE_CACHE_KEY = "reissue:1"
+
+#: debris from the model emitting part of its own JSON envelope inside a string field
+_DEBRIS = (re.compile(r"','\s*reason\s*'"), re.compile(r'"reason"\s*:'))
+#: the same word twice in a row — a decoding loop, not a sentence a reader would write
+_DOUBLED_WORDS = re.compile(r"\b(\w{3,})\s+\1\b")
+#: control characters that are never legitimate prose. TAB/LF/CR (\x09/\x0a/\x0d) are excluded:
+#: they arrive routinely in text quoted out of a PDF text layer and mean nothing is wrong.
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+#: a literal backslash escape that was never decoded (`\x08`, `\n1`, `\t2` as four characters)
+_STRAY_ESCAPE = re.compile(r"\\[tnx][a-z0-9]")
+
+
+def degenerate_reply(text: str) -> list[str]:
+    """Which degeneracy signatures a model's justification carries; `[]` means it is a real reply.
+
+    Signatures, in the order they are reported: `too_short`, `raw_serialisation`, `doubled_words`,
+    `control_artefacts`. Verified over every orientation ballot in `runs/rerun-fixed`: 16 ballots,
+    exactly 4 flagged (`tests/test_llm_client.py`).
+    """
+    reply = text or ""
+    found: list[str] = []
+    if len(reply.strip()) < DEGENERATE_MIN_LEN:
+        found.append("too_short")
+    if any(p.search(reply) for p in _DEBRIS) or reply.count("{") != reply.count("}"):
+        found.append("raw_serialisation")
+    if _DOUBLED_WORDS.search(reply):
+        found.append("doubled_words")
+    if _CONTROL.search(reply) or _STRAY_ESCAPE.search(reply):
+        found.append("control_artefacts")
+    return found
 
 
 # ----------------------------------------------------------------------------- content blocks

@@ -1,0 +1,134 @@
+{
+ "source": "runs/rerun-fixed/papers/*/verify.json (three-paper run), copied verbatim",
+ "note": "Every orientation ballot that run produced. Four of them are not replies at all; C12's detector must find exactly those four and no others.",
+ "ballots": [
+  {
+   "paper": "heuer",
+   "outcome_key": "late_adaptation",
+   "measure_name": "Adaptive shift (posttest−pretest difference of final movement direction) in the open-loop test with cued presence of the 30° rotation; alternatively initial direction error across the five practice blocks",
+   "model": "claude-opus-5",
+   "quotes": 4,
+   "reason": "The adaptive shift is a signed angular quantity: a shift of −30° (i.e., a negative, counter-rotation value) would fully compensate the 30° CCW rotation, so more negative values indicate more adaptation and values approaching zero indicate none (the paper prints ~−15° at the practiced direction, approaching zero away from it). Hence a larger (less negative / more positive) raw value corresponds to LESS of the construct (adaptation), so higher_is_better = lower. For the group comparison, although the ANOVA showed 'no effect of age', the paper prints per-amplitude means that are less negative (numerically higher) for the older group (−3.7, −6.4, −5.2) than for the younger group (−8.2, −7.0, −6.9), so on the raw signed scale the older group's values are greater."
+  },
+  {
+   "paper": "heuer",
+   "outcome_key": "late_adaptation",
+   "measure_name": "Adaptive shift (posttest−pretest difference of final movement direction) in the open-loop test with cued presence of the 30° rotation; alternatively initial direction error across the five practice blocks",
+   "model": "claude-sonnet-5",
+   "quotes": 3,
+   "reason": "The adaptive shift is a signed measure: a value of −30° would fully compensate the 30° CCW rotation, so more negative values indicate stronger (more complete) adaptation while values near zero indicate little or no adaptation. Thus the raw value's sign and magnitude jointly encode direction of compensation (signed_direction), and because full compensation corresponds to a more negative number, a *lower* (more negative) raw value corresponds to more of the adaptation construct (higher_is_better = lower). The paper reports that the older group's adaptive shifts were less negative (closer to zero, e.g. −3.7° to −6.4°) than the younger group's (−8.2° to −6.9°), i.e., the older group (Group A) had the numerically higher (less negative) raw value, indicating weaker adaptation, even though the age main effect was not statistically significant overall (F(4,132)=14.3 for target direction, no significant age effect reported for the overall ANOVA)."
+  },
+  {
+   "paper": "heuer",
+   "outcome_key": "late_adaptation",
+   "measure_name": "Adaptive shift (posttest−pretest difference of final movement direction) in the open-loop test with cued presence of the 75° rotation; alternatively initial direction error in the last practice block",
+   "model": "claude-opus-5",
+   "quotes": 4,
+   "reason": "The adaptive shift is a signed angular change (posttest minus pretest final movement direction); for the 75° CCW rotation of Experiment 1a full compensation corresponds to a shift of -75°, and the figure axis runs from 0 to -50 deg. Hence the raw number is signed: more negative = more adaptation, so a larger (less negative, closer to zero) raw value means LESS of the construct (adaptation). The paper states the adaptive shifts were 'stronger for the younger than for the older participants', i.e. younger were more negative; on the raw signed scale the older group (Group A) therefore has the higher (less negative) values, which is why direction_stated_in_text is a_greater even though the older group is the poorer adapter."
+  },
+  {
+   "paper": "heuer",
+   "outcome_key": "late_adaptation",
+   "measure_name": "Adaptive shift (posttest−pretest difference of final movement direction) in the open-loop test with cued presence of the 75° rotation; alternatively initial direction error in the last practice block",
+   "model": "claude-sonnet-5",
+   "quotes": 3,
+   "reason": "The adaptive shift is a signed directional measure (negative values indicate compensation toward the rotation), so raw magnitude alone doesn't indicate 'more error' or 'more construct' without considering sign; larger negative (i.e., larger magnitude in the compensatory direction, closer to -75°) indicates stronger adaptation, so more negative (further from zero, closer to full compensation) is better/higher construct. The paper explicitly states adaptive shifts were stronger (i.e., larger in magnitude, more compensatory) for younger than older participants, meaning younger showed greater adaptation on this raw measure."
+  },
+  {
+   "paper": "heuer",
+   "outcome_key": "aftereffect",
+   "measure_name": "Aftereffect (posttest−pretest difference of final movement direction) in the open-loop test with cued absence of the visuomotor rotation",
+   "model": "claude-opus-5",
+   "quotes": 4,
+   "reason": "The aftereffect is a signed posttest−pretest change in final movement direction, printed in degrees of 'relative direction'; with the 75° CCW rotation of Experiment 1a the aftereffects are negative (Figure 2b axis runs 0 to −20), so magnitude of implicit recalibration increases as the raw number becomes more negative. Hence a larger (less negative) raw value means LESS aftereffect, i.e. less of the construct. The text states the older participants had 'slightly stronger aftereffects' (non-significant), which on this signed scale means more negative values for the older group, so the younger group (B) has the higher raw value."
+  },
+  {
+   "paper": "heuer",
+   "outcome_key": "aftereffect",
+   "measure_name": "Aftereffect (posttest−pretest difference of final movement direction) in the open-loop test with cued absence of the visuomotor rotation",
+   "model": "claude-sonnet-5",
+   "quotes": 3,
+   "reason": "The aftereffect is a signed posttest\ba--direction difference (relative direction in degrees) that is expected to be negative, opposite in sign to the imposed 75° CCW rotation, so its magnitude (how far from zero, i.e. how negative) indexes the strength of implicit recalibration rather than the raw numeric value itself; the paper explicitly frames the analogous adaptive-shift measure this way ('An adaptive shift of -75° would compensate the visuomotor rotation of 75°'), and describes the older group as showing 'slightly stronger aftereffects' even though the statistical test of the raw values was non-significant. Because 'stronger' here means a larger absolute (more negative) value, a numerically higher (less negative, closer to zero) raw score corresponds to a weaker aftereffect, i.e. less of the implicit-recalibration construct. This makes the raw scale a signed-direction measure where lower (more negative) raw values indicate more of the construct, so 'stronger for older' implies the older group's raw value is actually lower (more negative) while the younger group's raw value is higher (less negative), i.e. b_greater in terms of the printed raw number."
+  },
+  {
+   "paper": "cressman",
+   "outcome_key": "aftereffect",
+   "measure_name": "Hand deviation at peak velocity on no-cursor (aftereffect) reaches, expressed in degrees and as a percentage of the 30° distortion, with aligned-cursor performance as baseline",
+   "model": "claude-opus-5",
+   "quotes": 4,
+   "reason": "placeholder"
+  },
+  {
+   "paper": "cressman",
+   "outcome_key": "aftereffect",
+   "measure_name": "Hand deviation at peak velocity on no-cursor (aftereffect) reaches, expressed in degrees and as a percentage of the 30° distortion, with aligned-cursor performance as baseline",
+   "model": "claude-sonnet-5",
+   "quotes": 3,
+   "reason": "The aftereffect is measured as the leftward (counter-rotation direction) shift in hand deviation on no-cursor reaches after misaligned training relative to aligned baseline, expressed in degrees and as % of the 30° distortion; a larger magnitude reflects more adaptation/recalibration (more of the construct), consistent with the paper's framing of aftereffects as a percentage of the distortion (up to 100%). The paper explicitly reports no significant difference between young and older groups on this measure (t(17)<1), so it does not state which group was numerically greater; Fig. 3b shows similar bar heights for young and elderly but no verbal statement of which is larger, so direction_stated_in_text is unknown."
+  },
+  {
+   "paper": "cressman",
+   "outcome_key": "late_adaptation",
+   "measure_name": "Mean angular deviation of the hand at peak velocity during reach training with the misaligned (30° CW rotated) cursor",
+   "model": "claude-opus-5",
+   "quotes": 4,
+   "reason": "During misaligned-cursor training the hand's angular deviation from the target vector is the compensatory (leftward/CCW) rotation of the hand that counters the 30\the papaper explicitly states these deviations increased with the distortion 'in order to guide the rotated cursor to the target in a more direct path', so a larger value = greater adaptation (more of the construct), plotted toward CCW in Fig. 3a with a dashed line at the 30\report which which group had a higher late-block value: the group effect was non-significant (F(1,17)=2.523, P=0.131) and the only group-specific statement concerns earlier saturation in the older subjects (rate, not magnitude). Hence direction_stated_in_text = unknown."
+  },
+  {
+   "paper": "cressman",
+   "outcome_key": "late_adaptation",
+   "measure_name": "Mean angular deviation of the hand at peak velocity during reach training with the misaligned (30° CW rotated) cursor",
+   "model": "claude-sonnet-5",
+   "quotes": 3,
+   "reason": "Hand deviation at peak velocity during rotated-cursor reaches reflects the extent to which the hand trajectory has deviated (compensated) toward counteracting the 30° CW rotation; larger leftward deviation indicates greater compensatory adaptation to the perturbation, i.e., more of the adaptation construct, so higher values correspond to greater late adaptation (higher is better for this construct). The paper reports no significant difference between groups on this raw measure across the learning blocks (Group main effect P=0.131), so the paper does not state which group had greater raw hand deviation at the end of training (block 33)."
+  },
+  {
+   "paper": "bock",
+   "outcome_key": "late_adaptation",
+   "measure_name": "Angular pointing error (median initial direction error per episode)",
+   "model": "claude-opus-5",
+   "quotes": 4,
+   "reason": "The plotted variable is angular pointing error in degrees (median initial movement direction), i.e. deviation from the target direction, so a larger raw value means more error and hence less adaptation to the +60° rotation; the review's construct (adaptive change) is therefore better when the number is smaller. The paper states that adaptive improvement was more pronounced for young subjects and the exponential fits give a higher residual/asymptotic error for old subjects (29.51 deg) than young (9.92 deg), with a significant Age effect during the adaptation phase, so on this raw error measure the old group (Group A) was higher."
+  },
+  {
+   "paper": "bock",
+   "outcome_key": "late_adaptation",
+   "measure_name": "Angular pointing error (median initial direction error per episode)",
+   "model": "claude-sonnet-5",
+   "quotes": 4,
+   "reason": "The measure is an angular pointing error relative to the target direction; larger values indicate more deviation from the correct movement direction, i.e. more error, so lower values indicate better adaptation (more of the construct). The paper states young subjects adapted more (lower asymptotic error, 9.92° vs 29.51°) than old subjects, i.e. old subjects had higher (worse) error late in adaptation."
+  },
+  {
+   "paper": "bock",
+   "outcome_key": "aftereffect",
+   "measure_name": "Angular pointing error without visual feedback (median initial direction error per episode)",
+   "model": "claude-opus-5",
+   "quotes": 4,
+   "reason": "The measure is a signed angular pointing-direction error in degrees (median initial direction per episode); in Fig. 1 the adaptation-phase errors are positive (up to ~+55 deg) while the after-effect episodes without feedback are plotted as negative values (approx. -40 to -10 deg on the same 'angular error (deg)' axis), so the sign carries the direction of the deviation relative to the target. Because the after-effect values are negative, a larger (less negative) raw value corresponds to a SMALLER after-effect magnitude, i.e. less implicit recalibration; hence lower raw values indicate more of the construct. The paper states the after-effect was 'similar in both age groups' with no reported Age main effect and gives no numeric values (data are plotted only), so it does not state which group was higher on the raw measure (only that decline over episodes was faster in the young)."
+  },
+  {
+   "paper": "bock",
+   "outcome_key": "aftereffect",
+   "measure_name": "Angular pointing error without visual feedback (median initial direction error per episode)",
+   "model": "claude-sonnet-5",
+   "quotes": 3,
+   "reason": "The after-effect is the residual angular pointing error remaining once feedback is removed, taken as an index of implicit recalibration; a larger residual error reflects more retained adaptation (more of the recalibration construct), so higher values mean higher on the construct and higher_is_better. However, the ANOVA for the after-effect phase showed no significant main effect of Age (only Episode and the Age×Episode interaction were significant), and the text explicitly states the after-effect 'was similar in both age groups,' so the paper does not assert that either group's raw after-effect magnitude was consistently greater; hence direction_stated_in_text is unknown."
+  },
+  {
+   "paper": "bock",
+   "outcome_key": "late_adaptation",
+   "measure_name": "Tracking root mean square error between target and cursor (RMSE)",
+   "model": "claude-opus-5",
+   "quotes": 5,
+   "reason": "placeholder','reason':'',\"reason\":\"\"}"
+  },
+  {
+   "paper": "bock",
+   "outcome_key": "late_adaptation",
+   "measure_name": "Tracking root mean square error between target and cursor (RMSE)",
+   "model": "claude-sonnet-5",
+   "quotes": 2,
+   "reason": "RMSE quantifies deviation between cursor and target, so a larger value indicates more tracking error, not more of the adaptation construct; smaller RMSE is better. The paper describes the general pattern (higher error under rotation, gradual improvement especially for young controls) but does not give a specific numeric comparison of old vs young controls at the final rotated episode (episode 15), and no exact values are printed—only shown in Fig. 2. Hence the specific direction (which group had higher/lower RMSE at that final point) is not explicitly stated in text beyond the qualitative note that improvement was more pronounced in young participants, which does not directly establish which group had a higher/lower raw RMSE value at episode 15."
+  }
+ ]
+}
