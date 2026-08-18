@@ -833,3 +833,18 @@ def test_a_retry_ladder_further_away_than_a_tick_label_ever_sits_is_not_its_ladd
         assert panels[0].calibrated is True, where          # the wide panel is unaffected
         assert panels[1].calibrated is certifies, where
         assert (panels[1].n_ladder == 5) is certifies, where
+
+
+def test_a_raster_figure_whose_native_density_wins_the_dpi_choice_still_renders():
+    """`get_pixmap(dpi=…)` needs an int; the raster branch handed it `72 * nat_w / width * upscale`
+    raw and one nine-paper-run PDF died in ingest with `TypeError: in method
+    'fz_pixmap_xres_set'`. The choice is rounded, on both branches."""
+    import inspect
+    from canopy.ingest import pdf as ingest_pdf_module
+    src = inspect.getsource(ingest_pdf_module.ingest_pdf)
+    assert "dpi = int(round(max(72, min(fig_dpi" in src
+    assert "dpi = int(fig_dpi)" in src
+    # and the arithmetic that used to leak a float is rounded to an int the way PyMuPDF wants
+    fig_dpi, nat_w, width = 300, 1000, 500.0
+    raw = max(72, min(fig_dpi, 72 * nat_w / max(width, 1) * ingest_pdf_module.RASTER_UPSCALE))
+    assert isinstance(int(round(raw)), int)

@@ -1202,9 +1202,12 @@ def ingest_pdf(path: str | Path, out_dir: str | Path, page_dpi: int = PAGE_DPI, 
             if reg["kind"] == "raster" and reg["native_px"] and reg["n_images"] == 1:
                 # render at the native pixel density × upscale (capped) so we don't invent detail beyond the source
                 nat_w = reg["native_px"][0]
-                dpi = max(72, min(fig_dpi, 72 * nat_w / max(clip.width, 1) * RASTER_UPSCALE))
+                # PyMuPDF's `set_dpi` takes an int: a raster figure whose native density won the
+                # `min` handed it a float and the paper died in ingest (`TypeError: in method
+                # 'fz_pixmap_xres_set'`, nine-paper run) — round, never pass the ratio raw
+                dpi = int(round(max(72, min(fig_dpi, 72 * nat_w / max(clip.width, 1) * RASTER_UPSCALE))))
             else:
-                dpi = fig_dpi
+                dpi = int(fig_dpi)
             pix = page.get_pixmap(dpi=dpi, clip=clip, alpha=False)
             crop = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
             crop_rel = f"figures/{fid}.png"
