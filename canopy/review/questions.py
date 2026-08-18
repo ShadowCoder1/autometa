@@ -67,11 +67,20 @@ _FLAG_TO_KIND: tuple[tuple[str, str], ...] = (
     ("group_label_swapped", "group_mapping"),
     ("series_transposed", "which_series"),
     ("series_identity_conflict", "which_series"),
+    #: D2: every reading of this cell came off a panel the caption gives to another group, and
+    #: this group has none of its own. That is the same doubt as a transposed series — which thing
+    #: in this picture is this group? — and it has the same two answers, so it asks the same
+    #: question. `confirm_value` would be the wrong terminus: its answer is a note, and a note
+    #: does not settle whose number this is.
+    ("locator_panel_mismatch", "which_series"),
     ("axis_conflict", "which_axis"),
     ("calibration_disputed", "which_axis"),
     ("calibration_refuted", "which_axis"),
     ("value_outside_axis", "which_value"),
     ("sign_mismatch", "which_value"),
+    #: D2: two places in one figure were read and they gave two numbers, so the vote refused to
+    #: average them. Naming the right one is the whole answer.
+    ("locator_reads_conflict", "which_value"),
     ("quote_not_grounded", "quote_not_found"),
     ("series_marker_mismatch", "which_series"),
     ("dispersion_type_from_legend", "error_bar_type"),
@@ -404,7 +413,7 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
         options = _stamped(_converted_options(verdict, overruled))
     image = _image(run, candidates, provenance)
     prompt = _prompt(kind, label, outcome_key, where, unit, x_hint, options, verdict,
-                     measure, overruled)
+                     measure, overruled, flags)
     if kind == "dispersion_doubt":
         prompt = _dispersion_prompt(who=label, outcome_key=outcome_key, row=row)
     if kind == "converted_statistic":
@@ -832,7 +841,8 @@ def _options(kind: str, valued: Sequence[Mapping[str, Any]], verdict: Mapping[st
                         # confirming the identity is the whole answer to the identity findings:
                         # without saying so, the cell keeps asking a question it has answered.
                         "clears": _present(flags, "series_marker_mismatch",
-                                           "series_identity_conflict", "series_transposed"),
+                                           "series_identity_conflict", "series_transposed",
+                                           "locator_panel_mismatch"),
                         "label": f"this series is this group — {resolved[0]['label']} is right"})
         out.append({"key": "other_series", "label": "the value belongs to the other group"})
         return out
@@ -887,12 +897,15 @@ def _options(kind: str, valued: Sequence[Mapping[str, Any]], verdict: Mapping[st
                  "overrules": _present_holds(verdict, "verifier_refuted", overruled=overruled),
                  "label": "the value is right anyway — I have read the verifier's objection and "
                           "disagree with it"},
-                *({**option, "clears": _present(flags, "value_outside_axis", "sign_mismatch")}
+                *({**option, "clears": _present(flags, "value_outside_axis", "sign_mismatch",
+                                                 "locator_reads_conflict")}
                   for option in _value_options(valued, verdict, unit))]
     if kind == "which_value":
-        # naming the right number is the answer to "that number is off the ladder" and to "the
-        # paper says the other group was higher" — the two findings that raise this question.
-        return [{**option, "clears": _present(flags, "value_outside_axis", "sign_mismatch")}
+        # naming the right number is the answer to "that number is off the ladder", to "the paper
+        # says the other group was higher", and to "two places in this figure were read and they
+        # do not agree" — the findings that raise this question.
+        return [{**option, "clears": _present(flags, "value_outside_axis", "sign_mismatch",
+                                              "locator_reads_conflict")}
                 for option in _value_options(valued, verdict, unit)]
     if kind == "no_value":
         # the free-text answer ("it is on p. 5, Table 2") is a re-extraction; the one thing a
@@ -1031,13 +1044,21 @@ def _confirmed_value(options: Sequence[Mapping[str, Any]], verdict: Mapping[str,
 
 def _prompt(kind: str, label: str, outcome_key: str, where: str, unit: str, x_hint: str,
             options: Sequence[Mapping[str, Any]], verdict: Mapping[str, Any],
-            measure: str = "", overruled: Collection[str] = ()) -> str:
+            measure: str = "", overruled: Collection[str] = (),
+            flags: Sequence[str] = ()) -> str:
     who = f"the {label} group" if label else "this group"
     at = f" at {x_hint}" if x_hint else ""
     u = f" ({unit})" if unit else ""
     src = f" in {where}" if where else ""
     outcome = outcome_key.replace("_", " ")
+    raised = set(flags)
     if kind == "which_value":
+        # a question states the finding that raised it, or a reviewer is told the routes disagree
+        # about a cell where one route read two places and the routes never met (D2).
+        if "locator_reads_conflict" in raised:
+            return (f"Which of these is {who}'s {outcome}{at}{src}{u}? Two places in the same "
+                    f"figure were read and they give different numbers, so neither corroborates "
+                    f"the other and nothing was averaged.")
         return (f"Which of these is {who}'s {outcome}{at}{src}{u}? The routes that read it "
                 f"disagree.")
     if kind == "confirm_value":
@@ -1056,6 +1077,13 @@ def _prompt(kind: str, label: str, outcome_key: str, where: str, unit: str, x_hi
                 f"ladder disagree about the scale, so each answer names the ladder it was read "
                 f"against — pick the number the right ladder gives.")
     if kind == "which_series":
+        # same question, same two answers; what differs is WHY the identity is in doubt — a
+        # marker the pixel pass could not match, or a panel the caption gives to another group.
+        if "locator_panel_mismatch" in raised:
+            return (f"In {where or 'this figure'}, which plotted series is {who}? Every reading "
+                    f"of this value was taken off a panel the caption gives to another group, and "
+                    f"this group has no reading from its own panel, so the number below may "
+                    f"belong to the other group.")
         return (f"In {where or 'this figure'}, which plotted series is {who}? The marker the "
                 f"reader described and the one the pixel pass found do not match, so the number "
                 f"below may belong to the other group.")

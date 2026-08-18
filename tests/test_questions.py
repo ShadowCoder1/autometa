@@ -1157,6 +1157,34 @@ def test_every_forcing_finding_has_a_question_that_can_express_it():
     assert {kind for _, kind in _FLAG_TO_KIND} <= set(QUESTION_KINDS)
 
 
+def test_the_two_locator_findings_ask_a_question_that_states_them():
+    """D2's two contradictions, and the question each one raises.
+
+    Neither may fall to `confirm_value`: its answer is a note, and a note does not settle whose
+    number this is. "Two places, two numbers" is answered by naming the right number; "every
+    reading came off another group's panel" is the same doubt a transposed series raises — which
+    thing in this picture is this group? — and has the same two answers. Each prompt states the
+    finding that raised it, and each answer clears exactly that finding and nothing else.
+    """
+    from canopy.review.questions import _answer_kind, _kind, _options, _prompt
+
+    valued = [{"mean": 6.0, "candidate_id": "c1:digitize:ensemble", "route": "figure", "n": 20},
+              {"mean": 6.2, "candidate_id": "c2:digitize:ensemble", "route": "figure", "n": 20}]
+    verdict = {"agreement": "single", "mean": 6.0, "higher_is_better": True, "flags": []}
+    expected = {"locator_reads_conflict": ("which_value", "different numbers"),
+                "locator_panel_mismatch": ("which_series", "own panel")}
+    for code, (kind, said) in expected.items():
+        flags = [code]
+        assert _kind(verdict, flags, valued, holding={code}) == kind
+        assert _answer_kind(kind) == "value", "a note cannot settle whose number this is"
+        options = _options(kind, valued, verdict, flags, "deg", ())
+        prompt = _prompt(kind, "young adults", "aftereffect", "Fig. 1", "deg", "", options,
+                         verdict, "", (), flags)
+        assert said in prompt, prompt
+        cleared = {c for option in options for c in (option.get("clears") or [])}
+        assert cleared == {code}, cleared
+
+
 @pytest.mark.skipif(not _HAS_RERUN, reason="runs/rerun-fixed is not on this machine")
 def test_a_reader_contradicting_the_numbers_is_asked_with_the_quote_and_the_two_means(tmp_path):
     """M5, the new CONTRADICTING error: a reader's stated direction disagrees with this cell's own
