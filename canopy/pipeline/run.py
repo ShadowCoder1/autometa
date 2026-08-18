@@ -1492,8 +1492,8 @@ def _write_outputs(ctx: RunContext, manifest: RunManifest, results: Sequence[Pap
         # between, and why it could not decide — what a reviewer actually wants to be shown
         try:
             from ..review.questions import questions_for_run, write_questions
-            outputs.update({f"questions.{k}": v for k, v in
-                            write_questions(out, questions_for_run(out)).items()})
+            outputs.update({f"questions.{k}": v for k, v in write_questions(
+                out, questions_for_run(out, queue=manifest.human_review_queue)).items()})
         except Exception as exc:                        # pragma: no cover - never fail a run on it
             manifest.warnings.append(f"questions could not be written: {type(exc).__name__}: {exc}")
 

@@ -1786,3 +1786,40 @@ def test_marking_a_cell_reviewed_keeps_the_stricter_of_the_row_and_the_cells():
     assert _stricter("accept_with_note", gated) == "needs_human"
     assert _stricter("accept_with_note", "auto_accept") == "accept_with_note"
     assert _stricter("auto_accept", "auto_accept") == "auto_accept"
+
+
+def test_a_resumed_runs_questions_come_from_the_queue_it_just_built_not_the_stale_manifest(tmp_path):
+    """`questions_for_run` must not read the queue off a manifest the run has not rewritten yet.
+
+    While a resumed run writes its outputs, `manifest.json` on disk is still the previous pass's
+    manifest: `runs/ceiling-3` wrote THREE questions for a NINE-cell queue that way. The pipeline
+    now passes the queue it just built; without one, the freshest record on disk wins.
+    """
+    import json, os, shutil, time
+    from canopy.review.questions import questions_for_run
+    if not _HAS_RERUN:
+        pytest.skip("runs/rerun-fixed is not on this machine")
+    src = RERUN
+    run = tmp_path / "run"
+    shutil.copytree(src, run, ignore=shutil.ignore_patterns("_before_*", "cache", "*.log"))
+    manifest = json.loads((run / "manifest.json").read_text())
+    full = list(manifest["human_review_queue"])
+    assert len(full) >= 2
+    # a stale manifest that knows only the first held cell…
+    manifest["human_review_queue"] = full[:1]
+    (run / "manifest.json").write_text(json.dumps(manifest))
+    # …while the queue file the run has just written carries every cell
+    (run / "human_review_queue.json").write_text(json.dumps(full))
+    time.sleep(0.02)
+    os.utime(run / "human_review_queue.json", None)
+    explicit = questions_for_run(run, queue=full)
+    assert len(explicit) == len(questions_for_run(src)), "the passed queue is what is asked"
+    freshest = questions_for_run(run)
+    assert len(freshest) == len(explicit), "the freshest file wins over a stale manifest"
+    # and when the manifest IS the newer record, it is trusted again
+    manifest["human_review_queue"] = full
+    (run / "manifest.json").write_text(json.dumps(manifest))
+    (run / "human_review_queue.json").write_text(json.dumps(full[:1]))
+    time.sleep(0.02)
+    os.utime(run / "manifest.json", None)
+    assert len(questions_for_run(run)) == len(explicit)

@@ -155,14 +155,36 @@ class Question(dict):
     """A plain dict with a stable shape; subclassed only so the intent is visible in signatures."""
 
 
+def _freshest_queue(run: Path, manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The review queue as most recently written — the queue file or the manifest's copy."""
+    from_manifest = list(manifest.get("human_review_queue") or [])
+    queue_file = run / "human_review_queue.json"
+    manifest_file = run / "manifest.json"
+    if queue_file.exists():
+        newer = (not manifest_file.exists()
+                 or queue_file.stat().st_mtime >= manifest_file.stat().st_mtime)
+        if newer or not from_manifest:
+            return list(_json_if_present(queue_file) or [])
+    return from_manifest
+
+
 # ----------------------------------------------------------------------------- building
-def questions_for_run(run_dir: str | Path) -> list[Question]:
-    """Every held cell of a finished run, as questions, worst first (biggest |Δ pooled| on top)."""
+def questions_for_run(run_dir: str | Path, *,
+                      queue: Sequence[Mapping[str, Any]] | None = None) -> list[Question]:
+    """Every held cell of a finished run, as questions, worst first (biggest |Δ pooled| on top).
+
+    `queue` is the review queue to build from. The pipeline passes the one it has just built:
+    while a run's outputs are being written, `manifest.json` on disk is still the PREVIOUS
+    pass's manifest, so reading the queue off it wrote a resumed run's questions from the queue
+    of the run before it (three Bock questions for a nine-cell queue). Without `queue`, the
+    freshest record on disk is used: the queue file when it is at least as new as the manifest,
+    else the manifest's copy.
+    """
     run = Path(run_dir)
     manifest = _json_if_present(run / "manifest.json") or {}
-    queue = list(manifest.get("human_review_queue") or [])
-    if not queue:                       # a run that held nothing writes no queue file at all
-        queue = list(_json_if_present(run / "human_review_queue.json") or [])
+    if queue is None:
+        queue = _freshest_queue(run, manifest)
+    queue = list(queue)
     overrides = _overrides(run)
     pending = _pending_seqs(run)
     consumed = consumed_seqs(run)

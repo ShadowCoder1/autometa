@@ -1434,6 +1434,14 @@ def _rewrite(out: Path, manifest: RunManifest, protocol: Protocol,
                       provenance=provenance if isinstance(provenance, dict) else None,
                       run_outputs=run_outputs)
     save_manifest(out, manifest)
+    # the questions file is what a CLI reviewer reads next; a re-pool has just changed which
+    # cells are held, so it is rewritten from the queue this re-pool built (never from a stale
+    # manifest — `questions_for_run` is given the queue explicitly)
+    try:
+        from ..review.questions import questions_for_run, write_questions
+        write_questions(out, questions_for_run(out, queue=manifest.human_review_queue))
+    except Exception:                                    # pragma: no cover - never fail a re-pool on it
+        pass
     return outcomes
 
 
