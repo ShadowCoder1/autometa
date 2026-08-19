@@ -8,8 +8,8 @@ Nothing here adds behaviour; it exists so the server's imports say where its fea
 from __future__ import annotations
 
 from ..pipeline.overrides import (KINDS, OVERRIDES_FILE, OverrideRejected, append_override,
-                                  apply_overrides_and_repool, override_summary, read_overrides,
-                                  repool_lock)
+                                  append_overrides, apply_overrides_and_repool, override_summary,
+                                  read_overrides, repool_lock)
 
-__all__ = ["KINDS", "OVERRIDES_FILE", "OverrideRejected", "append_override", "read_overrides",
-           "apply_overrides_and_repool", "override_summary", "repool_lock"]
+__all__ = ["KINDS", "OVERRIDES_FILE", "OverrideRejected", "append_override", "append_overrides",
+           "read_overrides", "apply_overrides_and_repool", "override_summary", "repool_lock"]

@@ -41,6 +41,7 @@ after each decision. `canopy/server/overrides.py` is a thin adapter over this mo
 from __future__ import annotations
 
 import json
+import math
 import os
 import threading
 from datetime import datetime, timezone
@@ -62,7 +63,7 @@ from .state import (load_manifest, read_stage, review_entry, save_manifest, sha1
 
 __all__ = ["KINDS", "MAP_KINDS", "MAP_PENDING", "OVERRIDES_FILE", "OverrideRejected",
            "OVERRULABLE", "RE_EXTRACT_PENDING", "codes_cleared_by_value", "consumed_seqs",
-           "recorded_flags", "recorded_holds", "row_flags", "append_override",
+           "recorded_flags", "recorded_holds", "row_flags", "append_override", "append_overrides",
            "read_overrides", "apply_overrides_and_repool", "map_answers", "eligibility_answers",
            "override_summary", "repool_lock"]
 
@@ -113,6 +114,31 @@ def _number(value: Any, field: str) -> float | None:
         raise OverrideRejected(f"{field} must be a number, not {value!r}") from None
 
 
+def _count(value: Any, field: str) -> int | None:
+    """A number of PEOPLE — whole, at least one, and never quietly rounded.
+
+    `int(payload["n"])` was three defects in one call (review finding 16). `ValueError` is not
+    `OverrideRejected`, so "abc" — or the "1e3" an `<input type=number>` is entitled to emit —
+    left the endpoint returning 500 where the contract says 422. `int(12.7)` silently became 12,
+    a group size nobody stated standing in a record whose whole purpose is to say what a human
+    said. And `bool` is an `int` in Python, so `True` was one participant.
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise OverrideRejected(f"{field} must be a whole number of people, not {value!r}")
+    number = _number(value, field)
+    if number is None:
+        return None
+    if not math.isfinite(number) or number != int(number):
+        raise OverrideRejected(f"{field} must be a whole number of people, not {value!r} — "
+                               f"a size the tool rounded is a size nobody stated")
+    if int(number) < 1:
+        raise OverrideRejected(f"{field} must be at least 1; a group of nobody is an exclusion, "
+                               f"not a size")
+    return int(number)
+
+
 # ----------------------------------------------------------------------------- the log
 def _validate(payload: Mapping[str, Any]) -> dict[str, Any]:
     kind = _text(payload.get("kind"), 40)
@@ -155,7 +181,7 @@ def _validate(payload: Mapping[str, Any]) -> dict[str, Any]:
             "mean": _number(payload.get("mean"), "mean"),
             "dispersion_value": _number(payload.get("dispersion_value"), "dispersion_value"),
             "dispersion_type": _text(payload.get("dispersion_type"), 20).upper() or "",
-            "n": None if payload.get("n") in (None, "") else int(payload["n"]),
+            "n": _count(payload.get("n"), "n"),
             "unit": _text(payload.get("unit"), 40),
             # the findings THIS answer settles, named by the question that offered it — "yes, this
             # series is this group" answers the series identity, which no field of the record
@@ -193,6 +219,11 @@ def _validate(payload: Mapping[str, Any]) -> dict[str, Any]:
         if bucket not in ("auto_accept", "accept_with_note", "needs_human"):
             raise OverrideRejected(f"unknown confidence bucket {bucket!r}")
         record["confidence"] = bucket
+        # D1's third answer: "keep the printed value". It is a decision about how the ROW is
+        # built, not about either cell's number, so it cannot be expressed as a clear or a bucket
+        # — and without it every rebuild raised the precedence override again out from under the
+        # reviewer who had just declined it (review finding 12).
+        record["keep_printed"] = bool(payload.get("keep_printed"))
     if kind == "eligibility":
         if not record["paper_id"]:
             raise OverrideRejected("an eligibility override needs a paper_id")
@@ -240,14 +271,11 @@ def _validate(payload: Mapping[str, Any]) -> dict[str, Any]:
         record["outcome_key"] = ""
         for field in ("n_a", "n_b"):
             value = payload.get(field)
-            try:
-                record[field] = int(value)
-            except (TypeError, ValueError):
+            size = _count(value, f"an analysed-n answer's {field}")
+            if size is None:
                 raise OverrideRejected(f"an analysed-n answer needs {field} as a whole number, "
-                                       f"not {value!r}") from None
-            if record[field] < 1:
-                raise OverrideRejected(f"an analysed-n answer needs {field} of at least 1; "
-                                       f"a group of nobody is an exclusion, not a size")
+                                       f"not {value!r}")
+            record[field] = size
         record["quote"] = _text(payload.get("quote"), 1000)
     if kind in MAP_KINDS:
         # a map answer is about a dataset nobody has read yet, so it is scoped by ids alone —
@@ -447,9 +475,28 @@ def _check_clears(run_dir: str | Path, record: Mapping[str, Any]) -> str:
 
 def append_override(run_dir: str | Path, payload: Mapping[str, Any]) -> dict[str, Any]:
     """Validate and append one decision. Returns the record as it was written."""
+    return append_overrides(run_dir, [payload])[0]
+
+
+def append_overrides(run_dir: str | Path,
+                     payloads: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Append several decisions as ONE act: all are validated before any of them is written.
+
+    One answer is one record per CELL it names (§C1), and appending them one at a time meant a
+    refusal on the second left the first in the log — half a decision on the record, with no
+    re-pool behind it and nothing in the response to say so (review MINOR 29). They are also
+    written under one lock, so no other writer can land between the halves of one answer.
+    """
     directory = Path(run_dir)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / OVERRIDES_FILE
+    checked = [(_checked(directory, payload), payload) for payload in payloads]
+    with _lock_for(path):
+        return [_write(directory, path, record, payload) for record, payload in checked]
+
+
+def _checked(directory: Path, payload: Mapping[str, Any]) -> dict[str, Any]:
+    """The record this payload would be written as — or `OverrideRejected`. Writes nothing."""
     record = _validate(payload)
     if record.get("clears") or record.get("overrules"):
         # what the cell was holding when the reviewer answered, on the record. A `--resume`
@@ -461,14 +508,19 @@ def append_override(run_dir: str | Path, payload: Mapping[str, Any]) -> dict[str
     refused = _check_clears(directory, record)
     if refused:
         raise OverrideRejected(refused)
-    with _lock_for(path):
-        record["seq"] = len(read_overrides(directory)) + 1
-        record["at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        record["actor"] = _text(payload.get("actor"), 80) or "local reviewer"
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+    return record
+
+
+def _write(directory: Path, path: Path, record: dict[str, Any],
+           payload: Mapping[str, Any]) -> dict[str, Any]:
+    """One validated record onto the end of the log. The caller holds the lock."""
+    record["seq"] = len(read_overrides(directory)) + 1
+    record["at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    record["actor"] = _text(payload.get("actor"), 80) or "local reviewer"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
     return record
 
 
@@ -621,6 +673,16 @@ class _RunState:
         #: every row of that dataset — an n answered before a value answer must still be the n the
         #: value answer's row is built with, whatever order the log happens to be in.
         self.group_n: dict[str, tuple[int, int]] = {}
+        #: WHEN each answer about a group size was made (`seq` in the log). The dataset-level
+        #: analysed n has to reach every later rebuild of every row — and must not overwrite a
+        #: per-cell `n` a reviewer answered AFTER it, which is how the table came to show one
+        #: size while the row was divided by another (review MINOR 30).
+        self.group_n_seq: dict[str, int] = {}
+        self.n_answered: dict[tuple[str, str, str], int] = {}
+        #: D1's "keep the printed value" answers, as `(dataset_id, outcome_key)`. Held here for
+        #: the same reason `group_n` is: it must reach EVERY later rebuild of that row, whatever
+        #: else is answered afterwards and in whatever order the log happens to be in.
+        self.keep_printed: set[tuple[str, str]] = set()
         for status in manifest.papers:
             paper_id = status.paper_id
             if stage_done(run_dir, paper_id, "map"):
@@ -729,6 +791,11 @@ def apply_overrides_and_repool(run_dir: str | Path, *, protocol_path: str | Path
                                   else {**override, "why": MAP_PENDING})
             continue
         if kind == "mark_reviewed":
+            if override.get("keep_printed"):
+                # before anything is rebuilt in this branch: the probe below goes through
+                # `_prepare` too, and a row prepared with the alternatives still on it would
+                # answer the row's own findings as the overridden row rather than the held one.
+                state.keep_printed.add((dataset_id, outcome_key))
             record = records.get((dataset_id, outcome_key))
             if record is None:
                 pending.append({**override, "why": f"no row for {dataset_id}/{outcome_key}"})
@@ -1070,6 +1137,7 @@ def _apply_analysed_n(override: Mapping[str, Any],
     if dataset is None:
         return False, f"no dataset {dataset_id!r} in this run"
     state.group_n[dataset_id] = (int(override["n_a"]), int(override["n_b"]))
+    state.group_n_seq[dataset_id] = int(override.get("seq") or 0)
 
     sizes = {"A": int(override["n_a"]), "B": int(override["n_b"])}
     touched = 0
@@ -1289,6 +1357,15 @@ def _apply_group_n(row: PreparedRow, state: "_RunState" | None, siblings: int = 
     if sizes is None:
         return
     answered = {"A": sizes[0], "B": sizes[1]}
+    # …except an arm a reviewer answered LATER, cell by cell. The dataset-level size is the
+    # reviewer's word about both arms of every outcome, and a per-cell `n` answered after it is
+    # their word about this one: re-applying the older number left the review table showing the
+    # newer size beside a row divided by the older (review MINOR 30).
+    when = (state.group_n_seq if state is not None else {}).get(row.dataset.dataset_id, 0)
+    for key in ("A", "B"):
+        if (state.n_answered if state is not None else {}).get(
+                (row.dataset.dataset_id, row.outcome_key, key), -1) > when:
+            answered.pop(key, None)
     flags = set(row.values.flags)
     shared = SHARED_CONTROL_ARM
     merged = "A" if shared == "B" else "B"
@@ -1345,6 +1422,11 @@ def _prepare(dataset: DatasetSpec, outcome_key: str, verdict_a: Verdict, verdict
         [(dataset, outcome_key, verdict_a, verdict_b)], candidates, protocol.stats,
         cluster_of=cluster_of, directions=directions)[0]
     _apply_group_n(row, state, len(cells))
+    if state is not None and (dataset.dataset_id, outcome_key) in state.keep_printed:
+        # D1's fallback is offered alternatives or it is not; there is no third state. A reviewer
+        # who kept the printed value declined the candidate pair, and `resolve_effect_with_fallback`
+        # has no other way to be told (review finding 12).
+        row.alternatives = []
     return row
 
 
@@ -1448,6 +1530,9 @@ def _apply_value(override: Mapping[str, Any], records: dict[tuple[str, str], Eff
                            f"(expected one of {[d.value for d in DispersionType]})")
     if override.get("n") is not None:
         verdict.n = int(override["n"])
+        # before the rebuild below, which reads it: this arm's size now comes from an answer of
+        # its own, and a dataset-level analysed n answered EARLIER may not put its number back.
+        state.n_answered[(dataset_id, outcome_key, group)] = int(override.get("seq") or 0)
     if override.get("unit"):
         verdict.unit = override["unit"]
     verdict.overridden_by_human = True

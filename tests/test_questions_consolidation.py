@@ -406,3 +406,90 @@ def test_the_unfolded_path_is_what_the_page_is_built_from(nine_tmp):
             assert card["member_ids"] == [card["id"]]
         for member in card["member_ids"]:
             assert member in cells or card["scope"] in ("paper", "dataset"), member
+
+
+# ------------------------------------------------- fix round 2: a card action does what it says
+def test_exclude_these_cells_on_a_precedence_card_excludes(nine_tmp):
+    """Fix round 2, finding 11. The page's "Exclude these cells" button posts `{exclude: true}`
+    with no `option`, and `_precedence_answers` read only `option`: the empty key fell through to
+    the `keep_printed` branch and wrote two `mark_reviewed` records saying "the printed value
+    stands". The card ticked and nothing was excluded — the opposite decision, recorded."""
+    _override_the_heuer_row(nine_tmp)
+    card = next(q for q in questions_for_run(nine_tmp)
+                if q["id"] == "3570e4ce2a9c:d1|late_adaptation||precedence_override")
+    recs = answers_to_overrides(card, {"exclude": True, "note": "neither value is usable"})
+    assert [r["kind"] for r in recs] == ["exclude_dataset"]
+
+
+def test_an_answer_that_decides_nothing_is_refused_by_the_precedence_card(nine_tmp):
+    """…and the same fallthrough is why an unrecognised answer must be refused rather than read
+    as "keep the printed value": a reviewer who typed a note and picked nothing decided nothing."""
+    from canopy.pipeline.overrides import OverrideRejected
+
+    _override_the_heuer_row(nine_tmp)
+    card = next(q for q in questions_for_run(nine_tmp)
+                if q["id"] == "3570e4ce2a9c:d1|late_adaptation||precedence_override")
+    for bad in ({"note": "not sure yet"}, {"option": "typo", "note": "hmm"}, {}):
+        with pytest.raises(OverrideRejected):
+            answers_to_overrides(card, bad)
+
+
+def test_keep_printed_keeps_the_printed_value_on_both_lines(nine_tmp):
+    """Fix round 2, finding 12. `keep_printed` wrote a plain `mark_reviewed`, and every rebuild
+    goes through `resolve_effect_with_fallback`, which re-raised the override the reviewer had
+    just refused: the row kept the candidate pair's effect size, `precedence_override` and its
+    place on the best-guess line, while the card reported "answered … keeps no effect size from
+    it". The decision is on the record now, and the rebuild offers that row no alternatives."""
+    _override_the_heuer_row(nine_tmp)
+    card = next(q for q in questions_for_run(nine_tmp)
+                if q["id"] == "3570e4ce2a9c:d1|late_adaptation||precedence_override")
+    kept = answers_to_overrides(card, {"option": "keep_printed",
+                                       "note": "the printed pair is the paper's own number"})
+    assert all(r["kind"] == "mark_reviewed" and r["keep_printed"] is True
+               and r["confidence"] == "needs_human" for r in kept)
+    _append(nine_tmp, kept)
+    _repool(nine_tmp)
+    row = {(r["dataset_id"], r["outcome_key"]): r for r in json.loads(
+        (nine_tmp / "results" / "extraction_table_all.json").read_text())
+        }[("3570e4ce2a9c:d1", "late_adaptation")]
+    assert row["route"] == "not_convertible" and "precedence_override" not in row["flags"]
+    assert not row.get("in_best_guess")
+
+
+def test_an_eligibility_answer_that_decides_nothing_leaves_the_paper_out(nine_tmp):
+    """Fix round 2, finding 13. `decision or ("exclude" if exclude else "include")` made INCLUDE
+    the default of every malformed answer: a note-only submit, a typo'd option key, a decision
+    spelled "excluded" or "no" all came back `eligible: True` — and an included paper buys a map
+    and an extraction at the next `--resume`. A paper stays out unless a reviewer says the word."""
+    from canopy.pipeline.overrides import OverrideRejected
+
+    card = next(q for q in questions_for_run(nine_tmp) if q["kind"] == "include_paper")
+    for bad in ({"note": "not sure yet"}, {"option": "typo", "note": "hmm"},
+                {"decision": "excluded", "note": "hmm"}, {"decision": "no", "note": "hmm"}):
+        with pytest.raises(OverrideRejected):
+            answers_to_overrides(card, bad)
+    out = answers_to_overrides(card, {"decision": "exclude", "note": "no older adults"})[0]
+    assert out["eligible"] is False and "excluded by the reviewer" in out["justification"]
+    keep = answers_to_overrides(card, {"option": "include", "note": "it does have both arms"})[0]
+    assert keep["eligible"] is True and "included by the reviewer" in keep["justification"]
+
+
+def test_a_later_per_cell_n_is_not_overwritten_by_an_earlier_dataset_n(nine_tmp):
+    """Fix round 2, MINOR 30. The analysed size is kept on the run state so that it reaches every
+    later rebuild of that dataset's rows — but it was re-applied to the arm unconditionally, so a
+    per-cell answer made AFTER it (a reviewer reading the cell's own n out of the table) was
+    overwritten on the way into the resolver: the review table showed the later number and the row
+    was divided by the earlier one. The newer answer is the reviewer's current word."""
+    ds, key = "b7523a41b03a:d1", "late_adaptation"
+    _append(nine_tmp, [
+        {"kind": "group_n", "paper_id": "b7523a41b03a" + "0" * 52, "dataset_id": ds,
+         "n_a": 18, "n_b": 16, "justification": "the analysed sizes, from the participants para"},
+        {"kind": "value", "paper_id": "b7523a41b03a" + "0" * 52, "dataset_id": ds,
+         "outcome_key": key, "group": "A", "n": 12,
+         "justification": "the table for this measure reports twelve in that arm"},
+    ])
+    _repool(nine_tmp)
+    row = {(r["dataset_id"], r["outcome_key"]): r for r in json.loads(
+        (nine_tmp / "results" / "extraction_table_all.json").read_text())}[(ds, key)]
+    assert row["n_a"] == 12 and row["n_b"] == 16
+    assert "√12" in row["conversion_chain"], "and the row is DIVIDED by the n the table shows"

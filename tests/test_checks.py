@@ -1162,3 +1162,42 @@ def test_over_two_whole_papers_it_speaks_only_where_the_paper_does():
                                flag.detail["excluded"]))
     assert fired == {("b7523a41b03a:d1", 19, 3), ("b7523a41b03a:d1", 20, 4),
                      ("b7523a41b03a:d2", 19, 3), ("b7523a41b03a:d2", 21, 4)}
+
+
+# ------------------------------------------------- D4-lite: whose words a printed size stands by
+def _sized(n: int, group: str = "B") -> Candidate:
+    return vachon(n, group)
+
+
+def test_a_printed_size_is_read_beside_this_reviews_own_arm_words():
+    """Fix round 2, finding 8. `_GROUP_SIZE` matched a count only beside `young|old|healthy|
+    participant|subject|adult` — this review's arm vocabulary, hard-coded into a general check.
+    A Parkinson's review prints "Twenty PD patients (20 patients)…" and a stroke review prints
+    "18 survivors", and D4-lite was silent on both. The words come from the arm's own vocabulary
+    (the protocol's, already passed in) and the nouns that make a count a count of people."""
+    from canopy.verify.checks import n_before_exclusions
+
+    pages = ["Twenty Parkinson patients (20 patients) took part. Before analysis we excluded "
+             "3 Parkinson patients who did not complete the protocol."]
+    flag = n_before_exclusions(pages, _sized(20), ["Parkinson patients"])
+    assert flag is not None and (flag.detail["recruited"], flag.detail["excluded"]) == (20, 3)
+
+    stroke = ["We recruited 18 survivors of a first stroke. We then excluded 2 survivors whose "
+              "lesions were bilateral."]
+    flag = n_before_exclusions(stroke, _sized(18), ["stroke survivors"])
+    assert flag is not None and (flag.detail["recruited"], flag.detail["excluded"]) == (18, 2)
+
+
+def test_a_size_the_paper_calls_final_is_not_a_recruited_count():
+    """Fix round 2, MINOR 25. "The final sample comprised 20 patients … 4 did not complete" is the
+    ANALYSED size followed by the losses it already reflects, and subtracting again offered the
+    reviewer "may be 16" — an option that is simply wrong. A size the paper itself calls final,
+    analysed or remaining is not a recruited count, so the check says nothing about it."""
+    from canopy.verify.checks import n_before_exclusions
+
+    pages = ["The final sample comprised 20 Parkinson patients. 4 Parkinson patients did not "
+             "complete the protocol."]
+    assert n_before_exclusions(pages, _sized(20), ["Parkinson patients"]) is None
+    pages = ["Twenty Parkinson patients were recruited (20 patients). 4 Parkinson patients did "
+             "not complete."]
+    assert n_before_exclusions(pages, _sized(20), ["Parkinson patients"]) is not None

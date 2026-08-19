@@ -209,6 +209,11 @@ class ResolvedValues(CanopyModel):
     #: built from a candidate a verifier refuted is still held, and the reviewer who is asked to
     #: decide it must be shown the objection rather than have to go and find it.
     objections: dict[str, str] = Field(default_factory=dict)
+    #: the group keys (`"A"`, `"B"`) whose cell vote came out `disagree` — the readers were weighed
+    #: and no value was settled. It travels with the inputs because D1's fallback has to tell two
+    #: different silences apart: a value the paper printed without a spread (which the fallback
+    #: exists for) and a value the pipeline REFUSED to settle (which it must not overrule).
+    disagreed: list[str] = Field(default_factory=list)
 
     def group(self, key: str) -> GroupValues | None:
         return self.group_a if key == "A" else self.group_b
@@ -233,6 +238,8 @@ class ResolvedValues(CanopyModel):
                    group_b=GroupValues.from_verdict(verdict_b),
                    test_statistic=test_statistic, reported=reported,
                    higher_is_better=direction, confidence=buckets[0], flags=flags,
+                   disagreed=[key for key, verdict in (("A", verdict_a), ("B", verdict_b))
+                              if verdict.agreement == "disagree"],
                    objections={note.candidate_id: note.reason
                                for verdict in (verdict_a, verdict_b) for note in verdict.verifiers
                                if note.verdict in ("refuted", "ambiguous")
@@ -720,36 +727,78 @@ def resolve_effect_with_fallback(dataset: DatasetSpec, outcome_def: OutcomeDef,
     record (`route_overridden_from`, `precedence_override_reason`), and the flag
     `precedence_override` so a reader can find every one of them. Nothing is released by this.
 
-    Four conditions, all necessary. The row got no effect size at all: `group_statistics_missing`
+    Six conditions, all necessary. The row got no effect size at all: `group_statistics_missing`
     says the four group routes were unavailable, and it does NOT say the row converted to nothing
     — a printed t beside a spreadless mean still converts — so the route is tested too, and the
-    override can never demote a row that has a number. An unresolved orientation still refuses: an
-    effect size nobody can sign is not improved by measuring it more precisely. And a row the
-    resolver already refused (`ROW_REFUSAL_CODES`) stays refused — the fallback is not a way
-    around a screen.
+    override can never demote a row that has a number. The primary must EXIST: a cell the
+    verification layer settled no centre for has nothing that failed to convert. No cell of the
+    row may have come out of the vote `disagree`: that is a refusal on evidence, and the readings
+    the fallback would take are the readings the vote refused. An unresolved orientation still
+    refuses: an effect size nobody can sign is not improved by measuring it more precisely. And a
+    row the resolver already refused (`ROW_REFUSAL_CODES`) stays refused — the fallback is not a
+    way around a screen.
 
     `alternatives` come from `rows.fallback_values`, which is where the pairing rules live (same
-    locator, same unit, one reading per route). The first that converts wins, and the ordering is
-    the protocol's own `route_precedence`.
+    locator, same unit, one reading per route). The one that converts at the route the protocol
+    most prefers wins; when two convert at the SAME precedence, none of them does
+    (`_no_pair_is_preferred`) — D1 supplies a value the precedence list could not, and it does not
+    choose between values.
     """
     record = resolve_effect(dataset, outcome_def, primary, settings)
     if not _may_fall_back(record, primary):
         return record
+    converted: list[tuple[int, ResolvedValues, EffectSizeRecord]] = []
     for alternative in alternatives:
         values = _with_row_context(alternative, primary)
         attempt = resolve_effect(dataset, outcome_def, values, settings)
-        if _rank(attempt.route, settings) >= _rank(record.route, settings):
+        rank = _rank(attempt.route, settings)
+        if rank >= _rank(record.route, settings):
             continue        # not convertible, or a route precedence ranks BELOW the one we have
-        # both flags: the swap, and the fact that made it necessary. The alternative HAS group
-        # statistics, so `resolve_effect` would never raise the second on it — and a row that did
-        # not say the printed value has no spread would be a row whose reader cannot tell an
-        # override from an ordinary figure read (acceptance item 4).
-        attempt.flags = sorted(set(attempt.flags) | {PRECEDENCE_OVERRIDE, GROUP_STATISTICS_MISSING})
-        attempt.route_overridden_from = _group_route_name(primary)
-        attempt.precedence_override_reason = _override_reason(primary, values, attempt,
-                                                              alternatives)
-        attempt.confidence = "needs_human"          # a row this was done to is never released
-        return attempt
+        converted.append((rank, values, attempt))
+    if not converted:
+        return record
+    best = min(rank for rank, _, _ in converted)
+    tied = [(values, attempt) for rank, values, attempt in converted if rank == best]
+    if len(tied) > 1:
+        return _no_pair_is_preferred(record, tied)
+    values, attempt = tied[0]
+    # both flags: the swap, and the fact that made it necessary. The alternative HAS group
+    # statistics, so `resolve_effect` would never raise the second on it — and a row that did
+    # not say the printed value has no spread would be a row whose reader cannot tell an
+    # override from an ordinary figure read (acceptance item 4).
+    attempt.flags = sorted(set(attempt.flags) | {PRECEDENCE_OVERRIDE, GROUP_STATISTICS_MISSING})
+    attempt.route_overridden_from = _group_route_name(primary)
+    attempt.precedence_override_reason = _override_reason(primary, values, attempt, alternatives)
+    attempt.confidence = "needs_human"              # a row this was done to is never released
+    return attempt
+
+
+def _no_pair_is_preferred(record: EffectSizeRecord,
+                          tied: Sequence[tuple[ResolvedValues, EffectSizeRecord]]
+                          ) -> EffectSizeRecord:
+    """Two candidate pairs convert at the SAME route precedence, so the row is held for a human.
+
+    D1 supplies a value the precedence list could not; it does not choose between values. Buch
+    d2's aftereffect is read in two places — Fig 4's left panel (d = −1.35) and Fig 3's top-right
+    (d = −0.08), both `figure` — and "the first that converts" meant the order
+    `rows.fallback_values` happened to build the pairs in: a factor of seventeen on the best-guess
+    forest, decided by a list index that nothing on the record justifies (review finding 2).
+
+    So neither is taken. The row keeps the `not_convertible` the primary earned — held, off both
+    lines, no `precedence_override` flag and no number — and the reason names every pair with its
+    place and its effect size, because the reviewer who decides this row is the one who can.
+    """
+    said = "; ".join(
+        f"{_shown(values.group_a, spread=True)}/{_shown(values.group_b, spread=True)} at "
+        f"{(values.group_a.locator or '')[:_LOCATOR_CHARS]!r} → {attempt.route} "
+        f"{_fmt(attempt.es)}"
+        for values, attempt in tied if values.group_a is not None and values.group_b is not None)
+    record.not_convertible_reason = (
+        f"{record.not_convertible_reason}; {len(tied)} candidate pairs convert at the same route "
+        f"precedence and nothing on the record prefers one of them ({said}), so the row is held "
+        f"rather than built from whichever was listed first")
+    record.conversion_steps = [f"not convertible: {record.not_convertible_reason}"]
+    record.conversion_chain = record.conversion_steps[0]
     return record
 
 
@@ -767,7 +816,24 @@ def _may_fall_back(record: EffectSizeRecord, primary: ResolvedValues) -> bool:
         return False
     if primary.higher_is_better is None or primary.group_a is None or primary.group_b is None:
         return False
+    # D1's premise is a value the paper PRINTS that carries no spread — "preferred whenever it
+    # converts; when it cannot…". A cell with no centre at all did not fail to convert: it has
+    # nothing to convert, and rebuilding it from a picture is not a precedence override but a
+    # value invented for a cell the pipeline never resolved one for. (A verdict that settled a
+    # median settled a value: `GroupValues.from_verdict` puts an IQR's centre in `median`.)
+    if not (_settled_a_value(primary.group_a) and _settled_a_value(primary.group_b)):
+        return False
+    # and a vote that came out `disagree` is a refusal ON EVIDENCE — the readings were weighed
+    # and none of them was accepted. Buch d2's aftereffect cell A is that case, and the fallback
+    # answered it with the very readings the vote had just refused (review finding 2).
+    if primary.disagreed:
+        return False
     return not (set(record.flags) & ROW_REFUSAL_CODES)
+
+
+def _settled_a_value(group: GroupValues) -> bool:
+    """Did verification settle a centre for this group at all — a mean, or a median?"""
+    return group.mean is not None or group.median is not None
 
 
 def _rank(route: str, settings: StatsSettings) -> int:

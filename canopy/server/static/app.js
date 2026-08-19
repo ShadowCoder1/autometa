@@ -1088,10 +1088,18 @@
     var actions = h("div", { cls: "q-actions" }, [
       h("button", { cls: "btn small", attrs: { type: "submit" }, text: "Answer & re-pool" })
     ]);
-    // "exclude this cell" on a `which_measure` question writes an exclusion for a dataset nothing
-    // was ever extracted from: the re-pool has no row to drop, so the decision is inert. The
-    // exclusion of such a dataset is the `include_dataset` question's own answer.
-    if (q.kind !== "which_measure") {
+    // "exclude this cell" is offered only where an exclusion is what it would write.
+    //   `which_measure`   — the dataset has nothing extracted, so the re-pool has no row to drop;
+    //                       excluding it is the `include_dataset` question's own answer.
+    //   `analysed_n`      — the card writes a `group_n`, and an exclude posted through it arrives
+    //                       as a `group_n` with no sizes, which the log refuses (422).
+    //   a measure-scoped card — its `dataset_id` is empty, so the exclusion names no dataset (422).
+    //   `precedence_override` — the card HAS an exclude option of its own, with the words that
+    //                       say what is being excluded and why; a second, wordless one wrote the
+    //                       opposite decision for as long as the answer read only the option key.
+    var inertExclude = q.kind === "which_measure" || q.kind === "analysed_n"
+      || q.kind === "precedence_override" || q.scope === "measure";
+    if (!inertExclude) {
       actions.appendChild(h("button", { cls: "btn small ghost", attrs: { type: "button" },
         // one decision can be about more than one cell, and the button has to say so: a card
         // that folded two groups excludes the dataset, not "this cell"
@@ -1260,8 +1268,12 @@
      reader could quote — the pooled card, the forest, the row badges — reads it, so there is no
      state of this page in which the strict estimate and the guess are both on screen. */
   function hasGuess(results) {
+    // `outputs.py` writes a `best_guess` block for every outcome, and at `n_added = 0` its k and
+    // its estimate ARE the strict ones. Enabling the toggle on that put the same number on screen
+    // twice under two names, the second time under the caveat that the line adds held rows —
+    // which is exactly what `html.py` and `outputs.py` refuse to print (review finding 14).
     var guess = (results || {}).best_guess || {};
-    return !!(guess.k || guess.n_added);
+    return Number(guess.n_added) >= 1 && Number(guess.k) >= 2;
   }
 
   function guessing(results) {
@@ -1367,10 +1379,22 @@
     var conclusion = (results || {}).conclusion || {};
     var sentences = conclusion.sentences || [];
     if (!sentences.length) { show(card, false); return; }
-    card.appendChild(h("h2", { text: "Conclusion" }));
-    sentences.forEach(function (sentence) { card.appendChild(h("p", { text: sentence })); });
-    (conclusion.caveats || []).forEach(function (caveat) {
-      card.appendChild(h("p", { cls: "hint", text: caveat }));
+    // ONE line's headline, the line the reader chose. The paragraph `pooled.json` carries is the
+    // whole run's — it names the strict estimate and the best-guess estimate — so showing it
+    // whole put both numbers on screen in every state of the toggle, under a comment claiming no
+    // state did (review finding 15). The payload names the strict headline sentence and the
+    // second line's sentences; whichever line is not on screen has its sentences left out.
+    var guess = guessing(results);
+    var second = conclusion.best_guess_sentences || [];
+    var shown = sentences.filter(function (sentence) {
+      return guess ? sentence !== conclusion.headline : second.indexOf(sentence) < 0;
+    });
+    card.appendChild(h("h2", { text: guess ? "Conclusion · best guess" : "Conclusion" }));
+    // …and the caveats ONCE: `conclusion.py` already ends the paragraph with them, and printing
+    // `conclusion.caveats` underneath printed every one of them a second time.
+    shown.forEach(function (sentence) {
+      card.appendChild(h("p", { cls: (conclusion.caveats || []).indexOf(sentence) < 0 ? "" : "hint",
+        text: sentence }));
     });
     show(card, true);
   }

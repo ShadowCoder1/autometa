@@ -12,7 +12,7 @@ panel the caption gives it — otherwise the paper has not said enough, and the 
 from __future__ import annotations
 
 from canopy.verify.panels import (apply_panel_check, locator_panel, panel_assignments,
-                                  panel_mismatch)
+                                  panel_groups, panel_mismatch)
 from canopy.verify.vote import vote
 from tests.helpers import nine
 
@@ -75,3 +75,17 @@ def test_a_group_whose_own_panel_has_no_votable_read_keeps_its_number():
     assert len(kept) == len(cell), "a reading was set aside and the cell has nothing left"
     res = vote([c for c in kept if c.extractor_id.endswith("ensemble")])
     assert res.mean == 6.0
+
+
+def test_a_panel_phrase_that_names_both_groups_binds_neither_letter():
+    """Fix round 2, finding 9. `_PANEL_IN_CAPTION` ended a panel's phrase at `\\band\\b`, so
+    "(A) Young adults and older adults' reach errors" was read as "(A) Young adults" — the caption
+    was made to say a panel belongs to one arm when it says the panel shows both. An older-adult
+    reading at Fig 2A was then a mismatch, and set aside if that group had a panel-B ensemble too.
+    The phrase ends at a clause boundary, and a letter whose phrase names both groups is left
+    unbound — which is what makes the whole check fail closed on a caption like this."""
+    caption = ("Figure 2. (A) Young adults and older adults' reach errors; "
+               "(B) OA aftereffects during the washout.")
+    vocab = {"A": ["young adults"], "B": ["older adults"]}
+    assert panel_assignments(caption)["A"] == "Young adults and older adults' reach errors"
+    assert panel_groups(caption, vocab) == {}

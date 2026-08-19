@@ -163,8 +163,10 @@ def locator_key(cand: Candidate) -> str:
     A and the older adults in panel B, and the digitiser, handed the figure, read one cell off
     both: -20.5 and -16.5, whose middle -18.5 is a number neither panel contains and no reader
     wrote down. Nothing about the numbers distinguishes that from two honest readings of one
-    place, so the PLACE joins the route: two readings that agree across a panel boundary are not
-    corroborating each other, and `vote` refuses to average them.
+    place, so the PLACE partitions the vote: two readings that agree across a panel boundary are
+    not corroborating each other, and `vote` refuses to average them. It partitions it from
+    INSIDE the route (`_route_values`) rather than by joining `route_key`, because a voter is a
+    modality and a model family — see `route_key` for what counting a place as a voter cost.
 
     Only a figure reading has one, and only when it says where it looked.
 
@@ -186,9 +188,16 @@ def locator_key(cand: Candidate) -> str:
 
 
 def route_key(cand: Candidate) -> str:
-    key = f"{modality(cand)}/{model_family(cand.model)}"
-    locator = locator_key(cand)
-    return f"{key}/{locator}" if locator else key
+    """WHO is voting — one modality and one model family, and nothing else.
+
+    The place a reading was taken at is NOT part of this. It was, briefly, and the cost was
+    measured: one model reading one panel under two prompt wordings ("Fig. 2A, left bar" and "the
+    left bar…, panel A") became two independent voters that then "corroborated" each other, out of
+    one reader looking once (review finding 7). The place partitions the route from the INSIDE
+    instead — `_route_values` refuses a route whose members span two places in one figure — so two
+    panels are still never averaged, and two spellings of one reader are still one voter.
+    """
+    return f"{modality(cand)}/{model_family(cand.model)}"
 
 
 def is_text_route(key: str) -> bool:
@@ -256,6 +265,10 @@ class RouteValue(CanopyModel):
     #: a route whose members disagree with each other and corroborate nothing abstains: its
     #: `value` is None and it is kept here for the record, not counted in the vote
     abstained: bool = False
+    #: …and this says the abstention was D2's: the route's own members were read at two places in
+    #: ONE figure, which are two quantities. It is on the route rather than inferred later because
+    #: an abstaining route is filtered out of the vote before anything can ask it why (finding 7).
+    locator_conflict: bool = False
 
 
 class VoteResult(CanopyModel):
@@ -433,13 +446,24 @@ def _route_values(rows: Sequence[Candidate], axis_range: float | None,
         chosen = [cand for _position, cand in voters]
         dispersions = [c.dispersion_value for c in chosen if c.dispersion_value is not None]
         sigmas = [c.sigma for c in chosen if c.sigma is not None]
-        routes.append(RouteValue(
+        route = RouteValue(
             route_key=label, value=value,
             dispersion_value=_median(dispersions) if dispersions else None,
             n=_mode([c.n for c in chosen]), sigma=_median(sigmas) if sigmas else None,
             candidate_ids=[c.candidate_id for c in chosen],
             positions=[position for position, _cand in voters], tolerance=tolerance,
-            spread=spread, consistent=consistent, unit=unit, abstained=value is None))
+            spread=spread, consistent=consistent, unit=unit, abstained=value is None)
+        # D2, INSIDE the route (finding 7): the voter is a modality and a family, so one model
+        # reading two panels of one figure is one voter with two quantities — and its median is
+        # the number neither panel contains. `_locator_conflict` is the same rule the winning
+        # cluster is held to, asked of one route's own members; two DIFFERENT figures are still
+        # corroboration and pass through it untouched.
+        places = _locator_conflict([route], rows) if not route.abstained else {}
+        if places:
+            route.value, route.abstained, route.locator_conflict = None, True, True
+            notes.append(f"route {label} was read at more than one place in one figure — "
+                         + _locator_conflict_note(places))
+        routes.append(route)
     return routes
 
 
@@ -493,8 +517,12 @@ def _locator_conflict(cluster: Sequence[RouteValue],
             _text, values = places.setdefault(
                 (figure_of(rows[position]), key),
                 (" ".join(rows[position].locator.split()), []))
-            if route.value is not None and route.value not in values:
-                values.append(route.value)
+            # what was read AT THIS PLACE, not the route's value: a route may now hold members
+            # from two places, and printing its median beside both of them would tell the
+            # reviewer the two panels read the same number (finding 7).
+            read = rows[position].mean
+            if read is not None and read not in values:
+                values.append(read)
     counts = Counter(figure for figure, _key in places)
     conflicting = {figure for figure, seen in counts.items() if seen > 1}
     if not conflicting:
@@ -590,7 +618,9 @@ def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
     row_index: dict[int, Candidate] = dict(enumerate(rows))
     routes = [r for r in routes if not r.abstained]        # kept on the record, not in the vote
     if not routes:
-        result.agreement, result.method = "disagree", "none"
+        conflicted = any(r.locator_conflict for r in result.routes)
+        result.agreement = "disagree"
+        result.method = LOCATOR_CONFLICT if conflicted else "none"
         result.disagreeing_ids = [c.candidate_id for c in rows]
         result.notes = notes + ["every route disagrees with itself; nothing corroborated votes"]
         return result
@@ -664,6 +694,20 @@ def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
         else:
             result.tolerance = reconciliation or consensus[0].tolerance
             result.method = "figure_tolerance" if others else "single"
+
+        # D2 on the printed path too (finding 6). A figure tolerance is wide — 7.5° on Langan's
+        # Fig. 1 — so "within tolerance of the printed value" says nothing about WHICH panel a
+        # reading came from, and without this every panel of the figure joined the winners and its
+        # dispersion went into the published median. A winning cluster spanning two places in one
+        # figure is not corroboration of the printed value; it is a cell for a human.
+        places = _locator_conflict(winners, rows) if len(winners) >= 2 else {}
+        if places:
+            result.agreement, result.method = "disagree", LOCATOR_CONFLICT
+            result.tolerance = max(r.tolerance for r in routes)
+            result.disagreeing_ids = [c.candidate_id for c in rows]
+            notes.append(_locator_conflict_note(places))
+            result.notes = notes
+            return result
 
         if len(winners) >= 2:
             _decide(result, rows, winners, value, row_index, notes)

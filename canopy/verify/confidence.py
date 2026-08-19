@@ -731,8 +731,9 @@ def _witness_families(result: VoteResult, candidates: Sequence[Candidate] | None
     ran are recorded in its provenance; a text or table route carries its family in its route key.
     An empty family is "not stated", never a second one.
     """
-    # index 1, not "everything after the first slash": `route_key` gained a third segment for the
-    # PLACE a figure reading was taken (D2), and one model reading two panels is one family
+    # index 1, not "everything after the first slash": a route key is `modality/family` and the
+    # modality of a digitised reading has a colon in it, never a slash — and one model reading two
+    # panels is one family, which is why the PLACE is not part of the key (fix round 2, finding 7)
     families = {parts[1] for parts in (r.route_key.split("/")
                                        for r in _agreeing_routes(result)) if len(parts) > 1}
     families |= set(_agreeing_model_families(result, candidates))

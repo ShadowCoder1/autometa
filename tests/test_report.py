@@ -586,7 +586,11 @@ def _same(fixture, written, path=""):
             _same(value, written[key], f"{path}.{key}")
         return
     if isinstance(fixture, float) and math.isnan(fixture):
-        assert isinstance(written, float) and math.isnan(written), path
+        # the fixture predates fix round 2 (MINOR 21): a quantity with no estimable value was
+        # written as the bare token `NaN`, which no JSON parser outside Python accepts. It is
+        # `null` now — the same absence, spelled in the language of the file — and nothing else
+        # may stand where the fixture recorded one.
+        assert written is None or (isinstance(written, float) and math.isnan(written)), path
         return
     if isinstance(fixture, list):
         assert isinstance(written, list) and len(fixture) == len(written), path

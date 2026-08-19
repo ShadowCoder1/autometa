@@ -40,7 +40,8 @@ from ..protocol import (apply_profile, available_profiles, dump_protocol, load_p
                         load_yaml_strict)
 from ..report import theme
 from .jobs import Job, JobBusy, JobManager, TooManyRuns
-from .overrides import (OverrideRejected, append_override, apply_overrides_and_repool,
+from .overrides import (OverrideRejected, append_override, append_overrides,
+                        apply_overrides_and_repool,
                         override_summary, read_overrides, repool_lock)
 from .security import (PathRejected, is_attachment, is_loopback, media_type, safe_run_path,
                        token_matches)
@@ -854,9 +855,12 @@ def create_app(runs_dir: str | Path = "runs", *,
         # naming its own group and carrying only its own option's `clears`. They are appended
         # together and the run is re-pooled ONCE, so a reviewer never sees the analysis in the
         # half-answered state between two records of one decision.
+        # …and they are validated TOGETHER before any of them is written: a refusal on the
+        # second record used to leave the first in the log, half a decision with no re-pool
+        # behind it and nothing in the response to say so (review MINOR 29).
         try:
-            records = [append_override(job.run_dir, payload)
-                       for payload in answers_to_overrides(question, body or {})]
+            records = append_overrides(job.run_dir,
+                                       answers_to_overrides(question, body or {}))
         except OverrideRejected as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         with repool_lock(job.run_dir):

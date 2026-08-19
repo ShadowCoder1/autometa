@@ -303,3 +303,35 @@ def test_provenance_codes_are_not_quoted_as_disputes():
     assert "orientation_by_majority" not in dec[0].evidence.get("disputed", [])
     assert "dispersion_missing" in dec[0].evidence["disputed"]     # a real doubt still shows
     assert "orientation_by_majority" in dec[0].evidence["flags"]   # the row still carries it
+
+
+def test_a_prediction_interval_that_is_not_estimable_is_null_never_nan(tmp_path):
+    """Fix round 2, MINOR 21. At k = 2 under Hartung-Knapp the prediction interval has no
+    estimable width, and both lines wrote the bare token `NaN` into `pooled.json` — which is not
+    JSON: every consumer that is not Python (R's jsonlite, a browser, `jq`) fails on the file
+    rather than on the number. An interval that does not exist is `null`."""
+    import json
+    import math
+
+    from canopy.report.tables import dump_json, leave_one_out_rows, pool_rows
+
+    p = nine.protocol()
+    settings = p.stats.model_copy(update={"pi_method": "pi_t"})
+    split = _split_rows(nine.records("late_adaptation"), settings)
+    rows, dec = best_guess_rows(split.primary_pre_agg, split.held,
+                                outcome=p.outcome("late_adaptation"), settings=settings)
+    bg = pool_rows(rows, settings)
+    payload = best_guess_payload(pool_rows(split.primary, settings), bg, dec,
+                                 added_rows=[r for r in rows if BEST_GUESS_FLAG in r.flags],
+                                 loo_bg=leave_one_out_rows(rows, settings), rows=rows,
+                                 settings=settings)
+    for key, value in payload.items():
+        assert not (isinstance(value, float) and not math.isfinite(value)), (key, value)
+    assert payload["pi_low"] is None and payload["pi_high"] is None
+
+    # …and the writer itself, for the strict block's own `pi_low`/`pi_used` (pre-existing)
+    text = dump_json({"pi_low": float("nan"), "pi_high": float("inf"),
+                      "rows": [{"se": float("-inf")}]}, tmp_path / "pooled.json").read_text()
+    assert "NaN" not in text and "Infinity" not in text
+    written = json.loads(text)
+    assert written["pi_low"] is None and written["rows"][0]["se"] is None

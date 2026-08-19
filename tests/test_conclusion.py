@@ -112,12 +112,21 @@ def test_direction_word_comes_from_protocol():
 
 
 def test_direction_falls_back_to_the_group_labels():
-    """R3: blank both labels and the sentence names the groups, never an invented word."""
+    """R3: blank both labels and the sentence names the groups, never an invented word.
+
+    In CONSTRUCT terms, and fix round 2 (finding 10) is why. "A scored lower than B" is a claim
+    about the raw numbers the paper printed, and `es` is not that: it is orientation-applied, so
+    on a measure where a larger raw value means LESS of the construct (`higher_is_better = false`
+    — every error-type outcome in this protocol) the sign has already been flipped and the
+    raw-score sentence states the opposite of the finding. What the sign means is how much of the
+    outcome each group shows, so that is what the fallback says.
+    """
     protocol = nine.protocol()
     o = protocol.outcome("late_adaptation").model_copy(
         update={"positive_direction_label": "", "negative_direction_label": ""})
     text = render_text(_late(outcome=o))
-    assert f"{protocol.group_a.label} scored lower than {protocol.group_b.label}" in text
+    assert "scored lower" not in text and "scored higher" not in text
+    assert f"less {o.label} in {protocol.group_a.label} than in {protocol.group_b.label}" in text
     assert "reduced in old" not in text.lower()
 
 
@@ -327,3 +336,19 @@ def test_a_negative_number_that_does_not_round_to_zero_keeps_its_sign():
         "n_still_held": 0, "delta_vs_strict": 0.4, "sign_agrees_with_strict": True,
         "not_added": []}, held=_rows([-0.3]))
     assert "gives -0.01" in render_text(c)
+
+
+def test_the_payload_tells_the_two_lines_sentences_apart():
+    """Fix round 2, finding 15. The conclusion card claimed the page never shows both lines'
+    headline numbers, and then rendered the whole paragraph — which carries the strict d AND the
+    best-guess d, in every state of the toggle. The paragraph is still one paragraph (the report
+    prints it whole); the payload now says which sentence is the strict headline and which
+    sentences are the second line's, so a viewer can show the line the reader chose."""
+    payload = conclusion_payload(_late())
+    assert payload["headline"] in payload["sentences"] and "pooled" in payload["headline"]
+    assert payload["best_guess_sentences"], "the fixture's late outcome holds rows"
+    assert all(s in payload["sentences"] for s in payload["best_guess_sentences"])
+    assert payload["headline"] not in payload["best_guess_sentences"]
+    # …and each caveat is in the paragraph exactly once: the card used to print them again
+    for caveat in payload["caveats"]:
+        assert payload["sentences"].count(caveat) == 1

@@ -2874,17 +2874,32 @@ def _precedence_answers(card: Mapping[str, Any],
         return [{**_base(card, kind="mark_reviewed", group=None, confidence="needs_human",
                          justification=f"{just} — the candidate pair is not on the record; "
                                        f"nothing could be written")}]
-    if key == "exclude":
+    # …and the page's own "Exclude these cells" button, which posts `{exclude: true}` and no
+    # option at all. Reading only the option key sent that answer through the fallthrough below
+    # and recorded the OPPOSITE decision — the card ticked "the printed value stands" and nothing
+    # was excluded (review finding 11).
+    if key == "exclude" or answer.get("exclude"):
         return [{**_base(card, group=None, kind="exclude_dataset",
                          justification=f"{just} — neither the printed value nor the reading is "
                                        f"usable; excluded")}]
-    # `keep_printed`, and anything unrecognised: a review decision on both cells that changes no
-    # number. The ROW stays held — the printed value still converts to nothing, and saying so is
-    # the honest content of this answer.
-    return [{**_base(card, group=group, kind="mark_reviewed", clears=[], overrules=[],
-                     justification=f"{just} — the printed value stands; this row keeps no "
-                                   f"effect size from it")}
-            for group in ("A", "B")]
+    if key == "keep_printed":
+        # a review decision on both cells that changes no number, and one the REBUILD has to see:
+        # every release path re-resolves the row through `resolve_effect_with_fallback`, which
+        # would raise the override again out from under the reviewer who just declined it. The
+        # decision travels on the record (`keep_printed`), `overrides._prepare` offers that row no
+        # alternatives, and the row resolves `not_convertible` — which is what "the printed value
+        # stands" MEANS for a printed value with no spread (review finding 12).
+        return [{**_base(card, group=group, kind="mark_reviewed", clears=[], overrules=[],
+                         keep_printed=True, confidence="needs_human",
+                         justification=f"{just} — the printed value stands; this row keeps no "
+                                       f"effect size from it")}
+                for group in ("A", "B")]
+    from ..pipeline.overrides import OverrideRejected
+
+    raise OverrideRejected(
+        "this card offers three decisions — take the candidate pair, keep the printed value, or "
+        f"exclude the dataset — and {key or 'nothing'!r} is none of them; an answer that decides "
+        "nothing is not recorded as one that does")
 
 
 def _analysed_n_answer(card: Mapping[str, Any], answer: Mapping[str, Any]) -> dict[str, Any]:
@@ -2910,13 +2925,25 @@ def _eligibility_answer(card: Mapping[str, Any], answer: Mapping[str, Any]) -> d
     option = next((o for o in card.get("options") or []
                    if o.get("key") == answer.get("option")), None)
     decision = str((option or {}).get("decision") or answer.get("decision")
-                   or ("exclude" if answer.get("exclude") else "include")).strip().lower()
+                   or ("exclude" if answer.get("exclude") else "")).strip().lower()
+    if decision not in ("include", "exclude"):
+        # INCLUDE was the default of every malformed answer — a note-only submit, a typo'd option
+        # key, a decision spelled "excluded" or "no" — and an included paper buys a map and an
+        # extraction at the next `--resume`. A paper the screen left out stays out until a
+        # reviewer says the word, the way `include_dataset` has always required it (finding 13).
+        from ..pipeline.overrides import OverrideRejected
+
+        raise OverrideRejected(
+            "an eligibility answer has to say include or exclude; "
+            f"{decision or 'nothing'!r} decides neither, and the paper stays as the screen left it")
     return {"kind": "eligibility", "paper_id": card.get("paper_id", ""), "dataset_id": "",
             "outcome_key": "", "group": None, "question_id": card.get("id", ""),
-            "eligible": decision != "exclude",
+            "eligible": decision == "include",
             "rule": str(answer.get("rule") or ""),
             "quote": str(answer.get("quote") or note or ""),
-            "justification": f"{just} — {decision}d by the reviewer"}
+            "justification": f"{just} — "
+                             f"{'included' if decision == 'include' else 'excluded'} by the "
+                             f"reviewer"}
 
 
 # ----------------------------------------------------------------------------- output

@@ -33,7 +33,15 @@ from .checks import CHECK_SEVERITY
 from .vote import _ANY_FIGURE, _FIGURE_WORD, LOCATOR_DROPPED, figure_reference, locator_key
 
 __all__ = ["panel_assignments", "locator_panel", "panel_mismatch", "panel_groups",
-           "apply_panel_check", "figure_reference", "LOCATOR_DROPPED"]
+           "apply_panel_check", "figure_reference", "LOCATOR_DROPPED", "LOCATOR_SET_ASIDE",
+           "set_aside_ids"]
+
+#: the flag this check raises when it takes a reading off the vote, and the ONLY part of the
+#: set-aside that survives the stage write: `LOCATOR_DROPPED` is written on the candidate objects
+#: in memory and `extract.json` is never rewritten, so a re-pool, a `_Preview` or a resumed
+#: `resolve` sees the flag and not the mark. Every consumer of the set-aside reads both
+#: (`pipeline.rows.fallback_values`), which is why the flag names the candidate ids it dropped.
+LOCATOR_SET_ASIDE = "locator_reads_set_aside"
 
 #: the digitiser's own consensus candidate, and the only digitised reading the vote ever sees.
 #: The constant's owner is `canopy.pipeline.rows.ENSEMBLE`; the literal is repeated here rather
@@ -91,8 +99,14 @@ def _names_group(category: Any, names: Sequence[str]) -> bool:
 #: "(A) YA DE," / "(b) OA RT." — a bracketed single letter and the phrase it introduces, which
 #: ends at the next clause boundary. The 60-character ceiling is what keeps a caption whose
 #: letters are NOT an enumeration ("a 30° rotation (b) was applied") from swallowing a sentence.
+#:
+#: `and` is NOT a boundary (review finding 9). It was, and it cut "(A) Young adults and older
+#: adults' reach errors" down to "Young adults", which is the caption made to say a panel belongs
+#: to one arm when what it says is that the panel shows both — and an older-adult reading at that
+#: panel was then a mismatch. A phrase that names both groups binds neither (`panel_groups`), so
+#: the whole check fails closed on such a caption, which is the only safe reading of it.
 _PANEL_IN_CAPTION = re.compile(
-    r"\(\s*([A-Za-z])\s*\)\s*([^()]{0,60}?)(?=\s*(?:[,;.]|\band\b|\(|$))")
+    r"\(\s*([A-Za-z])\s*\)\s*([^()]{0,60}?)(?=\s*(?:[,;.]|\(|$))")
 
 #: the caption's own printed label, so a locator can be anchored to the figure it names.
 #: `_FIGURE_WORD` and `_ANY_FIGURE` live in `verify.vote` — the lower layer, which needs them to
@@ -270,8 +284,8 @@ def apply_panel_check(cell: Sequence[Candidate], caption: str,
                 cell[i].pixel_provenance = provenance
             dropped.update(wrong)
             flags.append(CheckFlag(
-                code="locator_reads_set_aside",
-                severity=CHECK_SEVERITY["locator_reads_set_aside"],
+                code=LOCATOR_SET_ASIDE,
+                severity=CHECK_SEVERITY[LOCATOR_SET_ASIDE],
                 message=(f"the caption gives panel {mine} to group {group} and panel {theirs} to "
                          f"another group; {len(wrong_votable)} reading(s) taken off panel "
                          f"{theirs} were set aside, and the {len(right)} taken off panel {mine} "
@@ -287,3 +301,17 @@ def apply_panel_check(cell: Sequence[Candidate], caption: str,
                          f"the value may be the other group's"),
                 candidate_ids=ids))
     return [c for i, c in enumerate(cell) if i not in dropped], flags
+
+
+def set_aside_ids(*verdicts: Any) -> set[str]:
+    """The candidate ids this check took off the vote, read back off the verdicts it flagged.
+
+    The mark `apply_panel_check` writes lives on the candidate objects the verifier held; the
+    flag it returns lives on the verdict, and the verdict is what `verify.json` keeps. So a
+    caller that has verdicts can honour the set-aside without the marked candidates — which is
+    the whole of the fix for standing ruling (d): the run marked candidates in memory, and the
+    re-pool re-loaded them from `extract.json` with the marks gone (review finding 5).
+    """
+    return {cid for verdict in verdicts if verdict is not None
+            for flag in getattr(verdict, "flags", ())
+            if flag.code == LOCATOR_SET_ASIDE for cid in flag.candidate_ids}

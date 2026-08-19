@@ -62,6 +62,13 @@ class Conclusion:
     caveats: list[str] = field(default_factory=list)
     direction_word: str = ""
     estimable: bool = False
+    #: the one sentence carrying the STRICT line's pooled number, and the sentences carrying the
+    #: best-guess line's. Both are members of `sentences` — the paragraph is printed whole and
+    #: this changes nothing about it — and they are named because a viewer that shows one line at
+    #: a time cannot otherwise tell which of the numbers in the paragraph belongs to which line
+    #: (review finding 15: the conclusion card claimed no state showed both, and showed both).
+    headline: str = ""
+    best_guess_sentences: list[str] = field(default_factory=list)
 
 
 def render_text(c: Conclusion) -> str:
@@ -131,8 +138,14 @@ def _direction_phrase(outcome: OutcomeDef, estimate: float, group_a: GroupDef | 
              else outcome.negative_direction_label).strip()
     if label:
         return label.lower()                      # the protocol's label, mid-sentence
-    return (f"{a} scored {'higher' if estimate > 0 else 'lower'} than {b} "
-            f"on {outcome.label or outcome.key}")
+    # …and with no label, the CONSTRUCT, never the raw scores. "A scored higher than B" is a claim
+    # about the numbers the paper printed, and the estimate is not one: it is orientation-applied,
+    # so on a measure where a larger raw value means less of the construct (`higher_is_better =
+    # false` — every error-type outcome) the sign has already been flipped, and the raw-score
+    # sentence states the opposite of the finding (review finding 10). What a positive estimate
+    # says is that group A shows MORE of the outcome, whatever direction its raw numbers run in.
+    return (f"{'more' if estimate > 0 else 'less'} {outcome.label or outcome.key} "
+            f"in {a} than in {b}")
 
 
 def _veto_reasons(best_guess: Mapping[str, Any]) -> str:
@@ -190,6 +203,7 @@ def outcome_conclusion(outcome: OutcomeDef, settings: StatsSettings, *,
     facts["k"] = k
     estimable = pooled is not None and k >= 2
     direction = ""
+    headline, second_line = "", []                # named below when there is a line to name
 
     if not estimable:
         # R2: below two datasets there is no estimate, and an estimate is all the rest of the
@@ -205,13 +219,14 @@ def outcome_conclusion(outcome: OutcomeDef, settings: StatsSettings, *,
         facts["direction"] = direction
         _register(facts, "direction", direction)
         estimator = _register(facts, "estimator", estimator_label(settings))
-        sentences.append(
+        headline = (
             f"Across k = {k} datasets from {k_papers} papers, the pooled {estimator} is "
             f"{_fact(facts, 'estimate', pooled.estimate)} "
             f"({pct} CI {_fact(facts, 'ci_low', pooled.ci_low)} to "
             f"{_fact(facts, 'ci_high', pooled.ci_high)}, "
             f"p = {_fact(facts, 'p', pooled.p, 3)}), i.e. {direction}; the interval "
             f"{'excludes' if not (pooled.ci_low <= 0 <= pooled.ci_high) else 'includes'} zero.")
+        sentences.append(headline)
 
         # --- heterogeneity, always followed by the prediction interval or by its absence (R5)
         if _finite(pooled.tau2):
@@ -263,7 +278,8 @@ def outcome_conclusion(outcome: OutcomeDef, settings: StatsSettings, *,
     facts["n_held"], facts["n_rows"] = n_held, n_rows
     if n_held:
         sentences.append(f"{n_held} of {n_rows} rows for this outcome are held for human review.")
-        sentences.extend(_best_guess_sentences(facts, bg, estimable=estimable))
+        second_line = _best_guess_sentences(facts, bg, estimable=estimable)
+        sentences.extend(second_line)
 
     # --- caveats (R6, plus the figure share) — never at k < 2, where there is nothing to caveat
     if estimable:
@@ -281,7 +297,8 @@ def outcome_conclusion(outcome: OutcomeDef, settings: StatsSettings, *,
         sentences.extend(caveats)
 
     return Conclusion(outcome_key=outcome.key, sentences=sentences, facts=facts, caveats=caveats,
-                      direction_word=direction, estimable=estimable)
+                      direction_word=direction, estimable=estimable, headline=headline,
+                      best_guess_sentences=second_line)
 
 
 def _best_guess_sentences(facts: dict[str, Any], bg: Mapping[str, Any], *,
@@ -374,7 +391,8 @@ def conclusion_payload(c: Conclusion) -> dict[str, Any]:
     """
     return {"outcome_key": c.outcome_key, "sentences": list(c.sentences), "facts": dict(c.facts),
             "caveats": list(c.caveats), "direction_word": c.direction_word,
-            "estimable": c.estimable, "text": render_text(c)}
+            "estimable": c.estimable, "headline": c.headline,
+            "best_guess_sentences": list(c.best_guess_sentences), "text": render_text(c)}
 
 
 def conclusion_from_payload(payload: Mapping[str, Any]) -> Conclusion:
@@ -384,4 +402,7 @@ def conclusion_from_payload(payload: Mapping[str, Any]) -> Conclusion:
                       facts=dict(payload.get("facts") or {}),
                       caveats=[str(s) for s in payload.get("caveats") or ()],
                       direction_word=str(payload.get("direction_word") or ""),
-                      estimable=bool(payload.get("estimable")))
+                      estimable=bool(payload.get("estimable")),
+                      headline=str(payload.get("headline") or ""),
+                      best_guess_sentences=[str(s) for s
+                                            in payload.get("best_guess_sentences") or ()])

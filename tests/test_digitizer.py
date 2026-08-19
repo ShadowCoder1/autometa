@@ -3526,3 +3526,30 @@ def test_a_reader_that_could_not_see_the_panel_does_not_buy_an_overlay():
     wanted, why = _overlay_wanted(True, "adaptive", agreeing + [disputed], axis_range=60.0,
                                   tick_spacing=10.0, px_units=0.1)
     assert wanted is True and "already dropped" in why
+
+
+def test_a_single_point_is_not_whatever_category_the_source_asked_for():
+    """Fix round 2, MINOR 23. `_locatable_point` and `_row_at_locator_category` both took "this
+    series has exactly one point" as "this point is the category the locator names", whatever the
+    reader had labelled it. On Vachon's Fig 4 that returned group B's only point — 'with
+    strategy', 25.0 — as B's value at 'without strategy': the two halves of the comparison read
+    off two different conditions, in one candidate, with nothing on the record to say so. The
+    label the source asked for and the label the reader wrote down are the whole of the evidence;
+    an unlabelled point still stands, because it contradicts nothing.
+    """
+    from canopy.digitize.digitizer import _locatable_point, _row_at_locator_category
+    from canopy.digitize.vlm import GroupReadOut, PointRead
+
+    def row(*points):
+        return GroupReadOut(group="B", label_read="younger adults", mean=99.0,
+                            points=[PointRead(x_label=x, mean=m) for x, m in points])
+
+    wrong = row(("with strategy", 25.0))
+    assert not _locatable_point(wrong, "without strategy")
+    assert _row_at_locator_category(wrong, "without strategy").mean == 99.0, "the series' own mean"
+    right = row(("without strategy", 12.0))
+    assert _locatable_point(right, "without strategy")
+    assert _row_at_locator_category(right, "without strategy").mean == 12.0
+    unlabelled = row(("", 7.0))
+    assert _locatable_point(unlabelled, "without strategy")
+    assert _row_at_locator_category(unlabelled, "without strategy").mean == 7.0

@@ -997,6 +997,25 @@ def _series_names_its_group(label_read: Any, own: Sequence[str], other: Sequence
     return bool(words & (mine - theirs)) and not (words & (theirs - mine))
 
 
+def _point_at(row: Any, category: str) -> Any | None:
+    """The one point of this series that IS the named category — or `None`.
+
+    A series with a single point was taken as that category whatever the reader had called it,
+    and on Vachon's Fig 4 that returned group B's only point ('with strategy', 25.0) as B's value
+    at 'without strategy': two halves of one comparison read off two different conditions, in one
+    candidate, with nothing on the record to say so (review MINOR 23). The label the source asked
+    for and the label the reader wrote down are the whole of the evidence here, so one
+    contradicting the other is not a match. An UNLABELLED point still stands: it contradicts
+    nothing, and refusing it would throw away every reading of a single-category figure.
+    """
+    named = [point for point in row.points if _labels_are_the_same(point.x_label, category)]
+    if len(named) == 1:
+        return named[0]
+    if len(row.points) == 1 and not str(row.points[0].x_label or "").strip():
+        return row.points[0]
+    return None
+
+
 def _locatable_point(row: Any, category: str) -> bool:
     """Can this series' value be pinned to the named category, without picking one of several?
 
@@ -1005,11 +1024,7 @@ def _locatable_point(row: Any, category: str) -> bool:
     two halves of the predicate come apart. The category and the point at it are asked of one
     reading or of none.
     """
-    if not row.points:
-        return False
-    if len(row.points) == 1:
-        return True
-    return len([p for p in row.points if _labels_are_the_same(p.x_label, category)]) == 1
+    return bool(row.points) and _point_at(row, category) is not None
 
 
 def _series_are_the_groups(readings: Sequence[Any], vocab: dict[str, tuple[str, ...]],
@@ -1185,9 +1200,10 @@ def _row_at_locator_category(row: Any, category: str) -> Any:
 
     The sibling of `_row_at_own_category`, keyed on the locator's category rather than on the
     group's label: here the categories are conditions and the series are the groups, so what
-    picks the point out is which condition was asked for. A reader that came back with exactly
-    one point came back with that one, and `mean` — which the read-out prompt asks to be the
-    series as a whole — is used only when no point can be matched.
+    picks the point out is which condition was asked for (`_point_at`: a single point counts
+    when the reader's own label for it agrees, or when the reader gave it none), and `mean` —
+    which the read-out prompt asks to be the series as a whole — is used only when no point can
+    be matched.
 
     A point PICKED OUT of a series brings only its own dispersion. `error_half_length`,
     `error_upper` and `error_lower` are the reader's statements about the SERIES: reporting them
@@ -1201,8 +1217,7 @@ def _row_at_locator_category(row: Any, category: str) -> Any:
 
     if not row.points:
         return row
-    mine = [p for p in row.points if _labels_are_the_same(p.x_label, category)]
-    chosen = mine[0] if len(mine) == 1 else (row.points[0] if len(row.points) == 1 else None)
+    chosen = _point_at(row, category)
     if chosen is None or chosen.mean is None:
         return row
     picked_out = len(row.points) > 1

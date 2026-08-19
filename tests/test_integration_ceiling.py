@@ -2527,3 +2527,45 @@ def test_the_cli_exposes_the_switch_and_defaults_it_on():
     assert inspect.signature(run_pipeline).parameters["tiebreak"].default is True
     source = inspect.getsource(cli.run)
     assert '"--tiebreak/--no-tiebreak"' in source and "tiebreak=tiebreak" in source
+
+
+def test_a_typed_n_that_is_not_a_whole_number_of_people_is_refused(tmp_path):
+    """Fix round 2, finding 16. `int(payload["n"])` inside `_validate` raised `ValueError`, which
+    is not `OverrideRejected`: a per-cell answer of "abc" — or the "1e3" an `<input type=number>`
+    is entitled to emit — reached the endpoint as a 500 where the POST contract says 422, and 12.7
+    was truncated to 12 with a 201 and no word to anyone. `True` is an `int` in Python and is not
+    one participant. The analysed-n card's two boxes go through the same test."""
+    from canopy.pipeline.overrides import OverrideRejected, append_override
+
+    run = tmp_path / "run"
+    value = {"kind": "value", "paper_id": "a" * 64, "dataset_id": "aaaaaaaaaaaa:d1",
+             "outcome_key": "late_adaptation", "group": "A", "mean": 12.0,
+             "justification": "I read the table for that arm"}
+    sizes = {"kind": "group_n", "paper_id": "a" * 64, "dataset_id": "aaaaaaaaaaaa:d1",
+             "n_b": 12, "justification": "the analysed sizes from the participants paragraph"}
+    for bad in ("abc", 12.7, True, 0, -3, float("nan")):
+        with pytest.raises(OverrideRejected):
+            append_override(run, {**value, "n": bad})
+        with pytest.raises(OverrideRejected):
+            append_override(run, {**sizes, "n_a": bad})
+    assert append_override(run, {**value, "n": "1e3"})["n"] == 1000
+    assert append_override(run, {**sizes, "n_a": "18"})["n_a"] == 18
+
+
+def test_half_of_a_two_record_answer_is_never_left_in_the_log(tmp_path):
+    """Fix round 2, MINOR 29. One answer is one record per CELL it names (§C1), and the endpoint
+    appended them one at a time: a refusal on the second — a bad n, a `clears` the cell no longer
+    carries — left the FIRST in the log, applied at the next re-pool, with a 422 in the response
+    saying the answer had failed. Every record of one answer is validated before any is written."""
+    from canopy.pipeline.overrides import (OverrideRejected, append_overrides, read_overrides)
+
+    run = tmp_path / "run"
+    base = {"kind": "value", "paper_id": "a" * 64, "dataset_id": "aaaaaaaaaaaa:d1",
+            "outcome_key": "late_adaptation", "justification": "I read the figure once"}
+    with pytest.raises(OverrideRejected):
+        append_overrides(run, [{**base, "group": "A", "mean": 12.0},
+                               {**base, "group": "B", "mean": 9.0, "n": 12.7}])
+    assert read_overrides(run) == []
+    written = append_overrides(run, [{**base, "group": "A", "mean": 12.0},
+                                     {**base, "group": "B", "mean": 9.0, "n": 12}])
+    assert [r["seq"] for r in written] == [1, 2]

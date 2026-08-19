@@ -441,7 +441,12 @@ def best_guess_payload(strict_pooled: MetaResult | None, bg_pooled: MetaResult |
             except ValueError:                             # pragma: no cover - guarded upstream
                 pi_low = pi_high = float("nan")
                 pi_df = 0
-        payload.update({"pi_low": pi_low, "pi_high": pi_high, "pi_df": pi_df})
+        # …as `null` when it is not estimable, never as the bare token `NaN`: at k = 2 under
+        # Hartung-Knapp (and under `pi_t` at any k the method cannot serve) the interval has no
+        # width, and `NaN` is not JSON — every consumer that is not Python fails on the FILE
+        # rather than on the number (review MINOR 21).
+        payload.update({"pi_low": pi_low if _usable(pi_low) else None,
+                        "pi_high": pi_high if _usable(pi_high) else None, "pi_df": pi_df})
         if strict_pooled is not None:
             payload["delta_vs_strict"] = bg_pooled.estimate - strict_pooled.estimate
             payload["sign_agrees_with_strict"] = _sign_agrees(bg_pooled.estimate,

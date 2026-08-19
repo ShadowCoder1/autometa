@@ -791,6 +791,76 @@ def test_the_precedence_override_row_is_the_same_row_on_the_run_and_the_re_pool_
     assert set(rebuilt.flags) - set(ran.flags) == {"human_override"}
 
 
+def test_a_reading_the_caption_set_aside_is_off_the_alternatives_on_both_paths():
+    """Fix round 2, finding 5. Standing ruling (d) again: run and re-pool must offer the resolver
+    the SAME alternatives.
+
+    D2's caption check marks a reading whose panel the caption gives to the other group by writing
+    `pixel_provenance["locator_dropped"]` on the candidate — in memory, on the objects
+    `run._verify_cell` happens to hold. `run._verify` then writes the verdicts and its
+    `extra_candidates`, and `extract.json` is never rewritten: every later reader (a re-pool after
+    a human answer, `_Preview`'s pricing, a resumed `resolve`) loads the candidates from disk
+    WITHOUT the mark and offers the fallback a pair the run had set aside. Measured on Langan d1
+    late adaptation, where the re-pool offered two pairs and the run offered none.
+
+    What survives the write is the verdict's `locator_reads_set_aside` flag, which names the very
+    candidate ids the check dropped, so that is what both paths read now.
+    """
+    from canopy.pipeline import overrides as ov
+    from canopy.pipeline.resolve import resolve_effect_with_fallback
+    from canopy.pipeline.rows import prepare_rows
+    from canopy.pipeline.state import load_manifest
+    from canopy.verify.checks import CHECK_SEVERITY
+    from canopy.verify.panels import LOCATOR_SET_ASIDE
+    from canopy.verify.vote import LOCATOR_DROPPED
+    from canopy.models import CheckFlag
+    from tests.helpers import nine
+
+    protocol = nine.protocol()
+    state = ov._RunState(nine.NINE, load_manifest(nine.NINE))   # read-only: nothing writes
+    live = {(v.dataset_id, v.outcome_key, v.group): v for v in state.verdicts}
+
+    for ds_id, key in (("d1f2946e7e81:d1", "late_adaptation"), ("592b3b55a318:d2", "aftereffect")):
+        dataset = state.datasets[ds_id]
+        cell = [c for c in state.candidates
+                if c.dataset_id == ds_id and c.outcome_key == key and c.group == "A"
+                and c.extractor_id.startswith("digitize:")]
+        assert cell, "the cell is read off a figure, so a panel can be given away"
+        dropped = sorted({c.candidate_id for c in cell})
+        flag = CheckFlag(code=LOCATOR_SET_ASIDE, severity=CHECK_SEVERITY[LOCATOR_SET_ASIDE],
+                         message="the caption gives that panel to the other group",
+                         candidate_ids=dropped)
+        verdicts = {}
+        for group in ("A", "B"):
+            verdict = live[(ds_id, key, group)].model_copy(deep=True)
+            verdict.flags = [*verdict.flags, flag]           # what `apply_panel_check` returns
+            verdicts[group] = verdict
+
+        # the RUN: the check marked the candidate objects it held, and the run resolved from those
+        marked = []
+        for cand in state.candidates:
+            if cand.candidate_id not in dropped:
+                marked.append(cand)
+                continue
+            copy = cand.model_copy(deep=True)
+            copy.pixel_provenance = {**(copy.pixel_provenance or {}),
+                                     LOCATOR_DROPPED: "the caption gives panel a to the other "
+                                                      "group"}
+            marked.append(copy)
+        # the RE-POOL: the same verdicts, and the candidates as `extract.json` holds them
+        cells = [(dataset, key, verdicts["A"], verdicts["B"])]
+        ran = prepare_rows(cells, marked, protocol.stats)[0]
+        repooled = prepare_rows(cells, state.candidates, protocol.stats)[0]
+
+        assert [a.model_dump() for a in repooled.alternatives] \
+            == [a.model_dump() for a in ran.alternatives], f"{ds_id}/{key} alternatives differ"
+        assert all(a.group_a.candidate_id not in dropped for a in ran.alternatives)
+        rows = [resolve_effect_with_fallback(dataset, protocol.outcome(key), row.values,
+                                             row.alternatives, protocol.stats)
+                for row in (ran, repooled)]
+        assert (rows[0].es, rows[0].var, rows[0].flags) == (rows[1].es, rows[1].var, rows[1].flags)
+
+
 # ------------------------------- D4-lite: an answered analysed n over a shared control arm
 def _shared_row(*, flags: list[str], n_a: int = 19, n_b: int = 20):
     """One prepared row of a two-comparison cluster, at the sizes the mapper read."""
@@ -804,10 +874,13 @@ def _shared_row(*, flags: list[str], n_a: int = 19, n_b: int = 20):
                        values=values)
 
 
-def _answered(sizes=(18, 16)):
+def _answered(sizes=(18, 16), *, when: int = 1, per_cell: dict | None = None):
+    """The run state as `_apply_group_n` reads it: the answered sizes, and WHEN each answer about
+    a group size was made — a per-cell `n` answered later is not overwritten by this one."""
     from types import SimpleNamespace
 
-    return SimpleNamespace(group_n={"p:d1": sizes})
+    return SimpleNamespace(group_n={"p:d1": sizes}, group_n_seq={"p:d1": when},
+                           n_answered=dict(per_cell or {}), keep_printed=set())
 
 
 def test_an_answered_size_for_a_split_control_arm_is_re_split_not_handed_back_whole():

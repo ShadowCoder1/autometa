@@ -113,11 +113,37 @@ def _cell(value: Any) -> str:
 
 
 def dump_json(payload: Any, path: Path) -> Path:
-    """Write one JSON artefact (numpy arrays, dataclasses and Paths included)."""
+    """Write one JSON artefact (numpy arrays, dataclasses and Paths included), as valid JSON.
+
+    `json.dumps` writes Python's own spelling of a value it has no JSON for — `NaN`, `Infinity`,
+    `-Infinity` — and every one of those makes the whole FILE unreadable to a consumer that is
+    not Python: R's jsonlite, `jq` and every browser refuse the document, not the number. A
+    quantity that is not estimable is `null`, which is what the rest of these artefacts already
+    write for it (review MINOR 21).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=1, default=_default),
+    path.write_text(json.dumps(_plain(payload), ensure_ascii=False, indent=1, default=_default),
                     encoding="utf-8")
     return path
+
+
+def _plain(obj: Any) -> Any:
+    """The payload with every float JSON can print — a non-finite one becomes `None`."""
+    if isinstance(obj, bool) or obj is None or isinstance(obj, (str, int)):
+        return obj
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, (np.floating, np.integer)):
+        return _plain(obj.item())
+    if isinstance(obj, np.ndarray):
+        return [_plain(float(x)) for x in obj.ravel()]
+    if is_dataclass(obj) and not isinstance(obj, type):
+        return _plain(asdict(obj))
+    if isinstance(obj, Mapping):
+        return {key: _plain(value) for key, value in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_plain(value) for value in obj]
+    return obj
 
 
 def _default(obj: Any) -> Any:

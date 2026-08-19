@@ -1422,10 +1422,16 @@ def test_the_badge_counts_open_questions_and_reports_the_ones_waiting_for_a_re_r
 def test_the_page_offers_no_inert_button_and_no_unscoped_direction():
     """M4 + H1, on the page itself: the exclude button is not drawn on a `which_measure` card (its
     override could never apply), and the direction form offers the measures the map names rather
-    than a blank box that meant "every measure of this outcome"."""
+    than a blank box that meant "every measure of this outcome".
+
+    Fix round 2 (finding 11) widened the first rule rather than replacing it — the same button was
+    inert or wrong on three more card kinds — so the condition is now a named predicate and
+    `which_measure` is one of its clauses (`test_app_js_card_actions_do_what_they_say` pins the
+    rest).
+    """
     source = (Path(__file__).resolve().parents[1] / "canopy" / "server" / "static"
               / "app.js").read_text(encoding="utf-8")
-    assert 'if (q.kind !== "which_measure") {' in source
+    assert 'q.kind === "which_measure"' in source and "if (!inertExclude) {" in source
     assert "blank means every measure" not in source
     assert "o.outcome_key === evidence.outcome_key && o.measure_name" in source
     assert "payload.id = q.id" in source or "{ id: q.id," in source
@@ -1497,3 +1503,23 @@ def test_app_js_has_the_hooks():
     for needle in ("line-toggle", "state.line", "pill guess", "q-status", 'name: "option_"',
                    "body.overrides", "include_paper", "precedence_override", "analysed_n"):
         assert needle in js, needle
+
+
+def test_app_js_card_actions_do_what_they_say():
+    """Fix round 2, findings 11, 14 and 15 — the three places the page said one thing and did
+    another.
+
+    The wordless "Exclude these cells" button posted `{exclude: true}` on cards where an exclusion
+    is not what the answer writes: on a `precedence_override` it recorded "the printed value
+    stands" (the opposite decision), and on an `analysed_n` or a measure-scoped card it produced a
+    422. The best-guess toggle enabled itself on a line that had admitted nothing, showing the
+    strict number twice under two names. And the conclusion card rendered the whole paragraph —
+    both lines' headline numbers — under a comment claiming no state of the page shows both, then
+    printed every caveat a second time.
+    """
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "inertExclude" in js and 'q.kind === "analysed_n"' in js and 'q.scope === "measure"' in js
+    assert "Number(guess.n_added) >= 1 && Number(guess.k) >= 2" in js
+    card = js.split("function renderConclusion(")[1].split("\n  }")[0]
+    assert "conclusion.best_guess_sentences" in card and "conclusion.headline" in card
+    assert "(conclusion.caveats || []).forEach" not in card

@@ -29,6 +29,7 @@ from typing import Callable, Collection, Mapping, Sequence
 
 from ..models import Candidate, DatasetSpec, StatsSettings, Verdict
 from ..verify.checks import best_statistic
+from ..verify.panels import set_aside_ids
 from ..verify.units import same_unit
 from ..verify.vote import LOCATOR_DROPPED, locator_key, modality
 from .resolve import (GROUP_ROUTES, GroupValues, ReportedValues, ResolvedValues,
@@ -252,7 +253,8 @@ def _first_reading(cands: Sequence[Candidate], settled: GroupValues | None
 
 
 def fallback_values(cell: Sequence[Candidate], primary: ResolvedValues,
-                    settings: StatsSettings) -> list[ResolvedValues]:
+                    settings: StatsSettings, *,
+                    set_aside: Collection[str] = ()) -> list[ResolvedValues]:
     """The candidate PAIRS this row could be built from instead — D1's alternatives, in order.
 
     A pair, never two readings: one route, one place, both groups. The rules are the vote's own,
@@ -261,9 +263,14 @@ def fallback_values(cell: Sequence[Candidate], primary: ResolvedValues,
     * **One reading per group per route** (`vote_candidates`), so the digitiser's five measurement
       paths are one alternative and not five; and per group the FIRST of them that is a whole set
       of numbers, so an incomplete first candidate does not discard a complete second one.
-    * **Nothing the panel check set aside** (`vote.LOCATOR_DROPPED`), which is where the vote
-      itself drops them (`verify.vote._usable`): a reading whose panel the caption gives to the
-      other group is that group's number, not a second reading of this one (D2).
+    * **Nothing the panel check set aside** — the mark on the candidate (`vote.LOCATOR_DROPPED`,
+      where the vote itself drops them, `verify.vote._usable`) OR the candidate ids the verdict's
+      `locator_reads_set_aside` flag names (`set_aside`): a reading whose panel the caption gives
+      to the other group is that group's number, not a second reading of this one (D2). Both,
+      because only the second survives the stage write — the run marked the candidate objects it
+      held in memory and `extract.json` was never rewritten, so the re-pool, `_Preview` and a
+      resumed resolve loaded them back unmarked and were offered a pair the run had set aside
+      (review finding 5).
     * **The same locator** (`vote.locator_key`, and the locator text where a modality has no key),
       because two panels of one figure are two quantities: Langan's Fig. 1 plots the young adults
       in panel A and the older adults in panel B, and a "pair" spanning both is a difference
@@ -272,7 +279,9 @@ def fallback_values(cell: Sequence[Candidate], primary: ResolvedValues,
       per-cent is not an effect size.
     * **Ordered by the protocol's `route_precedence`**, so that when more than one pair converts
       the row is built from the one the protocol prefers — the fallback changes WHICH value is
-      used, never the order they are preferred in.
+      used, never the order they are preferred in. Two pairs that convert at the SAME precedence
+      are not ordered by anything the record justifies, and `resolve_effect_with_fallback` takes
+      neither (review finding 2).
 
     Whether a pair converts is not decided here: `resolve_effect_with_fallback` finds out by
     resolving it, through the ordinary resolver and its ordinary gates. This function's answer is
@@ -283,7 +292,8 @@ def fallback_values(cell: Sequence[Candidate], primary: ResolvedValues,
     for cand in vote_candidates(cell):
         if cand.kind != "group_stats" or cand.status != "found" or cand.group not in ("A", "B"):
             continue
-        if (cand.pixel_provenance or {}).get(LOCATOR_DROPPED):
+        if (cand.pixel_provenance or {}).get(LOCATOR_DROPPED) \
+                or cand.candidate_id in set_aside:
             continue        # verify.panels gave this panel to the other group (D2)
         readings.setdefault((modality(cand), locator_key(cand)), {}) \
                 .setdefault(cand.group, []).append(cand)
@@ -358,10 +368,14 @@ def prepare_rows(cells: Sequence[tuple[DatasetSpec, str, Verdict, Verdict]],
     # LAST, after the shared-control adjustment: an alternative takes the row's group sizes from
     # the values above, and those are the split ones (Cochrane 16.5.4). Built before this loop,
     # every fallback row would carry a control arm's full n.
-    for row in prepared:
+    # …and with the panel check's set-aside read off the two VERDICTS, which is where it is
+    # persisted. The candidates a re-pool loads carry no `locator_dropped` mark (it was written in
+    # memory during `run._verify_cell` and `extract.json` was never rewritten), so a rule that
+    # read only the mark gave the run and the re-pool different alternatives — standing ruling (d).
+    for row, (_, _, verdict_a, verdict_b) in zip(prepared, cells):
         row.alternatives = fallback_values(
             cell_candidates(candidates, row.dataset.dataset_id, row.outcome_key),
-            row.values, settings)
+            row.values, settings, set_aside=set_aside_ids(verdict_a, verdict_b))
     return prepared
 
 

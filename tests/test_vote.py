@@ -493,16 +493,68 @@ def test_locator_key_partitions_only_figure_candidates():
     """A place is part of a route only for a reading that was measured somewhere.
 
     The modality of a digitised reading is `figure:<path>` — the path is how the picture was
-    measured — so the family is the first segment, not the whole string. A text or table or
-    statistic reading keeps the two-part route it always had.
+    measured — so the family is the first segment, not the whole string. Every reading keeps the
+    two-part route it always had: fix round 2 (finding 7) took the place back OUT of the route
+    key, because a voter is a modality and a model family, and a place that joined the key made
+    one model reading one panel under two prompt wordings into two independent voters. The place
+    partitions the route from the inside instead (`_route_values`).
     """
     for p in ("3570e4ce2a9c", "5039533c85ef", "b511dbb76fa6", "b7523a41b03a", "592b3b55a318",
               "d1f2946e7e81"):
         for c in nine.candidates(p):
+            assert route_key(c).count("/") == 1
             if modality(c).split(":", 1)[0] not in ("figure", "digitize"):
-                assert locator_key(c) == "" and route_key(c).count("/") == 1
+                assert locator_key(c) == ""
             else:
-                assert route_key(c).count("/") == (2 if c.locator.strip() else 1)
+                assert bool(locator_key(c)) == bool(c.locator.strip())
+
+
+def _wang_sonnet(group):
+    """One model family's two readings of the gradual group's aftereffect — Fig 3 and Fig 4."""
+    return [c for c in nine.candidates("592b3b55a318")
+            if c.dataset_id == "592b3b55a318:d2" and c.outcome_key == "aftereffect"
+            and c.group == group and model_family(c.model) == "claude-sonnet"
+            and modality(c) == "figure:readout" and c.mean is not None]
+
+
+def test_a_printed_value_does_not_absorb_a_reading_from_the_other_panel():
+    """Fix round 2, finding 6. D2's locator rule was applied only where the pictures vote among
+    themselves. With a printed value in the cell, `winners` was assembled by tolerance alone, so
+    every figure route near the printed number joined it whatever panel it had been read at — and
+    the dispersion the cell published was the median over the wrong panel too. Langan's two panels
+    are the case the rule exists for: -20.5 at Fig. 1A and -16.5 at Fig. 1B, 4° apart under a 7.5°
+    figure tolerance, with the same -20.5 printed beside them: panel A's reading matches the
+    printed number and panel B's is inside the wide tolerance its own calibration claims, so both
+    panels joined the winners and the cell published a dispersion medianed over both."""
+    printed = text_cand("langan-printed", -20.5, written="-20.5 ± 11.12 deg", group="B")
+    res = vote([*_langan("B"), printed])
+    assert res.agreement == "disagree" and res.method == "locator_conflict"
+    assert "Fig. 1A" in " ".join(res.notes) and "Fig. 1B" in " ".join(res.notes)
+
+
+def test_one_family_reading_two_panels_of_one_figure_is_one_voter_that_conflicts():
+    """Fix round 2, finding 7. Langan's aftereffect cell is read by ONE family at Fig. 1A and at
+    Fig. 1B; with the place inside the route key those were two routes, and two routes that agree
+    within a figure tolerance are "corroboration". They are one reader looking twice. The voter is
+    the family, and the two places inside it are what refuses the cell."""
+    cands = [c for c in nine.candidates("d1f2946e7e81")
+             if c.dataset_id == "d1f2946e7e81:d1" and c.outcome_key == "aftereffect"
+             and c.group == "A" and c.extractor_id.endswith("ensemble")]
+    assert len({model_family(c.model) for c in cands}) == 1 and len(cands) == 2
+    res = vote(cands)
+    assert len(res.routes) == 1, "one modality, one family, one voter"
+    assert res.agreement == "disagree" and res.method == "locator_conflict"
+
+
+def test_one_family_reading_two_figures_does_not_corroborate_itself():
+    """Fix round 2, finding 7, the other half. Two DIFFERENT figures are not a conflict (fix round
+    1, MAJOR 2), but one model family measuring both is still one witness: the vote may take its
+    reading, and it may not call it agreed. `single` is the honest answer — and it is what keeps
+    the cell out of `accept_by_vote` on one reader's word."""
+    cands = _wang_sonnet("B")
+    assert len(cands) == 2 and len({figure_of(c) for c in cands}) == 2
+    res = vote(cands)
+    assert len(res.routes) == 1 and res.agreement == "single"
 
 
 def test_duplicate_ids_under_two_locators_are_all_considered_and_ids_keep_their_shape():

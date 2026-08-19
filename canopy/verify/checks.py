@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 import re
+from functools import lru_cache
 from typing import Any, Iterable, Sequence
 
 from ..models import (Candidate, CheckFlag, DatasetSpec, DispersionType, GroupSpec,
@@ -1097,8 +1098,35 @@ EXCLUSION_COUNT_SPAN = 60
 #: a size the paper PRINTS: "n = 20", or "20 younger" / "38 older adults" / "12 participants".
 #: Spelled-out counts ("Forty-one younger adults were recruited") are deliberately not matched:
 #: this check only ever speaks about a number a reader can see beside the group it belongs to.
-_GROUP_SIZE = re.compile(
-    r"\bn\s*=\s*(\d+)\b|\b(\d+)\s+(?:young|old|healthy|participant|subject|adult)\w*", re.I)
+#:
+#: The words are NOT a fixed list. `young|old|healthy` are this review's arm vocabulary, and a
+#: check that carries them is a check that reads one study: "Twenty PD patients (20 patients)…
+#: 3 controls were excluded" found nothing at all, and "20 younger… excluded 4 younger" fired
+#: (review finding 8). So the pattern is built per call from the person nouns plus the words the
+#: protocol itself uses for THIS arm — the same vocabulary `excluded_count` already reads.
+_ANY_SIZE = r"\bn\s*=\s*(\d+)\b"
+
+
+def _group_size(group_terms: Sequence[str]) -> re.Pattern[str]:
+    """`"n = 20"`, or a count standing beside a word this review calls its people by."""
+    words = _PERSON_NOUNS | _group_words(group_terms)
+    return _size_pattern(frozenset(words))
+
+
+@lru_cache(maxsize=None)
+def _size_pattern(words: frozenset[str]) -> re.Pattern[str]:
+    beside = "|".join(re.escape(word) for word in sorted(words, key=lambda w: (-len(w), w)))
+    return re.compile(rf"{_ANY_SIZE}|\b(\d+)\s+(?:{beside})\w*", re.I) if beside \
+        else re.compile(_ANY_SIZE, re.I)
+
+
+#: a size sentence that is already the ANALYSED one — the paper has done the subtraction, and
+#: doing it again offers the reviewer a number lower than either ("the final sample comprised 20
+#: … 4 did not complete" → "may be 16", review MINOR 25). The check says nothing about such a
+#: size rather than saying something wrong about it.
+_ALREADY_ANALYSED = re.compile(
+    r"\b(?:final|analys\w*|analyz\w*|remain\w*|included in the analys\w*|after (?:the )?"
+    r"exclusion\w*)\b", re.I)
 #: the words a paper takes people OUT with
 _EXCLUSION_CUE = re.compile(
     r"\b(?:exclud|remov|withdrew|withdrawn|drop(?:ped)?[- ]?out|discontinued|did not complete"
@@ -1115,9 +1143,13 @@ _COUNT_INTO_CUE = re.compile(r"\b(\d+)\s+([A-Za-z][\w-]*)(?:\s+\w+)?\s*$")
 #: cue's own verb ("4 were excluded"). It overlaps `_GENERIC_GROUP_WORDS` below and the two sets
 #: do opposite jobs — there these words are useless because BOTH arms share them, here they are
 #: the whole evidence that the number counts participants at all.
-_PERSON_WORDS: frozenset[str] = frozenset({
+#: …the NOUNS of it. A printed size stands beside a noun ("20 patients"), never beside the
+#: auxiliary — "20 were excluded" is a loss, not a group size — so the size pattern above takes
+#: this half and `excluded_count` below takes both.
+_PERSON_NOUNS: frozenset[str] = frozenset({
     "adult", "adults", "participant", "participants", "subject", "subjects", "person", "people",
-    "volunteer", "volunteers", "patient", "patients", "were", "was", "had"})
+    "volunteer", "volunteers", "patient", "patients"})
+_PERSON_WORDS: frozenset[str] = _PERSON_NOUNS | frozenset({"were", "was", "had"})
 #: words every arm of every review shares, so a count standing next to one says nothing about
 #: WHICH group lost it. They are dropped from a group's vocabulary before the count is read.
 _GENERIC_GROUP_WORDS: frozenset[str] = frozenset({
@@ -1231,11 +1263,14 @@ def n_before_exclusions(pages: Sequence[str], cand: Candidate,
     """
     if cand.n is None or cand.n < MIN_N or cand.group not in ("A", "B"):
         return None
+    pattern = _group_size(group_terms)
     for text in pages:
-        for size in _GROUP_SIZE.finditer(text):
+        for size in pattern.finditer(text):
             printed = int(size.group(1) or size.group(2))
             if printed != cand.n:
                 continue
+            if _ALREADY_ANALYSED.search(_sentence(text, size.start(), size.end())):
+                continue        # the paper has already taken its losses off this one (MINOR 25)
             count, phrase, quote = excluded_count(
                 text[size.end():size.end() + EXCLUSION_SPAN], group_terms)
             if count is None:

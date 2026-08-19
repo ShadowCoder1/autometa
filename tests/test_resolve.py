@@ -1030,3 +1030,39 @@ def test_a_row_that_converted_from_a_printed_statistic_is_never_overridden():
     assert "group_statistics_missing" in rec.flags     # raised, but on its own not a trigger
     assert rec.model_dump() == resolve_effect(ds, p.outcome("late_adaptation"), primary,
                                               p.stats).model_dump()
+
+
+def test_a_vote_that_disagreed_is_not_a_missing_spread():
+    """Fix round 2, finding 2 (BLOCKER). Buch d2's aftereffect cell A has `agreement: "disagree"`
+    and NO mean at all: the vote weighed the readings and refused to settle one. D1 is scoped to a
+    value the paper PRINTS that merely carries no spread — "the printed value is preferred whenever
+    it converts; when it cannot…" — and a refusal on evidence is not that case. Falling back there
+    put a digitised pair (d = −1.35) on the best-guess forest for a cell the pipeline never
+    resolved a value for."""
+    p, ds, primary, alts = _cell("592b3b55a318", "592b3b55a318:d2", "aftereffect", False)
+    assert primary.group_a.mean is None and primary.disagreed == ["A"]
+    assert len(alts) >= 2, "the pairs are there — the point is that none of them is taken"
+    rec = resolve_effect_with_fallback(ds, p.outcome("aftereffect"), primary, alts, p.stats)
+    assert rec.route == "not_convertible" and "precedence_override" not in rec.flags
+    assert rec.es is None and rec.route_overridden_from == ""
+
+
+def test_two_pairs_that_convert_hold_the_row_instead_of_taking_the_first():
+    """Fix round 2, finding 2 (BLOCKER), second half. The same cell is read in two places — Fig 4's
+    left panel (d = −1.35) and Fig 3's top-right (d = −0.08), both `figure`, so neither is preferred
+    by the protocol's precedence list. Taking "the first that converts" is taking the order
+    `rows.fallback_values` happened to build them in, and a factor of seventeen on the best-guess
+    forest rested on it. D1 supplies a value the precedence list could not; it does not choose
+    BETWEEN values. The row is held, and the reason names both pairs so the card can offer them."""
+    p, ds, primary, alts = _cell("592b3b55a318", "592b3b55a318:d2", "aftereffect", False)
+    # the vote's refusal above is the FIRST gate and would stop the fallback before the choice
+    # this test is about is reached, so cell A is given the printed value the vote lacked — a mean
+    # with no spread, which is exactly the case D1 was written for.
+    primary.disagreed = []
+    primary.group_a.mean, primary.group_a.n = -2.5, 5
+    rec = resolve_effect_with_fallback(ds, p.outcome("aftereffect"), primary, alts, p.stats)
+    assert rec.route == "not_convertible" and "precedence_override" not in rec.flags
+    assert rec.es is None
+    assert "Fig 4, left panel" in rec.not_convertible_reason
+    assert "Fig 3, top-right panel" in rec.not_convertible_reason
+    assert rec.conversion_chain.endswith(rec.not_convertible_reason)
