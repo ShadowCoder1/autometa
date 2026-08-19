@@ -40,6 +40,7 @@ from typing import Any, Mapping, Sequence
 
 from ..models import EffectSizeRecord, OutcomeDef, StatsSettings
 from ..stats.meta import MetaResult, prediction_interval
+from ..verify.checks import severity_of
 from ..verify.confidence import CONTRADICTING_FLAGS, ROW_REFUSAL_CODES, WITHHOLDING_FLAGS
 from .resolve import GROUP_STATISTICS_MISSING, PRECEDENCE_OVERRIDE
 
@@ -63,9 +64,6 @@ CONTRADICTED = CONTRADICTING_FLAGS
 #: when a group has no mean, size and dispersion; from D1 onward the same fact is also a flag
 #: (`GROUP_STATISTICS_MISSING`), but records resolved before it carry only the sentence.
 _NO_GROUP_STATS = re.compile(r"group\(s\)[^;]*\bhave no mean\b")
-#: what the reason calls a dispute: the doubts the verify layer records on a row. Contradicting
-#: flags veto, so in practice this is the capping half plus anything a stage spelled as a dispute.
-_DISPUTE_WORDS = ("disput", "refut", "conflict", "objection")
 
 
 @dataclass(frozen=True)
@@ -126,11 +124,27 @@ def _group_statistics_missing(record: EffectSizeRecord) -> bool:
     return bool(_NO_GROUP_STATS.search(prose))
 
 
+def _severity(flag: str) -> str:
+    """The severity `verify.checks` DECLARED for a code, or `""` for one it does not declare."""
+    try:
+        return severity_of(flag)
+    except KeyError:
+        return ""
+
+
 def _disputes(record: EffectSizeRecord) -> list[str]:
-    """The doubts recorded ON the row — what the reason has to show when it admits it anyway."""
+    """The doubts recorded ON the row — what the reason has to show when it admits it anyway.
+
+    A dispute is what the check layer DECLARED as one: a code it raised at `error` or `warn`, plus
+    the withholding sets. Reading the flag's spelling instead (`"disput" in name`) made the mark a
+    coincidence — `unit_mismatch` was never quoted because its name says nothing, and
+    `calibration_disputed` was quoted only because of four letters in the middle of its name, so
+    renaming that code would have silently dropped the whole mark from a row whose two groups may
+    be on different scales. Severity is the one place that fact is stated on purpose.
+    """
     flags = set(record.flags)
-    named = {f for f in flags if any(word in f.lower() for word in _DISPUTE_WORDS)}
-    return sorted((flags & WITHHOLDING_FLAGS) | named)
+    return sorted((flags & WITHHOLDING_FLAGS)
+                  | {f for f in flags if _severity(f) in ("error", "warn")})
 
 
 def _evidence(record: EffectSizeRecord, **extra: Any) -> dict[str, Any]:
@@ -291,14 +305,24 @@ def mark_composites(rows: Sequence[EffectSizeRecord],
 
 
 def best_guess_cells(rows: Sequence[EffectSizeRecord],
-                     decisions: Sequence[BestGuessDecision]) -> dict[tuple[str, str], dict]:
+                     decisions: Sequence[BestGuessDecision],
+                     strict: Sequence[EffectSizeRecord] = ()) -> dict[tuple[str, str], dict]:
     """`(dataset_id, outcome_key) -> the best-guess columns` for the extraction tables.
 
     Every row of the line gets an entry (a strict row is in the line, with no rule of its own),
     and so does every held row the line refused — with the veto and its reason, because "why is
     this row in neither analysis" is the question the table has to answer.
+
+    `strict` is the line's PRE-aggregation membership. Without it, a strict row that the
+    best-guess aggregation folded into a composite appears in neither the decisions nor the
+    post-aggregation rows, and its cell would read `in_best_guess: None` — which the extraction
+    table defines as "this run computed no second line", a different and false claim.
     """
     cells: dict[tuple[str, str], dict] = {}
+    for record in strict:
+        cells[(record.dataset_id, record.outcome_key)] = {
+            "in_best_guess": True, "best_guess_rule": "", "best_guess_reason": "",
+            "best_guess_es": record.es, "best_guess_se": record.se}
     for decision in decisions:
         cells[(decision.dataset_id, decision.outcome_key)] = (
             {"in_best_guess": True, "best_guess_rule": decision.rule,
@@ -320,10 +344,6 @@ def best_guess_cells(rows: Sequence[EffectSizeRecord],
 
 
 # ----------------------------------------------------------------------------- the payload
-def _poolable(rows: Sequence[EffectSizeRecord]) -> list[EffectSizeRecord]:
-    return [r for r in rows if _usable(r.es) and _usable(r.var) and float(r.var) > 0]
-
-
 def _cluster(record: EffectSizeRecord) -> str:
     return record.cluster_id or record.paper_id or record.dataset_id
 
@@ -339,6 +359,7 @@ def best_guess_payload(strict_pooled: MetaResult | None, bg_pooled: MetaResult |
                        added_rows: Sequence[EffectSizeRecord],
                        loo_bg: Sequence[Mapping[str, Any]],
                        rows: Sequence[EffectSizeRecord] = (),
+                       weights: Mapping[str, float] | None = None,
                        settings: StatsSettings | None = None) -> dict[str, Any]:
     """The `best_guess` block of `pooled.json` — the second line, next to the first.
 
@@ -346,17 +367,22 @@ def best_guess_payload(strict_pooled: MetaResult | None, bg_pooled: MetaResult |
     guessed member is one of them); `rows` is the whole line; `loo_bg` is
     `tables.leave_one_out_rows` over it, so `max_abs_delta_from_one_best_guess_row` can say how
     much of the line's estimate rests on a single guessed row.
+
+    `weights` is `dataset_id -> weight %`, built by the caller from the SAME filter that fed the
+    pooler. Re-deriving the poolable subset here and zipping the weights onto it by index would
+    put a plausible number beside the wrong row the first time the two filters disagreed, with
+    nothing raised — so the map is passed in rather than recomputed.
     """
-    line = _poolable(rows) if rows else list(added_rows)
+    line = list(rows) if rows else list(added_rows)
     added_ids = {r.dataset_id for r in added_rows}
     not_added = [d for d in decisions if not d.admitted]
-    # the pooled weights are in the order the poolable rows were handed to the pooler, so they are
-    # matched back by position and then keyed by row, never by comparing two records for equality
-    weights = [] if bg_pooled is None else [float(w) for w in bg_pooled.weights_pct]
-    weight_of = {row.dataset_id: weights[i] for i, row in enumerate(line) if i < len(weights)}
+    weight_of = dict(weights or {})
 
     payload: dict[str, Any] = {
-        "k": bg_pooled.k if bg_pooled is not None else len(line),
+        # the same rule the strict payload uses: `k` is what was POOLED, and is 0 when nothing
+        # was. How many rows the line has is a different question, and has its own key.
+        "k": bg_pooled.k if bg_pooled is not None else 0,
+        "k_rows": len(line),
         "k_papers": len({_cluster(r) for r in line}),
         "estimate": None, "se": None, "ci_low": None, "ci_high": None, "z": None, "p": None,
         "tau2": None, "I2": None, "Q": None, "Q_df": None, "Q_p": None,

@@ -39,6 +39,7 @@ __all__ = ["extraction_table", "EXTRACTION_COLUMNS", "exclusions_table", "EXCLUS
            "leave_one_out_table", "leave_one_out_rows", "sensitivity_analyses",
            "sensitivity_outputs",
            "SENSITIVITY_ANALYSES", "funnel_plot", "prisma_flow", "PRISMA_CHAIN", "pool_rows",
+           "poolable_rows",
            "write_rows", "dump_json"]
 
 #: the reasons a paper or a dataset can leave the review — a free-text reason becomes `other`.
@@ -347,6 +348,17 @@ def _poolable(rows: Sequence[EffectSizeRecord], *, digitization: bool = False
         yi.append(float(record.es))
         vi.append(float(var))
     return keep, yi, vi
+
+
+def poolable_rows(rows: Sequence[EffectSizeRecord], *,
+                  digitization: bool = False) -> list[EffectSizeRecord]:
+    """The rows `pool_rows` would actually pool, in the order it hands them to the pooler.
+
+    Public because anything that reads a pooled result BY POSITION — the per-row weights, above
+    all — has to use the same predicate the pooler used, not a second one that agrees today.
+    """
+    keep, _, _ = _poolable(rows, digitization=digitization)
+    return keep
 
 
 def pool_rows(rows: Sequence[EffectSizeRecord], settings: StatsSettings, *,

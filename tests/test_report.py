@@ -632,6 +632,10 @@ def test_forest_best_guess_written_only_when_rows_were_added(tmp_path):
     aft, aft_payload, _ = _nine_outputs(tmp_path / "aft", "aftereffect")
     assert aft_payload["best_guess"]["n_added"] == 0
     assert "forest_best_guess_png" not in aft
+    # and `k` means on both lines what it means on the strict one: what was POOLED. The line's
+    # size is a different question with its own key, so the two ks can be read side by side.
+    assert aft_payload["k"] == 0 and aft_payload["best_guess"]["k"] == 0
+    assert aft_payload["best_guess"]["k_rows"] == 1
 
 
 def test_aftereffect_has_best_guess_forest_without_strict_forest(tmp_path):

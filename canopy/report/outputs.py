@@ -26,7 +26,7 @@ from ..models import EffectSizeRecord, OutcomeDef, Protocol, StatsSettings, Verd
 from ..stats.meta import MetaResult, prediction_interval
 from .forest import forest_plot
 from .tables import (dump_json, extraction_table, funnel_plot, leave_one_out_rows,
-                     leave_one_out_table, pool_rows, sensitivity_outputs)
+                     leave_one_out_table, pool_rows, poolable_rows, sensitivity_outputs)
 from .theme import BEST_GUESS_CAVEAT
 
 __all__ = ["write_outcome_outputs", "outcome_dir"]
@@ -83,7 +83,7 @@ def _best_guess_line(primary_pre_agg: Sequence[EffectSizeRecord],
 
         rows = mark_composites(aggregate_one_row_per_paper(rows, settings).rows, decisions)
     return (rows, decisions, [r for r in rows if BEST_GUESS_FLAG in r.flags],
-            best_guess_cells(rows, decisions))
+            best_guess_cells(rows, decisions, primary_pre_agg))
 
 
 def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
@@ -135,8 +135,14 @@ def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
     bg_loo = leave_one_out_rows(bg_rows, settings)
     if best_guess_cells is not None:
         best_guess_cells.update(cells)
+    # the weights come back from the pooler in the order IT was given the rows, so they are keyed
+    # by the pooler's own filter rather than by a second one computed beside it
+    bg_weights = {} if bg_pooled is None else {
+        row.dataset_id: float(weight)
+        for row, weight in zip(poolable_rows(bg_rows), bg_pooled.weights_pct)}
     bg_payload = best_guess_payload(pooled, bg_pooled, decisions, added_rows=added,
-                                    loo_bg=bg_loo, rows=bg_rows, settings=settings)
+                                    loo_bg=bg_loo, rows=bg_rows, weights=bg_weights,
+                                    settings=settings)
 
     table = extraction_table(list(all_rows) if all_rows is not None
                              else [*rows, *needs_human_rows],
@@ -168,7 +174,10 @@ def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
                                 moderators=moderators, subtitle=BEST_GUESS_CAVEAT)
         out.update({f"forest_best_guess_{k}": v for k, v in bg_forest.items()})
     # …and no second leave-one-out table unless the line is a different set of rows: the same
-    # table under a second name is how two artefacts of one run start being read as two findings
+    # table under a second name is how two artefacts of one run start being read as two findings.
+    # So `leave_one_out_best_guess.*` is absent whenever nothing was added, and below k = 3, where
+    # `leave_one_out_rows` returns nothing — the artefact keys are optional for the same reason
+    # `forest_best_guess_*` is.
     if added and bg_loo:
         bg_loo_out = leave_one_out_table(bg_rows, settings,
                                          directory / "leave_one_out_best_guess", table=bg_loo)

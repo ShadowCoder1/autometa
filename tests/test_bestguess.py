@@ -32,6 +32,9 @@ def test_strict_input_rows_are_never_changed_or_removed(agg):
         split, rows, _ = _lines(key, agg)
         for s in split.primary_pre_agg:
             same = next(r for r in rows if r.dataset_id == s.dataset_id)
+            # the module promises the OBJECT, not a row that happens to hold the same numbers:
+            # a refactor that copied and renormalised a strict row would pass a value comparison
+            assert same is s
             assert (same.es, same.var) == (s.es, s.var)
 
 
@@ -165,7 +168,7 @@ def test_a_composite_with_a_guessed_member_is_a_guess_wholesale():
 
 
 def test_the_payload_names_every_added_row_and_every_row_it_could_not_add():
-    from canopy.report.tables import leave_one_out_rows, pool_rows
+    from canopy.report.tables import leave_one_out_rows, pool_rows, poolable_rows
 
     p = nine.protocol()
     split = _split_rows(nine.records("late_adaptation"), p.stats)
@@ -173,10 +176,12 @@ def test_the_payload_names_every_added_row_and_every_row_it_could_not_add():
                                 outcome=p.outcome("late_adaptation"), settings=p.stats)
     added = [r for r in rows if BEST_GUESS_FLAG in r.flags]
     bg = pool_rows(rows, p.stats)
+    weights = {r.dataset_id: float(w) for r, w in zip(poolable_rows(rows), bg.weights_pct)}
     payload = best_guess_payload(pool_rows(split.primary, p.stats), bg, dec, added_rows=added,
                                  loo_bg=leave_one_out_rows(rows, p.stats), rows=rows,
-                                 settings=p.stats)
-    assert payload["k"] == bg.k and payload["n_added"] == len(added)
+                                 weights=weights, settings=p.stats)
+    assert payload["k"] == bg.k and payload["k_rows"] == len(rows)
+    assert payload["n_added"] == len(added)
     assert {a["dataset_id"] for a in payload["added"]} == {r.dataset_id for r in added}
     assert {n["dataset_id"] for n in payload["not_added"]} == {
         d.dataset_id for d in dec if not d.admitted}
@@ -186,3 +191,49 @@ def test_the_payload_names_every_added_row_and_every_row_it_could_not_add():
     assert payload["delta_vs_strict"] is not None and payload["note"]
     assert payload["max_abs_delta_from_one_best_guess_row"] > 0
     assert sum(a["weight_pct"] for a in payload["added"]) < 100
+
+
+# ------------------------------------------------------- what "the dispute is quoted" means
+def test_a_disputed_row_quotes_every_flag_the_checks_declare_as_a_dispute():
+    """DECISION admits a disputed row only WITH the dispute quoted — all of it.
+
+    Buch's two rows carry `calibration_disputed` (the check layer declares it `error`) and
+    `unit_mismatch` (`warn`). Both are things a reader has to see before reading the value: one
+    says the axis calibration is contested, the other that the two groups may not be in the same
+    unit. Reading the flag's SPELLING quoted the first only because the letters "disput" sit in
+    the middle of its name, and never quoted the second at all.
+    """
+    _, _, d = _lines("late_adaptation")
+    for ds in ("592b3b55a318:d1", "592b3b55a318:d2"):
+        assert d[ds].admitted and d[ds].reason.startswith("disputed (")
+        assert "calibration_disputed" in d[ds].reason and "unit_mismatch" in d[ds].reason
+        assert d[ds].evidence["disputed"] == ["calibration_disputed", "unit_mismatch"]
+
+
+def test_the_dispute_mark_reads_the_declared_severity_not_the_flags_name():
+    """Both directions: an undeclared code does not become a dispute by being named like one,
+    and a declared one is quoted however innocuous its name reads."""
+    held = nine.record("5039533c85ef:d1", "late_adaptation")
+    row = held.model_copy(update={"flags": [*held.flags, "looks_disputed_but_undeclared"]})
+    _, dec = best_guess_rows([], [row], outcome=nine.protocol().outcome("late_adaptation"),
+                             settings=nine.protocol().stats)
+    assert "looks_disputed_but_undeclared" not in dec[0].reason
+    assert "panel_not_isolated" in dec[0].reason          # declared `warn`, quoted for it
+
+
+def test_the_group_statistics_sentence_this_veto_reads_is_the_one_the_resolver_writes():
+    """`one_group_only` matches prose on records resolved before D1's flag existed, so the two
+    spellings have to be tied together by something the suite runs — not by a frozen fixture."""
+    from canopy.pipeline.bestguess import _NO_GROUP_STATS
+    from canopy.pipeline.resolve import ResolvedValues, resolve_effect
+
+    p = nine.protocol()
+    live = {(v.dataset_id, v.outcome_key, v.group): v for v in nine.verdicts("b7523a41b03a")}
+    group_a = live[("b7523a41b03a:d1", "aftereffect", "A")]
+    group_b = live[("b7523a41b03a:d1", "aftereffect", "B")]
+    record = resolve_effect(nine.dataset("b7523a41b03a", "b7523a41b03a:d1"),
+                            p.outcome("aftereffect"),
+                            ResolvedValues.from_verdicts(group_a, group_b, higher_is_better=True),
+                            p.stats)
+    assert record.route == "not_convertible" and record.es is None
+    assert _NO_GROUP_STATS.search(record.not_convertible_reason)
