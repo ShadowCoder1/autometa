@@ -789,3 +789,67 @@ def test_the_precedence_override_row_is_the_same_row_on_the_run_and_the_re_pool_
         was.pop(field, None), now.pop(field, None)
     assert now == was
     assert set(rebuilt.flags) - set(ran.flags) == {"human_override"}
+
+
+# ------------------------------- D4-lite: an answered analysed n over a shared control arm
+def _shared_row(*, flags: list[str], n_a: int = 19, n_b: int = 20):
+    """One prepared row of a two-comparison cluster, at the sizes the mapper read."""
+    from canopy.models import DatasetSpec
+    from canopy.pipeline.resolve import GroupValues, ResolvedValues
+    from canopy.pipeline.rows import PreparedRow
+
+    values = ResolvedValues(dataset_id="p:d1", outcome_key="late_adaptation",
+                            group_a=GroupValues(n=n_a), group_b=GroupValues(n=n_b), flags=flags)
+    return PreparedRow(dataset=DatasetSpec(dataset_id="p:d1"), outcome_key="late_adaptation",
+                       values=values)
+
+
+def _answered(sizes=(18, 16)):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(group_n={"p:d1": sizes})
+
+
+def test_an_answered_size_for_a_split_control_arm_is_re_split_not_handed_back_whole():
+    """Cochrane 16.5.4 survives the answer: the arm two comparisons share still contributes n/k.
+
+    Written against `resolve.SHARED_CONTROL_ARM` rather than a literal "B", because that constant
+    is the whole of the coupling — `rows.prepare_rows` hands it to `apply_shared_control` and this
+    function has to undo exactly the arm it adjusted (review finding 3).
+    """
+    from canopy.pipeline.overrides import _apply_group_n
+    from canopy.pipeline.resolve import SHARED_CONTROL_ARM
+    from canopy.stats.conversions import split_control
+
+    answered = {"A": 18, "B": 16}
+    shared = SHARED_CONTROL_ARM
+    other = "A" if shared == "B" else "B"
+
+    row = _shared_row(flags=["shared_control_split"])
+    _apply_group_n(row, _answered(), 2)
+    assert row.values.group(shared).n == int(round(split_control(answered[shared], 2)))
+    assert row.values.group(other).n == answered[other]
+
+
+def test_a_merged_control_arm_keeps_the_n_the_strategy_built():
+    """Under `combine_arms` the surviving row's other arm is two arms added together, and a
+    per-arm size a reviewer answered is not that number — so it is left alone."""
+    from canopy.pipeline.overrides import _apply_group_n
+    from canopy.pipeline.resolve import SHARED_CONTROL_ARM
+
+    shared = SHARED_CONTROL_ARM
+    other = "A" if shared == "B" else "B"
+    row = _shared_row(flags=["shared_control_combined"])
+    was = row.values.group(other).n
+
+    _apply_group_n(row, _answered(), 1)
+    assert row.values.group(other).n == was, "a merged arm is not one arm"
+    assert row.values.group(shared).n == {"A": 18, "B": 16}[shared]
+
+
+def test_a_row_that_shares_no_control_simply_takes_the_answered_sizes():
+    from canopy.pipeline.overrides import _apply_group_n
+
+    row = _shared_row(flags=[])
+    _apply_group_n(row, _answered(), 1)
+    assert (row.values.group_a.n, row.values.group_b.n) == (18, 16)

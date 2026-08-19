@@ -991,9 +991,17 @@ def _denominator_note(values: ResolvedValues, inputs: dict[str, Any]) -> str:
 
 
 # ----------------------------------------------------------------------------- dependence policies
+#: which arm `apply_shared_control` treats as the SHARED one when a caller does not say. Named,
+#: rather than left as a positional default, because a second module has to know which arm the
+#: adjustment touched in order not to undo it: `overrides._apply_group_n` re-splits the answered
+#: size for exactly this arm, and reading "B" out of this signature by eye is how that coupling
+#: silently breaks the day the default moves (review finding 3).
+SHARED_CONTROL_ARM: GroupKey = "B"
+
+
 def apply_shared_control(rows: Sequence[ResolvedValues],
                          strategy: str = "split_n", *,
-                         shared: GroupKey = "B") -> list[ResolvedValues]:
+                         shared: GroupKey = SHARED_CONTROL_ARM) -> list[ResolvedValues]:
     """`k` comparisons that share one arm, adjusted per `StatsSettings.shared_control_strategy`.
 
     The orchestrator (Task 10) groups rows by `(cluster_id, outcome_key)` and the shared arm, then

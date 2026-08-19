@@ -54,7 +54,7 @@ from ..protocol import load_protocol
 from ..stats.conversions import split_control
 from ..report import (dump_json, exclusions_table, extraction_table, pool_rows, prisma_flow,
                       write_html_report, write_outcome_outputs, write_rows)
-from .resolve import ResolvedValues, resolve_effect_with_fallback
+from .resolve import SHARED_CONTROL_ARM, ResolvedValues, resolve_effect_with_fallback
 from .rows import (PreparedRow, converted_route, prepare_rows,
                    shared_control_siblings)
 from .state import (load_manifest, read_stage, review_entry, save_manifest, sha12,
@@ -1046,7 +1046,10 @@ def _apply_analysed_n(override: Mapping[str, Any],
         # bucket is untouched, because a size is not an answer to whatever is holding the cell.
         for verdict in (verdict_a, verdict_b):
             verdict.n = sizes[str(verdict.group)]
-            verdict.overridden_by_human = True
+            # …and NOT `overridden_by_human`: the only reader of that field is the review page,
+            # which shows it as "a human overrode this cell", and nobody overrode this cell's
+            # value, its spread or its direction — a group size was supplied. The justification
+            # still travels, so the record says who supplied it and why (review finding 4).
             verdict.override_justification = override["justification"]
         records[key] = _rebuild_row(records[key], dataset, verdict_a, verdict_b, protocol,
                                     outcome_key, override["justification"],
@@ -1235,17 +1238,32 @@ def _apply_group_n(row: PreparedRow, state: "_RunState" | None, siblings: int = 
     the run split it (Cochrane 16.5.4). Overwriting a split arm with the whole answered size would
     hand a control shared between two comparisons its full n back, which shrinks the row's
     variance and raises its weight — the same un-splitting `pipeline.rows` exists to prevent.
+
+    Which arm was shared is `resolve.SHARED_CONTROL_ARM` — the same name `rows.prepare_rows` hands
+    to `apply_shared_control` — and not a literal "B" written here, because an assumption about
+    another module's default that is true today is a wrong number tomorrow. And under
+    `combine_arms` the OTHER arm of the surviving row is two arms added together: a per-arm size a
+    reviewer answered is not that number, so that arm is left exactly as the strategy built it
+    (review finding 3).
     """
     sizes = (state.group_n if state is not None else {}).get(row.dataset.dataset_id)
     if sizes is None:
         return
-    n_a, n_b = sizes
-    shared = "shared_control_split" in row.values.flags and siblings > 1
+    answered = {"A": sizes[0], "B": sizes[1]}
+    flags = set(row.values.flags)
+    shared = SHARED_CONTROL_ARM
+    merged = "A" if shared == "B" else "B"
     for values in (row.values, *row.alternatives):
-        if values.group_a is not None:
-            values.group_a.n = n_a
-        if values.group_b is not None:
-            values.group_b.n = int(round(split_control(n_b, siblings))) if shared else n_b
+        for key, size in answered.items():
+            group = values.group(key)
+            if group is None:
+                continue
+            if key == merged and "shared_control_combined" in flags:
+                continue                    # two arms added together is not one arm's answered n
+            if key == shared and "shared_control_split" in flags and siblings > 1:
+                group.n = int(round(split_control(size, siblings)))
+            else:
+                group.n = size
 
 
 def _prepare(dataset: DatasetSpec, outcome_key: str, verdict_a: Verdict, verdict_b: Verdict,

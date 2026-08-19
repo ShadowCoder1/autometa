@@ -1105,6 +1105,10 @@ _EXCLUSION_CUE = re.compile(
     r"|were not included|data (?:were|was) lost)\w*", re.I)
 #: "4 younger", "153 of" — a count and the word immediately after it
 _COUNTED = re.compile(r"\b(\d+)\s+([A-Za-z][\w-]*)")
+#: "…, 4 were excluded" — a count that runs INTO the cue, at most two words short of it. The
+#: exclusion count is usually the subject of the cue's own verb, and in that shape it is the only
+#: number in the sentence that is not the size being excluded from.
+_COUNT_INTO_CUE = re.compile(r"\b(\d+)\s+(?:\w+\s+){0,2}$")
 #: words every arm of every review shares, so a count standing next to one says nothing about
 #: WHICH group lost it. They are dropped from a group's vocabulary before the count is read.
 _GENERIC_GROUP_WORDS: frozenset[str] = frozenset({
@@ -1142,18 +1146,46 @@ def excluded_count(text: str, group_terms: Sequence[str]) -> tuple[int | None, s
     "recruited − excluded" must have parsed a count that belongs to the group it is offering it
     for. When no such pair sits beside the cue this returns `(None, "", "")` and the caller says
     nothing: a cue on its own is not evidence about this arm.
+
+    **The cue is read forwards first.** English writes the exclusion after the word that announces
+    it — "we excluded 4 younger participants" — while what sits BEFORE the cue is very often the
+    size being excluded FROM: "Of the 20 younger participants who were recruited, 4 were excluded"
+    put `20 younger` next to the cue and the first cut of this function read it as the exclusion
+    count. So the window from the cue onwards is scanned on its own, and the 60 characters before
+    it are a fallback consulted only when nothing followed the cue at all. The remaining ambiguity
+    — a recruited size read out of the fallback — is what `n_before_exclusions`' `0 < count <
+    printed` guard is for: a count that is not a strict part of the size it is taken from is not
+    an exclusion count, whatever it stands next to.
     """
     words = _group_words(group_terms)
     if not words:
         return None, "", ""
     for cue in _EXCLUSION_CUE.finditer(text):
-        left = max(0, cue.start() - EXCLUSION_COUNT_SPAN)
-        window = text[left:cue.end() + EXCLUSION_COUNT_SPAN]
-        for match in _COUNTED.finditer(window):
-            if match.group(2).casefold() not in words:
-                continue
-            return (int(match.group(1)), match.group(0).strip(),
-                    _sentence(text, cue.start(), left + match.end()))
+        before = max(0, cue.start() - EXCLUSION_COUNT_SPAN)
+        ahead, behind = (text[cue.start():cue.end() + EXCLUSION_COUNT_SPAN],
+                         text[before:cue.start()])
+        # 1. the ordinary shape, read forwards: "we excluded 4 younger participants"
+        for match in _COUNTED.finditer(ahead):
+            if match.group(2).casefold() in words:
+                return (int(match.group(1)), match.group(0).strip(),
+                        _sentence(text, cue.start(), cue.start() + match.end()))
+        # 2. the count that IS the cue's own subject: "…, 4 were excluded". It is taken only when
+        #    the same window names this arm, so a sentence about the other group's exclusions
+        #    cannot supply a number for this one.
+        into = _COUNT_INTO_CUE.search(behind)
+        if into is not None and any(word in behind.casefold() for word in words):
+            # the phrase is the bare count: the words between it and the cue are the sentence's
+            # own grammar ("4 were excluded"), and quoting them back after "it excluded" would
+            # read as nonsense. The sentence itself travels in the quote.
+            return (int(into.group(1)), into.group(1),
+                    _sentence(text, cue.start(), before + into.end()))
+        # 3. and last, an arm-labelled count behind the cue. It is where a RECRUITED size hides
+        #    ("Of the 20 younger participants…"), which is why it is the fallback and why the
+        #    caller still has to check that what comes back is a strict part of the printed size.
+        for match in _COUNTED.finditer(behind):
+            if match.group(2).casefold() in words:
+                return (int(match.group(1)), match.group(0).strip(),
+                        _sentence(text, cue.start(), before + match.end()))
     return None, "", ""
 
 
@@ -1187,13 +1219,32 @@ def n_before_exclusions(pages: Sequence[str], cand: Candidate,
                 text[size.end():size.end() + EXCLUSION_SPAN], group_terms)
             if count is None:
                 continue
+            # …and the count must be a strict PART of the size it is taken out of. "Of the 20
+            # younger participants who were recruited, 4 were excluded" stands the recruited size
+            # next to this arm's own word, so a fallback read behind the cue can come back with
+            # the size itself — and `recruited − excluded` would then offer the reviewer a group
+            # of nobody, which `overrides._validate` refuses ("a group of nobody is an exclusion,
+            # not a size"): a card option nobody can answer. The FINDING still stands, because it
+            # rests on the printed size and the exclusion sentence, not on the subtraction; what
+            # is dropped is the subtraction, so the card offers no `recruited_minus_excluded`.
+            if count is not None and not 0 < count < printed:
+                count = None
+            detail = {"recruited": printed, "excluded": count, "quote": quote}
+            if count is None:
+                return CheckFlag(
+                    code="n_before_exclusions", severity=severity_of("n_before_exclusions"),
+                    message=(f"n = {printed} is a group size this paper prints before its "
+                             f"exclusions, and how many of THIS group were left out cannot be "
+                             f"read from the sentence that reports them — so the analysed group "
+                             f"may be smaller than {printed} by an amount only a reader can say "
+                             f"— \"{quote}\""),
+                    candidate_ids=[cand.candidate_id], detail=detail)
             return CheckFlag(
                 code="n_before_exclusions", severity=severity_of("n_before_exclusions"),
                 message=(f"n = {printed} is a group size this paper prints before its exclusions: "
                          f"it then says it excluded {phrase}, so the analysed group may be "
                          f"{printed - count} rather than {printed} — \"{quote}\""),
-                candidate_ids=[cand.candidate_id],
-                detail={"recruited": printed, "excluded": count, "quote": quote})
+                candidate_ids=[cand.candidate_id], detail=detail)
     return None
 
 

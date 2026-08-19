@@ -1050,6 +1050,72 @@ def test_a_trial_level_exclusion_never_supplies_the_count():
     assert (count, phrase) == (4, "4 younger") and quote.startswith("We excluded 4 younger")
 
 
+#: the shape the first cut of `excluded_count` read backwards: the RECRUITED size stands next to
+#: the arm's own word and the exclusion count is the cue's own subject. Real English, and the one
+#: sentence in which "the first arm-labelled number near the cue" is exactly the wrong number.
+RECRUITED_THEN_EXCLUDED = (
+    "Twenty younger adults took part (n = 20).\n"
+    "Of the 20 younger participants who were recruited, 4 were excluded from the analyses.")
+
+
+def test_the_exclusion_count_is_read_after_the_cue_not_before_it():
+    """"Of the 20 younger participants who were recruited, 4 were excluded" — four, not twenty."""
+    from canopy.verify.checks import excluded_count, n_before_exclusions
+
+    count, phrase, quote = excluded_count(RECRUITED_THEN_EXCLUDED, ["younger adults", "younger"])
+    assert (count, phrase) == (4, "4"), "the recruited size is not the exclusion count"
+    assert "4 were excluded" in quote
+
+    flag = n_before_exclusions([RECRUITED_THEN_EXCLUDED], vachon(20), ["younger", "young"])
+    assert flag is not None and flag.detail["excluded"] == 4
+    assert flag.detail["recruited"] == 20
+    assert "may be 16 rather than 20" in flag.message
+
+
+def test_a_count_that_is_not_a_strict_part_of_the_printed_size_offers_no_subtraction():
+    """The guard behind the fallback: a "count" equal to the size it came out of would offer the
+    reviewer an analysed group of nobody — an option `overrides._validate` refuses. The finding
+    still stands (this n IS a size printed before an exclusion); only the subtraction is dropped,
+    so the card can offer no `recruited_minus_excluded`."""
+    from canopy.verify.checks import n_before_exclusions
+
+    whole_arm = ("Twenty younger adults took part (n = 20).\n"
+                 "The 20 younger participants were excluded from the transfer analysis.")
+    flag = n_before_exclusions([whole_arm], vachon(20), ["younger", "young"])
+    assert flag is not None and flag.code == "n_before_exclusions"
+    assert flag.detail["excluded"] is None and flag.detail["recruited"] == 20
+    # the message quotes the paper's sentence (so "20 younger" appears in it), but it makes no
+    # claim about how many were left out and never offers a subtraction
+    assert "cannot be read" in flag.message
+    assert "it excluded" not in flag.message and "may be 0" not in flag.message
+
+
+def test_each_arms_count_comes_from_the_clause_that_names_that_arm():
+    """Two exclusion sentences in one line: neither arm may take the other's number."""
+    from canopy.verify.checks import excluded_count
+
+    both = "In the younger group, 12 were excluded; in the older group, 9 were excluded."
+    assert excluded_count(both, ["younger"])[0] == 12
+    assert excluded_count(both, ["older"])[0] == 9
+
+
+def test_every_finding_the_sweep_produces_subtracts_to_a_real_group():
+    """Over both fixture papers: an `excluded` that is offered is a strict part of its size."""
+    from canopy.pipeline.run import _analysed_n_flags, _group_vocabulary
+    from tests.helpers import nine
+
+    protocol = nine.protocol()
+    for paper12 in ("b7523a41b03a", "d1f2946e7e81"):
+        pages, cands = nine.page_texts(paper12), nine.candidates(paper12)
+        for dataset in nine.study(paper12).datasets:
+            for sources in dataset.outcomes:
+                cell = [c for c in cands if c.dataset_id == dataset.dataset_id
+                        and c.outcome_key == sources.outcome_key]
+                for flag in _analysed_n_flags(pages, cell, _group_vocabulary(dataset, protocol)):
+                    excluded = flag.detail["excluded"]
+                    assert excluded is None or 0 < excluded < flag.detail["recruited"], flag.detail
+
+
 def test_the_finding_caps_the_cell_rather_than_contradicting_it():
     """An n that may be four people too large is a doubt about corroboration, not evidence that
     the number came from somewhere else — so it caps (D4-lite)."""
