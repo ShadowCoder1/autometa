@@ -28,7 +28,7 @@ from scipy import stats as sps
 
 from ..models import EffectSizeRecord, OutcomeDef, StatsSettings
 from ..stats.meta import MetaResult, prediction_interval
-from . import theme
+from . import labels, theme
 from .theme import (ACCENT, ACCENT_SOFT, AXIS, GRID, INK, INK_SECONDARY, MARK, MUTED,
                     estimator_label, figure_style, fmt, fmt_ci, is_overridden, route_glyph,
                     save_figure, study_label)
@@ -54,6 +54,9 @@ class ForestRow:
     glyph: str = ""
     overridden: bool = False
     hollow: bool = False
+    #: admitted by the best-guess line rather than by the primary analysis — drawn as a circle,
+    #: the same distinction `type.study` makes on the R forest
+    guessed: bool = False
 
 
 @dataclass
@@ -180,8 +183,8 @@ def forest_layout(rows: Sequence[EffectSizeRecord], pooled: MetaResult, settings
 CHAR_IN = 0.055             # inches per character at the row font size (DejaVu Sans 7.6pt)
 GAP_CH = 2.2                # blank characters between two columns
 BOLD_CH = 1.14              # a bold header character is wider than a plain cell character
-MAX_LABEL_CH = 17           # an author string longer than this is elided
-MAX_MOD_CH = 13             # …and so is a moderator value
+MAX_LABEL_CH = labels.MAX_LABEL_CH     # an author string longer than this is elided
+MAX_MOD_CH = labels.MAX_MOD_CH         # …and so is a moderator value
 
 
 @dataclass
@@ -192,11 +195,6 @@ class _Column:
     pad_ch: float = 0.0      # extra room a bold/larger row in this column needs
     width_ch: float = 0.0
     x: float = 0.0           # left edge, as a fraction of its axes
-
-
-def _elide(text: str, limit: int) -> str:
-    text = str(text)
-    return text if len(text) <= limit else text[: max(1, limit - 1)] + "\u2026"
 
 
 def _wrap_header(name: str, width_ch: float) -> str:
@@ -226,29 +224,47 @@ def _measure(columns: list[_Column]) -> float:
     return total
 
 
-def _left_columns(layout: ForestLayout) -> list[_Column]:
+def _left_labels(layout: ForestLayout, columns: labels.ForestColumns | None) -> list[str]:
+    """`[Author, Year, …moderators…, N (A/B)]` — the protocol's, when a caller passed them.
+
+    Without a protocol there are no group labels to take the N column's initials from and no
+    prettified moderator names to use, so the plot falls back to the row's own field names. Both
+    renderers read the SAME `ForestColumns` whenever one exists.
+    """
+    default = ["Author", "Year", *(str(m).replace("_", " ") for m in layout.moderators),
+               "N (A/B)"]
+    if columns is not None and columns.moderators == [str(m) for m in layout.moderators]:
+        return list(columns.leftlabs)
+    return default
+
+
+def _left_columns(layout: ForestLayout,
+                  spec: labels.ForestColumns | None = None) -> list[_Column]:
     rows = layout.all_rows
+    headings = _left_labels(layout, spec)
     columns = [
-        _Column("author", "Author",
-                [_elide(study_label(r.record) + (f" {theme.OVERRIDE_MARK}" if r.overridden else ""),
-                        MAX_LABEL_CH) for r in rows]),
-        _Column("year", "Year", [str(r.record.citation.year or "") for r in rows]),
+        _Column("author", headings[0],
+                [labels.elide(study_label(r.record)
+                              + (f" {theme.OVERRIDE_MARK}" if r.overridden else ""),
+                              MAX_LABEL_CH) for r in rows]),
+        _Column("year", headings[1], [str(r.record.citation.year or "") for r in rows]),
     ]
-    for name in layout.moderators:
-        cells = [_elide(str(r.record.moderators.get(name, "") or "\u2014"), MAX_MOD_CH)
+    for index, name in enumerate(layout.moderators):
+        cells = [labels.elide(str(r.record.moderators.get(name, "") or "\u2014"), MAX_MOD_CH)
                  for r in rows]
-        column = _Column(f"mod:{name}", name, cells)
+        heading = headings[2 + index]
+        column = _Column(f"mod:{name}", heading, cells)
         width = max((len(c) for c in cells), default=0)
-        column.header = _wrap_header(name, min(14, max(width, 10)))
+        column.header = _wrap_header(heading, min(14, max(width, 10)))
         columns.append(column)
-    columns.append(_Column("n", "N (A/B)",
+    columns.append(_Column("n", headings[-1],
                            [f"{r.record.n_a or '\u2014'}/{r.record.n_b or '\u2014'}" for r in rows]))
     columns.append(_Column("src", "Src", [r.glyph for r in rows]))
     return columns
 
 
-def _right_columns(layout: ForestLayout, outcome: OutcomeDef,
-                   settings: StatsSettings) -> list[_Column]:
+def _right_columns(layout: ForestLayout, outcome: OutcomeDef, settings: StatsSettings,
+                   spec: labels.ForestColumns | None = None) -> list[_Column]:
     """The numbers, in the order a meta-analysis reader expects: estimate, interval, weight.
 
     The estimate gets its own column headed by what it IS \u2014 `Cohen's d`, `Hedges' g` \u2014 rather
@@ -258,21 +274,24 @@ def _right_columns(layout: ForestLayout, outcome: OutcomeDef,
     reader can scan a column of effect sizes without parsing brackets out of it.
     """
     rows = layout.all_rows
-    estimate = _Column("effect", estimator_label(settings),
+    heads = list(spec.rightlabs) if spec is not None and len(spec.rightlabs) == 3 else [
+        estimator_label(settings), f"{settings.ci_level * 100:g}% CI", "Weight"]
+    estimate = _Column("effect", heads[0],
                        [fmt(r.es) if r.es is not None else "\u2014" for r in rows]
                        + [fmt(layout.pooled.estimate)],
                        pad_ch=2.5)        # the pooled row is set bold and one point larger
-    interval = _Column("ci", f"{settings.ci_level * 100:g}% CI",
+    interval = _Column("ci", heads[1],
                        [fmt_ci(r.ci_low, r.ci_high) if r.es is not None else "\u2014"
                         for r in rows]
                        + [fmt_ci(layout.pooled.ci_low, layout.pooled.ci_high)],
                        pad_ch=2.5)
-    weight = _Column("weight", "Weight",
+    weight = _Column("weight", heads[2],
                      [f"{r.weight_pct:.1f}%" for r in layout.rows] + ["100%"])
     return [estimate, interval, weight]
 
 
 def _draw_row(ax, row: ForestRow, xlim: tuple[float, float], max_weight: float) -> None:
+    """One study's interval and mark. A best-guess row is a CIRCLE, as it is on the R forest."""
     lo, hi = xlim
     if row.es is None:
         return
@@ -288,14 +307,16 @@ def _draw_row(ax, row: ForestRow, xlim: tuple[float, float], max_weight: float) 
                             xytext=(drawn, row.y),
                             arrowprops=dict(arrowstyle="-|>", color=MARK, lw=1.0,
                                             shrinkA=0, shrinkB=0), zorder=2)
+    marker = "o" if row.guessed else "s"
     if row.hollow:
-        ax.scatter([row.es], [row.y], s=MIN_SQUARE * 3, marker="s", facecolors="none",
+        ax.scatter([row.es], [row.y], s=MIN_SQUARE * 3, marker=marker, facecolors="none",
                    edgecolors=MARK, linewidths=1.0, zorder=3)
         return
     # affine in the weight, not proportional to it: the floor keeps a near-zero-weight study
     # visible, and the `Weight` column prints the exact percentage next to it
     area = MIN_SQUARE + (MAX_SQUARE - MIN_SQUARE) * (row.weight / max_weight if max_weight else 0)
-    ax.scatter([row.es], [row.y], s=area, marker="s", facecolors=MARK, edgecolors=MARK,
+    colour = MUTED if row.guessed else MARK
+    ax.scatter([row.es], [row.y], s=area, marker=marker, facecolors=colour, edgecolors=colour,
                linewidths=0.0, zorder=3)
 
 
@@ -316,7 +337,8 @@ def forest_plot(rows: Sequence[EffectSizeRecord], pooled: MetaResult, outcome: O
                 needs_human_rows: Sequence[EffectSizeRecord] = (),
                 pi: str | None = None, moderators: Sequence[str] | None = None,
                 title: str | None = None, formats: Sequence[str] = ("png", "svg", "pdf"),
-                subtitle: str = "") -> dict[str, Path]:
+                subtitle: str = "", columns: labels.ForestColumns | None = None,
+                best_guess_ids: Sequence[str] = ()) -> dict[str, Path]:
     """Draw the primary forest plot for one outcome; returns `{format: path}`.
 
     `rows` are the rows that were pooled (primary analysis); `needs_human_rows` are shown hollow,
@@ -324,12 +346,20 @@ def forest_plot(rows: Sequence[EffectSizeRecord], pooled: MetaResult, outcome: O
     outcome label all come from the protocol — nothing here knows what is being reviewed. A
     square's AREA is affine in its random-effects weight (see the module docstring); the exact
     weight is printed beside it.
+
+    `columns` (`report.labels.forest_columns`) is the SAME column spec the R renderer draws from,
+    so the two plots head their columns identically; without it the headings fall back to the
+    rows' own field names. `best_guess_ids` names the rows the second analysis line admitted:
+    they are drawn as circles, the distinction `type.study` makes on the R forest.
     """
     layout = forest_layout(rows, pooled, settings, needs_human_rows=needs_human_rows,
                            moderators=moderators, pi=pi)
     all_rows = layout.all_rows
-    left = _left_columns(layout)
-    right = _right_columns(layout, outcome, settings)
+    guessed = set(best_guess_ids)
+    for row in all_rows:
+        row.guessed = row.record.dataset_id in guessed
+    left = _left_columns(layout, columns)
+    right = _right_columns(layout, outcome, settings, columns)
     left_ch, right_ch = _measure(left), _measure(right)
     header_lines = max([1] + [c.header.count("\n") + 1 for c in (*left, *right)])
 

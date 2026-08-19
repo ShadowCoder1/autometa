@@ -239,6 +239,9 @@ def validate(
             console.print(f"[red]missing output:[/red] {missing}")
         for missing in report["missing_stages"]:
             console.print(f"[red]missing stage file:[/red] {missing}")
+        for failed in report.get("forest_crosscheck_failed", []):
+            console.print(f"[red]forest cross-check failed:[/red] {failed} \u2014 R meta and "
+                          f"canopy did not agree, so the plot is canopy's own")
     if not report["ok"]:
         raise typer.Exit(code=1)
 

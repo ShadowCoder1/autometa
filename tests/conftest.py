@@ -24,6 +24,9 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "replay: replays recorded LLM fixtures, and re-records them under CANOPY_LIVE=1 "
         "CANOPY_RECORD=1 (so it must see those env vars, unlike every other test)")
+    config.addinivalue_line(
+        "markers",
+        "slow: shells out to another runtime (R) and costs seconds, not milliseconds")
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:

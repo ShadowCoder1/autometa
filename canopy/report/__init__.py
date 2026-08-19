@@ -6,8 +6,10 @@ verified in `canopy.verify`; the report's whole job is to show those numbers tog
 conventions and the provenance that make them checkable.
 """
 from .forest import forest_layout, forest_plot
+from .forest_render import RenderInfo, render_forest
 from .html import (human_review_table, methods_paragraph, provenance_table,
                    write_html_report)
+from .labels import ForestColumns, forest_columns
 from .methods_fig import methods_figure, route_counts, route_examples, route_group
 from .naming import safe_name, url_path
 from .outputs import outcome_dir, write_outcome_outputs
@@ -17,7 +19,8 @@ from .tables import (EXCLUSION_REASONS, EXTRACTION_COLUMNS, SENSITIVITY_ANALYSES
                      leave_one_out_rows, leave_one_out_table, pool_rows, prisma_flow,
                      sensitivity_analyses, sensitivity_outputs, write_rows)
 
-__all__ = ["forest_plot", "forest_layout", "extraction_table", "EXTRACTION_COLUMNS",
+__all__ = ["forest_plot", "forest_layout", "render_forest", "RenderInfo", "forest_columns",
+           "ForestColumns", "extraction_table", "EXTRACTION_COLUMNS",
            "exclusions_table", "EXCLUSION_REASONS", "leave_one_out_table", "leave_one_out_rows",
            "sensitivity_analyses", "sensitivity_outputs", "SENSITIVITY_ANALYSES",
            "funnel_plot", "prisma_flow",

@@ -1,0 +1,72 @@
+{
+  "sm": "SMD",
+  "method_tau": "REML",
+  "method_random_ci": "classic",
+  "method_predict": "HTS",
+  "prediction": false,
+  "level": 0.95,
+  "print_tau2": false,
+  "digits": 1,
+  "fontfamily": "Helvetica",
+  "sortvar": "TE",
+  "xlim": [
+    -4.0,
+    4.0
+  ],
+  "weight_study": "random",
+  "label_left": "Reduced in Old",
+  "label_right": "Enhanced in Old",
+  "smlab": "Late adaptation",
+  "title": "Late adaptation",
+  "leftcols": [
+    "studlab",
+    "year",
+    "mod_task_type",
+    "mod_perturbation_size_deg",
+    "mod_n_targets",
+    "n_label"
+  ],
+  "leftlabs": [
+    "Author",
+    "Year",
+    "Task type",
+    "Perturbation size (deg)",
+    "N targets",
+    "N (O/Y)"
+  ],
+  "rightcols": [
+    "effect",
+    "ci",
+    "w.random"
+  ],
+  "rightlabs": [
+    "Cohen's d",
+    "95% CI",
+    "Weight"
+  ],
+  "plotwidth": "10.77cm",
+  "colgap_forest_left": "5mm",
+  "colgap_forest_right": "6mm",
+  "subgroup": null,
+  "subgroup_levels": null,
+  "type_study": [
+    "square",
+    "square"
+  ],
+  "col_square": [
+    "#52514e",
+    "#52514e"
+  ],
+  "col_circle": "#898781",
+  "text_addline1": "",
+  "text_addline2": "",
+  "formats": [
+    "png",
+    "svg",
+    "pdf"
+  ],
+  "width_in": 15.126,
+  "height_in": 2.15,
+  "pointsize": 10,
+  "res": 300
+}

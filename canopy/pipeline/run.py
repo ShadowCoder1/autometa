@@ -23,6 +23,7 @@ orientation, decided once per measure by two independent agents → confidence �
 """
 from __future__ import annotations
 
+import json
 import threading
 import time
 import traceback
@@ -1865,8 +1866,35 @@ def revalidate(run_dir: str | Path, protocol_path: str | Path | None = None) -> 
         }
     missing = [name for name, rel in manifest.outputs.items() if not (out / rel).exists()]
     protocol_changed = protocol.hash() != manifest.protocol_hash
+    crosscheck_failed = _forest_crosscheck_failures(out)
     return {"run_dir": str(out), "protocol_hash": protocol.hash(),
             "protocol_matches_manifest": not protocol_changed,
             "records": len(records), "outcomes": outcomes,
             "missing_outputs": sorted(missing), "missing_stages": stages_missing,
-            "ok": not missing and not stages_missing and not protocol_changed}
+            "forest_crosscheck_failed": crosscheck_failed,
+            "ok": (not missing and not stages_missing and not protocol_changed
+                   and not crosscheck_failed)}
+
+
+def _forest_crosscheck_failures(run_dir: Path) -> list[str]:
+    """Every forest whose R cross-check failed, as `<outcome>/<line>` (DECISION F).
+
+    A run whose picture and whose tables came out of two different pooled results is not a valid
+    run, however complete its file list is — so `canopy validate` fails on it. The check reads the
+    same `renderer` block the report printed under the figure, and a `pooled.json` that predates
+    the renderer (or names no renderer, because nothing was drawn) simply has nothing to fail.
+    """
+    failures: list[str] = []
+    for path in sorted((run_dir / "results").glob("*/pooled.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for name, line in (("renderer", "strict"), ("renderer_best_guess", "best guess")):
+            block = payload.get(name)
+            check = block.get("crosscheck") if isinstance(block, dict) else None
+            if not isinstance(check, dict) or check.get("ok") is not False:
+                continue
+            named = ", ".join(str(quantity) for quantity in (check.get("failed") or []))
+            failures.append(f"{path.parent.name}/{line}" + (f": {named}" if named else ""))
+    return failures

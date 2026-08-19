@@ -24,11 +24,12 @@ from ..models import EffectSizeRecord, Protocol, RunManifest
 from ..stats.meta import MetaResult, prediction_interval
 from . import theme
 from .conclusion import Conclusion, conclusion_from_payload, overall_conclusion, render_text
+from .forest_render import caption_line, methods_line
 from .naming import url_path
 from .theme import estimator_label, pi_label, variance_label
 
 __all__ = ["write_html_report", "methods_paragraph", "human_review_table",
-           "provenance_table", "REPORT_CSS"]
+           "provenance_table", "forest_caption", "REPORT_CSS"]
 
 REPORT_CSS = """
 :root { color-scheme: light dark;
@@ -73,6 +74,8 @@ pre { background: var(--panel); border: 1px solid var(--grid); border-radius: .5
   padding: .8rem; overflow-x: auto; color: var(--ink-2); white-space: pre-wrap; }
 .warn { color: var(--warn); }
 .conclusion { border-left: 2px solid var(--grid); padding-left: .8rem; }
+.callout { border-left: 3px solid #c0392b; background: rgba(192, 57, 43, .07); color: #c0392b;
+  padding: .6rem .8rem; border-radius: .3rem; font-size: .85rem; margin: .8rem 0; }
 """
 
 
@@ -233,6 +236,10 @@ def methods_paragraph(manifest: RunManifest, protocol: Protocol,
         f"`human_review_queue.csv`.",
         "",
     ]
+    # DECISION F: which renderer actually drew the figures, and the version of everything in it
+    drawn = methods_line(next(iter(_renderers(results).values()), None))
+    if drawn:
+        lines.extend([drawn, ""])
     for key, payload in results.items():
         pooled: MetaResult | None = payload.get("pooled")
         rows: Sequence[EffectSizeRecord] = payload.get("rows") or []
@@ -304,6 +311,67 @@ def _conclusions(results: Mapping[str, Mapping[str, Any]]) -> dict[str, Conclusi
     return out
 
 
+def _renderers(results: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Each outcome's `renderer` block (DECISION F), read out of its own `pooled.json`.
+
+    Same rule as the conclusion above: what the report says about a figure is what the file
+    beside the figure says, so a re-pool cannot leave the two disagreeing.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for key, payload in results.items():
+        path = (payload.get("outputs") or {}).get("pooled_json")
+        if path is None:
+            continue
+        try:
+            block = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):                      # a report never dies over one file
+            continue
+        for name, suffix in (("renderer", ""), ("renderer_best_guess", "_best_guess")):
+            if isinstance(block.get(name), dict):
+                out[f"{key}{suffix}"] = block[name]
+    return out
+
+
+def _crosscheck_failed(renderer: Mapping[str, Any] | None) -> bool:
+    check = (renderer or {}).get("crosscheck")
+    return isinstance(check, Mapping) and check.get("ok") is False
+
+
+#: what a reader has to know to read the plot, per renderer. `meta::forest.meta` draws only what
+#: was pooled and sizes its squares its own way; ours draws the held rows hollow beside them.
+_CAPTIONS = {
+    "R meta::forest.meta": (
+        "Squares are individual datasets, sized by their random-effects weight; the diamond is "
+        "the pooled estimate and the bar beneath it the prediction interval. Only the rows in "
+        "this analysis line are drawn \u2014 rows held for human review are listed below."),
+    "": ("Squares are individual datasets; a square's area grows with its random-effects weight "
+         "(from a floor, so a near-zero weight is still visible \u2014 the exact weight is "
+         "printed beside it). The diamond is the pooled estimate and the bar beneath it the "
+         "prediction interval. Hollow squares were held for human review and are not pooled."),
+}
+
+
+def forest_caption(renderer: Mapping[str, Any] | None) -> str:
+    """The sentences under a forest: how to read it, then who drew it and why (DECISION F)."""
+    name = str((renderer or {}).get("renderer") or "")
+    text = _CAPTIONS.get(name, _CAPTIONS[""])
+    drawn = caption_line(renderer) if renderer else ""
+    return f"{text} {drawn}".strip() if drawn else text
+
+
+def _renderer_callout(renderer: Mapping[str, Any] | None) -> str:
+    """The red box a reader must not be able to miss: R and canopy did not agree."""
+    if not _crosscheck_failed(renderer):
+        return ""
+    check = renderer["crosscheck"]
+    named = ", ".join(str(q) for q in (check.get("failed") or [])) or "the pooled result"
+    detail = "; ".join(str(w) for w in (check.get("warnings") or []))
+    return (f'<p class="callout">R <code>meta</code> and canopy disagreed on {_e(named)}, so '
+            f'this plot was NOT drawn by R: it is canopy\u2019s own, from the numbers in the '
+            f'tables below. <code>canopy validate</code> exits non-zero on this run. '
+            f'{_e(renderer.get("reason") or detail)}</p>')
+
+
 def _conclusion_markdown(protocol: Protocol, conclusions: Mapping[str, Conclusion]) -> str:
     """`conclusion.md`, beside `methods.md` — the same text, in the form a reader can paste."""
     lines = [f"## Conclusion — {protocol.title}", ""]
@@ -364,6 +432,7 @@ def write_html_report(run_dir: str | Path, manifest: RunManifest, protocol: Prot
     methods_path.write_text(methods, encoding="utf-8")
 
     conclusions = _conclusions(results)
+    renderers = _renderers(results)
     conclusion_path = directory / "conclusion.md"
     conclusion_path.write_text(_conclusion_markdown(protocol, conclusions), encoding="utf-8")
 
@@ -420,14 +489,12 @@ def write_html_report(run_dir: str | Path, manifest: RunManifest, protocol: Prot
             parts.append(f'<p class="conclusion">{_e(render_text(conclusion))}</p>')
         forest = outputs.get("forest_png")
         if forest is not None:
+            renderer = renderers.get(key)
+            parts.append(_renderer_callout(renderer))
             parts.append(
                 f'<figure><img src="{_link(forest, directory)}" '
                 f'alt="Forest plot for {_e(outcome.label if outcome else key)}">'
-                f"<figcaption>Squares are individual datasets; a square's area grows with "
-                f"its random-effects weight (from a floor, so a near-zero weight is still "
-                f"visible — the exact weight is printed beside it). The diamond is the pooled "
-                f"estimate and the bar beneath it the prediction interval. Hollow squares were "
-                f"held for human review and are not pooled.</figcaption></figure>")
+                f"<figcaption>{_e(forest_caption(renderer))}</figcaption></figure>")
         for name, caption in (("sensitivity_png",
                                "Each panel re-pools this outcome under one changed choice."),
                               ("funnel_png",

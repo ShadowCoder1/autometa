@@ -1,0 +1,3 @@
+dataset_id,studlab,year,TE,seTE,n_a,n_b,n_label,route,analysis_line,best_guess_rule,mod_task_type,mod_perturbation_size_deg,mod_n_targets
+b511dbb76fa6:d1,Bock,2005,-1.6587405191948008,0.4787472630672294,12,12,12/12,text_mean_sd,Confirmed,,visuomotor,+60°,eight possib…
+b7523a41b03a:d1,Vachon,2020,0.11174628535906206,0.3206248981749338,19,20,19/20,figure,Confirmed,,visuomotor,30,3

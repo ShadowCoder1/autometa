@@ -25,10 +25,9 @@ from typing import Any, Sequence
 from ..models import EffectSizeRecord, OutcomeDef, Protocol, StatsSettings, Verdict, Candidate
 from ..stats.meta import MetaResult, prediction_interval
 from .conclusion import conclusion_payload, outcome_conclusion
-from .forest import forest_plot
+from .forest_render import render_forest
 from .tables import (dump_json, extraction_table, funnel_plot, leave_one_out_rows,
                      leave_one_out_table, pool_rows, poolable_rows, sensitivity_outputs)
-from .theme import BEST_GUESS_CAVEAT
 
 __all__ = ["write_outcome_outputs", "outcome_dir"]
 
@@ -121,9 +120,13 @@ def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
     directory.mkdir(parents=True, exist_ok=True)
     out: dict[str, Path] = {}
 
+    renderer_info = None
     if pooled is not None and rows:
-        forest = forest_plot(rows, pooled, outcome, settings, directory / "forest",
-                             needs_human_rows=needs_human_rows, moderators=moderators)
+        forest, renderer_info = render_forest(rows, pooled, outcome, settings, protocol,
+                                              directory / "forest",
+                                              moderators=moderators,
+                                              needs_human_rows=needs_human_rows,
+                                              warnings=warnings)
         out.update({f"forest_{k}": v for k, v in forest.items()})
 
     # --- the second line (DECISION A): strict, plus the held rows a named rule admits
@@ -166,14 +169,16 @@ def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
 
     # a forest of a line that added nothing is the strict forest under another name, and one of a
     # single row is not a meta-analysis; either way it would only invite the wrong quotation
+    bg_renderer_info = None
     if bg_payload["n_added"] >= 1 and bg_payload["k"] >= 2 and bg_pooled is not None:
-        bg_forest = forest_plot(bg_rows, bg_pooled, outcome, settings,
-                                directory / "forest_best_guess",
-                                needs_human_rows=[r for r in needs_human_rows
-                                                  if not cells.get(
-                                                      (r.dataset_id, r.outcome_key),
-                                                      {}).get("in_best_guess")],
-                                moderators=moderators, subtitle=BEST_GUESS_CAVEAT)
+        bg_forest, bg_renderer_info = render_forest(
+            bg_rows, bg_pooled, outcome, settings, protocol,
+            directory / "forest_best_guess", line="best_guess", moderators=moderators,
+            best_guess_ids=[r.dataset_id for r in added], strict_pooled=pooled,
+            needs_human_rows=[r for r in needs_human_rows
+                              if not cells.get((r.dataset_id, r.outcome_key),
+                                               {}).get("in_best_guess")],
+            warnings=warnings)
         out.update({f"forest_best_guess_{k}": v for k, v in bg_forest.items()})
     # …and no second leave-one-out table unless the line is a different set of rows: the same
     # table under a second name is how two artefacts of one run start being read as two findings.
@@ -186,6 +191,12 @@ def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
         out.update({f"leave_one_out_best_guess_{k}": v for k, v in bg_loo_out.items()})
 
     payload = _pooled_payload(pooled, rows, needs_human_rows, outcome, settings)
+    # DECISION F: who drew each forest, on what, and whether R's pooled numbers and ours agreed.
+    # The report prints it under the figure, `methods.md` names the versions, and
+    # `canopy validate` exits non-zero when a cross-check failed.
+    payload["renderer"] = None if renderer_info is None else renderer_info.as_dict()
+    payload["renderer_best_guess"] = (None if bg_renderer_info is None
+                                      else bg_renderer_info.as_dict())
     payload["analysis_lines"] = ["strict", "best_guess"]
     payload["best_guess"] = bg_payload
     # DECISION B: the paragraph is computed once, here, beside the numbers it is about — the

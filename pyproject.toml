@@ -39,7 +39,7 @@ canopy = "canopy.cli:app"
 include = ["canopy*"]
 
 [tool.setuptools.package-data]
-canopy = ["profiles/*.yaml", "llm/prompts/*.md", "server/static/*"]
+canopy = ["profiles/*.yaml", "llm/prompts/*.md", "server/static/*", "report/*.R"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
