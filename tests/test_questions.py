@@ -11,7 +11,8 @@ from typing import Any
 
 import pytest
 
-from canopy.review.questions import (QUESTION_KINDS, answer_to_override, questions_for_run,
+from canopy.review.questions import (QUESTION_KINDS, answer_to_override,
+                                     answers_to_overrides, questions_for_run,
                                      write_questions)
 
 REPO = Path(__file__).resolve().parents[1]
@@ -168,7 +169,7 @@ def test_every_answer_to_every_real_question_is_accepted_and_changes_its_cell(tm
     baseline = _clone_run(tmp_path, "baseline")
     apply_overrides_and_repool(baseline)
     before = _cell_state(baseline)
-    questions = questions_for_run(baseline)
+    questions = questions_for_run(baseline, fold=False)
     assert len(questions) == 11, "the recorded run holds eleven cells"
 
     checked = 0
@@ -205,7 +206,7 @@ def test_the_question_is_chosen_by_what_is_holding_the_cell_not_by_a_fixed_list(
     """
     run = _clone_run(tmp_path)
     by_cell = {(q["dataset_id"], q["outcome_key"], q["group"]): q
-               for q in questions_for_run(run)}
+               for q in questions_for_run(run, fold=False)}
     for group in ("A", "B"):
         question = by_cell[("b511dbb76fa6:d1", "aftereffect", group)]
         assert question["kind"] == "orientation", question["kind"]
@@ -232,7 +233,7 @@ def test_an_orientation_answer_signs_bocks_aftereffect_and_does_not_wave_through
     from canopy.stats.effect_sizes import smd_from_means
 
     run = _clone_run(tmp_path)
-    question = next(q for q in questions_for_run(run)
+    question = next(q for q in questions_for_run(run, fold=False)
                     if q["dataset_id"] == "b511dbb76fa6:d1" and q["outcome_key"] == "aftereffect"
                     and q["group"] == "A")
     record = _validate(answer_to_override(question, {
@@ -280,14 +281,15 @@ def test_after_the_direction_is_answered_the_cell_asks_about_what_is_still_holdi
     from canopy.pipeline.overrides import append_override, apply_overrides_and_repool
 
     run = _clone_run(tmp_path)
-    before = questions_for_run(run)
+    before = questions_for_run(run, fold=False)
     assert sum(1 for q in before if not q["answered"]) == 11
     question = next(q for q in before if q["kind"] == "orientation" and q["group"] == "A")
     append_override(run, answer_to_override(question, {"option": "lower_is_more",
                                                        "note": "an error measure"}))
     apply_overrides_and_repool(run)
 
-    after = {(q["dataset_id"], q["outcome_key"], q["group"]): q for q in questions_for_run(run)}
+    after = {(q["dataset_id"], q["outcome_key"], q["group"]): q
+             for q in questions_for_run(run, fold=False)}
     assert ("b511dbb76fa6:d1", "aftereffect", "B") not in after, "group B is settled and pooled"
     still = after[("b511dbb76fa6:d1", "aftereffect", "A")]
     assert still["kind"] == "which_series", "the cell now asks about its remaining blocker"
@@ -449,7 +451,7 @@ def test_every_held_cell_asks_a_question_whose_answer_writes_the_field_its_reaso
     """
     run = _clone_run(tmp_path)
     queue = json.loads((run / "human_review_queue.json").read_text())
-    questions = questions_for_run(run)
+    questions = questions_for_run(run, fold=False)     # per CELL: the path the cards are built from
     assert len(questions) == len(queue), "one question per held cell — none dropped, none invented"
     by_cell = {(q["dataset_id"], q["outcome_key"], q["group"]): q for q in questions}
     for entry in queue:
@@ -497,8 +499,12 @@ def test_answering_every_question_the_run_asks_leaves_no_cell_held(tmp_path):
         rounds += 1
         for question in open_now:
             assert question["options"], f"#{question['number']} ({question['kind']}) asks nothing"
-            append_override(run, answer_to_override(
-                question, {"option": question["options"][0]["key"], "note": "answered in test"}))
+            # §C1: one answer, one override per cell the card names — appending only the first
+            # would leave a folded card's other group unanswered and the run would never converge.
+            for record in answers_to_overrides(
+                    question, {"option": question["options"][0]["key"],
+                               "note": "answered in test"}):
+                append_override(run, record)
         apply_overrides_and_repool(run)
     assert 1 <= rounds <= 3, f"the run needed {rounds} rounds of answering"
     rows = json.loads((run / "results" / "extraction_table_all.json").read_text())
@@ -792,7 +798,8 @@ def test_a_map_answer_does_not_tick_off_the_questions_of_a_cell_that_was_read(tm
     inclusion = next(q for q in questions_for_run(run) if q["kind"] == "include_dataset")
     held = (f"{BOCK}:d2", "late_adaptation", "B")
     append_override(run, answer_to_override(inclusion, {"option": "include", "note": "keep it"}))
-    after = {(q["dataset_id"], q["outcome_key"], q["group"]): q for q in questions_for_run(run)}
+    after = {(q["dataset_id"], q["outcome_key"], q["group"]): q
+             for q in questions_for_run(run, fold=False)}
     assert after[held]["answered"] is False and after[held]["kind"] == "error_bar_type"
     assert next(q for q in questions_for_run(run)
                 if q["kind"] == "include_dataset")["answered"] is True
@@ -865,14 +872,23 @@ def _rows(run: Path) -> dict[tuple[str, str], dict]:
 
 
 def _ask(run: Path, dataset_id: str, outcome_key: str, group: str | None) -> dict:
-    return next(q for q in questions_for_run(run) if q["dataset_id"] == dataset_id
+    """One CELL's own question — the unfolded path (§C1).
+
+    The page folds these into cards (a dataset's pair, a measure's direction), and a card has no
+    group of its own. Every test that reaches for a cell by group is about the question the cell
+    asks, which is what `fold=False` returns and what every card is built out of.
+    """
+    return next(q for q in questions_for_run(run, fold=False) if q["dataset_id"] == dataset_id
                 and q["outcome_key"] == outcome_key and q["group"] == group)
 
 
 def _answer(run: Path, question: dict, option: str, note: str = "answered in test") -> None:
     from canopy.pipeline.overrides import append_override
 
-    append_override(run, answer_to_override(question, {"option": option, "note": note}))
+    # one answer, one override per cell it names (§C1): a folded card writes one record per group,
+    # and appending only the first would leave the other group unanswered for ever.
+    for record in answers_to_overrides(question, {"option": option, "note": note}):
+        append_override(run, record)
 
 
 @pytest.mark.skipif(not _HAS_RERUN, reason="runs/rerun-fixed is not on this machine")
@@ -1287,6 +1303,18 @@ def _refute(run: Path, paper: str, dataset_id: str, outcome_key: str) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _excludes(question: dict, option: dict) -> bool:
+    """Does picking this option take the cell out of the analysis? Asked of the translator rather
+    than of the option's name, because §C1's cards spell the exclusion differently (`exclude`,
+    `not_reported`, `not_usable`) and all three mean the same thing here."""
+    try:
+        return any(r.get("kind") == "exclude_dataset"
+                   for r in answers_to_overrides(question, {"option": option["key"],
+                                                            "note": "answered in test"}))
+    except Exception:
+        return False
+
+
 def _answer_everything(run: Path, *, prefer_last: bool = False, rounds: int = 6) -> int:
     """Answer every open question until none is open. `prefer_last` never picks the head option,
     which is where an overrule lives — so it answers everything a *number* can answer."""
@@ -1300,7 +1328,7 @@ def _answer_everything(run: Path, *, prefer_last: bool = False, rounds: int = 6)
         done += 1
         for question in open_now:
             option = question["options"][-1 if prefer_last else 0]
-            if prefer_last and option.get("key") == "not_reported":
+            if prefer_last and _excludes(question, option):
                 option = question["options"][0]           # excluding the cell is not "a number"
             _answer(run, question, option["key"])
         _repool(run)

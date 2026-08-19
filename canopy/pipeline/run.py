@@ -71,7 +71,8 @@ from ..verify.panels import apply_panel_check
 from ..verify.vote import (LOCATOR_CONFLICT, LOCATOR_CONFLICT_NOTE, VoteResult,
                            model_family, vote_groups)
 from .aggregate import AGGREGATED_FLAG, Aggregation, aggregate_one_row_per_paper
-from .overrides import (OVERRIDES_FILE, apply_overrides_and_repool, map_answers, read_overrides)
+from .overrides import (OVERRIDES_FILE, apply_overrides_and_repool, eligibility_answers,
+                        map_answers, read_overrides)
 from .resolve import resolve_effect_with_fallback
 from .rows import (DISPERSION_APPROXIMATED, approximation_flags, cell_candidates, prepare_rows,
                    reported_values, statistic_values, vote_candidates)
@@ -204,6 +205,63 @@ def _map_answers(ctx: "RunContext", paper: PaperRecord) -> list[dict[str, Any]]:
     return cached
 
 
+def _answered_eligibility(ctx: "RunContext", paper: PaperRecord) -> bool | None:
+    """What a reviewer has decided about whether this PAPER is in the review (§C3), or `None`.
+
+    The mapper's verdict is a model's reading of the protocol's criteria, and until §C3 it was
+    final: a paper it called ineligible left the run with nobody having been asked. The card asks,
+    and this is where the answer is acted on — before the exclusion, so a paper a reviewer put back
+    is mapped and extracted like any other. The freshest answer wins, because a reviewer who
+    changes their mind changes the review and the log still holds both.
+    """
+    answers = eligibility_answers(ctx.out_dir, paper.sha256)
+    return bool(answers[-1]["eligible"]) if answers else None
+
+
+def _eligibility_seqs(ctx: "RunContext", paper: PaperRecord, extracted: Sequence[str]) -> list[int]:
+    """The `seq` of an inclusion this stage has now acted on — nothing until something was read.
+
+    Same contract as `_consumed_seqs`: an answer is consumed when the reading it asked for has
+    been bought, not when the stage that could buy it ran. A run that dies on its budget before
+    reaching the paper a reviewer just included has not consumed that answer.
+    """
+    if not extracted:
+        return []
+    return sorted({int(answer["seq"])
+                   for answer in eligibility_answers(ctx.out_dir, paper.sha256)
+                   if isinstance(answer.get("seq"), int) and answer.get("eligible")})
+
+
+#: §C3: the map stage's own record of the inclusions it has already bought a fresh map for.
+#: Deliberately NOT `consumed_override_seqs`, which means "a reading was bought for this answer"
+#: and is what the questions page reads to stop calling a decision pending — a map is not a
+#: reading, and claiming one would tick off a card nothing had extracted for.
+REMAPPED_FOR = "remapped_for_override_seqs"
+
+
+def _needs_a_fresh_map(ctx: "RunContext", paper: PaperRecord) -> list[int]:
+    """The inclusion(s) this paper's cached map cannot be acted on without re-mapping (§C3).
+
+    A reviewer who includes a paper the mapper left with NO dataset is asking for a map: there is
+    nothing on the cached one to extract, and the ordinary resume would exclude it again for the
+    same reason. One map per answer, recorded in the stage file, so a paper nothing can be mapped
+    in does not re-buy a map on every resume. A paper whose cached map HAS datasets is extracted
+    off that map and buys nothing at all.
+    """
+    if not ctx.resume or not stage_done(ctx.out_dir, paper.sha256, "map"):
+        return []
+    if _answered_eligibility(ctx, paper) is not True:
+        return []
+    payload = read_stage(ctx.out_dir, paper.sha256, "map") or {}
+    if (payload.get("study") or {}).get("datasets"):
+        return []
+    bought = {int(seq) for seq in payload.get(REMAPPED_FOR) or [] if isinstance(seq, int)}
+    return sorted({int(answer["seq"])
+                   for answer in eligibility_answers(ctx.out_dir, paper.sha256)
+                   if answer.get("eligible") and isinstance(answer.get("seq"), int)
+                   and answer["seq"] not in bought})
+
+
 #: map answers that can only be acted on by BUYING a reading. "Exclude it" needs no model call and
 #: is applied by `overrides.apply_overrides_and_repool` at re-pool time; these two are decisions
 #: about what to EXTRACT, so they stay pending until an extract stage has read the cells they
@@ -254,6 +312,10 @@ def _consumed_seqs(ctx: "RunContext", paper: PaperRecord, study: StudyMap, keys:
         cells = _answer_cells(answer, study, keys, blocked_cells)
         if isinstance(seq, int) and cells and done.issuperset(cells):
             seqs.add(seq)
+    # …and §C3's inclusion, whose cells are every cell of the paper: it is acted on the moment
+    # this paper has been read at all, because being read IS what it asked for. Without this the
+    # card said "not applied yet" for ever on a paper the resume had extracted.
+    seqs.update(_eligibility_seqs(ctx, paper, extracted))
     return sorted(seqs)
 
 
@@ -360,11 +422,14 @@ def _ingest(ctx: RunContext, group: PaperGroup, status: PaperStatus) -> PaperRec
 
 
 def _map(ctx: RunContext, paper: PaperRecord, group: PaperGroup,
-         status: PaperStatus) -> tuple[StudyMap, str]:
+         status: PaperStatus, *, remap_for: Sequence[int] = ()) -> tuple[StudyMap, str]:
+    bought: set[int] = set()
     if ctx.resume and stage_done(ctx.out_dir, paper.sha256, "map"):
         payload = read_stage(ctx.out_dir, paper.sha256, "map")
-        status.stages["map"] = "skipped"
-        return StudyMap.model_validate(payload["study"]), str(payload.get("pdf_file_id") or "")
+        bought = {int(seq) for seq in payload.get(REMAPPED_FOR) or [] if isinstance(seq, int)}
+        if not remap_for:
+            status.stages["map"] = "skipped"
+            return StudyMap.model_validate(payload["study"]), str(payload.get("pdf_file_id") or "")
     # amendment B: the paper is uploaded once and the mapper's call warms the prompt cache before
     # any fan-out, so the extractors read a cached document rather than re-sending the PDF.
     file_id = ""
@@ -387,7 +452,12 @@ def _map(ctx: RunContext, paper: PaperRecord, group: PaperGroup,
                  # would tell a reviewer their decision had been applied while nothing had been
                  # extracted for it — the same false statement, one stage earlier, that H2 is
                  # about. The key is written empty rather than omitted so the record says which.
-                 "consumed_override_seqs": []})
+                 "consumed_override_seqs": [],
+                 # …and §C3's own key, which is NOT that: it records the inclusions this stage has
+                 # already bought a fresh map for, so a paper nothing can be mapped in does not
+                 # re-buy one on every resume. A map is not a reading, so it does not retire the
+                 # answer — the extract stage does that.
+                 REMAPPED_FOR: sorted({*bought, *(int(seq) for seq in remap_for)})})
     status.stages["map"] = "done"
     return study, file_id
 
@@ -1340,7 +1410,8 @@ def _run_paper(ctx: RunContext, group: PaperGroup) -> PaperResult:
 
         ctx.stop_if_cancelled()                            # …and between every two stages
         emit(ctx.progress, "map", label, "started", cost_so_far=ctx.client.total_cost())
-        study, file_id = _map(paper_ctx, paper, group, status)
+        study, file_id = _map(paper_ctx, paper, group, status,
+                              remap_for=_needs_a_fresh_map(paper_ctx, paper))
         result.study = study
         status.status = "mapped"
         status.eligible = study.eligible
@@ -1350,7 +1421,11 @@ def _run_paper(ctx: RunContext, group: PaperGroup) -> PaperResult:
         # was made. An objection that reaches no output is the same as no objection at all.
         for note in study.needs_human:
             status.warnings.append(f"map: {note}")
-        if study.eligible is False:
+        # §C3: the reviewer's answer to the `include_paper` card, before the mapper's verdict is
+        # acted on. `True` skips the exclusion and the paper is read like any other; `False` is a
+        # person agreeing with the mapper, which changes nothing here and is recorded in the log.
+        included = _answered_eligibility(paper_ctx, paper)
+        if study.eligible is False and included is not True:
             status.status = "excluded"
             result.exclusions.append({
                 "paper_id": group.sha256, "filename": status.filename, "stage": "map",
@@ -1359,6 +1434,11 @@ def _run_paper(ctx: RunContext, group: PaperGroup) -> PaperResult:
             emit(ctx.progress, "map", label, "excluded",
                  cost_so_far=ctx.client.total_cost(), message=study.exclusion_reason)
             return result
+        if study.eligible is False and included is True:
+            status.eligible = True
+            status.warnings.append(
+                "the mapper called this paper ineligible and a reviewer included it: "
+                f"{study.exclusion_reason}")
         if not study.datasets:
             # Eligible and empty. Without this the paper leaves the run without appearing
             # anywhere at all — no row in the forest plot, none in the review queue, none in the

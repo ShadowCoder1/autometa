@@ -124,3 +124,39 @@ def page_texts(paper12: str) -> list[str]:
     record = _payload(NINE / "papers" / paper12 / "ingest" / "paper.json")
     base = NINE / "papers" / paper12 / "ingest"
     return [(base / page["text_file"]).read_text(encoding="utf-8") for page in record["pages"]]
+
+
+# ------------------------------------------------------------- injecting what the fixture predates
+# The fixture is the run as it stood before Tasks 2–5: its verdicts carry no `n_before_exclusions`
+# and its records no `precedence_override`, because neither check nor the resolver's fallback
+# existed when it was written. Re-recording it to suit a test is exactly what this module refuses
+# (a fixture that agrees with every change is not evidence), so a test that needs one of those
+# findings puts it on a COPY — the shape the producing code writes, on the cell the run really has.
+def with_flags(tmp_run: Path, dataset_id: str, outcome_key: str, group: str,
+               codes: list[str], *, detail: dict[str, Any] | None = None) -> Path:
+    """Append `CheckFlag`-shaped entries to one verdict of the copied run's `verify.json`."""
+    from canopy.verify.checks import severity_of
+
+    path = Path(tmp_run) / "papers" / dataset_id.split(":")[0] / "verify.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for verdict in payload.get("verdicts") or []:
+        if (verdict.get("dataset_id") == dataset_id and verdict.get("outcome_key") == outcome_key
+                and verdict.get("group") == group):
+            verdict["flags"] = [*(verdict.get("flags") or []),
+                                *({"code": code, "severity": severity_of(code),
+                                   "message": f"{code} on {dataset_id}/{outcome_key} {group}",
+                                   "candidate_ids": [], "detail": dict(detail or {})}
+                                  for code in codes)]
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def with_record(tmp_run: Path, dataset_id: str, outcome_key: str, **fields: Any) -> Path:
+    """Patch one resolved record of the copied run's `resolve.json` with the given fields."""
+    path = Path(tmp_run) / "papers" / dataset_id.split(":")[0] / "resolve.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for record in payload.get("records") or []:
+        if record.get("dataset_id") == dataset_id and record.get("outcome_key") == outcome_key:
+            record.update(fields)
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return path

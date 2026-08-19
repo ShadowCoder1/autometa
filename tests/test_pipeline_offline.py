@@ -566,6 +566,108 @@ def test_an_ineligible_paper_is_excluded_with_its_reason(tmp_path, papers_dir, f
     assert any(r["reason"] == "not_eligible" for r in rows)
 
 
+def test_resume_maps_a_paper_the_reviewer_included(tmp_path, papers_dir, fake_specs):
+    """§C3, end to end: the mapper's "not eligible" is a question, and answering it is acted on.
+
+    A paper the mapper rejected left the review with a model's reading of the criteria and nobody's
+    decision — there was no override kind that could put it back and no branch in the run that
+    would have read one. Now the `include_paper` card writes an `eligibility` answer, `--resume`
+    reads it before the exclusion, and the paper is extracted like any other. `consumed_override_seqs`
+    is how the page learns the decision has actually happened.
+    """
+    from canopy.pipeline.overrides import append_override
+    from canopy.pipeline.run import run_pipeline
+    from canopy.pipeline.state import sha12
+
+    router = fake_router(fake_specs)
+
+    def ineligible(request: LLMRequest) -> Any:
+        payload = router(request)
+        if isinstance(payload, dict) and "eligible" in payload:
+            payload = {**payload, "eligible": False, "exclusion_reason": "single age group",
+                       "eligibility_rationale": "only younger adults took part"}
+        return payload
+
+    out = tmp_path / "run"
+    first = run_pipeline(papers_dir, PROTOCOL, out,
+                         client=LLMClient(provider=FakeProvider([ineligible]), allow_live=True,
+                                          cache_dir=None), concurrency=1)
+    paper_id = first.papers[0].paper_id
+    assert first.papers[0].status == "excluded"
+    assert any(row["reason"] == "not_eligible" and row["paper_id"] == paper_id
+               for row in json.loads((out / "exclusions.json").read_text()))
+
+    record = append_override(out, {
+        "kind": "eligibility", "paper_id": paper_id, "eligible": True,
+        "rule": "criterion 2: older vs younger adults",
+        "quote": "two age groups performed the rotation",
+        "justification": "answered the include_paper card: the mapper misread criterion 2"})
+
+    resumed = run_pipeline(papers_dir, PROTOCOL, out,
+                           client=LLMClient(provider=FakeProvider([ineligible]), allow_live=True,
+                                            cache_dir=None), concurrency=1, resume=True)
+    assert resumed.papers[0].status != "excluded", resumed.papers[0].error
+    assert resumed.papers[0].stages["extract"] in ("done", "skipped")
+    # …and only for THIS paper: the answer named one paper, and every other one the mapper
+    # rejected is still rejected — an inclusion is not a licence over the whole run
+    rows = json.loads((out / "exclusions.json").read_text())
+    assert not any(row["reason"] == "not_eligible" and row["paper_id"] == paper_id
+                   for row in rows)
+    assert any(row["reason"] == "not_eligible" for row in rows) or len(resumed.papers) == 1
+    extract = json.loads((out / "papers" / sha12(paper_id) / "extract.json").read_text())
+    assert record["seq"] in (extract.get("consumed_override_seqs") or [])
+
+
+def test_resume_buys_a_map_for_an_included_paper_whose_cached_map_is_empty(tmp_path, papers_dir,
+                                                                           fake_specs):
+    """§C3's other half: the commonest shape of "not eligible" is a map with no datasets at all.
+
+    Extraction on the cached map is not an option there — there is nothing on it — so the resume
+    buys a map, once per answer. `remapped_for_override_seqs` in `map.json` is what makes it once:
+    a paper nothing can be mapped in must not re-buy a map on every resume for ever.
+    """
+    from canopy.pipeline.overrides import append_override
+    from canopy.pipeline.run import REMAPPED_FOR, run_pipeline
+    from canopy.pipeline.state import sha12
+
+    router = fake_router(fake_specs)
+
+    def empty(request: LLMRequest) -> Any:
+        payload = router(request)
+        if isinstance(payload, dict) and "eligible" in payload:
+            payload = {**payload, "eligible": False, "datasets": [],
+                       "exclusion_reason": "single age group",
+                       "eligibility_rationale": "only younger adults took part"}
+        return payload
+
+    out = tmp_path / "run"
+    first = run_pipeline(papers_dir, PROTOCOL, out,
+                         client=LLMClient(provider=FakeProvider([empty]), allow_live=True,
+                                          cache_dir=None), concurrency=1)
+    paper_id = first.papers[0].paper_id
+    map_file = out / "papers" / sha12(paper_id) / "map.json"
+    assert not json.loads(map_file.read_text())["study"]["datasets"]
+
+    record = append_override(out, {
+        "kind": "eligibility", "paper_id": paper_id, "eligible": True,
+        "justification": "answered the include_paper card: map it properly"})
+    resumed = run_pipeline(papers_dir, PROTOCOL, out,
+                           client=LLMClient(provider=FakeProvider([fake_router(fake_specs)]),
+                                            allow_live=True, cache_dir=None),
+                           concurrency=1, resume=True)
+    assert resumed.papers[0].stages["map"] == "done", "the resume bought a fresh map"
+    payload = json.loads(map_file.read_text())
+    assert payload["study"]["datasets"], "and this one has something to extract"
+    assert record["seq"] in payload[REMAPPED_FOR]
+
+    # …and the next resume does not buy another one: the answer has had its map
+    third_client = LLMClient(provider=FakeProvider([fake_router(fake_specs)]), allow_live=True,
+                             cache_dir=None)
+    third = run_pipeline(papers_dir, PROTOCOL, out, client=third_client, concurrency=1,
+                         resume=True)
+    assert third.papers[0].stages["map"] == "skipped"
+
+
 def test_a_mapper_objection_reaches_the_run_instead_of_dying_where_it_was_made(
         tmp_path, papers_dir, fake_specs):
     """`StudyMap.needs_human` was written at `mapper.py` and read by nothing but `app.js`.

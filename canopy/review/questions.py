@@ -7,11 +7,20 @@ list; they want to be shown the picture and asked the one thing the tool could n
 answers it is choosing between, and the override its answer becomes — so answering it is a
 recorded decision, not a note in the margin.
 
+One decision, one card (DECISION §C1). The questions are built per CELL — that is where the
+evidence is — and then folded into the decision a person actually takes: both groups of a dataset
+are read off one picture, the direction of a measure is settled once for the paper, a whole paper's
+eligibility is one answer. A card keeps its members, its slots and their options, so a fold can
+never hide a hold; `questions_for_run(..., fold=False)` is the unfolded path underneath it.
+
 Nothing here calls a model. It reads the run's own stage files and writes `questions.json` and
-`questions.md` beside them; the server serves the same list and accepts answers.
+`questions.md` beside them; the server serves the same list and accepts answers. What a card says
+an answer WOULD do — the effect size a combination implies, whether it moves the pooled estimate —
+is produced by the run's own row builder over copied verdicts, never by arithmetic invented here.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -21,10 +30,10 @@ from typing import Any, Collection, Iterable, Mapping, Sequence
 
 from ..pipeline.overrides import (MAP_KINDS, ROW_REFUSALS, codes_cleared_by_value, consumed_seqs)
 from ..pipeline.rows import converted_route
-from ..pipeline.state import paper_dir, read_json
+from ..pipeline.state import paper_dir, read_json, sha12
 
 __all__ = ["Question", "questions_for_run", "write_questions", "answer_to_override",
-           "QUESTION_KINDS"]
+           "answers_to_overrides", "QUESTION_KINDS", "PAIRABLE", "fingerprint"]
 
 #: what a question is about; the UI groups and phrases by kind
 QUESTION_KINDS: tuple[str, ...] = (
@@ -48,7 +57,45 @@ QUESTION_KINDS: tuple[str, ...] = (
     # than hold a value, so they never appear in the review queue (C6, C7)
     "include_dataset",    # only one mapping agent proposed this dataset — is it in the review?
     "which_measure",      # one outcome, two measures, and the window fits both
+    # ---- §C1: the CARDS. A card is one decision, and the decision is not always a cell: a
+    # dataset's two groups are read off one picture, a direction belongs to a measure, an
+    # eligibility to a paper, an analysed n to two arms. The per-cell kinds above are still what
+    # the page is built from — `_consolidate` folds them, and every card keeps its members.
+    "pair",               # both groups of one dataset/outcome, decided together
+    "precedence_override",  # D1: this row was built from a candidate pair, not the printed value
+    "analysed_n",         # D4-lite: the n the row was divided by is a recruited count
+    "include_paper",      # C3: a paper the MAPPER excluded — does this review include it?
 )
+
+#: the per-cell kinds a dataset's two groups may be decided together in (§C1). Every one of them
+#: is answered by naming a NUMBER (or by confirming the one in hand), which is what makes a
+#: combination of the two an answerable thing. `verifier_refuted` is deliberately absent: its
+#: contract has no per-slot objection option, so folding it would hide a hold (ruling e).
+PAIRABLE: tuple[str, ...] = ("which_value", "which_axis", "confirm_value", "which_series",
+                             "error_bar_type")
+
+#: how many combinations a pair card may offer before it stops being one screen a person reads
+_MAX_COMBINATIONS = 9
+
+#: §C4's low-impact band: every option moves the ROW's d by less than this…
+LOW_IMPACT_D = 0.10
+#: …and the POOLED estimate by less than this. Both, because either alone is half the question:
+#: a row whose d barely moves can still be the row that decides a k = 2 pool, and a big swing on
+#: a row with almost no weight is not a reason to put a reviewer's time there.
+LOW_IMPACT_POOLED = 0.05
+
+#: D1's own flag, `pipeline.resolve.PRECEDENCE_OVERRIDE`: this row was built from a candidate
+#: pair because the value the precedence list preferred converts to nothing. It is a RECORD flag,
+#: never a `CheckFlag` code, so it reaches this module through the row and not through a cell.
+PRECEDENCE_OVERRIDE_FLAG = "precedence_override"
+#: the code `verify.checks.n_before_exclusions` raises on a candidate whose n is a recruited count
+N_BEFORE_EXCLUSIONS = "n_before_exclusions"
+
+#: the exclusion reasons `pipeline.run` writes when the MAPPER — not a person, and not the
+#: resolver — is why a paper contributes nothing. Those are the two decisions §C3 turns back into
+#: a question; every other exclusion in the table was made by someone or something a card cannot
+#: overrule.
+MAPPER_EXCLUSIONS: tuple[str, ...] = ("not_eligible", "no_usable_data:no_datasets_mapped")
 
 #: flag codes → the question they raise. NOT "first match wins by position": `_kind` prefers the
 #: code that is actually holding the cell (an error, a contradiction or a cap) over one that only
@@ -180,8 +227,9 @@ def _freshest_queue(run: Path, manifest: Mapping[str, Any]) -> list[dict[str, An
 
 # ----------------------------------------------------------------------------- building
 def questions_for_run(run_dir: str | Path, *,
-                      queue: Sequence[Mapping[str, Any]] | None = None) -> list[Question]:
-    """Every held cell of a finished run, as questions, worst first (biggest |Δ pooled| on top).
+                      queue: Sequence[Mapping[str, Any]] | None = None,
+                      fold: bool = True) -> list[Question]:
+    """Every open decision of a finished run, as cards, worst first (biggest |Δ pooled| on top).
 
     `queue` is the review queue to build from. The pipeline passes the one it has just built:
     while a run's outputs are being written, `manifest.json` on disk is still the PREVIOUS
@@ -189,6 +237,12 @@ def questions_for_run(run_dir: str | Path, *,
     of the run before it (three Bock questions for a nine-cell queue). Without `queue`, the
     freshest record on disk is used: the queue file when it is at least as new as the manifest,
     else the manifest's copy.
+
+    `fold` is §C1. A reviewer reads a figure once and settles the row; a direction is decided once
+    per measure. So the per-cell questions below are what the page is BUILT from and `_consolidate`
+    is what it SHOWS — one card per decision, each keeping its members, its slots and their
+    options. `fold=False` is the unfolded path: the cells themselves, which is what a test about a
+    cell's own question, and anything that indexes by group, is actually about.
     """
     run = Path(run_dir)
     manifest = _json_if_present(run / "manifest.json") or {}
@@ -247,12 +301,12 @@ def questions_for_run(run_dir: str | Path, *,
                              rows.get((dataset_id, outcome_key)) or {}))
     out.extend(_excluded_questions(run, overrides, out))
     out.extend(_map_questions(run, overrides, pending, consumed))
-    out.sort(key=lambda q: (q.get("answered", False),
-                            -(q.get("impact") if isinstance(q.get("impact"), (int, float))
-                              else -1.0)))
-    for i, q in enumerate(out, 1):
+    cards = _consolidate(out, run, overrides, pending, consumed) if fold else \
+        [_as_cell_card(q, run, overrides) for q in out]
+    cards.sort(key=_rank)
+    for i, q in enumerate(cards, 1):
         q["number"] = i
-    return out
+    return cards
 
 
 def _answered_orientation(overrides: Sequence[Mapping[str, Any]], entry: Mapping[str, Any],
@@ -987,7 +1041,14 @@ def fingerprint(option: Mapping[str, Any]) -> str:
     payload = json.dumps({key: option.get(key) for key in
                           ("key", "label", "mean", "dispersion_value", "dispersion_type", "n",
                            "analysis_metric", "location", "decision", "rule", "higher_is_better",
-                           "clears", "overrules")},
+                           "clears", "overrules",
+                           # §C1: a FOLDED option's key is positional twice over (`a{i}|b{j}`),
+                           # so the numbers each slot contributes are part of what the option
+                           # means. Without them the same key under the same card id could denote
+                           # a different pair of numbers after any answer, and the server's echo
+                           # check — the whole point of this hash — would wave the stale one
+                           # through. `n_a`/`n_b` do the same for an analysed-n card.
+                           "slots", "n_a", "n_b")},
                          sort_keys=True, default=str)
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
 
@@ -1461,11 +1522,19 @@ def _answer_kind(kind: str) -> str:
             "needs_group_values": "value",
             "converted_statistic": "mark_reviewed",
             "reader_contradicts_values": "value",
-            "group_mapping": "mark_reviewed", "no_value": "re_extract"}.get(kind, "mark_reviewed")
+            "group_mapping": "mark_reviewed", "no_value": "re_extract",
+            # §C1's cards. `pair` is decided by its slots, so what it writes is what they write
+            # (`_pair_card` narrows it when they agree); the other three write one kind each.
+            "pair": "value", "precedence_override": "value",
+            "analysed_n": "group_n", "include_paper": "eligibility",
+            }.get(kind, "mark_reviewed")
 
 
-def answer_to_override(question: Mapping[str, Any], answer: Mapping[str, Any]) -> dict[str, Any]:
-    """Translate an answer into the override payload `append_override` validates.
+def _single_override(question: Mapping[str, Any], answer: Mapping[str, Any]) -> dict[str, Any]:
+    """Translate an answer to ONE cell's question into the payload `append_override` validates.
+
+    `answers_to_overrides` is the public door: a card that folds two cells is answered by two of
+    these, one per group, and each carries only its own option's `clears`.
 
     `answer` carries either `option` (a key from the question's options) or the free-text
     fields (`mean`, `dispersion_value`, `dispersion_type`, `n`, `hint`, `exclude`), plus an
@@ -1615,6 +1684,1197 @@ def answer_to_override(question: Mapping[str, Any], answer: Mapping[str, Any]) -
     return {**base, "kind": "mark_reviewed", "confidence": "needs_human", "justification": just}
 
 
+# ============================================================== §C1/C3/C4: one decision, one card
+#: every key a card carries, in the order the page reads them. The first block is what a per-cell
+#: question has always carried (so `write_questions`, the SPA and every reader keep working); the
+#: second is §C1's — what this card IS, what it is made of, and what answering it is worth.
+_CARD_KEYS: tuple[str, ...] = (
+    "id", "kind", "prompt", "paper", "paper_id", "dataset_id", "dataset_label", "outcome_key",
+    "measure_name", "group", "group_label", "where", "unit", "image", "options", "free_text",
+    "answer_writes", "why", "confidence", "route", "impact", "answered", "status", "pending_why",
+    "answers",
+    "scope", "member_ids", "cells", "slots", "settled", "impact_basis", "impact_rank",
+    "impact_band", "blocking_rank", "status_line", "best_guess")
+
+_CARD_DEFAULTS: dict[str, Any] = {
+    "id": "", "kind": "other", "prompt": "", "paper": "", "paper_id": "", "dataset_id": "",
+    "dataset_label": "", "outcome_key": "", "measure_name": "", "group": None, "group_label": "",
+    "where": "", "unit": "", "image": {}, "options": [], "free_text": True,
+    "answer_writes": "mark_reviewed", "why": "", "confidence": None, "route": "", "impact": None,
+    "answered": False, "status": "open", "pending_why": "", "answers": [],
+    "scope": "cell", "member_ids": [], "cells": [], "slots": [], "settled": [],
+    "impact_basis": "unknown", "impact_rank": -1.0, "impact_band": "high", "blocking_rank": 0,
+    "status_line": "", "best_guess": {},
+}
+
+
+def _blank(**fields: Any) -> Question:
+    card = OrderedDict((key, copy.deepcopy(_CARD_DEFAULTS[key])) for key in _CARD_KEYS)
+    card.update(fields)
+    return Question(card)
+
+
+def _rank(card: Mapping[str, Any]) -> tuple[bool, float, int, str]:
+    """§C4's order: unanswered first, then what answering is worth, then how much it is holding.
+
+    `impact_rank` is negative for a card nothing could measure, so an unknown can never sort above
+    a known — a reviewer working down the page would otherwise spend the top of their attention on
+    the cards the tool has the least to say about.
+    """
+    return (bool(card.get("answered")), -float(card.get("impact_rank") or -1.0),
+            -int(card.get("blocking_rank") or 0), str(card.get("id") or ""))
+
+
+def _consolidate(out: Sequence[Question], run: Path, overrides: Sequence[Mapping[str, Any]],
+                 pending: Mapping[int, str], consumed: Collection[int] = ()) -> list[Question]:
+    """The per-cell questions, folded into the decisions they are (§C1).
+
+    Folded AFTER building, never instead of building: every builder above is untouched, every card
+    keeps its `member_ids`, and a fold that would hide a hold does not happen (a non-`PAIRABLE`
+    kind, more combinations than a screen holds, a cell whose partner is not held). What changes is
+    what a reviewer is shown — one decision at a time instead of one cell at a time.
+    """
+    preview = _Preview(run)
+    cards: list[Question] = []
+    rest = list(out)
+
+    # a paper nobody read, and a dataset's analysed size: neither is a held cell, so neither can
+    # come out of the queue — they are read from the run's own exclusion table and verify stages.
+    cards += _excluded_paper_questions(run, overrides, pending, consumed)
+    cards += _analysed_n_questions(run, overrides, pending, consumed)
+
+    # D1 first, because its card REPLACES the value-picking cards of the cell it is about: the row
+    # was built from a candidate pair, so "which of these numbers is group A's" is no longer the
+    # decision — "which pair is this row" is.
+    precedence, rest = _precedence_override_questions(run, rest, overrides, pending, consumed,
+                                                      preview)
+    cards += precedence
+    orientation, rest = _fold_orientation(rest, run, overrides)
+    cards += orientation
+    pairs, rest = _fold_pairs(rest, run, overrides, preview)
+    cards += pairs
+    cards += [_as_cell_card(q, run, overrides) for q in rest]
+    return cards
+
+
+# ------------------------------------------------------------------ the cell, as a card of one
+def _as_cell_card(question: Question, run: Path,
+                  overrides: Sequence[Mapping[str, Any]] = ()) -> Question:
+    """A question nothing folded, wearing the same shape as everything else on the page."""
+    dataset_id = str(question.get("dataset_id") or "")
+    outcome_key = str(question.get("outcome_key") or "")
+    row = _row_record(run, dataset_id, outcome_key)
+    card = _blank(**{key: question[key] for key in question if key in _CARD_DEFAULTS})
+    card.update({
+        "scope": "cell",
+        "member_ids": [question["id"]],
+        "cells": [_cell_of(question)],
+        "slots": [_slot_of(question, run, overrides)],
+        "settled": _settled(overrides, dataset_id, outcome_key, question.get("group")),
+        "status_line": _status_line(row),
+        "best_guess": _best_guess(row),
+    })
+    _stamp_impact(card, [question], row_swings=None)
+    return card
+
+
+def _cell_of(question: Mapping[str, Any]) -> dict[str, Any]:
+    """One cell a card settles, as the page lists it under the decision."""
+    return {"dataset_id": str(question.get("dataset_id") or ""),
+            "outcome_key": str(question.get("outcome_key") or ""),
+            "group": question.get("group"),
+            "group_label": str(question.get("group_label") or ""),
+            "dataset_label": str(question.get("dataset_label") or ""),
+            "paper": str(question.get("paper") or ""),
+            "measure_name": str(question.get("measure_name") or ""),
+            "question_id": str(question.get("id") or "")}
+
+
+def _slot_of(question: Mapping[str, Any], run: Path,
+             overrides: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:
+    """One group's own question inside a card: its kind, its options and why it is being asked.
+
+    The slot is the whole of the guarantee that a fold hides nothing — the kind that was folded,
+    the answers that kind offered, and the reason the cell is held all travel into the card, so a
+    reviewer can always see the two questions the one decision is made of.
+    """
+    return {"group": question.get("group"),
+            "group_label": str(question.get("group_label") or ""),
+            "kind": str(question.get("kind") or ""),
+            "member_id": str(question.get("id") or ""),
+            "dataset_id": str(question.get("dataset_id") or ""),
+            "outcome_key": str(question.get("outcome_key") or ""),
+            "prompt": str(question.get("prompt") or ""),
+            "why": str(question.get("why") or ""),
+            "answer_writes": str(question.get("answer_writes") or ""),
+            "options": list(question.get("options") or []),
+            "image": dict(question.get("image") or {}),
+            "where": str(question.get("where") or ""),
+            "unit": str(question.get("unit") or ""),
+            "settled": _settled(overrides, str(question.get("dataset_id") or ""),
+                                str(question.get("outcome_key") or ""), question.get("group"))}
+
+
+def _settled(overrides: Sequence[Mapping[str, Any]], dataset_id: str, outcome_key: str,
+             group: str | None) -> list[dict[str, Any]]:
+    """What this group's recorded answers have already cleared — history, with its dates.
+
+    Never an "answered" tick: a cell whose axis question was settled last week is asked about the
+    series identity today, and the card it sits in is OPEN. What the reviewer needs to see is that
+    somebody has already been here and what they decided, which is exactly this list.
+    """
+    out: list[dict[str, Any]] = []
+    for override in overrides:
+        if str(override.get("dataset_id") or "") != dataset_id:
+            continue
+        if str(override.get("outcome_key") or "") not in ("", outcome_key):
+            continue
+        if override.get("group") not in (None, group):
+            continue
+        cleared = [str(code) for code in (override.get("clears") or []) if str(code)]
+        overruled = [str(name) for name in (override.get("overrules") or []) if str(name)]
+        if not cleared and not overruled:
+            continue
+        out.append({"clears": cleared, "overrules": overruled,
+                    "kind": str(override.get("kind") or ""),
+                    "at": str(override.get("at") or override.get("timestamp") or ""),
+                    "actor": str(override.get("actor") or ""),
+                    "justification": _short(override.get("justification"), 300)})
+    return out
+
+
+# ------------------------------------------------------------------ the folds
+def _measure_id(paper_id: str, outcome_key: str, measure: str) -> str:
+    digest = hashlib.sha1(" ".join(str(measure or "").split()).casefold().encode("utf-8"))
+    return "|".join([f"{sha12(paper_id)}:m{digest.hexdigest()[:8]}", outcome_key, "", "orientation"])
+
+
+def _fold_orientation(rest: Sequence[Question], run: Path,
+                      overrides: Sequence[Mapping[str, Any]]) -> tuple[list[Question], list[Question]]:
+    """One direction card per (paper, outcome, normalised measure) — the override's own scope.
+
+    `_apply_orientation` settles every dataset of a paper's outcome that measures the same thing,
+    so asking the question once per cell asked one question eight times and offered eight chances
+    to answer it eight different ways. The card lists every cell its one answer settles.
+    """
+    groups: "OrderedDict[str, list[Question]]" = OrderedDict()
+    keep: list[Question] = []
+    for question in rest:
+        if question.get("kind") != "orientation" or not question.get("paper_id"):
+            keep.append(question)
+            continue
+        groups.setdefault(_measure_id(str(question["paper_id"]), str(question["outcome_key"]),
+                                      str(question.get("measure_name") or "")), []).append(question)
+    cards: list[Question] = []
+    for card_id, members in groups.items():
+        head = members[0]
+        cards.append(_folded(card_id, "orientation", "measure", members, run, overrides,
+                             options=_stamped(list(head.get("options") or [])),
+                             prompt=_measure_prompt(head, members, run),
+                             why=str(head.get("why") or ""),
+                             group=None, group_label="",
+                             answer_writes="orientation"))
+    return cards, keep
+
+
+def _measure_prompt(head: Mapping[str, Any], members: Sequence[Mapping[str, Any]],
+                    run: Path) -> str:
+    """The measure's question, the outcome as the PROTOCOL defines it, and every cell the one
+    answer signs — with its raw means, because a direction is decided against the numbers.
+
+    The ballots are already under `why` (`_with_ballots`); §C asks the card to show these three
+    as well, and they are the whole of what a reviewer arbitrates a direction from: what this
+    review counts as more of the construct, and which way this paper's numbers actually run.
+    """
+    said = "; ".join(dict.fromkeys(
+        f"{m.get('dataset_label') or m.get('dataset_id')} "
+        f"({m.get('group_label') or m.get('group')} = "
+        f"{_raw_mean(run, str(m.get('paper_id') or ''), str(m.get('dataset_id') or ''),
+                    str(m.get('outcome_key') or ''), m.get('group'))})"
+        for m in members))
+    outcome = _outcome_definition(run, str(head.get("outcome_key") or ""))
+    return (f"{head.get('prompt') or ''} This review counts as "
+            f"{str(head.get('outcome_key') or '').replace('_', ' ')}: {outcome} This one answer "
+            f"settles the direction of that measure for every cell of this paper that uses it, "
+            f"with the raw means each of them resolved: {said}.")
+
+
+def _raw_mean(run: Path, paper_id: str, dataset_id: str, outcome_key: str,
+              group: Any) -> str:
+    """One cell's own resolved mean, as the verify stage recorded it."""
+    verdict = _verdict(run, paper_id, dataset_id, outcome_key,
+                       group if group in ("A", "B") else None)
+    value = verdict.get("mean")
+    return _fmt(float(value)) if isinstance(value, (int, float)) else "—"
+
+
+def _outcome_definition(run: Path, outcome_key: str) -> str:
+    """What the REVIEW's protocol says this outcome is. A direction cannot be decided against a
+    key: "late_adaptation" is a name, and the definition is the thing being scored."""
+    from ..protocol import load_protocol
+
+    for name in ("protocol.yaml", "protocol.staged.yaml"):
+        path = run / name
+        if not path.exists():
+            continue
+        try:
+            outcome = load_protocol(path).outcome(outcome_key)
+        except (OSError, ValueError, KeyError):
+            continue
+        said = " ".join(x for x in (outcome.definition, outcome.measurement_window) if x)
+        if said:
+            return _short(said, 400)
+    return "the review's protocol records no definition for it."
+
+
+def _fold_pairs(rest: Sequence[Question], run: Path, overrides: Sequence[Mapping[str, Any]],
+                preview: "_Preview") -> tuple[list[Question], list[Question]]:
+    """Both groups of one dataset/outcome, decided together — when that is honest (§C1).
+
+    Three conditions, and each of them is a way the fold could hide a hold. Both groups must be
+    held (a card that folded one held cell with one released one would ask about a cell nobody is
+    asking about); every kind must be `PAIRABLE` (a refutation has no per-slot answer, so its cell
+    keeps its own card); and the combinations must fit on a screen, which is what the nine is.
+    """
+    cells: "OrderedDict[tuple[str, str], list[Question]]" = OrderedDict()
+    for question in rest:
+        cells.setdefault((str(question.get("dataset_id") or ""),
+                          str(question.get("outcome_key") or "")), []).append(question)
+    cards: list[Question] = []
+    keep: list[Question] = []
+    for (dataset_id, outcome_key), members in cells.items():
+        by_group = {q.get("group"): q for q in members}
+        if len(members) != 2 or set(by_group) != {"A", "B"} \
+                or any(q.get("kind") not in PAIRABLE for q in members) \
+                or not dataset_id or not outcome_key:
+            keep.extend(members)
+            continue
+        a, b = by_group["A"], by_group["B"]
+        options = list(a.get("options") or []), list(b.get("options") or [])
+        if not options[0] or not options[1] \
+                or len(options[0]) * len(options[1]) > _MAX_COMBINATIONS:
+            keep.extend(members)
+            continue
+        cards.append(_pair_card(dataset_id, outcome_key, a, b, run, overrides, preview))
+    return cards, keep
+
+
+def _pair_card(dataset_id: str, outcome_key: str, a: Question, b: Question, run: Path,
+               overrides: Sequence[Mapping[str, Any]], preview: "_Preview") -> Question:
+    card_id = "|".join([dataset_id, outcome_key, "", "pair"])
+    combinations: list[dict[str, Any]] = []
+    patch_sets: list[dict[str, dict[str, Any]]] = []
+    for i, option_a in enumerate(a.get("options") or [], 1):
+        for j, option_b in enumerate(b.get("options") or [], 1):
+            patches = {"A": _patch(a, option_a), "B": _patch(b, option_b)}
+            patch_sets.append(patches)
+            combinations.append(_combination(f"a{i}|b{j}", (a, option_a), (b, option_b),
+                                             dataset_id, outcome_key, preview, patches))
+    writes = {str(a.get("answer_writes") or ""), str(b.get("answer_writes") or "")}
+    card = _folded(card_id, "pair", "dataset", [a, b], run, overrides,
+                   options=_stamped(combinations),
+                   prompt=_pair_prompt(a, b),
+                   why=" || ".join(dict.fromkeys(x for x in (str(a.get("why") or ""),
+                                                             str(b.get("why") or "")) if x)),
+                   group=None, group_label="",
+                   # what the card writes is what its slots write; when they differ it is still a
+                   # number that lands, because every `PAIRABLE` kind's picked option carries one.
+                   answer_writes=(writes.pop() if len(writes) == 1 else "value"))
+    _stamp_impact(card, [a, b], row_swings=[o.get("implied_d") for o in combinations])
+    card["impact_band"] = preview.band(dataset_id, outcome_key, patch_sets)
+    return card
+
+
+def _pair_prompt(a: Mapping[str, Any], b: Mapping[str, Any]) -> str:
+    """Both groups' questions in one sentence, each named by the group it is about."""
+    return " ".join(f"{who}: {str(q.get('prompt') or '').strip()}"
+                    for q, who in ((a, str(a.get("group_label") or "group A")),
+                                   (b, str(b.get("group_label") or "group B"))) if q.get("prompt"))
+
+
+def _combination(key: str, left: tuple[Mapping[str, Any], Mapping[str, Any]],
+                 right: tuple[Mapping[str, Any], Mapping[str, Any]],
+                 dataset_id: str, outcome_key: str, preview: "_Preview",
+                 patches: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    """One answer to a pair: this option for group A, that one for group B, and what it implies.
+
+    `implied_d` is the resolver's own answer to "what would this put in the forest plot", got by
+    running the run's own row builder over copied verdicts — never arithmetic this layer invented,
+    because a page that computed effect sizes its own way would be a second resolver nobody tests
+    against the first.
+    """
+    (question_a, option_a), (question_b, option_b) = left, right
+    slots = [_option_slot("A", question_a, option_a), _option_slot("B", question_b, option_b)]
+    implied, note = preview.implied(dataset_id, outcome_key, patches)
+    label = " · ".join(
+        f"{str(q.get('group_label') or ('group ' + str(q.get('group'))))}: {o.get('label')}"
+        for q, o in (left, right))
+    if implied is not None:
+        label += f" — implies d = {_fmt(implied)}"
+    elif note:
+        label += f" — {note}"
+    return {"key": key, "label": label, "a": option_a.get("key"), "b": option_b.get("key"),
+            "slots": slots, "implied_d": implied, "implied_note": note}
+
+
+def _option_slot(group: str, question: Mapping[str, Any],
+                 option: Mapping[str, Any]) -> dict[str, Any]:
+    """What one slot's chosen option contributes, in the shape the fingerprint hashes."""
+    return {"group": group, "option": option.get("key"), "label": option.get("label"),
+            "mean": option.get("mean"), "dispersion_value": option.get("dispersion_value"),
+            "dispersion_type": option.get("dispersion_type"), "n": option.get("n"),
+            "analysis_metric": option.get("analysis_metric"), "location": option.get("location")}
+
+
+def _patch(question: Mapping[str, Any], option: Mapping[str, Any]) -> dict[str, Any]:
+    """What choosing this option would DO to the cell, decided by the override it writes.
+
+    Asked of `_single_override` rather than guessed from the option's shape, so the preview and
+    the answer can never disagree about what an answer means: "it is not reported" takes the cell
+    out, a dispersion type converts the spread, a number replaces it.
+    """
+    try:
+        record = _single_override(question, {"option": option.get("key"),
+                                             "note": "what this option would do"})
+    except Exception:                                      # pragma: no cover - defensive
+        return {}
+    if record.get("kind") == "exclude_dataset":
+        return {"exclude": True}
+    if record.get("kind") != "value":
+        return {}
+    return {key: record.get(key) for key in ("mean", "dispersion_value", "dispersion_type", "n")}
+
+
+def _folded(card_id: str, kind: str, scope: str, members: Sequence[Question], run: Path,
+            overrides: Sequence[Mapping[str, Any]], **fields: Any) -> Question:
+    """The common shape of a card built out of per-cell questions."""
+    head = members[0]
+    dataset_id = str(head.get("dataset_id") or "")
+    outcome_key = str(head.get("outcome_key") or "")
+    row = _row_record(run, dataset_id, outcome_key)
+    card = _blank(
+        id=card_id, kind=kind, scope=scope,
+        paper=str(head.get("paper") or ""), paper_id=str(head.get("paper_id") or ""),
+        dataset_id=dataset_id if scope in ("cell", "dataset") else "",
+        dataset_label=str(head.get("dataset_label") or ""),
+        outcome_key=outcome_key, measure_name=str(head.get("measure_name") or ""),
+        where=str(head.get("where") or ""), unit=str(head.get("unit") or ""),
+        image=dict(head.get("image") or {}),
+        confidence=head.get("confidence"), route=head.get("route"),
+        member_ids=[str(m["id"]) for m in members],
+        cells=[_cell_of(m) for m in members],
+        slots=[_slot_of(m, run, overrides) for m in members],
+        settled=[s for m in members
+                 for s in _settled(overrides, str(m.get("dataset_id") or ""),
+                                   str(m.get("outcome_key") or ""), m.get("group"))],
+        status_line=_status_line(row), best_guess=_best_guess(row))
+    card.update(fields)
+    _answered_from(card, members)
+    _stamp_impact(card, members, row_swings=None)
+    return card
+
+
+def _answered_from(card: Question, members: Sequence[Mapping[str, Any]]) -> None:
+    """A card is open while any cell it settles is: the answer has not been given until every
+    slot it names has one. Its `answers` are its members', so the history is not lost."""
+    statuses = [str(m.get("status") or "open") for m in members]
+    card["status"] = ("open" if "open" in statuses
+                      else PENDING_RERUN if PENDING_RERUN in statuses else "answered")
+    card["answered"] = card["status"] != "open"
+    card["pending_why"] = next((str(m.get("pending_why") or "") for m in members
+                                if m.get("status") == PENDING_RERUN), "")
+    card["answers"] = [answer for m in members for answer in (m.get("answers") or [])]
+
+
+def _stamp_impact(card: Question, members: Sequence[Mapping[str, Any]],
+                  row_swings: Sequence[float | None] | None = None) -> None:
+    """What answering this card is worth, and on what evidence (§C4).
+
+    `pooled` is the run's own number — what admitting this row would do to the estimate, computed
+    by `state.pooled_impact` when the queue was built. `row` is the spread of the effect sizes the
+    card's own options imply, which is the only measure a card has when the row carries no effect
+    size to leave one out of. `unknown` is neither, and it sorts last rather than pretending to
+    be harmless.
+    """
+    pooled = next((float(m["impact"]) for m in members
+                   if isinstance(m.get("impact"), (int, float))), None)
+    known = [float(x) for x in (row_swings or []) if isinstance(x, (int, float))]
+    spread = (max(known) - min(known)) if len(known) >= 2 else (0.0 if known else None)
+    if pooled is not None:
+        card["impact"], card["impact_basis"], card["impact_rank"] = pooled, "pooled", abs(pooled)
+    elif spread is not None:
+        card["impact"], card["impact_basis"], card["impact_rank"] = spread, "row", abs(spread)
+    else:
+        card["impact"], card["impact_basis"], card["impact_rank"] = None, "unknown", -1.0
+    card["blocking_rank"] = len({(c.get("dataset_id"), c.get("outcome_key"))
+                                 for c in card.get("cells") or []})
+
+
+# ------------------------------------------------------------------ D1: the precedence override
+def _precedence_override_questions(run: Path, rest: Sequence[Question],
+                                   overrides: Sequence[Mapping[str, Any]],
+                                   pending: Mapping[int, str], consumed: Collection[int],
+                                   preview: "_Preview") -> tuple[list[Question], list[Question]]:
+    """One card per row the resolver built from a candidate pair instead of the printed value.
+
+    It REPLACES the cell cards that pick a value for that row, because after D1 those are not the
+    decision any more: the row already has a number, and what a reviewer has to settle is whether
+    it may be the one the printed value could not give. The cards D1 does not answer — a
+    refutation, a direction — stay exactly where they are.
+    """
+    keep = list(rest)
+    cards: list[Question] = []
+    for (dataset_id, outcome_key), row in _rows_of(run).items():
+        if PRECEDENCE_OVERRIDE_FLAG not in set(row.get("flags") or []):
+            continue
+        card_id = "|".join([dataset_id, outcome_key, "", "precedence_override"])
+        already = _live_answers(overrides, card_id, dataset_id, outcome_key)
+        members: list[Question] = []
+        if not already:
+            # while the decision is OPEN it is the only value question this row has: picking a
+            # number for one group is not an answer to "which pair is this row built from". Once
+            # it is answered the cells go back to asking whatever is still holding them — a fold
+            # that kept them absorbed would leave a held row with nothing open anywhere.
+            members = [q for q in keep if q.get("dataset_id") == dataset_id
+                       and q.get("outcome_key") == outcome_key and q.get("kind") in PAIRABLE]
+            keep = [q for q in keep if q not in members]
+        cards.append(_precedence_card(run, dataset_id, outcome_key, row, members, overrides,
+                                      already, pending, consumed, preview))
+    return cards, keep
+
+
+def _live_answers(overrides: Sequence[Mapping[str, Any]], card_id: str, dataset_id: str,
+                  outcome_key: str) -> list[dict[str, Any]]:
+    """The answers naming this card that a LATER decision about the row's values has not overtaken.
+
+    D1's card is not settled once and for ever: the resolver re-raises the override every time it
+    rebuilds the row, so a reviewer who answered "use the candidate pair" and then typed the
+    printed value back has a row that is overridden again — and a card ticked "answered" on a
+    decision the log itself has superseded is the tick §C4 exists to remove.
+    """
+    already = _named(overrides, card_id)
+    if not already:
+        return []
+    last = max((int(o["seq"]) for o in already if isinstance(o.get("seq"), int)), default=-1)
+    for override in overrides:
+        if override.get("kind") != "value" or str(override.get("question_id") or "") == card_id:
+            continue
+        if str(override.get("dataset_id") or "") != dataset_id \
+                or str(override.get("outcome_key") or "") != outcome_key:
+            continue
+        if isinstance(override.get("seq"), int) and override["seq"] > last:
+            return []
+    return already
+
+
+def _precedence_card(run: Path, dataset_id: str, outcome_key: str, row: Mapping[str, Any],
+                     members: Sequence[Question], overrides: Sequence[Mapping[str, Any]],
+                     already: Sequence[Mapping[str, Any]], pending: Mapping[int, str],
+                     consumed: Collection[int], preview: "_Preview") -> Question:
+    card_id = "|".join([dataset_id, outcome_key, "", "precedence_override"])
+    paper_id = str(row.get("paper_id") or "")
+    study, dataset = _dataset(run, paper_id, dataset_id)
+    citation = study.get("citation") or {}
+    options = [*_candidate_options(preview, dataset_id, outcome_key),
+               {"key": "keep_printed",
+                "label": "keep the printed value — the paper's own number is the one this row "
+                         "should use, even though it converts to no effect size"},
+               {"key": "exclude",
+                "label": "take this dataset out of the analysis — neither the printed value nor "
+                         "the reading is usable here"}]
+    reason = _short(row.get("precedence_override_reason"), 900)
+    printed = str(row.get("route_overridden_from") or "the printed value")
+    prompt = (f"This {outcome_key.replace('_', ' ')} row is not built from {printed}, which the "
+              f"protocol prefers: that value converts to no effect size, so the resolver used a "
+              f"same-place candidate pair instead and is holding the row until a person decides. "
+              f"{reason} Which of these is this row?")
+    status, pending_why = _answer_status(already, pending, consumed)
+    card = _blank(
+        id=card_id, kind="precedence_override", scope="dataset",
+        paper=f"{citation.get('first_author') or citation.get('authors') or '?'} "
+              f"{citation.get('year') or ''}".strip(),
+        paper_id=paper_id, dataset_id=dataset_id,
+        dataset_label=str(dataset.get("label") or dataset.get("experiment") or ""),
+        outcome_key=outcome_key, measure_name=_measure(dataset, outcome_key),
+        options=_stamped(options), prompt=prompt,
+        answer_writes="value", why=reason or "the resolver recorded no reason",
+        confidence=row.get("confidence"), route=row.get("route"),
+        member_ids=[card_id, *(str(m["id"]) for m in members)],
+        cells=[{"dataset_id": dataset_id, "outcome_key": outcome_key, "group": group,
+                "group_label": _group_label(dataset, group),
+                "dataset_label": str(dataset.get("label") or ""),
+                "paper": "", "measure_name": "", "question_id": card_id} for group in ("A", "B")],
+        slots=[_slot_of(m, run, overrides) for m in members],
+        settled=_settled(overrides, dataset_id, outcome_key, None),
+        status=status, pending_why=pending_why, answered=bool(already),
+        answers=[{"kind": o.get("kind"), "justification": o.get("justification"),
+                  "mean": o.get("mean"), "at": o.get("at") or o.get("timestamp")}
+                 for o in already],
+        status_line=_status_line(row), best_guess=_best_guess(row))
+    _stamp_impact(card, members or [{"impact": None}],
+                  row_swings=[o.get("implied_d") for o in options if "implied_d" in o])
+    return card
+
+
+def _candidate_options(preview: "_Preview", dataset_id: str,
+                       outcome_key: str) -> list[dict[str, Any]]:
+    """`use_candidates`, one per PLACE the row could have been read (Task 4 review, finding 5).
+
+    When a cell was read in two places the resolver's tie-break is route precedence and then
+    reading order — a choice between two pictures that nothing on the record justifies. So the
+    card offers each place as its own answer whenever there is more than one; with a single place
+    the key stays the bare `use_candidates`, because there is nothing to choose between.
+    """
+    pairs = preview.alternatives(dataset_id, outcome_key)
+    out: list[dict[str, Any]] = []
+    for values, locator, key in pairs:
+        implied, note = preview.implied(dataset_id, outcome_key, {
+            "A": _group_patch(values.group_a), "B": _group_patch(values.group_b)})
+        shown = " / ".join(_group_shown(g) for g in (values.group_a, values.group_b))
+        label = (f"use the pair read under {locator!r}: {shown}" if locator
+                 else f"use the candidate pair: {shown}")
+        if implied is not None:
+            label += f" — implies d = {_fmt(implied)}"
+        elif note:
+            label += f" — {note}"
+        out.append({"key": "use_candidates" if len(pairs) == 1 else f"use_candidates@{key}",
+                    "label": label, "locator": locator,
+                    "slots": [{**_group_patch(values.group_a), "group": "A"},
+                              {**_group_patch(values.group_b), "group": "B"}],
+                    "implied_d": implied, "implied_note": note})
+    if not out:
+        out.append({"key": "use_candidates", "locator": "", "slots": [],
+                    "implied_d": None, "implied_note": "",
+                    "label": "use the candidate pair this row was built from — the readings are "
+                             "no longer in this run's stage files, so answer with the numbers "
+                             "below"})
+    return out
+
+
+def _group_patch(group: Any) -> dict[str, Any]:
+    """One group of a candidate pair as an answer's numbers — `{}` when there is no such group."""
+    if group is None:
+        return {}
+    kind = getattr(group.dispersion_type, "value", group.dispersion_type)
+    return {"mean": group.mean, "dispersion_value": group.dispersion_value,
+            "dispersion_type": str(kind or ""), "n": group.n}
+
+
+def _group_shown(group: Any) -> str:
+    patch = _group_patch(group)
+    if not patch or patch.get("mean") is None:
+        return "no value"
+    out = _fmt(float(patch["mean"]))
+    if patch.get("dispersion_value") is not None:
+        out += f" ± {_fmt(float(patch['dispersion_value']))}"
+        if patch.get("dispersion_type"):
+            out += f" ({patch['dispersion_type']})"
+    if patch.get("n"):
+        out += f", n = {patch['n']}"
+    return out
+
+
+# ------------------------------------------------------------------ D4-lite: the analysed n
+def _analysed_n_questions(run: Path, overrides: Sequence[Mapping[str, Any]],
+                          pending: Mapping[int, str],
+                          consumed: Collection[int] = ()) -> list[Question]:
+    """One card per DATASET whose n may be a recruited count, never one per cell (D4-lite).
+
+    How many people were analysed is a fact about the two arms: it holds for every outcome
+    measured on those people, so a size answered for late adaptation that left the aftereffect on
+    the recruited count would put two different denominators behind one pair of groups. The card
+    is scoped where the `group_n` override is.
+    """
+    found: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
+    for paper_id, verdicts in _verdicts_by_paper(run):
+        for verdict in verdicts:
+            flags = [f for f in verdict.get("flags") or []
+                     if str(f.get("code") or "") == N_BEFORE_EXCLUSIONS]
+            if not flags:
+                continue
+            dataset_id = str(verdict.get("dataset_id") or "")
+            group = verdict.get("group")
+            if not dataset_id or group not in ("A", "B"):
+                continue
+            entry = found.setdefault(dataset_id, {"paper_id": paper_id, "groups": {},
+                                                  "outcomes": []})
+            entry["outcomes"].append(str(verdict.get("outcome_key") or ""))
+            detail = flags[0].get("detail") or {}
+            said = {"recruited": detail.get("recruited"), "excluded": detail.get("excluded"),
+                    "quote": str(detail.get("quote") or ""),
+                    "message": str(flags[0].get("message") or ""), "n": verdict.get("n")}
+            was = entry["groups"].get(group)
+            # the same arm can be flagged on two outcomes and the check may have finished reading
+            # on only one of them. The one that PARSED both counts is the one the card can offer a
+            # subtraction from, so it wins whichever outcome it came from.
+            if was is None or (not isinstance(was.get("excluded"), int)
+                               and isinstance(said["excluded"], int)):
+                entry["groups"][group] = said
+    return [_analysed_n_card(run, dataset_id, entry, overrides, pending, consumed)
+            for dataset_id, entry in found.items()]
+
+
+def _analysed_n_card(run: Path, dataset_id: str, entry: Mapping[str, Any],
+                     overrides: Sequence[Mapping[str, Any]], pending: Mapping[int, str],
+                     consumed: Collection[int]) -> Question:
+    card_id = "|".join([dataset_id, "", "", "analysed_n"])
+    paper_id = str(entry.get("paper_id") or "")
+    study, dataset = _dataset(run, paper_id, dataset_id)
+    citation = study.get("citation") or {}
+    groups = dict(entry.get("groups") or {})
+    recorded = {group: _recorded_n(run, dataset_id, group, groups)
+                for group in ("A", "B")}
+    options: list[dict[str, Any]] = [
+        {"key": "recorded", "n_a": recorded["A"], "n_b": recorded["B"],
+         "label": f"the sizes the run used are the ANALYSED sizes "
+                  f"({_num(recorded['A'])}/{_num(recorded['B'])}) — the check read the wrong "
+                  f"sentence"}]
+    minus = _minus_option(groups, recorded)
+    if minus is not None:
+        options.append(minus)
+    # the one option on the page that is a FORM rather than an answer: it carries no numbers, and
+    # `needs_input` says which ones it is waiting for — so a client can tell "pick this" from
+    # "pick this and fill these in", and the log's refusal of an empty one is a bug report about
+    # the client rather than about the card.
+    options.append({"key": "typed", "n_a": None, "n_b": None, "needs_input": ["n_a", "n_b"],
+                    "label": "type the analysed size of each group below"})
+    quoted = "; ".join(dict.fromkeys(
+        f"{group}: “{_short(said.get('quote') or said.get('message'), 240)}”"
+        for group, said in sorted(groups.items()) if said.get("quote") or said.get("message")))
+    prompt = (f"The group sizes this dataset's rows are divided by look like the numbers the "
+              f"paper RECRUITED, not the numbers it analysed: the check found an exclusion "
+              f"beside them. How many people are in each group's analysis? {quoted}")
+    already = _named(overrides, card_id)
+    status, pending_why = _answer_status(already, pending, consumed)
+    card = _blank(
+        id=card_id, kind="analysed_n", scope="dataset",
+        paper=f"{citation.get('first_author') or citation.get('authors') or '?'} "
+              f"{citation.get('year') or ''}".strip(),
+        paper_id=paper_id, dataset_id=dataset_id,
+        dataset_label=str(dataset.get("label") or dataset.get("experiment") or ""),
+        options=_stamped(options), prompt=prompt, answer_writes="group_n",
+        why=f"the check `{N_BEFORE_EXCLUSIONS}` fired on "
+            f"{len(set(entry.get('outcomes') or []))} outcome(s) of this dataset; an n that "
+            f"counts people the analysis dropped makes every effect size on those arms too "
+            f"precise",
+        confidence="needs_human", route="",
+        cells=[{"dataset_id": dataset_id, "outcome_key": key, "group": None,
+                "group_label": "", "dataset_label": "", "paper": "", "measure_name": "",
+                "question_id": card_id} for key in dict.fromkeys(entry.get("outcomes") or [])],
+        member_ids=[card_id], status=status, pending_why=pending_why, answered=bool(already),
+        answers=[{"kind": o.get("kind"), "justification": o.get("justification"),
+                  "mean": None, "at": o.get("at") or o.get("timestamp")} for o in already])
+    card["blocking_rank"] = len(card["cells"])
+    return card
+
+
+def _recorded_n(run: Path, dataset_id: str, group: str,
+                groups: Mapping[str, Mapping[str, Any]]) -> int | None:
+    said = groups.get(group) or {}
+    if said.get("n"):
+        return int(said["n"])
+    for (ds, _outcome), row in _rows_of(run).items():
+        if ds == dataset_id and row.get(f"n_{group.lower()}"):
+            return int(row[f"n_{group.lower()}"])
+    return None
+
+
+def _minus_option(groups: Mapping[str, Mapping[str, Any]],
+                  recorded: Mapping[str, int | None]) -> dict[str, Any] | None:
+    """`recruited − excluded`, offered only where the check parsed BOTH numbers.
+
+    A group the check never flagged keeps the size the run used — its n was never in doubt. A
+    group it flagged but could not finish reading has no subtraction to offer, and offering one
+    anyway would be offering a number the tool made up.
+    """
+    sizes: dict[str, int | None] = {}
+    for group in ("A", "B"):
+        said = groups.get(group)
+        if said is None:
+            sizes[group] = recorded.get(group)
+            continue
+        recruited, excluded = said.get("recruited"), said.get("excluded")
+        if not isinstance(recruited, int) or not isinstance(excluded, int):
+            return None
+        sizes[group] = recruited - excluded
+    if not all(isinstance(sizes[g], int) and sizes[g] >= 1 for g in ("A", "B")):
+        return None
+    quote = "; ".join(dict.fromkeys(str((groups.get(g) or {}).get("quote") or "")
+                                    for g in ("A", "B") if (groups.get(g) or {}).get("quote")))
+    return {"key": "recruited_minus_excluded", "n_a": sizes["A"], "n_b": sizes["B"],
+            "quote": _short(quote, 900),
+            "label": f"recruited minus excluded ({_num(sizes['A'])}/{_num(sizes['B'])}) — the "
+                     f"counts the check read out of the paper"}
+
+
+# ------------------------------------------------------------------ C3: include_paper
+def _excluded_paper_questions(run: Path, overrides: Sequence[Mapping[str, Any]],
+                              pending: Mapping[int, str],
+                              consumed: Collection[int] = ()) -> list[Question]:
+    """One card per paper the MAPPER excluded — the only exclusion a card may reopen (§C3).
+
+    A paper the mapper called ineligible, or eligible with nothing to read, left the review with
+    a model's reasoning and nobody's decision. That is a question, and it is the biggest one on the
+    page: a whole paper. An exclusion a PERSON made is not — it is the answer.
+    """
+    cards: list[Question] = []
+    seen: set[str] = set()
+    for row in _json_if_present(run / "exclusions.json") or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("stage") or "") != "map" or str(row.get("decider") or "") != "mapper":
+            continue
+        if str(row.get("reason") or "") not in MAPPER_EXCLUSIONS:
+            continue
+        paper_id = str(row.get("paper_id") or "")
+        if not paper_id or paper_id in seen:
+            continue
+        seen.add(paper_id)
+        cards.append(_include_paper_card(run, paper_id, row, overrides, pending, consumed))
+    return cards
+
+
+def _include_paper_card(run: Path, paper_id: str, row: Mapping[str, Any],
+                        overrides: Sequence[Mapping[str, Any]], pending: Mapping[int, str],
+                        consumed: Collection[int]) -> Question:
+    card_id = "|".join([sha12(paper_id), "", "", "include_paper"])
+    study = _stage(run, paper_id, "map").get("study") or {}
+    citation = study.get("citation") or {}
+    name = f"{citation.get('first_author') or citation.get('authors') or ''} " \
+           f"{citation.get('year') or ''}".strip() or str(row.get("filename") or "this paper")
+    said = _short(row.get("detail"), 700)
+    quote = _short(row.get("quote"), 700)
+    mapped = len(study.get("datasets") or [])
+    tail = ("" if mapped else " Nothing was mapped in it, so including it buys a fresh map as "
+                              "well as an extraction on the next `--resume`.")
+    prompt = (f"The mapper took {name} out of this review and no person has been asked about it. "
+              f"Its reason: {said or 'none recorded'}. It was reading: “{quote}”. Does this "
+              f"review include this paper?{tail}")
+    already = _named(overrides, card_id)
+    status, pending_why = _answer_status(already, pending, consumed)
+    return _blank(
+        id=card_id, kind="include_paper", scope="paper", paper=name, paper_id=paper_id,
+        options=_stamped([
+            {"key": "include", "decision": "include",
+             "label": "include it — the mapper's reading of the criterion is wrong, and this "
+                      "paper belongs in the review"},
+            {"key": "keep_out", "decision": "exclude",
+             "label": "keep it out — I have read the criterion and the mapper is right"}]),
+        prompt=prompt, answer_writes="eligibility",
+        why=f"decided at the map stage by the mapper alone ({row.get('reason')}), before "
+            f"anything in this paper was read: {said}",
+        confidence="excluded", route="map",
+        member_ids=[card_id], cells=[], status=status, pending_why=pending_why,
+        answered=bool(already),
+        answers=[{"kind": o.get("kind"), "justification": o.get("justification"),
+                  "mean": None, "at": o.get("at") or o.get("timestamp")} for o in already])
+
+
+def _named(overrides: Sequence[Mapping[str, Any]], card_id: str) -> list[dict[str, Any]]:
+    """Every recorded answer that names THIS card — the only thing that settles a card whose
+    evidence lives in a stage file a re-pool never rewrites."""
+    return [dict(o) for o in overrides if str(o.get("question_id") or "") == card_id]
+
+
+# ------------------------------------------------------------------ what the row says about itself
+def _rows_of(run: Path) -> dict[tuple[str, str], dict[str, Any]]:
+    """Every row of the run, as the resolver wrote it AND as the last re-pool derived it.
+
+    Both, and unioned on the flags, for `overrides.row_flags`' reason: the stage file is the fixed
+    reference a re-pool never rewrites, and the table is where a finding a REVIEWER's own numbers
+    produced can be seen. A card built from either alone would miss half the run.
+    """
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for path in sorted((run / "papers").glob("*/resolve.json")):
+        for record in (_json_if_present(path) or {}).get("records") or []:
+            if isinstance(record, dict):
+                out[(str(record.get("dataset_id") or ""),
+                     str(record.get("outcome_key") or ""))] = dict(record)
+    for row in _json_if_present(run / "results" / "extraction_table_all.json") or []:
+        if not isinstance(row, dict):
+            continue
+        key = (str(row.get("dataset_id") or ""), str(row.get("outcome_key") or ""))
+        was = out.get(key, {})
+        merged = {**was, **{k: v for k, v in row.items() if v is not None}}
+        merged["flags"] = sorted({*(was.get("flags") or []), *(row.get("flags") or [])})
+        out[key] = merged
+    return out
+
+
+def _row_record(run: Path, dataset_id: str, outcome_key: str) -> dict[str, Any]:
+    return _rows_of(run).get((dataset_id, outcome_key)) or {}
+
+
+def _status_line(row: Mapping[str, Any]) -> str:
+    """Where this row stands WHILE the question is open — the best-guess line's own words (§A).
+
+    A held row is not simply missing: the best-guess line either admits it under a named rule or
+    vetoes it, and a reviewer deciding what to spend their attention on needs to know which. Read
+    off the row's own columns; a run written before they existed says what it can.
+    """
+    if not row:
+        return ""
+    rule = str(row.get("best_guess_rule") or "")
+    reason = _short(row.get("best_guess_reason"), 300)
+    in_line = row.get("in_best_guess")
+    if in_line is True:
+        head = (f"in the best-guess line at d = {_fmt(float(row['best_guess_es']))}"
+                if isinstance(row.get("best_guess_es"), (int, float))
+                else "in the best-guess line")
+        return f"Held, {head}" + (f" by rule `{rule}`" if rule else "") \
+            + (f": {reason}" if reason else "") + "."
+    if in_line is False:
+        return "Held, and in NEITHER analysis line" + (f": {reason}" if reason else "") + "."
+    return (f"Held ({row.get('confidence') or 'needs_human'}); this run predates the best-guess "
+            f"line, so nothing says whether it would be admitted.")
+
+
+def _best_guess(row: Mapping[str, Any]) -> dict[str, Any]:
+    """The row's own best-guess verdict — the rule that admitted it, or the veto that did not."""
+    if not row:
+        return {}
+    reason = str(row.get("best_guess_reason") or "")
+    veto = reason.split(":", 1)[0] if row.get("in_best_guess") is False and ":" in reason else ""
+    return {"in": row.get("in_best_guess"), "rule": str(row.get("best_guess_rule") or ""),
+            "veto": veto, "reason": _short(reason, 500),
+            "es": row.get("best_guess_es"), "se": row.get("best_guess_se")}
+
+
+def _verdicts_by_paper(run: Path) -> list[tuple[str, list[dict[str, Any]]]]:
+    out: list[tuple[str, list[dict[str, Any]]]] = []
+    for path in sorted((run / "papers").glob("*/verify.json")):
+        payload = _json_if_present(path) or {}
+        verdicts = [v for v in payload.get("verdicts") or [] if isinstance(v, dict)]
+        paper_id = next((str(v.get("paper_id") or "") for v in verdicts if v.get("paper_id")), "")
+        if not paper_id:
+            study = (_json_if_present(path.parent / "map.json") or {}).get("study") or {}
+            paper_id = str(study.get("paper_id") or "")
+        out.append((paper_id, verdicts))
+    return out
+
+
+# ------------------------------------------------------------------ what an answer would do
+#: what `_Preview._resolve` returns for an answer that takes the cell OUT of the analysis: there
+#: is no record to show, and `None` already means "this run could not be resolved from".
+_EXCLUDED = object()
+
+
+class _Preview:
+    """The run's OWN row builder, borrowed so a card can say what an answer would do.
+
+    Every number a card shows about a combination — the effect size it implies, whether it moves
+    the pooled estimate enough to be worth a reviewer's attention — is produced by
+    `pipeline.rows.prepare_rows` and `resolve.resolve_effect` over COPIES of the cells' verdicts:
+    the same path the run and the re-pool take, including the shared-control split and the row's
+    own policy flags. A review layer that did this arithmetic itself would be a second resolver,
+    and the first thing a second resolver does is disagree with the first.
+
+    Everything is lazy and memoised. A page with no combination question on it never loads a stage
+    file through here; one with several loads them once and resolves each distinct combination
+    once, which is what keeps `questions_for_run` a read of the run rather than a re-run of it.
+    """
+
+    def __init__(self, run: Path) -> None:
+        self.run = Path(run)
+        self._loaded = False
+        self._state: Any = None
+        self._protocol: Any = None
+        self._resolved: dict[str, Any] = {}
+        self._alternatives: dict[tuple[str, str], list[tuple[Any, str, str]]] = {}
+
+    # ---- the run's own state, loaded once
+    def _load(self) -> tuple[Any, Any]:
+        if not self._loaded:
+            self._loaded = True
+            try:
+                from ..pipeline.overrides import _RunState
+                from ..pipeline.state import load_manifest
+                from ..protocol import load_protocol
+
+                manifest = load_manifest(self.run)
+                for name in (self.run / "protocol.yaml", self.run / "protocol.staged.yaml",
+                             Path(str(manifest.protocol_path or ""))):
+                    if str(name) and name.exists():
+                        self._protocol = load_protocol(name)
+                        break
+                if self._protocol is not None:
+                    self._state = _RunState(self.run, manifest)
+            except Exception:            # a run this cannot be read from still gets its questions
+                self._state = self._protocol = None
+        return self._state, self._protocol
+
+    def alternatives(self, dataset_id: str, outcome_key: str) -> list[tuple[Any, str, str]]:
+        """D1's own candidate pairs for this cell — `(values, locator, place key)`, in its order."""
+        key = (dataset_id, outcome_key)
+        if key in self._alternatives:
+            return self._alternatives[key]
+        out: list[tuple[Any, str, str]] = []
+        prepared = self._prepared(dataset_id, outcome_key, {})
+        for values in getattr(prepared, "alternatives", None) or []:
+            locator = next((g.locator for g in (values.group_a, values.group_b)
+                            if g is not None and g.locator), "")
+            digest = hashlib.sha1(" ".join(locator.split()).casefold().encode("utf-8"))
+            out.append((values, _short(locator, 90), digest.hexdigest()[:8]))
+        self._alternatives[key] = out
+        return out
+
+    def implied(self, dataset_id: str, outcome_key: str,
+                patches: Mapping[str, Mapping[str, Any]]) -> tuple[float | None, str]:
+        """The effect size this answer would put in the plot, and why there is none when there is
+        none. `(None, "")` when this run cannot be resolved from at all — a card still asks."""
+        record = self._resolve(dataset_id, outcome_key, patches)
+        if record is _EXCLUDED:
+            return None, "this answer takes the cell out of the analysis"
+        if record is None:
+            return None, ""
+        if record.es is None:
+            return None, _short(record.not_convertible_reason, 200) or "no effect size converts"
+        return float(record.es), ""
+
+    def band(self, dataset_id: str, outcome_key: str,
+             patch_sets: Sequence[Mapping[str, Mapping[str, Any]]]) -> str:
+        """§C4's band: `low` when every answer on offer barely moves the row AND barely moves the
+        pool. Both halves, because either alone is half the question — a row whose d hardly moves
+        can still be the row that decides a k = 2 pool, and a big swing on a row with almost no
+        weight is not where a reviewer's attention belongs. `high` whenever it cannot be priced:
+        "we could not tell" is not "it does not matter"."""
+        records = [self._resolve(dataset_id, outcome_key, patches) for patches in patch_sets]
+        if not records or any(r is None or r is _EXCLUDED or r.es is None for r in records):
+            return "high"
+        spread = max(r.es for r in records) - min(r.es for r in records)
+        if spread >= LOW_IMPACT_D:
+            return "high"
+        pooled = [self._pooled(dataset_id, outcome_key, record) for record in records]
+        if any(value is None for value in pooled):
+            return "high"
+        return "low" if max(pooled) - min(pooled) < LOW_IMPACT_POOLED else "high"
+
+    # ---- internals
+    def _resolve(self, dataset_id: str, outcome_key: str,
+                 patches: Mapping[str, Mapping[str, Any]]) -> Any:
+        key = json.dumps([dataset_id, outcome_key, patches], sort_keys=True, default=str)
+        if key in self._resolved:
+            return self._resolved[key]
+        out: Any = None
+        if any((patches.get(group) or {}).get("exclude") for group in ("A", "B")):
+            out = _EXCLUDED
+        else:
+            prepared = self._prepared(dataset_id, outcome_key, patches)
+            _state, protocol = self._load()
+            if prepared is not None and protocol is not None:
+                try:
+                    from ..pipeline.resolve import resolve_effect
+
+                    out = resolve_effect(self._state.datasets[dataset_id],
+                                         protocol.outcome(outcome_key), prepared.values,
+                                         protocol.stats)
+                except Exception:                          # pragma: no cover - defensive
+                    out = None
+        self._resolved[key] = out
+        return out
+
+    def _prepared(self, dataset_id: str, outcome_key: str,
+                  patches: Mapping[str, Mapping[str, Any]]) -> Any:
+        state, protocol = self._load()
+        if state is None or protocol is None or dataset_id not in state.datasets:
+            return None
+        cells = {group: state.verdict(dataset_id, outcome_key, group) for group in ("A", "B")}
+        if any(cell is None for cell in cells.values()):
+            return None
+        for group, cell in cells.items():
+            cells[group] = _patched(cell, patches.get(group) or {})
+        try:
+            from ..pipeline.overrides import _prepare
+
+            return _prepare(state.datasets[dataset_id], outcome_key, cells["A"], cells["B"],
+                            protocol, state=state)
+        except Exception:                                  # pragma: no cover - defensive
+            return None
+
+    def _pooled(self, dataset_id: str, outcome_key: str, record: Any) -> float | None:
+        """The pooled estimate this row would sit in, at this answer's number."""
+        state, protocol = self._load()
+        if state is None or protocol is None or record is None or record.es is None:
+            return None
+        primary = [r for r in state.records if r.outcome_key == outcome_key
+                   and r.dataset_id != dataset_id and r.es is not None
+                   and r.confidence != "needs_human"]
+        try:
+            from ..pipeline.state import _pool
+
+            return _pool([*primary, record], protocol.stats)
+        except Exception:                                  # pragma: no cover - defensive
+            return None
+
+
+def _patched(verdict: Any, patch: Mapping[str, Any]) -> Any:
+    """One cell as an answer would leave it — the same fields `overrides._apply_value` writes."""
+    from ..models import DispersionType
+
+    out = verdict.model_copy(deep=True)
+    if patch.get("mean") is not None:
+        out.mean = float(patch["mean"])
+    if patch.get("dispersion_value") is not None:
+        out.dispersion_value = float(patch["dispersion_value"])
+    if patch.get("dispersion_type"):
+        try:
+            out.dispersion_type = DispersionType(patch["dispersion_type"])
+        except ValueError:                                 # an option naming no known type
+            pass
+    if patch.get("n") is not None:
+        out.n = int(patch["n"])
+    return out
+
+
+# ------------------------------------------------------------------ answers, one per cell named
+def answers_to_overrides(question: Mapping[str, Any],
+                         answer: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """One answer, one override per CELL the answer names (§C1).
+
+    A card can be a decision about two cells at once — a dataset's pair, a precedence override —
+    and the record of it must still be one record per cell, each naming its own group and carrying
+    only its own option's `clears`. A single merged record would be an answer that cleared findings
+    on a cell nobody said anything about, which is the standing ruling this list exists to keep:
+    answers clear only what they name.
+    """
+    kind = str(question.get("kind") or "")
+    if kind == "pair":
+        return _pair_answers(question, answer)
+    if kind == "precedence_override":
+        return _precedence_answers(question, answer)
+    if kind == "analysed_n":
+        return [_analysed_n_answer(question, answer)]
+    if kind == "include_paper":
+        return [_eligibility_answer(question, answer)]
+    return [_single_override(question, answer)]
+
+
+def answer_to_override(question: Mapping[str, Any], answer: Mapping[str, Any]) -> dict[str, Any]:
+    """The FIRST record an answer becomes — the whole of it for every one-cell question.
+
+    Kept because it is the older contract and most callers answer a cell. Anything that records a
+    decision must use `answers_to_overrides`: on a folded card this returns group A's record and
+    silently leaves group B unanswered.
+    """
+    return answers_to_overrides(question, answer)[0]
+
+
+def _stem(question: Mapping[str, Any], answer: Mapping[str, Any]) -> tuple[str, str]:
+    note = str(answer.get("note") or "").strip()
+    stem = f"answered question #{question.get('number', '?')} ({question.get('kind') or 'other'})"
+    return (f"{stem}: {note}" if note else stem), note
+
+
+def _base(question: Mapping[str, Any], **over: Any) -> dict[str, Any]:
+    out = {"paper_id": question.get("paper_id", ""), "dataset_id": question.get("dataset_id", ""),
+           "outcome_key": question.get("outcome_key", ""), "group": question.get("group"),
+           "question_id": question.get("id", "")}
+    out.update(over)
+    return out
+
+
+def _pair_answers(card: Mapping[str, Any],
+                  answer: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The combination, translated one slot at a time through each slot's OWN question."""
+    slots = {str(s.get("group")): s for s in card.get("slots") or []}
+    option = next((o for o in card.get("options") or []
+                   if o.get("key") == answer.get("option")), None)
+    if option is None:
+        # a typed answer, or a whole-cell decision: it names its group, or it is about the row
+        named = str(answer.get("group") or "")
+        if named in slots:
+            return [_slot_answer(card, slots[named], {**answer, "option": None})]
+        return [_single_override(card, answer)]
+    out: list[dict[str, Any]] = []
+    for group, chosen in (("A", option.get("a")), ("B", option.get("b"))):
+        slot = slots.get(group)
+        if slot is not None:
+            out.append(_slot_answer(card, slot, {**answer, "option": chosen}))
+    return out or [_single_override(card, answer)]
+
+
+def _slot_answer(card: Mapping[str, Any], slot: Mapping[str, Any],
+                 answer: Mapping[str, Any]) -> dict[str, Any]:
+    """One slot's own question, answered the way it would have been answered on its own card —
+    and the record names the CARD, because that is the question the reviewer was shown."""
+    view = {"id": card.get("id"), "number": card.get("number"),
+            "kind": slot.get("kind"), "group": slot.get("group"),
+            "paper_id": card.get("paper_id", ""),
+            "dataset_id": slot.get("dataset_id") or card.get("dataset_id", ""),
+            "outcome_key": slot.get("outcome_key") or card.get("outcome_key", ""),
+            "measure_name": card.get("measure_name", ""),
+            "unit": slot.get("unit") or card.get("unit", ""),
+            "options": list(slot.get("options") or [])}
+    return _single_override(view, answer)
+
+
+def _precedence_answers(card: Mapping[str, Any],
+                        answer: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """D1's three answers: take the pair, keep the printed value, or take the dataset out."""
+    just, note = _stem(card, answer)
+    option = next((o for o in card.get("options") or []
+                   if o.get("key") == answer.get("option")), None)
+    key = str((option or {}).get("key") or answer.get("option") or "")
+    label = _short((option or {}).get("label"), 300)
+    if key.startswith("use_candidates"):
+        out = [
+            {**_base(card, group=str(slot.get("group") or ""), kind="value",
+                     mean=slot.get("mean"), dispersion_value=slot.get("dispersion_value"),
+                     dispersion_type=slot.get("dispersion_type") or "", n=slot.get("n"),
+                     unit=card.get("unit") or "", clears=[], overrules=[],
+                     justification=f"{just} — {label or 'the candidate pair'}")}
+            for slot in (option or {}).get("slots") or []
+            if str(slot.get("group") or "") in ("A", "B") and slot.get("mean") is not None]
+        if out:
+            return out
+        return [{**_base(card, kind="mark_reviewed", group=None, confidence="needs_human",
+                         justification=f"{just} — the candidate pair is not on the record; "
+                                       f"nothing could be written")}]
+    if key == "exclude":
+        return [{**_base(card, group=None, kind="exclude_dataset",
+                         justification=f"{just} — neither the printed value nor the reading is "
+                                       f"usable; excluded")}]
+    # `keep_printed`, and anything unrecognised: a review decision on both cells that changes no
+    # number. The ROW stays held — the printed value still converts to nothing, and saying so is
+    # the honest content of this answer.
+    return [{**_base(card, group=group, kind="mark_reviewed", clears=[], overrules=[],
+                     justification=f"{just} — the printed value stands; this row keeps no "
+                                   f"effect size from it")}
+            for group in ("A", "B")]
+
+
+def _analysed_n_answer(card: Mapping[str, Any], answer: Mapping[str, Any]) -> dict[str, Any]:
+    """D4-lite's one record: the two arms' analysed sizes, for every outcome of the dataset."""
+    just, note = _stem(card, answer)
+    option = next((o for o in card.get("options") or []
+                   if o.get("key") == answer.get("option")), None)
+    sizes = {}
+    for field in ("n_a", "n_b"):
+        typed = answer.get(field)
+        sizes[field] = typed if typed not in (None, "") else (option or {}).get(field)
+    return {"kind": "group_n", "paper_id": card.get("paper_id", ""),
+            "dataset_id": card.get("dataset_id", ""), "outcome_key": "", "group": None,
+            "question_id": card.get("id", ""), "n_a": sizes["n_a"], "n_b": sizes["n_b"],
+            "quote": str((option or {}).get("quote") or note or ""),
+            "justification": f"{just} — analysed n {_num(sizes['n_a'])}/{_num(sizes['n_b'])}"
+                             + (f": {_short((option or {}).get('label'), 200)}" if option else "")}
+
+
+def _eligibility_answer(card: Mapping[str, Any], answer: Mapping[str, Any]) -> dict[str, Any]:
+    """§C3's record: this review includes the paper, or it agrees that it does not."""
+    just, note = _stem(card, answer)
+    option = next((o for o in card.get("options") or []
+                   if o.get("key") == answer.get("option")), None)
+    decision = str((option or {}).get("decision") or answer.get("decision")
+                   or ("exclude" if answer.get("exclude") else "include")).strip().lower()
+    return {"kind": "eligibility", "paper_id": card.get("paper_id", ""), "dataset_id": "",
+            "outcome_key": "", "group": None, "question_id": card.get("id", ""),
+            "eligible": decision != "exclude",
+            "rule": str(answer.get("rule") or ""),
+            "quote": str(answer.get("quote") or note or ""),
+            "justification": f"{just} — {decision}d by the reviewer"}
+
+
 # ----------------------------------------------------------------------------- output
 def write_questions(run_dir: str | Path, questions: Sequence[Mapping[str, Any]] | None = None
                     ) -> dict[str, Path]:
@@ -1625,14 +2885,17 @@ def write_questions(run_dir: str | Path, questions: Sequence[Mapping[str, Any]] 
     json_path.write_text(json.dumps(qs, ensure_ascii=False, indent=1, default=str),
                          encoding="utf-8")
     md = ["# Questions for the reviewer", "",
-          f"{len(qs)} cell(s) need a decision. Each shows the picture the tool read, the answers "
-          f"it is choosing between, and why it could not decide. Answer in the review tab, or by "
-          f"appending to `overrides.jsonl` (`canopy validate` re-pools).", ""]
+          f"{len(qs)} decision(s) need an answer. Each shows the picture the tool read, the "
+          f"answers it is choosing between, and why it could not decide — one card per decision, "
+          f"which may settle more than one cell. Answer in the review tab, or by appending to "
+          f"`overrides.jsonl` (`canopy validate` re-pools).", ""]
     for q in qs:
         head = f"## {q['number']}. {_md(q['paper'])} — {_md(q['dataset_label'] or q['dataset_id'])}"
         if q.get("group_label"):
             head += f" — {_md(q['group_label'])}"
         md += [head, "", f"**{_md(q['prompt'])}**", ""]
+        if q.get("status_line"):
+            md += [f"_{_md(q['status_line'])}_", ""]
         if q.get("image", {}).get("path"):
             md += [f"![{q['kind']}]({q['image']['path']})", ""]
         for o in q.get("options") or []:
@@ -1640,6 +2903,20 @@ def write_questions(run_dir: str | Path, questions: Sequence[Mapping[str, Any]] 
             md.append(f"- **{_md(o['label'])}**{extra}")
         if q.get("free_text"):
             md.append("- _(or type the value / where to find it)_")
+        if len(q.get("cells") or []) > 1 or q.get("scope") not in ("cell", "paper"):
+            named = ", ".join(dict.fromkeys(
+                f"{_md(c.get('dataset_id'))}/{_md(c.get('outcome_key'))}"
+                + (f" ({_md(c.get('group_label') or c.get('group'))})" if c.get("group") else "")
+                for c in q.get("cells") or []))
+            md += ["", f"_This answer settles {len(q.get('cells') or [])} cell(s): {named}._"]
+        for slot in q.get("slots") or []:
+            if len(q.get("slots") or []) < 2:
+                continue
+            md += ["", f"_{_md(slot.get('group_label') or slot.get('group'))} was asked "
+                       f"`{_md(slot.get('kind'))}`: {_md(slot.get('prompt'))}_"]
+            for was in slot.get("settled") or []:
+                md.append(f"  - _already recorded ({_md(was.get('at'))}): "
+                          f"{_md(was.get('justification'))}_")
         md += ["", f"<details><summary>why the tool could not decide</summary>", "",
                f"{_md(q['why'])}", "", "</details>", ""]
         if q.get("answered"):

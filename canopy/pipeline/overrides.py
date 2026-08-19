@@ -63,8 +63,8 @@ from .state import (load_manifest, read_stage, review_entry, save_manifest, sha1
 __all__ = ["KINDS", "MAP_KINDS", "MAP_PENDING", "OVERRIDES_FILE", "OverrideRejected",
            "OVERRULABLE", "RE_EXTRACT_PENDING", "codes_cleared_by_value", "consumed_seqs",
            "recorded_flags", "recorded_holds", "row_flags", "append_override",
-           "read_overrides", "apply_overrides_and_repool", "map_answers", "override_summary",
-           "repool_lock"]
+           "read_overrides", "apply_overrides_and_repool", "map_answers", "eligibility_answers",
+           "override_summary", "repool_lock"]
 
 OVERRIDES_FILE = "overrides.jsonl"
 SUMMARY_FILE = "overrides_applied.json"
@@ -75,10 +75,12 @@ KINDS: tuple[str, ...] = ("value", "mark_reviewed", "exclude_dataset", "eligibil
 #: exclusion, which needs no reading — the pipeline applies them on the next `--resume`, not here.
 MAP_KINDS: tuple[str, ...] = ("include_dataset", "which_measure")
 MAP_PENDING = "extraction was never bought for this; re-run with --resume to extract it"
-#: the other answer whose consequence is a model call: the questions page reads both, so a
-#: reviewer is told that a recorded decision has not happened yet rather than left to assume it has
-RE_EXTRACT_PENDING = ("a re-extraction needs a model call: run `canopy run --resume` with this "
-                      "hint")
+#: the other answer whose consequence is a model call — and the one nothing buys. `--resume`
+#: re-reads the cached stages; it does not hand a reviewer's hint to an extractor, and no branch in
+#: this build does (`re_extract` wiring is deferred). The questions page prints this text, so
+#: telling a reviewer to run a resume that will not act on their answer is worse than telling them
+#: nothing: it says what is true instead (DECISION §C4).
+RE_EXTRACT_PENDING = "recorded; this build does not act on a re-extraction hint at --resume"
 _MAX_TEXT = 4000
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
@@ -197,6 +199,12 @@ def _validate(payload: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(payload.get("eligible"), bool):
             raise OverrideRejected("an eligibility override needs eligible: true or false")
         record["eligible"] = bool(payload["eligible"])
+        # §C3: the criterion the decision was made under, and the paper's own words it rests on —
+        # the same two fields an `include_dataset` answer carries, and for the same reason. A
+        # reader of the review must be able to check an inclusion against the protocol, not merely
+        # see that somebody made one.
+        record["rule"] = _text(payload.get("rule"), 1000)
+        record["quote"] = _text(payload.get("quote"), 1000)
     if kind == "re_extract":
         record["hint"] = _text(payload.get("hint"), 1000)
         if not record["hint"]:
@@ -571,6 +579,32 @@ def map_answers(run_dir: str | Path, paper_id: str) -> list[dict[str, Any]]:
     return list(latest.values())
 
 
+def eligibility_answers(run_dir: str | Path, paper_id: str) -> list[dict[str, Any]]:
+    """Validated `eligibility` records for this paper, in log order — the later answer wins.
+
+    The sibling of `map_answers`, and the whole interface between §C3's `include_paper` card and
+    the run: `run._answered_eligibility` calls it before the mapper's own verdict is acted on, so
+    a paper a reviewer put back into the review is mapped, extracted and resolved by the pipeline
+    itself rather than by anyone editing a stage file.
+    """
+    wanted = sha12(str(paper_id or ""))
+    if not wanted:
+        raise ValueError("eligibility_answers needs a paper_id; '' is not a paper")
+    out: list[dict[str, Any]] = []
+    for raw in read_overrides(run_dir):
+        if raw.get("kind") != "eligibility":
+            continue
+        if sha12(str(raw.get("paper_id") or "")) != wanted:
+            continue
+        try:
+            record = _validate(raw)
+        except OverrideRejected:            # a record this log would not accept is not an answer
+            continue
+        record.update({key: raw[key] for key in ("seq", "at", "actor") if key in raw})
+        out.append(record)
+    return out
+
+
 # ----------------------------------------------------------------------------- run state
 class _RunState:
     """Everything the stage files hold, indexed the way re-pooling needs it."""
@@ -859,6 +893,11 @@ def _apply_eligibility(override: Mapping[str, Any],
             if record.paper_id == paper_id or sha12(record.paper_id) == sha12(paper_id)]
     if override.get("eligible"):
         return bool(mine)                                  # already in; nothing to do
+    if not mine:
+        # keeping a paper OUT needs nothing bought and nothing dropped — the run already has no
+        # row for it. Reporting that as "pending a model call" (the message for an INCLUSION) told
+        # a reviewer their decision had not happened when it was the state of the world.
+        return True
     for key in mine:
         dropped.add(key)
         excluded.append({"paper_id": paper_id, "filename": "", "dataset_id": key[0],

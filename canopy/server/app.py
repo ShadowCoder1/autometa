@@ -787,9 +787,12 @@ def create_app(runs_dir: str | Path = "runs", *,
         cell. An answer that picks an `option` must also echo that option's `fingerprint`: **422**
         without it, **409** when it no longer matches. Clients written against the earlier
         contract have to send both.
+
+        **201** carries `override` (the first record, as before) and `overrides` (all of them):
+        a card that settles both groups of a dataset writes one override per group.
         """
         job = run_of(run_id, request)
-        from ..review.questions import answer_to_override, questions_for_run
+        from ..review.questions import answers_to_overrides, questions_for_run
         question = next((q for q in questions_for_run(job.run_dir) if q["number"] == number), None)
         if question is None:
             raise HTTPException(status_code=404, detail=f"no question #{number} in this run")
@@ -827,9 +830,14 @@ def create_app(runs_dir: str | Path = "runs", *,
                                     detail=f"{chosen!r} on question #{number} is not the option "
                                            f"you were shown ({option.get('label')!r}); reload "
                                            f"the questions")
+        # one answer, one override per CELL it names (DECISION §C1). A card can settle both
+        # groups of a dataset at once, and the record of it is still one record per group — each
+        # naming its own group and carrying only its own option's `clears`. They are appended
+        # together and the run is re-pooled ONCE, so a reviewer never sees the analysis in the
+        # half-answered state between two records of one decision.
         try:
-            payload = answer_to_override(question, body or {})
-            record = append_override(job.run_dir, payload)
+            records = [append_override(job.run_dir, payload)
+                       for payload in answers_to_overrides(question, body or {})]
         except OverrideRejected as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         with repool_lock(job.run_dir):
@@ -838,7 +846,7 @@ def create_app(runs_dir: str | Path = "runs", *,
             except FileNotFoundError as exc:
                 raise HTTPException(status_code=409, detail=str(exc))
         after = questions_for_run(job.run_dir)
-        return {"ok": True, "override": record, "repool": summary,
+        return {"ok": True, "override": records[0], "overrides": records, "repool": summary,
                 "n_open": sum(1 for q in after if q.get("status") == "open"),
                 "n_pending": sum(1 for q in after if q.get("status") == "pending_rerun")}
 

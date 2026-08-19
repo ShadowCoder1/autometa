@@ -1333,6 +1333,73 @@ def test_an_answer_must_name_the_question_it_answers_and_a_stale_number_is_refus
     assert named.status_code == 201, named.text
 
 
+@pytest.fixture()
+def nine_served(tmp_path) -> dict[str, Any]:
+    """A server over the RECORDED nine-paper run — the only run in the suite that really holds
+    cells a card folds. The fake pipeline run behind `cloned` holds none, so the endpoint's plural
+    contract cannot be exercised there at all."""
+    from canopy.server.app import create_app
+    from tests.helpers import nine
+
+    runs = tmp_path / "nine-runs"
+    runs.mkdir()
+    run_dir = nine.copy_to(runs)
+    token = "n" * 43
+    (run_dir / "job.json").write_text(json.dumps({
+        "run_id": run_dir.name, "token": token, "title": "nine", "created_at": "2026-08-18",
+        "status": "done", "options": {}, "n_files": 9, "cost_usd": 0.0, "error": "",
+        "started_at": "2026-08-18", "finished_at": "2026-08-18", "kind": "run"}), encoding="utf-8")
+    return {"api": TestClient(create_app(runs_dir=runs)), "run_id": run_dir.name, "token": token}
+
+
+def _pair(served: dict[str, Any]) -> dict[str, Any]:
+    body = served["api"].get(f"/api/runs/{served['run_id']}/questions",
+                             headers=auth(served["token"])).json()
+    return next(q for q in body["questions"] if q["kind"] == "pair")
+
+
+def test_answer_endpoint_appends_one_override_per_group_and_returns_all(nine_served):
+    """§C1: one decision, one POST — and one override per cell the decision names. A client that
+    only reads `override` still sees the first; one that records what happened reads `overrides`."""
+    api, run_id, token = nine_served["api"], nine_served["run_id"], nine_served["token"]
+    card = _pair(nine_served)
+    option = card["options"][0]
+    posted = api.post(f"/api/runs/{run_id}/questions/{card['number']}/answer",
+                      headers=auth(token),
+                      json={"id": card["id"], "option": option["key"],
+                            "option_fingerprint": option["fingerprint"],
+                            "note": "read off the figure"})
+    assert posted.status_code == 201, posted.text
+    payload = posted.json()
+    assert len(payload["overrides"]) == 2
+    assert [r["group"] for r in payload["overrides"]] == ["A", "B"]
+    assert payload["override"] == payload["overrides"][0]
+    assert all(r["question_id"] == card["id"] for r in payload["overrides"])
+    log = [json.loads(line) for line in
+           (Path(api.app.state.runs_dir) / run_id / "overrides.jsonl").read_text().splitlines()
+           if line.strip()]
+    assert [r["group"] for r in log[-2:]] == ["A", "B"]
+
+
+def test_stale_option_fingerprint_still_409s(nine_served):
+    """The echo check has to survive the fold: a folded option's key is positional twice over, so
+    a key alone means even less than it did before."""
+    api, run_id, token = nine_served["api"], nine_served["run_id"], nine_served["token"]
+    card = _pair(nine_served)
+    url = f"/api/runs/{run_id}/questions/{card['number']}/answer"
+    option = card["options"][0]
+    unechoed = api.post(url, headers=auth(token), json={"id": card["id"], "option": option["key"]})
+    assert unechoed.status_code == 422 and "fingerprint" in unechoed.json()["detail"]
+    stale = api.post(url, headers=auth(token),
+                     json={"id": card["id"], "option": option["key"],
+                           "option_fingerprint": "0" * 12})
+    assert stale.status_code == 409 and "not the option you were shown" in stale.json()["detail"]
+    named = api.post(url, headers=auth(token),
+                     json={"id": card["id"], "option": option["key"],
+                           "option_fingerprint": option["fingerprint"], "note": "the figure"})
+    assert named.status_code == 201, named.text
+
+
 def test_the_badge_counts_open_questions_and_reports_the_ones_waiting_for_a_re_run(cloned):
     """M7. `n_open` counted "not answered", so a run whose every remaining answer was waiting for
     a resume reported "No open questions" while nothing had been applied."""

@@ -494,8 +494,8 @@ def test_a_dataset_the_map_adjudicator_rejected_is_recorded_in_the_exclusions_ta
 
     from canopy.agents.mapper import HUMAN_EXCLUSION_RULE
 
-    def map_with_a_rejected_dataset(ctx, paper_record, group, status):
-        study, file_id = real_map(ctx, paper_record, group, status)
+    def map_with_a_rejected_dataset(ctx, paper_record, group, status, **kw):
+        study, file_id = real_map(ctx, paper_record, group, status, **kw)
         for suffix, rule, quote in (
                 ("x", "the protocol's population rule: adults over 60",
                  "twelve young subjects aged 19-27 took part"),
@@ -569,8 +569,11 @@ def _offline(tmp_path, router_wrapper=None, map_wrapper=None, monkeypatch=None, 
     shutil.copyfile(PDFS[0], papers_dir / PDFS[0].name)
     if map_wrapper is not None:
         real_map = run_module._map
+        # `**kw` because `_map` takes a keyword the run decides for it (§C3's `remap_for`): a stub
+        # that pins the signature it was written against turns a new argument into a paper that
+        # errors out, which is a test failure about the stub and not about the pipeline.
         monkeypatch.setattr(run_module, "_map",
-                            lambda ctx, p, g, s: map_wrapper(real_map(ctx, p, g, s)))
+                            lambda ctx, p, g, s, **kw: map_wrapper(real_map(ctx, p, g, s, **kw)))
     out = tmp_path / "run"
     run_pipeline(papers_dir, PROTOCOL, out, client=client, concurrency=1, resume=resume,
                  tiebreak=tiebreak)
@@ -2239,15 +2242,17 @@ def test_the_other_two_answers_to_a_converted_row_do_what_they_say(tmp_path):
 
     typed = tmp_path / "typed"
     _statistic_run(typed)
+    # per CELL (`fold=False`): once both groups carry a typed number they both ask "is it right?",
+    # which §C1 folds into one dataset card — and a card has no group of its own.
     for group, mean in (("A", 15.2), ("B", 11.8)):
-        question = next(q for q in questions_for_run(typed) if q["group"] == group)
+        question = next(q for q in questions_for_run(typed, fold=False) if q["group"] == group)
         override = answer_to_override(question, {
             "mean": mean, "dispersion_value": 3.0, "dispersion_type": "SD", "n": 12,
             "note": "Table 2 prints both groups after all"})
         assert override["kind"] == "value"
         append_override(typed, override)
         apply_overrides_and_repool(typed)
-    assert {q["kind"] for q in questions_for_run(typed)} == {"confirm_value"}
+    assert {q["kind"] for q in questions_for_run(typed, fold=False)} == {"confirm_value"}
     row = json.loads((typed / "results" / "extraction_table_all.json").read_text())[0]
     assert row["route"] == "text_mean_sd" and round(row["es"], 4) == -1.1333
 
