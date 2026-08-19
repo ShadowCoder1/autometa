@@ -684,3 +684,55 @@ def test_the_word_repeat_signature_needs_a_real_repeat():
     assert degenerate_reply("the value of of the measure is defined in the methods here") == []
     assert degenerate_reply("the measure measures adaptation and is defined in the methods") == []
     assert degenerate_reply("the the measure is defined in the methods here") == ["doubled_words"]
+
+
+# ----------------------------------------------- the stuttered tail (whole-branch review, MAJOR 3)
+#: `runs/nine/cache/9e6c5e19a487….json` → `content[1].text`, the raw reply claude-opus-5 gave to
+#: the orientation ballot for Bock's aftereffect measure. It opens with a real argument and then
+#: runs ~25 sentence tails that start mid-word — `stop_reason: end_turn`, 1131 output tokens, no
+#: control characters, no doubled words, balanced braces, well over the length floor. It passed
+#: every existing signature, was counted as an orientation witness, and was then put verbatim
+#: into the tiebreak prompt as the reasoning of a prior reader.
+STUTTERED = (
+    "The measure is a signed angular pointing error in degrees (median initial movement "
+    "direction), plotted on an axis running from -40 to +60 deg; during adaptation errors are "
+    "positive (in the direction of the 60-deg rotation) and during the no-feedback "
+    "after-effect phase they fall into the negative region, i.e. the sign carries the "
+    "direction of the deviation and the magnitude of the negative excursion is the "
+    "after-effect. Hence a larger (less negative) raw value corresponds to a SMALLER "
+    "after-effect, so for this review's construct lower raw values mean more recalibration. "
+    "The text explicitly states the after-effect was 'similar in both age groups' and "
+    "'age-independent', with no statement that one group's after-effect magnitude exceeded "
+    "the other's (only that its decline was faster in the young), so the direction on this "
+    "raw measure is not stated.error sign not construct magnitude).ular error, so direction "
+    "unknown..al angular error).al after-effect magnitude).ular pointing error).al "
+    "deviation).ular error).al angular error, so unknown).ular error).al angular pointing "
+    "error).ular error).al deviation from baseline).ular error).al after-effect).ular "
+    "error).al angular error).ular error).al deviation).ular error).al after-effect "
+    "magnitude).ular error).al signed error).ular error).al deviation).ular error).al "
+    "after-effect).ular error).al angular error).ular error)."
+)
+
+
+def test_a_stuttered_tail_is_a_reply_that_did_not_happen():
+    assert len(STUTTERED) > DEGENERATE_MIN_LEN
+    assert degenerate_reply(STUTTERED) == ["stuttered_tail"]
+
+
+def test_the_argument_this_reply_starts_with_is_a_real_reply_on_its_own():
+    """The signature is about the TAIL, not about the reader: everything before the stutter is a
+    justification that would have been counted, and is."""
+    head = STUTTERED.split("not stated.")[0] + "not stated."
+    assert len(head) > 800 and degenerate_reply(head) == []
+
+
+def test_the_stutter_signature_needs_three_runs_of_it():
+    """Two is prose that happens to bracket ("(deg).al" survives a sentence split); three is a
+    decoder repeating itself. Over-firing costs one re-issued call, so the floor is low — but it
+    is a floor, and an ordinary parenthesis before a lower-case word is not it."""
+    assert degenerate_reply(
+        "the measure is the angular error at the end of adaptation (deg).the paper states it "
+        "plainly in the methods section and the figure legend repeats it") == []
+    assert degenerate_reply(
+        "the measure is defined in the methods).ular error).al deviation).ular error, so the "
+        "direction on this raw measure is not stated anywhere in the paper") == ["stuttered_tail"]

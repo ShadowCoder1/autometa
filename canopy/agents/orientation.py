@@ -34,6 +34,7 @@ Three ceiling rules live in `combine_orientation`, and all three are about who i
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Sequence, get_args
 
 from ..config import MODELS
@@ -172,8 +173,29 @@ def _means_prompt(group_a_label: str, group_b_label: str, mean_a: float | None,
     return "\n".join(lines)
 
 
+#: how much of an earlier reader's reason the tiebreak prompt shows. A reply that came back
+#: garbled — `degenerate_reply`'s `stuttered_tail` — runs to a kilobyte and a half of mid-word
+#: sentence tails, and all of it used to go verbatim into the prompt of the reader that has to
+#: break the tie (whole-branch review, MAJOR 3). A witness C12 will not let vote must not
+#: dominate the context of the vote that replaces it. Both limits, whichever ends first: the
+#: opening is where a reader states its case, and a bad reply's first run-on sentence never ends.
+_REASON_SENTENCES = 3
+_REASON_CHARS = 600
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+
+
+def _reason_opening(text: str) -> str:
+    """The first `_REASON_SENTENCES` sentences of a reason, or its first `_REASON_CHARS`
+    characters, whichever comes first — marked with an ellipsis when anything was left out."""
+    whole = re.sub(r"\s+", " ", str(text or "")).strip()
+    head = clip(" ".join(_SENTENCE_END.split(whole)[:_REASON_SENTENCES]), _REASON_CHARS)
+    if head != whole and not head.endswith("…"):
+        head += " …"
+    return head
+
+
 def _prior_readers_prompt(runs: Sequence[OrientationRun]) -> str:
-    """Every earlier ballot, verbatim: who, what it voted, why, and the words it rested on."""
+    """Every earlier ballot: who, what it voted, why (its opening), and the words it rested on."""
     if not runs:
         return "(no earlier ballot was recorded)"
     blocks = []
@@ -183,7 +205,7 @@ def _prior_readers_prompt(runs: Sequence[OrientationRun]) -> str:
                  f"  higher_is_better: {direction}",
                  f"  raw_value_semantics: {run.raw_value_semantics}",
                  f"  direction_stated_in_text: {run.direction_stated_in_text}",
-                 f"  reason: {clip(run.reason, 1200) or '(none given)'}"]
+                 f"  reason: {_reason_opening(run.reason) or '(none given)'}"]
         lines += [f"  quote: {clip(quote, 400)}" for quote in run.quotes[:4]]
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
@@ -431,7 +453,14 @@ def combine_orientation(runs: Sequence[OrientationRun], outcome_key: str,
         tally = {value: [b for b in decided if b.run.higher_is_better is value]
                  for value in answers}
         top = max(tally.values(), key=len)
-        shared = {b.run.raw_value_semantics for b in decided}
+        # …asked of the MAJORITY, not of every decided reader (whole-branch review, MINOR 4).
+        # Scoping it to `decided` let the outvoted reader break the majority by disagreeing about
+        # the scale, which made the ballot a no-op in the case it was bought for: Bock's
+        # aftereffect, where opus and fable both read `signed_direction` and both said False, and
+        # sonnet's `higher_more_error` alone kept the cell with a human. What has to be one number
+        # is the number the agreeing readers agreed about. `top` is never a single reader — the
+        # even-split gate below runs first — so "never settle alone" is untouched.
+        shared = {b.run.raw_value_semantics for b in top}
         if len(top) * 2 <= len(decided):
             notes.append("the readers split evenly on the direction of this measure, and a tie is "
                          "not a majority")

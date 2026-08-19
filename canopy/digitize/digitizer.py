@@ -867,6 +867,13 @@ _POSITIONAL_RE = re.compile(r"\b(?:" + "|".join(re.escape(p) for p in POSITIONAL
 #: the category a locator quotes or brackets: `'without strategy'`, `"block 20"`, `(pre-test)`
 _LOCATOR_PHRASE = re.compile(r"'([^']{2,60})'|\"([^\"]{2,60})\"|\(([^()]{2,60})\)")
 _WORD_RE = re.compile(r"[a-z0-9]+")
+#: a locator SAYING it spans the axis: "at each of the 8 target directions", "averaged across
+#: blocks", "all eight targets". Whatever else such a locator brackets or quotes, it has already
+#: said the value is not at one place on the x axis (whole-branch review, BLOCKER 1).
+_ENUMERATION_CUE = re.compile(r"\b(?:each of|all|every|across|average(?:d)? (?:over|across))\b")
+#: what separates the items of a bracketed LIST — `(0, 45, 90)`, `(block 1 and block 20)`,
+#: `(pre/post)`, `(days 1–3)`
+_LIST_SPLIT = re.compile(r",|/|;|\band\b|–|—")
 
 #: The vocabulary question — *do these words name this group?* — is asked in two places now: here,
 #: to decide whether a categorical x axis IS the comparison, and in `verify.panels`, to decide
@@ -903,9 +910,36 @@ def _agreed_x_read(readings: Sequence[Any]) -> str:
     return shortest if all(_labels_are_the_same(shortest, r) for r in reads) else ""
 
 
+def _same_category(a: Any, b: Any) -> bool:
+    """Do a locator's phrase and a plotted x category name the same category?
+
+    `_labels_are_the_same` for words, because a paper spells its own labels its own way
+    ("Elderly" / "Elderly adults"). NOT for digits: a numeric category is the number it prints
+    and nothing else, so a substring rule makes "135" the category named by "(n = 135)", by
+    "(1350)" and by the joined key of the whole list `0, 45, 90, 135, …` — which is exactly how
+    an average across eight target directions became the value at one of them (BLOCKER 1).
+    """
+    left, right = _label_key(a), _label_key(b)
+    if not left or not right:
+        return False
+    if left.isdigit() or right.isdigit():
+        return left == right
+    return _labels_are_the_same(a, b)
+
+
 def _locator_category(locator: str, readings: Sequence[Any]) -> str:
     """The x category this locator names, or `""` — a phrase it quotes, or a position it points
     at that every reader agrees on.
+
+    Three ways of naming NO category, and each of them is a locator that says something else:
+
+    * it ENUMERATES ("at each of the 8 target directions", "averaged across blocks"). Whatever
+      it brackets, it has already said the value is not at one place on the axis;
+    * one of its bracketed phrases is a LIST of two or more items. A list names several
+      categories, and several is not one;
+    * more than one of its phrases matches a category. Taking the first in reading order picks
+      whichever point the figure happens to plot leftmost, which is a decision about the data
+      made by a sort order.
 
     A position is only a category once it lands on one. "The left-most point" beside readers who
     all say they read "every point on the x axis" names no category at all: taking their word for
@@ -919,16 +953,23 @@ def _locator_category(locator: str, readings: Sequence[Any]) -> str:
     labels = [str(p.x_label).strip() for reading in readings
               for row in getattr(reading, "groups", ()) for p in getattr(row, "points", ())
               if str(getattr(p, "x_label", "") or "").strip()]
+    if _ENUMERATION_CUE.search(str(locator).lower()):
+        return ""
+    matched: dict[str, str] = {}
     for phrase in _locator_phrases(locator):
+        if len([p for p in _LIST_SPLIT.split(phrase) if p.strip()]) > 1:
+            return ""
         for label in labels:
-            if _labels_are_the_same(phrase, label):
-                return label
+            if _same_category(phrase, label):
+                matched[_label_key(label)] = label
+    if matched:
+        return next(iter(matched.values())) if len(matched) == 1 else ""
     if not _POSITIONAL_RE.search(str(locator).lower()):
         return ""
     agreed = _agreed_x_read(readings)
     if not agreed or not labels:
         return ""
-    return next((label for label in labels if _labels_are_the_same(agreed, label)), "")
+    return next((label for label in labels if _same_category(agreed, label)), "")
 
 
 def _vocab_words(names: Sequence[str]) -> set[str]:
@@ -3111,6 +3152,22 @@ def _unit(target: TargetSpec, readouts: Sequence[ReadOut]) -> str:
     return target.unit_hint or (named[0] if named else "")
 
 
+def _collapse_provenance(samples: Sequence[RouteSample]) -> dict[str, Any]:
+    """What these samples — and only these — say about averaging across the x axis.
+
+    Asked once per candidate rather than once per cell. `collapsed_across_x` is a claim about the
+    number on THIS row: a pool where one reader averaged eight target directions and another read
+    the point the locator named contains both kinds of row, and stamping the cell's answer on
+    every one of them puts `collapsed_across_x` beside `categorical_point_read` — the pair
+    DECISION D3 says cannot co-exist (whole-branch review, MAJOR beside BLOCKER 1).
+    """
+    collapsed = [s for s in samples if s.extra.get("collapsed_across_x")]
+    return {"collapsed_across_x": bool(collapsed),
+            "n_points": (min(int(s.extra.get("n_points") or 0) for s in collapsed)
+                         if collapsed else None),
+            "dispersion_approximation": MEAN_OF_POINT_SD if collapsed else ""}
+
+
 def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: FigureRegion,
                       paper: PaperRecord, source: Source | None, dataset: DatasetSpec | None,
                       core: _Core, cal: AxisCalibration | None, crop: Path, overlay_path: str,
@@ -3146,6 +3203,11 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
                 extractor_id=s.extractor_id, sigma=s.sigma, status=_sample_status(s),
                 notes=("; ".join(x for x in (s.notes, s.drop_reason) if x)),
                 provenance={**base, "route_sample": s.to_dict(),
+                            # the CELL's base says a collapse happened somewhere in the pool;
+                            # this row is one reader, and D3 forbids `collapsed_across_x` beside
+                            # a point read. Every candidate answers for its own sample, the way
+                            # the ensemble below already answers for its own group.
+                            **_collapse_provenance([s]),
                             "tool_calls": summarize_tool_calls(s.tool_calls),
                             "dropped": s.dropped,
                             "dropped_by": str(s.extra.get("dropped_by", ""))},
@@ -3160,6 +3222,7 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
                 page=page, locator=locator, crop=crop, overlay_path=overlay_path,
                 extractor_id="digitize:ensemble", sigma=None, status=status, notes=reason,
                 provenance={**base, "needs_review": True, "needs_review_reason": reason,
+                            **_collapse_provenance(mine),
                             "per_route": [s.to_dict() for s in mine],
                             "dropped_samples": [s.to_dict() for s in mine if s.dropped],
                             "dropped_by": ", ".join(sorted({str(s.extra.get("dropped_by", ""))
@@ -3235,7 +3298,6 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
                 + (f" (whisker drawn on one side only: {'/'.join(sides)})" if sides else ""))
         if topology_note:
             reasons.append(topology_note)
-        mine_collapsed = [s for s in mine if s.extra.get("collapsed_across_x")]
         provenance = {
             **base,
             # `live`, never `mine`: a vote may only credit readers that cast a ballot. The
@@ -3245,10 +3307,7 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             # that phantom family is the whole reason group A was released while group B,
             # on the same figure, was withheld.
             "model_families": model_families(live),
-            "collapsed_across_x": bool(mine_collapsed),
-            "n_points": (min(int(s.extra.get("n_points") or 0) for s in mine_collapsed)
-                         if mine_collapsed else None),
-            "dispersion_approximation": MEAN_OF_POINT_SD if mine_collapsed else "",
+            **_collapse_provenance(mine),
             "legend_says": legend_text,
             "legend_dispersion": legend_type.value if legend_type else None,
             "mapper_dispersion": mapper_type.value if mapper_type else None,

@@ -57,14 +57,22 @@ _DOUBLED_WORDS = re.compile(r"\b(\w{3,})\s+\1\b")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 #: a literal backslash escape that was never decoded (`\x08`, `\n1`, `\t2` as four characters)
 _STRAY_ESCAPE = re.compile(r"\\[tnx][a-z0-9]")
+#: a reply that finished its argument and then kept emitting the ENDS of sentences: close-paren,
+#: a period or two, then a fragment starting mid-word — `").ular error).al deviation).ular
+#: error)."` — three runs or more. Nothing else in the detector sees this: the text is long, its
+#: braces balance, no word is doubled and no control character appears in it, so the reply passed
+#: as a witness and was then quoted verbatim to the reader buying the tiebreak (whole-branch
+#: review, MAJOR 3; the record is `runs/nine/papers/b511dbb76fa6/verify.json`, Bock aftereffect).
+_STUTTER = re.compile(r"(?:\)\.{1,2}[a-z]{1,6}\b[^.]{0,60}){3,}")
 
 
 def degenerate_reply(text: str) -> list[str]:
     """Which degeneracy signatures a model's justification carries; `[]` means it is a real reply.
 
     Signatures, in the order they are reported: `too_short`, `raw_serialisation`, `doubled_words`,
-    `control_artefacts`. Verified over every orientation ballot in `runs/rerun-fixed`: 16 ballots,
-    exactly 4 flagged (`tests/test_llm_client.py`).
+    `control_artefacts`, `stuttered_tail`. Verified over every orientation ballot in
+    `runs/rerun-fixed`: 16 ballots, exactly 4 flagged — and the fifth signature adds none of them
+    (`tests/test_llm_client.py`).
     """
     reply = text or ""
     found: list[str] = []
@@ -76,6 +84,8 @@ def degenerate_reply(text: str) -> list[str]:
         found.append("doubled_words")
     if _CONTROL.search(reply) or _STRAY_ESCAPE.search(reply):
         found.append("control_artefacts")
+    if _STUTTER.search(reply):
+        found.append("stuttered_tail")
     return found
 
 

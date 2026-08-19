@@ -289,3 +289,41 @@ def _escape(text: str) -> str:
     import html as _html
 
     return _html.escape(text, quote=True)
+
+
+# ------------------------------------------------------------------- a sign zero does not have
+def test_a_value_that_rounds_to_zero_is_never_printed_with_a_minus_sign():
+    """Whole-branch review, MINOR 6: `runs/nine` wrote "gives -0.00 (95% CI -0.33 to 0.33, k = 5)".
+
+    The best-guess estimate really was -0.0025, and at two decimals that is zero. A minus sign in
+    front of it is a direction the line does not have — the one thing a reader takes away from a
+    pooled number at a glance — so the printed form is normalised at the printed precision. The
+    ledger keeps the unrounded number, and the form the prose used beside it, because every number
+    in the prose has to be in `facts`.
+    """
+    c = _synthetic([-0.4, -0.4], best_guess={
+        "k": 5, "estimate": -0.0025139210429772395, "ci_low": -0.33143932059379366,
+        "ci_high": 0.32641147850783914, "n_added": 2, "n_still_held": 0,
+        "delta_vs_strict": -0.0011, "sign_agrees_with_strict": True, "not_added": []},
+        held=_rows([-0.3, -0.3]))
+    text = render_text(c)
+    assert "-0.00" not in text
+    assert "gives 0.00 (95% CI -0.33 to 0.33, k = 5)" in text
+    assert "a change of +0.00 from the primary estimate" in text
+    assert c.facts["best_guess_estimate"] == -0.0025139210429772395     # the ledger is unrounded
+    assert set(NUMBER.findall(text)) <= ({f"{v:.2f}" for v in c.facts.values()
+                                          if isinstance(v, float)}
+                                         | {f"{v:.3f}" for v in c.facts.values()
+                                            if isinstance(v, float)}
+                                         | {f"{v:.0f}" for v in c.facts.values()
+                                            if isinstance(v, float)}
+                                         | {str(v) for v in c.facts.values()})
+
+
+def test_a_negative_number_that_does_not_round_to_zero_keeps_its_sign():
+    """The normalisation is about the printed precision and nothing else."""
+    c = _synthetic([-0.4, -0.4], best_guess={
+        "k": 3, "estimate": -0.006, "ci_low": -0.4, "ci_high": 0.4, "n_added": 1,
+        "n_still_held": 0, "delta_vs_strict": 0.4, "sign_agrees_with_strict": True,
+        "not_added": []}, held=_rows([-0.3]))
+    assert "gives -0.01" in render_text(c)

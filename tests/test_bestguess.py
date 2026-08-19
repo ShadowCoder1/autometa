@@ -237,3 +237,69 @@ def test_the_group_statistics_sentence_this_veto_reads_is_the_one_the_resolver_w
                             p.stats)
     assert record.route == "not_convertible" and record.es is None
     assert _NO_GROUP_STATS.search(record.not_convertible_reason)
+
+
+# ------------------------------------------------- a sign the row does not have is not a magnitude
+def _heuer_exp2_aftereffect():
+    """Heuer Exp 2's aftereffect row as the final round left it in `runs/nine`.
+
+    The fixture's own record carries the `sign_mismatch` the checker raised — "the paper states b
+    greater on this measure, but the extracted means say A = -1.719 and B = -2.42" — and the round
+    then settled the direction by tiebreak ballot and built a value on it. The four fields below
+    are exactly the ones the ballot and the resolver wrote (`runs/nine/papers/3570e4ce2a9c/
+    resolve.json`); nothing else about the row is invented.
+    """
+    held = nine.record("3570e4ce2a9c:d2", "aftereffect")
+    settled = [f for f in held.flags
+               if f not in ("not_convertible", "orientation_unknown", "orientation_unresolved")]
+    return held.model_copy(update={
+        "route": "figure", "es": -0.12762068294949444, "var": 0.1084198064845882,
+        "se": 0.3292716302455895, "higher_is_better": False, "confidence": "needs_human",
+        "orientation_source": "tiebreak_ballot",
+        "flags": [*settled, "orientation_by_majority"]})
+
+
+def test_a_disputed_sign_never_enters_the_best_guess_line():
+    """Whole-branch review, MAJOR 2: this row was admitted at 26% of the aftereffect best guess,
+    with the dispute merely quoted — and its admission is what flipped `sign_agrees_with_strict`
+    to false and wrote "The best-guess line points the other way" into the conclusion.
+
+    `sign_mismatch` is by definition a contested sign: the direction the paper states and the
+    direction the extracted means imply disagree. DECISION A says the line "never resolves a sign
+    it does not have", and that promise cannot depend on the check being right about this row —
+    a row whose sign is disputed is not a magnitude the line may borrow.
+    """
+    row = _heuer_exp2_aftereffect()
+    rows, dec = best_guess_rows([], [row], outcome=nine.protocol().outcome("aftereffect"),
+                                settings=nine.protocol().stats)
+    assert not dec[0].admitted and dec[0].rule == ""
+    assert dec[0].veto == "contradicted_value" and dec[0].veto in VETOES
+    assert "sign_mismatch" in dec[0].reason
+    assert "never resolves a sign it does not have" in dec[0].reason
+    assert rows == []
+
+
+def test_the_same_row_without_the_sign_dispute_is_still_admitted():
+    """The veto is about the disputed sign and nothing else: retire the flag — which is what
+    answering the row's question does — and the value the resolver built is borrowed again."""
+    row = _heuer_exp2_aftereffect()
+    clean = row.model_copy(update={"flags": [f for f in row.flags if f != "sign_mismatch"]})
+    _, dec = best_guess_rows([], [clean], outcome=nine.protocol().outcome("aftereffect"),
+                             settings=nine.protocol().stats)
+    assert dec[0].admitted and dec[0].rule == "low_confidence_value"
+
+
+def test_provenance_codes_are_not_quoted_as_disputes():
+    """Whole-branch review, MINOR 7: `orientation_by_majority` records HOW the direction was
+    settled — a decision about the row, not a doubt about a reading — and the best-guess reason
+    listed it under "disputed (…)". A reader counting disputes was counting the tiebreak."""
+    row = _heuer_exp2_aftereffect()
+    clean = row.model_copy(update={
+        "flags": [f for f in row.flags if f != "sign_mismatch"] + ["dispersion_missing"]})
+    _, dec = best_guess_rows([], [clean], outcome=nine.protocol().outcome("aftereffect"),
+                             settings=nine.protocol().stats)
+    assert dec[0].admitted
+    assert "orientation_by_majority" not in dec[0].reason
+    assert "orientation_by_majority" not in dec[0].evidence.get("disputed", [])
+    assert "dispersion_missing" in dec[0].evidence["disputed"]     # a real doubt still shows
+    assert "orientation_by_majority" in dec[0].evidence["flags"]   # the row still carries it

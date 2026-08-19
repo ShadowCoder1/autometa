@@ -29,7 +29,10 @@ Two things decide each held row, and every held row gets exactly one of them wit
 A verifier's refutation is NOT a veto. A refutation is a dispute about a magnitude or a quantity,
 and the best-guess line's job is to say what the reading implies while showing the dispute: the
 reason opens with `disputed` and names it. What the line never resolves is a SIGN it does not
-have — an unsigned row is vetoed, because guessing a direction would be inventing the finding.
+have — an unsigned row is vetoed, because guessing a direction would be inventing the finding,
+and so is a row whose sign is CONTESTED (`sign_mismatch`: the direction the paper states and the
+direction the extracted means imply disagree). A disputed magnitude is a number to show with its
+dispute; a disputed direction is a different finding.
 """
 from __future__ import annotations
 
@@ -59,6 +62,17 @@ VETOES: tuple[str, ...] = ("row_refusal", "contradicted_value", "orientation_unr
 VETO_ROW_FLAGS = ROW_REFUSAL_CODES
 #: "this may be a different quantity" — `verify.confidence`'s own set, likewise imported
 CONTRADICTED = CONTRADICTING_FLAGS
+#: a contested SIGN, not a contested magnitude: `checks.sign_check` raises it when the direction
+#: the paper STATES and the direction the extracted means imply disagree. It vetoes under
+#: `contradicted_value` (amendment, whole-branch review MAJOR 2) — the closed enum is unchanged,
+#: because what a disputed sign contradicts is the row's direction, and DECISION A's invariant is
+#: that this line never resolves a direction it does not have. Named and checked rather than
+#: spelled inline, so renaming the code in `verify.checks` fails here on the same commit.
+SIGN_DISPUTED = "sign_mismatch"
+assert severity_of(SIGN_DISPUTED) == "error"
+#: codes that record HOW a decision was made rather than a doubt about a reading. They are not
+#: disputes and the reason must not quote them as ones (whole-branch review, MINOR 7).
+PROVENANCE_PREFIX = "orientation_"
 
 #: `resolve.available_routes` writes this sentence into `routes_rejected`/`not_convertible_reason`
 #: when a group has no mean, size and dispersion; from D1 onward the same fact is also a flag
@@ -141,10 +155,16 @@ def _disputes(record: EffectSizeRecord) -> list[str]:
     `calibration_disputed` was quoted only because of four letters in the middle of its name, so
     renaming that code would have silently dropped the whole mark from a row whose two groups may
     be on different scales. Severity is the one place that fact is stated on purpose.
+
+    The `orientation_*` codes are the exception, and for the same reason: they carry a severity
+    because a cell settled by a majority must be reviewed, but what they record is HOW the
+    direction was decided, not a doubt about a reading. Quoting `orientation_by_majority` under
+    "disputed (…)" told a reader the tiebreak itself was contested (MINOR 7).
     """
     flags = set(record.flags)
-    return sorted((flags & WITHHOLDING_FLAGS)
-                  | {f for f in flags if _severity(f) in ("error", "warn")})
+    return sorted(((flags & WITHHOLDING_FLAGS)
+                   | {f for f in flags if _severity(f) in ("error", "warn")})
+                  - {f for f in flags if f.startswith(PROVENANCE_PREFIX)})
 
 
 def _evidence(record: EffectSizeRecord, **extra: Any) -> dict[str, Any]:
@@ -171,6 +191,13 @@ def _veto(record: EffectSizeRecord) -> tuple[str, str, dict[str, Any]] | None:
                 f"quantity the cell asks for, and a best guess about the wrong quantity is not a "
                 f"guess about this contrast — a human has to settle it first",
                 _evidence(record, contradicting_flags=contradicting))
+
+    if SIGN_DISPUTED in record.flags:
+        return ("contradicted_value",
+                "sign_mismatch: the paper's stated direction contradicts the extracted means, so "
+                "the sign of this row is disputed — the best-guess line never resolves a sign it "
+                "does not have",
+                _evidence(record, contradicting_flags=[SIGN_DISPUTED]))
 
     if record.higher_is_better is None:
         return ("orientation_unresolvable",

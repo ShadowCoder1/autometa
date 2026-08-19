@@ -74,10 +74,32 @@ def _finite(value: Any) -> bool:
         and math.isfinite(float(value))
 
 
-def _fact(facts: dict[str, Any], key: str, value: float, digits: int = 2) -> str:
-    """Record a number under its name and return it formatted exactly as the prose prints it."""
+def _number(value: float, digits: int = 2, sign: str = "") -> str:
+    """A number as the prose prints it, with no `-0.00` in it.
+
+    A value that rounds to zero at the printed precision IS zero on the page, and a minus sign in
+    front of it reads as a direction — the one thing a reader takes away from a pooled estimate at
+    a glance. `runs/nine` wrote "gives -0.00 (95% CI -0.33 to 0.33)" for an estimate of -0.0025
+    (whole-branch review, MINOR 6). Only the printed form is normalised; the ledger keeps the
+    number that was actually pooled.
+    """
+    text = f"{float(value):{sign}.{digits}f}"
+    return f"{0.0:{sign}.{digits}f}" if float(text) == 0.0 else text
+
+
+def _fact(facts: dict[str, Any], key: str, value: float, digits: int = 2,
+          sign: str = "") -> str:
+    """Record a number under its name and return it formatted exactly as the prose prints it.
+
+    When the printed form is not what the stored number formats to — the negative zero above — the
+    form itself is recorded under `<key>_text`, because the invariant this module is checked
+    against is that every number in the prose is in `facts`.
+    """
     facts[key] = float(value)
-    return f"{float(value):.{digits}f}"
+    text = _number(value, digits, sign)
+    if text != f"{float(value):{sign}.{digits}f}":
+        facts[f"{key}_text"] = text
+    return text
 
 
 def _register(facts: dict[str, Any], key: str, text: str) -> str:
@@ -292,7 +314,7 @@ def _best_guess_sentences(facts: dict[str, Any], bg: Mapping[str, Any], *,
         f"({facts['ci_level_pct']:.0f}% CI {_fact(facts, 'best_guess_ci_low', bg['ci_low'])} to "
         f"{_fact(facts, 'best_guess_ci_high', bg['ci_high'])}, k = {facts['best_guess_k']})")
     if _finite(bg.get("delta_vs_strict")):
-        delta = f"{float(bg['delta_vs_strict']):+.2f}"
+        delta = _number(bg["delta_vs_strict"], sign="+")
         facts["best_guess_delta"] = float(bg["delta_vs_strict"])
         facts["best_guess_delta_text"] = delta
         sentence += f", a change of {delta} from the primary estimate"
@@ -327,15 +349,16 @@ def overall_conclusion(protocol: Protocol, per_outcome: Mapping[str, Conclusion]
         if str(facts.get("best_guess_sign_agrees_with_strict") or "") == "no":
             n_flips += 1
         if c.estimable:
-            lines.append(f"{label}: {float(facts['estimate']):.2f} "
+            lines.append(f"{label}: {_number(facts['estimate'])} "
                          f"({float(facts['ci_level_pct']):.0f}% CI "
-                         f"{float(facts['ci_low']):.2f} to {float(facts['ci_high']):.2f}), "
+                         f"{_number(facts['ci_low'])} to {_number(facts['ci_high'])}), "
                          f"k = {facts['k']} — {c.direction_word}.")
         else:
             lines.append(f"{label}: not estimable (k = {facts.get('k', 0)}).")
     max_delta = max(deltas, key=abs) if deltas else 0.0
     lines.append(f"Across all outcomes, {n_held} of {n_rows} rows are held for human review; the "
-                 f"best-guess line changes a pooled estimate by at most {max_delta:+.2f} and "
+                 f"best-guess line changes a pooled estimate by at most "
+                 f"{_number(max_delta, sign='+')} and "
                  f"changes the direction of {n_flips} outcome(s). Every row above is traceable "
                  f"to a page or a figure in the extraction table, and nothing in this section "
                  f"goes beyond the numbers in it.")

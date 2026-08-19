@@ -2457,6 +2457,152 @@ def test_a_positional_locator_names_nothing_when_no_reader_listed_a_category():
         assert samples_for([r], t, locator=locator)[0].mean is None, locator
 
 
+# ------------------------------------------------- D3: a locator that ENUMERATES names no category
+#: the locator the mapper really wrote for `3570e4ce2a9c:d1:late_adaptation` (Heuer 2011, Fig. 2a)
+HEUER_LOC = ("Figure 2, panel a ('adaptive shift'), filled circles = young, open circles = old, "
+             "at each of the 8 target directions (0, 45, 90, 135, 180, 227, 270, 313°)")
+#: the eight points claude-sonnet-5 really read off that panel for the OLDER series
+#: (`runs/nine/papers/3570e4ce2a9c/extract.json`, route sample of `digitize:readout:
+#: claude-sonnet-5:direct`), and the younger series shaped the same way — the readers that
+#: produced the young number recorded no point list of their own, so only the CATEGORIES of that
+#: series are evidence here, and they are the same eight.
+HEUER_OLD = [("0", -23.0, 4.7), ("45", -29.5, 3.2), ("90", -25.0, 4.5), ("135", -27.0, 4.5),
+             ("180", -26.5, 5.0), ("227", -29.0, 4.0), ("270", -27.0, 9.5), ("313", -30.0, 4.0)]
+HEUER_YOUNG = [(x, m - 13.15, e) for x, m, e in HEUER_OLD]
+#: the review's own vocabulary for the two arms (`runs/nine/protocol.yaml`) — without it no
+#: series description names its own group and D3 cannot fire at all
+OLD_WORDS = ("older", "older adults", "elderly", "aged", "old", "seniors")
+YOUNG_WORDS = ("younger", "younger adults", "young", "young adults", "youths", "younger group")
+
+
+def _heuer():
+    """Heuer's Fig. 2a as the readers returned it: two series, eight target directions each."""
+    from tests.helpers.digitize_replay import readout, target
+
+    t = target(group_a_label="older participants", group_b_label="younger participants",
+               collapse_across_x=True, group_a_synonyms=OLD_WORDS, group_b_synonyms=YOUNG_WORDS)
+    r = readout("claude-sonnet-5", "direct", [
+        {"group": "A", "label_read": "old (open circles, dashed line)",
+         "x_read": "average across 8 target directions", "points": HEUER_OLD},
+        {"group": "B", "label_read": "young (filled circles, solid line)",
+         "x_read": "average across 8 target directions", "points": HEUER_YOUNG}])
+    return t, [r]
+
+
+def test_a_locator_that_enumerates_its_categories_names_none_of_them():
+    """Whole-branch review, BLOCKER 1: the locator asks for the average across eight target
+    directions and D3 read it as "the source names one x category ('135')".
+
+    `_locator_phrases` handed the bracketed LIST `0, 45, 90, 135, 180, 227, 270, 313` to
+    `_labels_are_the_same`, whose substring rule matched five of the eight labels inside its
+    joined key and returned the first. The whole row then sat on the best-guess forest at the
+    value of ONE target direction, carrying `categorical_point_read` AND `collapsed_across_x`,
+    two flags DECISION D3 says cannot co-exist. A locator that enumerates its categories names
+    none of them.
+    """
+    from canopy.digitize import digitizer as dz
+    from tests.helpers.digitize_replay import samples_for
+
+    t, rs = _heuer()
+    assert dz._locator_category(HEUER_LOC, rs) == ""
+    role, why = dz._categorical_role(t, rs, locator=HEUER_LOC)
+    assert role == dz.CATEGORICAL_CONDITIONS, why
+    s = {x.group: x for x in samples_for(rs, t, locator=HEUER_LOC)}
+    assert s["A"].mean == pytest.approx(-27.125)      # the average across the eight, not -27.0
+    assert s["A"].extra["collapsed_across_x"] is True and s["A"].extra["n_points"] == 8
+
+
+def test_a_bracketed_list_of_categories_names_no_single_one():
+    """The cue and the list are two nets, and either one alone has to hold: a locator that
+    brackets several categories without saying "each of" is still naming several."""
+    from canopy.digitize import digitizer as dz
+
+    t, rs = _heuer()
+    for locator in ("Figure 2, panel a (0, 45, 90, 135, 180, 227, 270, 313°)",
+                    "Figure 2, panel a ('0 and 45')",
+                    "Figure 2, panel a (135; 180)"):
+        assert dz._locator_category(locator, rs) == "", locator
+        assert dz._categorical_role(t, rs, locator=locator)[0] == dz.CATEGORICAL_CONDITIONS
+
+
+def test_a_numeric_category_is_matched_by_equality_and_never_as_a_substring():
+    """`_labels_are_the_same` exists for words a paper spells differently ("Elderly" /
+    "Elderly adults"). Digits are not spelled differently: an axis category "135" is the number
+    135 and nothing else, so "(n = 135)" — or any bracketed phrase with those three digits in it
+    — is not a locator naming that category."""
+    from canopy.digitize import digitizer as dz
+
+    _, rs = _heuer()
+    for locator in ("Figure 2, panel a (n = 135)", "Figure 2 ('the 135 trials')",
+                    "Figure 2, panel a (1350)"):
+        assert dz._locator_category(locator, rs) == "", locator
+    assert dz._locator_category("Figure 2, panel a ('135')", rs) == "135"
+
+
+def test_a_locator_that_quotes_two_categories_names_neither():
+    """Two matches is not one match. Taking the first in reading order picks the point the
+    figure happens to plot leftmost, which is a decision about the data made by a sort order."""
+    from canopy.digitize import digitizer as dz
+    from tests.helpers.digitize_replay import readout, target
+
+    t = target(group_a_label="older adults", group_b_label="younger adults",
+               collapse_across_x=True)
+    r = readout("claude-opus-5", "direct", [
+        {"group": g, "label_read": label, "x_read": "blocks 1 and 20",
+         "points": [("block 1", 1.0, None), ("block 20", 3.0, None)]}
+        for g, label in (("A", "open circles (older adults)"),
+                         ("B", "filled circles (younger adults)"))])
+    locator = "Fig 1, the change from 'block 1' to 'block 20', open circles"
+    assert dz._locator_category(locator, [r]) == ""
+    assert dz._categorical_role(t, [r], locator=locator)[0] == dz.CATEGORICAL_CONDITIONS
+
+
+def test_the_vachon_locator_still_names_its_one_category():
+    """The other half of the fix: a locator that quotes ONE category still names it. This is the
+    read D3 was built for, and no net above may take it away."""
+    from canopy.digitize import digitizer as dz
+
+    t, rs = _vachon()
+    assert dz._locator_category(LOC, rs) == "without strategy"
+    assert dz._categorical_role(t, rs, locator=LOC)[0] == dz.CATEGORICAL_POINT_AT_CATEGORY
+
+
+def test_a_candidate_carries_its_own_collapse_provenance_not_the_cells(bar_figure):
+    """Whole-branch review, the MAJOR beside BLOCKER 1: `collapsed_across_x`/`n_points`/
+    `dispersion_approximation` were stamped on the CELL's base provenance whenever ANY sample in
+    the pool collapsed, and `_build_candidates` copied the base onto every readout candidate. A
+    point-at-category candidate then said `collapsed_across_x: True` at top level while its own
+    `route_sample.extra` said otherwise — the two flags D3 forbids together, on one row. The
+    ensemble already computes its own; every candidate does now.
+    """
+    from canopy.digitize.digitizer import MEAN_OF_POINT_SD, _build_candidates
+
+    paper, fig = _paper_for(bar_figure)
+    collapsed = RouteSample(
+        route="D", group="A", model="claude-sonnet-5", variant="direct", mean=-27.125, error=4.4,
+        extra={"collapsed_across_x": True, "n_points": 8,
+               "dispersion_approximation": MEAN_OF_POINT_SD})
+    point = RouteSample(
+        route="D", group="A", model="claude-opus-5", variant="ticks_first", mean=-27.0,
+        extra={"categorical_x_role": "point_at_category", "categorical_x_category": "135"})
+    base = {"cal_status": "confirmed", "figure_id": "fig01", "collapsed_across_x": True,
+            "n_points": 8, "dispersion_approximation": MEAN_OF_POINT_SD}
+    cands = _build_candidates(
+        [collapsed, point], target=TARGET, fig=fig, paper=paper, source=SOURCE, dataset=DATASET,
+        core=_core_with(None), cal=None, crop=bar_figure["path"], overlay_path="", base=base,
+        axis_range=60.0, tick_spacing=10.0, px_units=0.1, readouts=[], want_uncertainty=True,
+        labels={"A": "old", "B": "young"})
+    by_id = {c.extractor_id: c for c in cands}
+
+    read = by_id[point.extractor_id].pixel_provenance
+    assert read["collapsed_across_x"] is False
+    assert read["n_points"] is None and read["dispersion_approximation"] == ""
+
+    across = by_id[collapsed.extractor_id].pixel_provenance
+    assert across["collapsed_across_x"] is True and across["n_points"] == 8
+    assert across["dispersion_approximation"] == MEAN_OF_POINT_SD
+
+
 def test_absent_status_names_the_real_drop_cause():
     from canopy.digitize import digitizer as dz
 

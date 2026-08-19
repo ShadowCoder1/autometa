@@ -1289,3 +1289,117 @@ def test_bock_adjudicator_picks_the_printed_value(client, paper, bock_dataset):
     group = ruling.group_values("A")
     assert group is not None and group.mean == 42.5, ruling.rationale
     assert ruling.rationale
+
+
+#: the shape of the reply that got through `degenerate_reply` before the `stuttered_tail`
+#: signature: an argument, and then sentence tails that start mid-word, ~25 of them
+#: (`runs/nine/cache/9e6c5e19a487….json`, Bock aftereffect, claude-opus-5)
+STUTTER_TAIL = ("error sign not construct magnitude).ular error, so direction unknown..al "
+                "angular error).al after-effect magnitude).ular pointing error).al "
+                "deviation).ular error).al angular error, so unknown).ular error).") * 3
+FIVE_SENTENCES = ("The measure is a signed angular pointing error in degrees. During adaptation "
+                  "the errors are positive. In the no-feedback phase they fall into the negative "
+                  "region. The magnitude of that negative excursion is the after-effect. The "
+                  "paper never states which group's after-effect was larger.")
+
+
+def test_a_prior_readers_reason_is_clipped_before_it_reaches_the_tiebreak_prompt(paper,
+                                                                                 bock_dataset):
+    """Whole-branch review, MAJOR 3, second half: a 1.5 kB garbled reason went verbatim into the
+    prompt of the reader that has to break the tie.
+
+    The reader buying the tiebreak is shown what the earlier readers argued. What it must not be
+    shown is a kilobyte of a decoder repeating itself: a bad witness that cannot vote (C12 calls
+    it `not_run`) must not dominate the context of the vote that replaces it either. The opening
+    is where a reader states its case; the tail is where a bad reply repeats itself.
+    """
+    from canopy.agents.orientation import tiebreak_ballot
+
+    provider = FakeProvider([orientation_payload(higher_is_better="lower")])
+    client = LLMClient(provider=provider, cache_dir=None)
+    tiebreak_ballot(
+        client, paper, bock_dataset, bock_dataset.outcomes[0], protocol=None, outcome=SCREENING,
+        pdf_file_id=None, mean_a=44.6, mean_b=30.2, group_a_label="old subjects",
+        group_b_label="young subjects", n_a=12, n_b=12, unit="s",
+        prior_runs=[ballot(OPUS, None, "signed_direction", "a_greater",
+                           reason="The measure is defined in the methods. " + STUTTER_TAIL),
+                    ballot(SONNET, True, "higher_more_construct", "unknown",
+                           reason=FIVE_SENTENCES)])
+    prompt = provider.requests[0].messages[0]["content"][-1]["text"]
+    shown = [line.split("reason: ", 1)[1] for line in prompt.splitlines()
+             if line.strip().startswith("reason:")]
+    assert len(shown) == 2
+
+    assert shown[0].startswith("The measure is defined in the methods.")
+    assert len(shown[0]) <= 602 and shown[0].endswith("…")
+    assert STUTTER_TAIL not in prompt                     # never the whole run of it
+
+    assert "The measure is a signed angular pointing error in degrees." in shown[1]
+    assert "In the no-feedback phase" in shown[1]         # three sentences, and only three
+    assert "The magnitude of that negative excursion" not in prompt
+    assert "never states which group" not in prompt
+
+
+def test_a_short_reason_still_reaches_the_tiebreak_prompt_word_for_word(paper, bock_dataset):
+    """The clip is a ceiling, not a summary: a reader that argued its case in a sentence is
+    quoted in full, and the test above this one would pass on an empty prompt without it."""
+    from canopy.agents.orientation import tiebreak_ballot
+
+    provider = FakeProvider([orientation_payload(higher_is_better="lower")])
+    client = LLMClient(provider=provider, cache_dir=None)
+    tiebreak_ballot(
+        client, paper, bock_dataset, bock_dataset.outcomes[0], protocol=None, outcome=SCREENING,
+        pdf_file_id=None, mean_a=44.6, mean_b=30.2, group_a_label="old subjects",
+        group_b_label="young subjects", n_a=12, n_b=12, unit="s",
+        prior_runs=[ballot(OPUS, None, "signed_direction", "a_greater")])
+    prompt = provider.requests[0].messages[0]["content"][-1]["text"]
+    assert REASON in prompt and "…" not in prompt.split("reason: ", 1)[1].splitlines()[0]
+
+
+# ------------------------------------------------- MINOR 4: whose scale the majority has to share
+def test_a_majority_on_one_scale_outvotes_a_lone_reader_on_another():
+    """Whole-branch review, MINOR 4 — Bock's aftereffect, the cell the ballot was bought for.
+
+    opus and fable both read the raw scale as `signed_direction` and both say `hib=False`; sonnet
+    reads it as `higher_more_error` and says True. The shared-scale condition was asked of ALL the
+    decided readers, so the minority's own scale broke the majority's — and the ballot became a
+    no-op in exactly the case it was bought for (DECISION C2, acceptance 6). The condition belongs
+    to the readers whose agreement is being counted: two readers agreeing about the scale AND the
+    direction outvote one reader on a different scale.
+
+    Nothing here relaxes "never settle alone": the even-split gate above it still refuses a tie,
+    so `top` is never one reader, and the verdict is still flagged and capped.
+    """
+    verdict = combine_orientation([ballot(OPUS, False, "signed_direction"),
+                                   ballot(TIEBREAK_MODEL, False, "signed_direction"),
+                                   ballot(SONNET, True, "higher_more_error")],
+                                  "aftereffect", "aftereffect (deg)", third_read=True)
+    assert verdict.higher_is_better is False and verdict.needs_human is False
+    assert verdict.orientation_source == "tiebreak_ballot" and verdict.agreed is False
+    assert "orientation_by_majority" in outcome_flags(verdict)
+    assert orientation_bucket(verdict)[0] == "accept_with_note"
+    assert d_of(BOCK_D1, False) == -0.6534           # the published direction, recorded at last
+
+
+def test_three_readers_who_agree_on_nothing_are_still_a_question():
+    """One reader each way and one abstaining is 1:1:1 — no majority to share a scale within, so
+    the measure stays with the human whatever the three readers called the raw axis."""
+    verdict = combine_orientation([ballot(OPUS, False, "signed_direction"),
+                                   ballot(SONNET, True, "higher_more_error"),
+                                   ballot(TIEBREAK_MODEL, None, "higher_more_construct")],
+                                  "aftereffect", "aftereffect (deg)", third_read=True)
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+    assert verdict.orientation_source == "" or verdict.orientation_source is None
+    assert "a tie is not a majority" in verdict.notes
+    assert "orientation_by_majority" not in outcome_flags(verdict)
+
+
+def test_the_majority_itself_must_still_agree_on_the_scale():
+    """The condition is not dropped, it is scoped: two readers who agree on the direction while
+    reading two different numbers are a coincidence, and that is still refused."""
+    verdict = combine_orientation([ballot(OPUS, True, "signed_direction"),
+                                   ballot(TIEBREAK_MODEL, True, "higher_more_error"),
+                                   ballot(SONNET, False, "signed_direction")],
+                                  "aftereffect", "aftereffect (deg)", third_read=True)
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+    assert "do not agree on what the raw scale IS" in verdict.notes
