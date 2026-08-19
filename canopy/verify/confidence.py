@@ -1098,6 +1098,7 @@ def resolve_cell(dataset: DatasetSpec, outcome_key: str, group: str,
 
     if orientation is not None:
         verdict.higher_is_better = orientation.higher_is_better
+        verdict.orientation_source = orientation.orientation_source
         verdict.orientation_evidence = "; ".join(
             part for part in (orientation.reason, *orientation.quotes) if part)
 

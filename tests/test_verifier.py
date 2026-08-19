@@ -1139,6 +1139,85 @@ def test_a_reader_that_could_not_tell_never_becomes_a_reply_that_did_not_happen(
     assert verdict.higher_is_better is None and verdict.needs_human is True
     assert "orientation_single_witness" not in outcome_flags(verdict)
 
+
+# ---------------------------------------- C2: the tiebreak ballot, with the raw means in view
+def test_the_tiebreak_ballot_has_a_prompt_and_a_version_of_its_own():
+    """It asks a different question from `orientation.md` — the two readers' ballots and this
+    cell's raw means are in front of it — so it is a different prompt, recorded as one. Putting
+    it in `PROMPT_FILES` would move the ordinary readers' `prompt_version` too, and every
+    recorded orientation fixture is keyed on that."""
+    from canopy.agents import orientation as module
+
+    assert "orientation_tiebreak" not in module.PROMPT_FILES
+    assert module.TIEBREAK_PROMPT_VERSION.startswith("orientation_tiebreak/1@")
+    assert module.TIEBREAK_PROMPT_VERSION != module.PROMPT_VERSION
+
+
+def test_the_tiebreak_prompt_never_mentions_what_the_answer_would_do_to_the_pool():
+    """A reader told which answer keeps a row in the analysis is being asked a different
+    question. It sees the measure, the means and the ballots, and nothing about the consequence."""
+    text = load_prompt("orientation_tiebreak").lower()
+    for forbidden in ("pool", "meta-analys", "forest", "effect size", "significan"):
+        assert forbidden not in text, forbidden
+
+
+def test_the_ballot_is_shown_the_raw_means_and_both_prior_readers(paper, bock_dataset):
+    from canopy.agents.orientation import TIEBREAK_PROMPT_VERSION, tiebreak_ballot
+
+    provider = FakeProvider([orientation_payload(higher_is_better="lower")])
+    client = LLMClient(provider=provider, cache_dir=None)
+    run = tiebreak_ballot(
+        client, paper, bock_dataset, bock_dataset.outcomes[0], protocol=None, outcome=SCREENING,
+        pdf_file_id=None, mean_a=44.6, mean_b=30.2, group_a_label="old subjects",
+        group_b_label="young subjects", n_a=12, n_b=12, unit="s",
+        prior_runs=[ballot(OPUS, None, "signed_direction", "a_greater"),
+                    ballot(SONNET, True, "higher_more_construct", "unknown")])
+
+    prompt = provider.requests[0].messages[0]["content"][-1]["text"]
+    assert "{{" not in prompt
+    assert "screening test completion time" in prompt            # the measure
+    assert "Screening test completion time" in prompt            # the outcome definition
+    assert "44.6" in prompt and "30.2" in prompt                 # both raw means
+    assert "old subjects" in prompt and "young subjects" in prompt
+    assert OPUS in prompt and SONNET in prompt                   # both prior readers, by name
+    assert "a_greater" in prompt and "higher_more_construct" in prompt
+    assert REASON in prompt                                       # their reasons, verbatim
+    assert run.model == TIEBREAK_MODEL and run.prompt_version == TIEBREAK_PROMPT_VERSION
+    assert provider.requests[0].effort == TIEBREAK_EFFORT
+    assert run.higher_is_better is False
+
+
+def test_the_verdict_records_how_its_direction_was_settled():
+    """`orientation_source` — the row carries it, and "two readers agreed" is a different claim
+    from "a bought third read outvoted one of them"."""
+    agreed = combine_orientation([ballot(OPUS, False, "higher_more_error"),
+                                  ballot(SONNET, False, "higher_more_error")], "x", "m")
+    assert (agreed.orientation_source, agreed.agreed) == ("agreed", True)
+
+    majority = combine_orientation([ballot(OPUS, False, "signed_direction"),
+                                    ballot(SONNET, True, "signed_direction"),
+                                    ballot(TIEBREAK_MODEL, False, "signed_direction")],
+                                   "x", "m", third_read=True)
+    assert majority.orientation_source == "tiebreak_ballot" and majority.needs_human is False
+
+    stub = ballot(SONNET, True, "higher_more_construct").model_copy(update={"not_run": True})
+    single = combine_orientation([ballot(OPUS, True, "higher_more_construct"), stub], "x", "m")
+    assert single.orientation_source == "single_witness"
+
+    unsettled = combine_orientation([ballot(OPUS, None), ballot(SONNET, None)], "x", "m")
+    assert unsettled.orientation_source == "", "an open question was settled by nobody"
+
+
+def test_a_tiebreak_ballot_never_settles_a_direction_on_its_own():
+    """Two abstentions and one answer is one ballot, whoever paid for it."""
+    verdict = combine_orientation([ballot(OPUS, None, "signed_direction"),
+                                   ballot(SONNET, None, "signed_direction"),
+                                   ballot(TIEBREAK_MODEL, False, "signed_direction")],
+                                  "x", "m", third_read=True)
+    assert verdict.higher_is_better is None and verdict.needs_human is True
+    assert verdict.orientation_source == ""
+
+
 # ------------------------------------------------------------------ replayed Bock 2005
 @replayed
 def test_bock_verifier_confirms_the_printed_screening_value(client, paper, bock_dataset):

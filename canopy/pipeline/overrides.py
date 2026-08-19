@@ -977,6 +977,10 @@ def _apply_orientation(override: Mapping[str, Any],
         for verdict in (verdict_a, verdict_b):
             verdict.higher_is_better = higher_is_better
             verdict.flags = [f for f in verdict.flags if f.code != "orientation_unknown"]
+            # C2: a person decided this one. "older adults adapted less" read off a majority of
+            # three machines is a different claim from one somebody made, and the extraction table
+            # cannot tell them apart from the sign alone.
+            verdict.orientation_source = "human"
             verdict.orientation_evidence = evidence
             verdict.overridden_by_human = True
             verdict.override_justification = override["justification"]
@@ -1330,6 +1334,9 @@ def _rebuild_row(record: EffectSizeRecord, dataset: DatasetSpec, verdict_a: Verd
     rebuilt.label = record.label
     rebuilt.moderators = record.moderators
     rebuilt.analysis_metric = record.analysis_metric
+    # C2, through `_prepare` like everything else here: the row says how its direction was settled,
+    # and a rebuild that dropped it would leave a human's decision reading as two agreeing models.
+    rebuilt.orientation_source = prepared.orientation_source or record.orientation_source
     rebuilt.flags = sorted({*rebuilt.flags, "human_override"})
     rebuilt.notes = "; ".join(x for x in (record.notes,
                                           f"human override: {justification}") if x)

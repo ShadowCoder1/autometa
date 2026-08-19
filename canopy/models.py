@@ -675,6 +675,11 @@ class Verdict(CanopyModel):
     # orientation (decided once per outcome/measure, copied onto every cell that used it)
     higher_is_better: bool | None = None
     orientation_evidence: str = ""
+    #: `OrientationVerdict.orientation_source`, copied here by `confidence.resolve_cell` and from
+    #: here onto the ROW (`pipeline.rows.prepare_rows`). It travels through the cell because the
+    #: row is built from the two cells and from nothing else — the same path `higher_is_better`
+    #: takes — so a direction and the account of how it was settled can never come apart.
+    orientation_source: str = ""
     overridden_by_human: bool = False
     override_justification: str = ""
 

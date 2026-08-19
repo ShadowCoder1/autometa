@@ -544,7 +544,7 @@ def test_a_dataset_the_map_adjudicator_rejected_is_recorded_in_the_exclusions_ta
 
 # ============================== the two stages, run for real against the pipeline's own fake
 def _offline(tmp_path, router_wrapper=None, map_wrapper=None, monkeypatch=None, resume=True,
-             **spec_kwargs):
+             tiebreak=True, **spec_kwargs):
     """One offline run of the Bock fixture paper, with optional hooks on the router and the map."""
     import shutil
 
@@ -565,14 +565,15 @@ def _offline(tmp_path, router_wrapper=None, map_wrapper=None, monkeypatch=None, 
 
     client = LLMClient(provider=FakeProvider([recording]), allow_live=True, cache_dir=None)
     papers_dir = tmp_path / "papers"
-    papers_dir.mkdir(exist_ok=True)
+    papers_dir.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(PDFS[0], papers_dir / PDFS[0].name)
     if map_wrapper is not None:
         real_map = run_module._map
         monkeypatch.setattr(run_module, "_map",
                             lambda ctx, p, g, s: map_wrapper(real_map(ctx, p, g, s)))
     out = tmp_path / "run"
-    run_pipeline(papers_dir, PROTOCOL, out, client=client, concurrency=1, resume=resume)
+    run_pipeline(papers_dir, PROTOCOL, out, client=client, concurrency=1, resume=resume,
+                 tiebreak=tiebreak)
     return out, seen
 
 
@@ -2068,10 +2069,16 @@ def test_the_contradiction_question_quotes_the_reader_that_was_actually_discarde
     collapses to "unknown", because the two readers stated opposite directions. So the reviewer
     was shown 'The reader said "unknown"' about the one thing they were being asked to arbitrate.
     The discarded ballot's own direction is on the record per reader now, and the prompt reads it.
+
+    `tiebreak=False` because this is a test about C3's record and not about C2's ballot: a discard
+    leaves the direction unsettled, so the bought ballot fires — and the fake answers it with the
+    same contradicted direction, which the same filter then discards. Two discarded readers is
+    correct behaviour and a different sentence from the one being pinned here.
     """
     from canopy.review.questions import questions_for_run
 
-    out, _ = _offline(tmp_path, router_wrapper=_readers_split_on_the_stated_direction)
+    out, _ = _offline(tmp_path, router_wrapper=_readers_split_on_the_stated_direction,
+                      tiebreak=False)
     verdict = next(iter(_verify_payload(out)["orientation"].values()))
     assert "orientation_reader_contradicts_values" in verdict["notes"]
     thrown_out = [r for r in verdict["runs"] if r["discarded"]]
@@ -2384,3 +2391,134 @@ def test_the_study_map_a_prompt_carries_is_the_one_the_fixtures_were_recorded_fo
     body = inspect.getsource(mapper.map_study)
     assert "MAP_A=json.dumps(study.model_dump(mode=\"json\")" in body
     assert "decided_by" not in set(DatasetSpec.model_fields)
+
+
+# ================================== C2: the tiebreak ballot, in the loop that can afford it
+#: the tiebreak prompt's own heading — how a request is told apart from an ordinary ballot's,
+#: since both carry the same schema and `LLMRequest` does not record a prompt version
+TIEBREAK_MARKER = "A THIRD READING"
+
+
+def _ballots(requests) -> list[Any]:
+    """(ordinary orientation reads, tiebreak ballots) among a run's requests."""
+    from tests.test_pipeline_offline import _request_text
+
+    calls = _orientation_calls(requests)
+    third = [r for r in calls if TIEBREAK_MARKER in _request_text(r)]
+    return [r for r in calls if r not in third], third
+
+
+def _with_directions(first: str, second: str, third: str):
+    """A router wrapper that answers the two readers and the bought ballot separately."""
+    from canopy.config import MODELS
+    from tests.test_pipeline_offline import _request_text
+
+    def wrapper(request, router):
+        answer = router(request)
+        if not (isinstance(answer, dict) and "raw_value_semantics" in answer):
+            return answer
+        if TIEBREAK_MARKER in _request_text(request):
+            return {**answer, "higher_is_better": third}
+        return {**answer,
+                "higher_is_better": first if request.model == MODELS["primary"] else second}
+    return wrapper
+
+
+def _second_dataset(measure_name: str):
+    """The same dataset again, measuring `measure_name` — one more (outcome, measure) to settle."""
+    def wrapper(mapped):
+        study, file_id = mapped
+        extra = study.datasets[0].model_copy(deep=True)
+        extra.dataset_id = f"{study.datasets[0].dataset_id}x"
+        for outcome in extra.outcomes:
+            outcome.measure_name = measure_name
+        study.datasets.append(extra)
+        return study, file_id
+    return wrapper
+
+
+def test_no_ballot_is_bought_while_the_free_check_can_settle_the_direction(tmp_path):
+    """The default run: the two readers agree, so nothing is bought. C2 is paid for only where
+    the free deterministic check has already abstained."""
+    out, requests = _offline(tmp_path)
+    ordinary, third = _ballots(requests)
+    assert ordinary and not third
+    verdict = next(iter(_verify_payload(out)["orientation"].values()))
+    assert verdict["orientation_source"] == "agreed"
+
+
+def test_one_ballot_is_bought_per_measure_and_it_sees_the_cells_own_means(tmp_path):
+    """Both readers abstain, so one ballot is bought — once for the measure, not once per cell,
+    and shown the outcome definition, the measure and the two raw means this cell resolved."""
+    from tests.test_pipeline_offline import _request_text
+
+    out, requests = _offline(tmp_path, router_wrapper=_with_directions("unknown", "unknown",
+                                                                      "lower"))
+    ordinary, third = _ballots(requests)
+    assert len(third) == 1, "one ballot per (outcome, measure), whatever the cell count"
+    prompt = _request_text(third[0])
+    assert "mean direction error" in prompt                    # the measure
+    assert "late adaptation" in prompt.lower()                 # the outcome definition
+    assert "44.6" in prompt and "30.2" in prompt               # the raw means, un-orientated
+    assert MODELS["primary"] in prompt and MODELS["secondary"] in prompt
+
+
+def test_a_ballot_never_settles_a_direction_on_its_own(tmp_path):
+    """Two abstentions and one answer is one ballot: the measure stays a question and the rows
+    stay unsigned. The money bought a reading, not an authority."""
+    out, _ = _offline(tmp_path, router_wrapper=_with_directions("unknown", "unknown", "lower"))
+    verdict = next(iter(_verify_payload(out)["orientation"].values()))
+    assert verdict["higher_is_better"] is None and verdict["needs_human"] is True
+    assert verdict["orientation_source"] == ""
+    assert all(r["route"] == "not_convertible" for r in _records(out))
+
+
+def test_a_majority_settles_the_direction_and_the_row_says_how(tmp_path):
+    """One reader answered, one abstained, the bought ballot agreed with the first: 2 of 3, and
+    every row it signs records that a bought ballot is what settled it."""
+    out, _ = _offline(tmp_path, router_wrapper=_with_directions("higher", "unknown", "higher"))
+    verdict = next(iter(_verify_payload(out)["orientation"].values()))
+    assert verdict["higher_is_better"] is True and verdict["needs_human"] is False
+    assert verdict["orientation_source"] == "tiebreak_ballot"
+    assert "majority 2 of 3" in verdict["notes"]
+
+    cells = _verify_payload(out)["verdicts"]
+    assert all(c["orientation_source"] == "tiebreak_ballot" for c in cells)
+    rows = _records(out)
+    assert rows and all(r["orientation_source"] == "tiebreak_ballot" for r in rows)
+    assert any(r["route"] != "not_convertible" and r["d"] is not None for r in rows)
+
+
+def test_a_second_measure_buys_its_own_ballot_and_a_second_dataset_does_not(tmp_path,
+                                                                           monkeypatch):
+    """`at most once per (paper, outcome, measure)` — both halves of it, on one run each."""
+    _, same = _offline(tmp_path / "same", monkeypatch=monkeypatch,
+                       map_wrapper=_second_dataset("mean direction error"),
+                       router_wrapper=_with_directions("unknown", "unknown", "lower"))
+    assert len(_ballots(same)[1]) == 1, "two datasets, one measure, one ballot"
+
+    _, other = _offline(tmp_path / "other", monkeypatch=monkeypatch,
+                        map_wrapper=_second_dataset("peak velocity of the corrective movement"),
+                        router_wrapper=_with_directions("unknown", "unknown", "lower"))
+    assert len(_ballots(other)[1]) == 2, "a second measure is a second question"
+
+
+def test_no_tiebreak_buys_nothing_and_leaves_the_run_exactly_as_it_was(tmp_path):
+    """The switch is the whole of the off state: same two reads, same question left open."""
+    out, requests = _offline(tmp_path, tiebreak=False,
+                             router_wrapper=_with_directions("unknown", "unknown", "lower"))
+    assert not _ballots(requests)[1]
+    verdict = next(iter(_verify_payload(out)["orientation"].values()))
+    assert verdict["higher_is_better"] is None and verdict["needs_human"] is True
+
+
+def test_the_cli_exposes_the_switch_and_defaults_it_on():
+    import inspect
+
+    from canopy import cli
+    from canopy.pipeline.run import RunContext, run_pipeline
+
+    assert RunContext.__dataclass_fields__["tiebreak"].default is True
+    assert inspect.signature(run_pipeline).parameters["tiebreak"].default is True
+    source = inspect.getsource(cli.run)
+    assert '"--tiebreak/--no-tiebreak"' in source and "tiebreak=tiebreak" in source

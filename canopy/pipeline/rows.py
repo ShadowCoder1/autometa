@@ -69,6 +69,11 @@ class PreparedRow:
     #: here rather than at either call site, because both call sites must offer the resolver the
     #: same alternatives or the re-pool of an unanswered row would not be the row the run built.
     alternatives: list[ResolvedValues] = field(default_factory=list)
+    #: C2: HOW the direction this row is signed with was settled — `agreed`, `single_witness`,
+    #: `tiebreak_ballot` or `human`, copied off the two cells. It is prepared here for the same
+    #: reason everything else here is: both call sites stamp it onto the record from this, so a
+    #: re-pool cannot quietly turn "a bought ballot outvoted a reader" into "two readers agreed".
+    orientation_source: str = ""
 
     @property
     def key(self) -> tuple[str, str]:
@@ -330,7 +335,10 @@ def prepare_rows(cells: Sequence[tuple[DatasetSpec, str, Verdict, Verdict]],
     prepared = [PreparedRow(
         dataset=dataset, outcome_key=key,
         values=prepare_row_values(dataset, key, verdict_a, verdict_b, candidates, settings,
-                                  higher_is_better=forced.get((dataset.dataset_id, key))))
+                                  higher_is_better=forced.get((dataset.dataset_id, key))),
+        # either cell's, because both were signed by the one verdict for the measure; A's first
+        # only so that the answer is deterministic when one cell was never verified
+        orientation_source=(verdict_a.orientation_source or verdict_b.orientation_source))
         for dataset, key, verdict_a, verdict_b in cells]
 
     # rows in one paper that share a control arm are not independent (Cochrane 16.5.4)

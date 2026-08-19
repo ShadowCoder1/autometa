@@ -42,6 +42,7 @@ from ..agents.mapper import (HUMAN_DECIDER, HUMAN_EXCLUSION_RULE, MAP_ADJUDICATO
                              source_unreadable_reason)
 from ..agents.orientation import combine_orientation
 from ..agents.orientation import orientation as orientation_verdict
+from ..agents.orientation import TIEBREAK_MODEL, tiebreak_ballot
 from ..agents.source_rank import (keep_for_vote, match_named_source, rank_sources,
                                  source_of)
 from ..agents.verifier import MAX_REOPENS, verify_candidate, verifier_model_for
@@ -66,7 +67,8 @@ from ..verify.checks import (CHECK_SEVERITY, DF_PROVENANCE_FLAGS, ORIENTATION_FL
                             n_before_exclusions, run_checks)
 from ..verify.confidence import ROW_REFUSAL_CODES, resolve_cell
 from ..verify.panels import apply_panel_check
-from ..verify.vote import LOCATOR_CONFLICT, LOCATOR_CONFLICT_NOTE, VoteResult, vote_groups
+from ..verify.vote import (LOCATOR_CONFLICT, LOCATOR_CONFLICT_NOTE, VoteResult,
+                           model_family, vote_groups)
 from .aggregate import AGGREGATED_FLAG, Aggregation, aggregate_one_row_per_paper
 from .overrides import (OVERRIDES_FILE, apply_overrides_and_repool, map_answers, read_overrides)
 from .resolve import resolve_effect_with_fallback
@@ -96,6 +98,12 @@ class RunContext:
     client: Any
     models: dict[str, str]
     resume: bool = True
+    #: C2: buy ONE more orientation ballot per (paper, outcome, measure) when the two readers and
+    #: the free deterministic check have all failed to settle a direction and this cell's raw
+    #: means exist. On by default — a measure nobody settles is a row that cannot be signed, and
+    #: the ballot is the cheapest thing in the run that can remove such a question. `--no-tiebreak`
+    #: reproduces the behaviour before C2 exactly: no call, no cost, the question stays open.
+    tiebreak: bool = True
     max_usd_per_paper: float | None = None
     progress: Callable[[dict[str, Any]], None] | None = None
     warnings: list[str] = field(default_factory=list)
@@ -751,6 +759,69 @@ NO_ADJUDICATION_FLAGS: frozenset[str] = frozenset(ORIENTATION_FLAGS) | frozenset
     DF_PROVENANCE_FLAGS)
 
 
+def _tiebreak(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
+              sources: OutcomeSources, orientation: OrientationVerdict | None,
+              votes: Mapping[str, VoteResult], flags: Sequence[CheckFlag],
+              tiebroken: set[tuple[str, str]] | None, status: PaperStatus,
+              file_id: str = "") -> OrientationVerdict | None:
+    """C2: at most ONE bought ballot per (paper, outcome, measure), or `None` for "not bought".
+
+    Every condition is a reason not to spend money, and each of them is a rule rather than a
+    heuristic:
+
+    * `--no-tiebreak`, or a direction that is already settled — there is nothing to buy;
+    * this measure already has a third read (`tiebroken`, and `third_read` on the verdict so that
+      a resumed run does not buy a second one) — the ruling is "at most once per measure", and a
+      paper with four datasets carrying one measure would otherwise buy four;
+    * one of the two raw means did not resolve — the ballot's whole advantage over the first two
+      readers is that it can check a claim about which group came out higher against the numbers,
+      and with a number missing it is simply a third reader of the same prompt;
+    * the ballot's model family is one an earlier reader already used — a reader that fails the
+      same way as one that has already answered adds a vote, not evidence.
+
+    The combination is `combine_orientation(..., third_read=True)`, which is the ordinary majority
+    branch: the ballot can remove a question and can never settle one alone. A `BudgetExceeded` is
+    a note on the verdict and not an exception — the run's money is the run's business, and a
+    ballot nobody can pay for leaves exactly the question the cell already had.
+    """
+    measure = (sources.outcome_key, sources.measure_name or "")
+    if not ctx.tiebreak or orientation is None or not orientation.needs_human:
+        return None
+    if orientation.third_read or (tiebroken is not None and measure in tiebroken):
+        return None
+    vote_a, vote_b = votes.get("A"), votes.get("B")
+    mean_a = vote_a.mean if vote_a is not None else None
+    mean_b = vote_b.mean if vote_b is not None else None
+    if mean_a is None or mean_b is None:
+        return None
+    if tiebroken is not None:
+        tiebroken.add(measure)                  # bought or refused, this measure is not asked twice
+    if model_family(TIEBREAK_MODEL) in {model_family(run.model) for run in orientation.runs}:
+        return orientation.model_copy(update={"notes": "; ".join(filter(None, [
+            orientation.notes,
+            f"no tiebreak ballot was bought: {TIEBREAK_MODEL} is the model family of a reader "
+            f"that has already answered on this measure"]))})
+    try:
+        third = tiebreak_ballot(
+            ctx.client, paper, dataset, sources, protocol=ctx.protocol,
+            outcome=ctx.protocol.outcome(sources.outcome_key),
+            pdf_file_id=file_id or None, mean_a=mean_a, mean_b=mean_b,
+            group_a_label=dataset.group_a.label, group_b_label=dataset.group_b.label,
+            n_a=dataset.group_a.n, n_b=dataset.group_b.n,
+            unit=sources.units or "", prior_runs=orientation.runs)
+    except (BudgetExceeded, PaperBudgetExceeded, LLMError) as exc:
+        status.warnings.append(
+            f"{dataset.dataset_id}/{sources.outcome_key}: no tiebreak ballot was bought for "
+            f"{sources.measure_name or sources.outcome_key!r} ({type(exc).__name__}: "
+            f"{str(exc)[:160]}) — the direction stays a question")
+        return orientation.model_copy(update={"notes": "; ".join(filter(None, [
+            orientation.notes, f"no tiebreak ballot was bought: {str(exc)[:200]}"]))})
+    return combine_orientation(
+        [*orientation.runs, third], sources.outcome_key, sources.measure_name or "",
+        mean_a=mean_a, mean_b=mean_b, open_flags=[f.code for f in flags], third_read=True,
+        dataset_id=dataset.dataset_id)
+
+
 def buys_adjudication(flags: Sequence[CheckFlag]) -> bool:
     """Does this cell carry an `error` an adjudicator could actually settle?"""
     return any(f.severity == "error" and f.code not in NO_ADJUDICATION_FLAGS for f in flags)
@@ -760,7 +831,8 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                  sources: OutcomeSources, candidates: Sequence[Candidate],
                  all_candidates: Sequence[Candidate], file_id: str,
                  orientation: OrientationVerdict | None,
-                 status: PaperStatus) -> _CellVerification:
+                 status: PaperStatus,
+                 tiebroken: set[tuple[str, str]] | None = None) -> _CellVerification:
     key = sources.outcome_key
     outcome_def = ctx.protocol.outcome(key)
     # D2: the caption says which panel is whose, and a reading taken off another group's panel is
@@ -906,6 +978,20 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
         flags = [*run_checks(dataset, key, cell, other_candidates=others,
                              orientation=orientation), *extra_flags]
 
+    # C2, immediately after the free check and nowhere else. Here because this is the first and
+    # only moment all three of its inputs exist together: the raw means (the vote has just
+    # resolved them), the two earlier ballots, and the fact that nothing free settled the
+    # direction. And here rather than in `_verify` after this function returns, because the two
+    # cells below are signed from `orientation` — a ballot bought after they were written would
+    # settle the MEASURE for the papers' later datasets and leave this one's own rows unsigned,
+    # which is the cell the money was spent on.
+    bought = _tiebreak(ctx, paper, dataset, sources, orientation, votes, flags, tiebroken,
+                       status, file_id)
+    if bought is not None:
+        orientation = out.orientation = bought
+        flags = [*run_checks(dataset, key, cell, other_candidates=others,
+                             orientation=orientation), *extra_flags]
+
     # …and D2's first half, recorded once the vote is final: the readings that agreed came from
     # different places in one figure, so their agreement is a coincidence of the figure tolerance
     # rather than corroboration, and the vote refused to average them.
@@ -960,6 +1046,9 @@ def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: li
     adjudications: list[dict[str, Any]] = []
     source_ranks: dict[str, Any] = {}
     reopens = 0
+    #: C2: the measures a tiebreak ballot has already been offered for, bought or refused. Owned
+    #: here because the ruling is per (paper, outcome, measure) and a cell cannot see its siblings.
+    tiebroken: set[tuple[str, str]] = set()
     only: set[tuple[str, str]] | None = None
 
     if ctx.resume and stage_done(ctx.out_dir, paper.sha256, "verify"):
@@ -1031,7 +1120,7 @@ def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: li
                     protocol=ctx.protocol, outcome=ctx.protocol.outcome(sources.outcome_key),
                     pdf_file_id=file_id or None)
             result = _verify_cell(ctx, paper, dataset, sources, cell, [*candidates, *extra],
-                                  file_id, orientations[measure], status)
+                                  file_id, orientations[measure], status, tiebroken)
             if result.orientation is not None:
                 # C3 row 1 may have discarded a reader once this cell's means existed. That is a
                 # fact about the MEASURE, so every later dataset carrying it inherits the checked
@@ -1206,6 +1295,7 @@ def _resolve(ctx: RunContext, paper: PaperRecord, study: StudyMap,
         # the same function the review layer's rebuild calls, so both paths offer the same pairs.
         record = resolve_effect_with_fallback(dataset, ctx.protocol.outcome(key), values,
                                               row.alternatives, ctx.settings)
+        record.orientation_source = row.orientation_source
         record.paper_id = paper.sha256
         record.cluster_id = record.cluster_id or paper.sha256
         record.sample_id = sample_key(dataset, paper.sha256)
@@ -1229,7 +1319,7 @@ def _run_paper(ctx: RunContext, group: PaperGroup) -> PaperResult:
     result = PaperResult(status=status)
     paper_client = PaperClient(ctx.client, group.sha256, ctx.max_usd_per_paper)
     paper_ctx = RunContext(protocol=ctx.protocol, out_dir=ctx.out_dir, client=paper_client,
-                           models=ctx.models, resume=ctx.resume,
+                           models=ctx.models, resume=ctx.resume, tiebreak=ctx.tiebreak,
                            max_usd_per_paper=ctx.max_usd_per_paper, progress=ctx.progress,
                            cancel_event=ctx.cancel_event, ingest_fn=ctx.ingest_fn)
     label = sha12(group.sha256)
@@ -1450,11 +1540,15 @@ def run_pipeline(papers_dir: str | Path, protocol_path: str | Path, out_dir: str
                  client: LLMClient | None = None,
                  allow_live: bool | None = None,
                  cancel_event: threading.Event | None = None,
+                 tiebreak: bool = True,
                  ingest_fn: Callable[[Path, Path], PaperRecord] | None = None) -> RunManifest:
     """Run the whole review and write `<out_dir>`; returns the manifest it saved.
 
     `resume=True` (the default) skips any stage whose file already exists, so re-running after a
     budget stop, a crash or a new paper costs only what is genuinely new.
+
+    `tiebreak=False` turns C2's bought orientation ballot off: no third read is ever purchased
+    and a direction the two readers and the free check could not settle stays a question.
 
     `cancel_event` stops the run at the next paper or stage boundary: the papers that had not
     finished end `status="cancelled"`, everything that did finish is written, and `--resume`
@@ -1474,6 +1568,7 @@ def run_pipeline(papers_dir: str | Path, protocol_path: str | Path, out_dir: str
                            allow_live=bool(allow_live) if allow_live is not None
                            else live_enabled())
     ctx = RunContext(protocol=protocol, out_dir=out, client=client, models=chosen, resume=resume,
+                     tiebreak=tiebreak,
                      max_usd_per_paper=max_usd_per_paper, progress=progress,
                      cancel_event=cancel_event, ingest_fn=ingest_fn or ingest_pdf)
 

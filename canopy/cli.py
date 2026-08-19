@@ -129,6 +129,10 @@ def run(
                                     help="Papers processed at the same time."),
     resume: bool = typer.Option(True, "--resume/--no-resume",
                                 help="Skip stages that already have a file (default)."),
+    tiebreak: bool = typer.Option(
+        True, "--tiebreak/--no-tiebreak",
+        help="Buy one extra orientation ballot per measure the two readers could not settle "
+             "(default). --no-tiebreak leaves the direction a question instead."),
     profile: Optional[str] = typer.Option(None, "--profile",
                                           help=f"Statistics profile: {available_profiles()}"),
     quiet: bool = typer.Option(False, "--quiet", help="Only print the summary."),
@@ -165,7 +169,7 @@ def run(
     manifest = run_pipeline(papers, protocol_path, out, budget_usd=budget_usd,
                             max_usd_per_paper=max_usd_per_paper, max_papers=max_papers,
                             concurrency=concurrency, resume=resume, progress=progress,
-                            allow_live=True)
+                            tiebreak=tiebreak, allow_live=True)
 
     table = Table(show_header=True, header_style="dim")
     for column in ("paper", "file", "status", "eligible", "cost", "s"):

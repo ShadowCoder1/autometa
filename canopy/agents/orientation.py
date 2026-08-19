@@ -50,10 +50,24 @@ from .verify_common import (SYSTEM, clip, enum_schema, enum_value, groups_prompt
 
 __all__ = ["orientation", "orientation_run", "combine_orientation", "ORIENTATION_SCHEMA",
            "PROMPT_VERSION", "PROMPT_FILES", "DEFAULT_MODELS", "TIEBREAK_MODEL",
-           "TIEBREAK_EFFORT", "MEANS_CHECK_NOTE"]
+           "TIEBREAK_EFFORT", "MEANS_CHECK_NOTE", "tiebreak_ballot", "TIEBREAK_PROMPT_FILES",
+           "TIEBREAK_PROMPT_VERSION", "ORIENTATION_SOURCES"]
 
 PROMPT_FILES = ("orientation",)
 PROMPT_VERSION = f"orientation/1@{prompt_fingerprint(PROMPT_FILES)}"
+
+#: C2's ballot asks a DIFFERENT question — the two earlier ballots and this cell's raw group means
+#: are in front of it — so it has a prompt of its own and a version of its own. Deliberately NOT in
+#: `PROMPT_FILES`: that fingerprint is the ordinary readers' `prompt_version`, every recorded
+#: orientation fixture is keyed on it, and adding a file to it would re-key reads whose prompt has
+#: not changed by one character. The version is recorded for PROVENANCE (the cache key does not
+#: contain it), so a reader of `verify.json` can tell which question a ballot answered.
+TIEBREAK_PROMPT_FILES = ("orientation_tiebreak",)
+TIEBREAK_PROMPT_VERSION = f"orientation_tiebreak/1@{prompt_fingerprint(TIEBREAK_PROMPT_FILES)}"
+
+#: HOW a direction was settled, for `OrientationVerdict.orientation_source` and the row that copies
+#: it. Empty means nothing settled it and the measure is still a question.
+ORIENTATION_SOURCES: tuple[str, ...] = ("agreed", "single_witness", "tiebreak_ballot", "human")
 
 MAX_TOKENS = 4000
 #: two agents, and they must differ — one strong reader and one that fails differently
@@ -138,6 +152,98 @@ def orientation_run(client: LLMClient, paper: PaperRecord, dataset: DatasetSpec 
         quotes=_quotes(parsed.get("quotes")),
         reason=(parsed.get("reason") or "").strip(),
         model=model, prompt_version=PROMPT_VERSION, llm_call_id=result.call_id)
+
+
+def _means_prompt(group_a_label: str, group_b_label: str, mean_a: float | None,
+                  mean_b: float | None, n_a: int | None, n_b: int | None, unit: str) -> str:
+    """The two groups' raw values, un-orientated, in the paper's own units.
+
+    Un-orientated on purpose: `higher_is_better` is applied in `resolve_effect`, far downstream,
+    and showing a reader a signed number would be showing it this function's guess at the answer
+    it is being asked for.
+    """
+    lines = []
+    for key, label, mean, n in (("A", group_a_label, mean_a, n_a),
+                                ("B", group_b_label, mean_b, n_b)):
+        lines.append(f"GROUP {key} ({label or 'unnamed group'}): "
+                     f"{'not resolved' if mean is None else mean}"
+                     f"{' ' + unit if unit and mean is not None else ''}"
+                     f"{f', n = {n}' if n else ''}")
+    return "\n".join(lines)
+
+
+def _prior_readers_prompt(runs: Sequence[OrientationRun]) -> str:
+    """Every earlier ballot, verbatim: who, what it voted, why, and the words it rested on."""
+    if not runs:
+        return "(no earlier ballot was recorded)"
+    blocks = []
+    for index, run in enumerate(runs, start=1):
+        direction = {True: "higher", False: "lower"}.get(run.higher_is_better, "unknown")
+        lines = [f"READER {index}: {run.model or 'unnamed reader'}",
+                 f"  higher_is_better: {direction}",
+                 f"  raw_value_semantics: {run.raw_value_semantics}",
+                 f"  direction_stated_in_text: {run.direction_stated_in_text}",
+                 f"  reason: {clip(run.reason, 1200) or '(none given)'}"]
+        lines += [f"  quote: {clip(quote, 400)}" for quote in run.quotes[:4]]
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+def tiebreak_ballot(client: LLMClient, paper: PaperRecord, dataset: DatasetSpec | None,
+                    outcome_sources: OutcomeSources, *,
+                    protocol: Protocol | None = None, outcome: OutcomeDef | None = None,
+                    pdf_file_id: str | None = None,
+                    mean_a: float | None = None, mean_b: float | None = None,
+                    group_a_label: str = "", group_b_label: str = "",
+                    n_a: int | None = None, n_b: int | None = None, unit: str = "",
+                    prior_runs: Sequence[OrientationRun] = (),
+                    model: str = TIEBREAK_MODEL,
+                    effort: str = TIEBREAK_EFFORT) -> OrientationRun:
+    """C2: ONE more ballot on a direction the two readers and the free check could not settle.
+
+    It differs from `orientation_run` in what it is shown and in nothing else. Same schema, same
+    parsing, same `OrientationRun` — so `combine_orientation` weighs it exactly like any other
+    ballot and it can never settle a direction on its own. What it is shown is:
+
+    * the outcome definition and the measure, as every reader gets them;
+    * this cell's RAW group means, un-orientated, with their labels, sizes and unit — the numbers
+      only exist after the vote, which is why this call happens in the verify loop rather than
+      where the first two ballots are bought;
+    * both earlier ballots verbatim, including each reader's `direction_stated_in_text`, so that a
+      claim about which group came out higher can be checked against the values rather than
+      re-remembered.
+
+    What it is never shown is what its answer would DO — nothing about pooling, about the size of
+    the effect, or about which answer keeps the row in the analysis. A reader told the consequence
+    is being asked a different question, and the answer would no longer be about the paper.
+    """
+    document, betas = whole_paper(client, paper, pdf_file_id)
+    content = [document, text_block(render_prompt(
+        "orientation_tiebreak",
+        OUTCOME=outcome_prompt(outcome_sources.outcome_key, protocol=protocol, dataset=None,
+                               outcome=outcome),
+        MEASURE=measure_prompt(outcome_sources),
+        RAW_MEANS=_means_prompt(group_a_label, group_b_label, mean_a, mean_b, n_a, n_b, unit),
+        PRIOR_READERS=_prior_readers_prompt(prior_runs)))]
+
+    result = client.structured(
+        model=model, system=SYSTEM, schema=ORIENTATION_SCHEMA, effort=effort,
+        max_tokens=MAX_TOKENS, betas=betas, prompt_version=TIEBREAK_PROMPT_VERSION,
+        cell_key=f"orientation_tiebreak:{outcome_sources.outcome_key}:"
+                 f"{outcome_sources.measure_name or 'measure'}",
+        messages=[{"role": "user", "content": content}])
+
+    parsed = result.parsed if isinstance(result.parsed, dict) else {}
+    return OrientationRun(
+        higher_is_better=_HIGHER[enum_value(parsed.get("higher_is_better"), list(_HIGHER),
+                                             "unknown")],
+        raw_value_semantics=enum_value(parsed.get("raw_value_semantics"),
+                                        get_args(RawValueSemantics), "unknown"),
+        direction_stated_in_text=enum_value(parsed.get("direction_stated_in_text"),
+                                             get_args(Direction), "unknown"),
+        quotes=_quotes(parsed.get("quotes")),
+        reason=(parsed.get("reason") or "").strip(),
+        model=model, prompt_version=TIEBREAK_PROMPT_VERSION, llm_call_id=result.call_id)
 
 
 class _Ballot:
@@ -338,10 +444,12 @@ def combine_orientation(runs: Sequence[OrientationRun], outcome_key: str,
         else:
             verdict.higher_is_better = top[0].run.higher_is_better
             verdict.needs_human = False
+            verdict.orientation_source = "tiebreak_ballot"
             notes.append(orientation_note(
                 "orientation_by_majority",
-                f"the direction was settled {len(top)}-{len(decided) - len(top)} by a third read, "
-                f"not by two readers agreeing independently"))
+                f"the direction was settled by a majority {len(top)} of {len(ballots)} after a "
+                f"third read, not by two readers agreeing independently "
+                f"({len(top)}-{len(decided) - len(top)} among the readers that named one)"))
     elif len(decided) >= 2 and one_answer is not None and settled_by(one_answer):
         # row 4 — two or more readers named the same direction and nothing contradicted them. A
         # discarded reader that named the SAME direction does not stop this: the question it
@@ -350,6 +458,7 @@ def combine_orientation(runs: Sequence[OrientationRun], outcome_key: str,
         verdict.higher_is_better = one_answer
         verdict.agreed = True
         verdict.needs_human = False
+        verdict.orientation_source = "agreed"
     elif len(decided) >= 2 and one_answer is not None:
         notes.append(overruled())
     elif (len(decided) == 1 and any(b.not_run for b in ballots)
@@ -369,6 +478,7 @@ def combine_orientation(runs: Sequence[OrientationRun], outcome_key: str,
         # sign to the other reader alone at a pooling bucket (whole-diff M2).
         verdict.higher_is_better = decided[0].run.higher_is_better
         verdict.needs_human = False
+        verdict.orientation_source = "single_witness"
         notes.append(orientation_note(
             "orientation_single_witness",
             f"only {decided[0].run.model} returned a real reply about this measure, so one reader "
