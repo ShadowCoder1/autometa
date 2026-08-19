@@ -1506,6 +1506,8 @@ def _rewrite(out: Path, manifest: RunManifest, protocol: Protocol,
     review: list[dict[str, Any]] = []
     every_row: list[EffectSizeRecord] = []
     primary_rows: list[EffectSizeRecord] = []
+    #: the same sink the run path uses: one best-guess decision per cell, shown by both tables
+    best_guess_cells: dict[tuple[str, str], dict] = {}
     aggregated_out: list[dict[str, Any]] = []
     by_cell = {(r.dataset_id, r.outcome_key): r for r in records}
     # `cells_for_review` recognises a person's exclusion by its `decider`; a re-pool writes the
@@ -1528,7 +1530,11 @@ def _rewrite(out: Path, manifest: RunManifest, protocol: Protocol,
                                           needs_human_rows=held, verdicts=live,
                                           candidates=state.candidates,
                                           moderators=protocol.moderators or None,
-                                          all_rows=split.every)
+                                          all_rows=split.every,
+                                          primary_pre_agg=split.primary_pre_agg,
+                                          best_guess_cells=best_guess_cells,
+                                          protocol=protocol,
+                                          warnings=manifest.warnings)
         _drop_stale_forest(out, outcome.key, artefacts, manifest)
         manifest.outputs.update({f"{outcome.key}.{k}": str(Path(v).relative_to(out))
                                  for k, v in artefacts.items()})
@@ -1556,7 +1562,8 @@ def _rewrite(out: Path, manifest: RunManifest, protocol: Protocol,
                              for k, v in extraction_table(
                                  every_row, out / "results" / "extraction_table_all",
                                  verdicts=live, candidates=state.candidates,
-                                 primary=primary_rows).items()})
+                                 primary=primary_rows,
+                                 best_guess=best_guess_cells).items()})
 
     manifest.human_review_queue = sort_review_queue(review)
     write_rows(manifest.human_review_queue, out / "human_review_queue",
@@ -1612,14 +1619,15 @@ def _drop_stale_forest(out: Path, outcome_key: str, artefacts: Mapping[str, Any]
 
     `write_outcome_outputs` writes no forest below k = 2, so an exclusion that takes an outcome
     under that leaves the previous run's plot on disk — still showing the row a reviewer just
-    removed. Delete it, and stop the manifest promising it.
+    removed. Delete it, and stop the manifest promising it. The best-guess forest has the same
+    rule and the same failure, so it is swept with the same broom.
     """
-    for suffix in ("png", "svg", "pdf"):
-        if f"forest_{suffix}" in artefacts:
-            continue
-        stale = out / "results" / outcome_key / f"forest.{suffix}"
-        stale.unlink(missing_ok=True)
-        manifest.outputs.pop(f"{outcome_key}.forest_{suffix}", None)
+    for stem in ("forest", "forest_best_guess"):
+        for suffix in ("png", "svg", "pdf"):
+            if f"{stem}_{suffix}" in artefacts:
+                continue
+            (out / "results" / outcome_key / f"{stem}.{suffix}").unlink(missing_ok=True)
+            manifest.outputs.pop(f"{outcome_key}.{stem}_{suffix}", None)
 
 
 def _read_json(path: Path) -> Any:

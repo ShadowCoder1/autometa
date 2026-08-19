@@ -36,7 +36,8 @@ from . import theme
 from .theme import ACCENT, ACCENT_SOFT, AXIS, GRID, INK, INK_SECONDARY, MARK, MUTED, figure_style
 
 __all__ = ["extraction_table", "EXTRACTION_COLUMNS", "exclusions_table", "EXCLUSION_REASONS",
-           "leave_one_out_table", "sensitivity_analyses", "sensitivity_outputs",
+           "leave_one_out_table", "leave_one_out_rows", "sensitivity_analyses",
+           "sensitivity_outputs",
            "SENSITIVITY_ANALYSES", "funnel_plot", "prisma_flow", "PRISMA_CHAIN", "pool_rows",
            "write_rows", "dump_json"]
 
@@ -57,8 +58,8 @@ _REASON_ALIASES: dict[str, str] = {"aggregated_into": "aggregated"}
 #: the analyses amendment H requires; `by_analysis_metric` fans out to one entry per metric
 SENSITIVITY_ANALYSES: tuple[str, ...] = (
     "primary", "exclude_figure_derived", "exclude_test_statistic_derived", "include_needs_human",
-    "hartung_knapp", "normal_z", "with_digitization_variance", "without_digitization_variance",
-    "by_analysis_metric", "one_row_per_paper", "all_rows")
+    "best_guess", "hartung_knapp", "normal_z", "with_digitization_variance",
+    "without_digitization_variance", "by_analysis_metric", "one_row_per_paper", "all_rows")
 
 #: `(start, removals, end)` — every step must satisfy `start − Σ removals = end`. `not_processed`
 #: is what `--max-papers` left out: a partial run still has to add up, so the papers it never
@@ -177,7 +178,12 @@ EXTRACTION_COLUMNS: tuple[str, ...] = (
     "estimator", "variance_method", "es", "se", "var", "ci_low", "ci_high", "level",
     "higher_is_better", "orientation_applied", "conversion_chain", "routes_available",
     "routes_rejected", "not_convertible_reason", "digitization_var", "digitization_var_share",
-    "inputs", "notes")
+    "inputs", "notes",
+    # DECISION A: the second analysis line, per row — whether it is in the best guess, the rule
+    # that admitted it (empty on a row the primary analysis already had) or the veto and reason
+    # that kept it out, and the value the line used. They sit here, ahead of the `mod_*` block,
+    # so a reviewer reads them next to the row's own value rather than past its moderators.
+    "in_best_guess", "best_guess_rule", "best_guess_reason", "best_guess_es", "best_guess_se")
 
 
 def _group_provenance(record: EffectSizeRecord, group: str, verdicts: Mapping[tuple, Verdict],
@@ -222,7 +228,8 @@ def _group_provenance(record: EffectSizeRecord, group: str, verdicts: Mapping[tu
 
 def extraction_row(record: EffectSizeRecord, verdicts: Mapping[tuple, Verdict],
                    candidates: Mapping[str, Candidate],
-                   primary_row: bool | None = None) -> dict[str, Any]:
+                   primary_row: bool | None = None,
+                   best_guess: Mapping[str, Any] | None = None) -> dict[str, Any]:
     row: dict[str, Any] = {
         "paper_id": record.paper_id, "cluster_id": record.cluster_id,
         "sample_id": record.sample_id, "primary_row": primary_row,
@@ -245,6 +252,17 @@ def extraction_row(record: EffectSizeRecord, verdicts: Mapping[tuple, Verdict],
     }
     for group in ("A", "B"):
         row.update(_group_provenance(record, group, verdicts, candidates))
+    # the best-guess line's own view of this row. Without a decision for it the columns stay
+    # empty — a blank is "this run did not compute a second line", which is not the same claim
+    # as "this row is not in it", and the record's own fields are the fallback because a row that
+    # already carries them was written by the line itself.
+    row.update({"in_best_guess": None, "best_guess_rule": record.best_guess_rule,
+                "best_guess_reason": record.best_guess_reason,
+                "best_guess_es": None, "best_guess_se": None})
+    if best_guess is not None:
+        row.update({key: best_guess.get(key) for key in
+                    ("in_best_guess", "best_guess_rule", "best_guess_reason",
+                     "best_guess_es", "best_guess_se")})
     for name, value in record.moderators.items():
         row[f"mod_{name}"] = value
     return {key: row.get(key) for key in (*EXTRACTION_COLUMNS,
@@ -254,6 +272,7 @@ def extraction_row(record: EffectSizeRecord, verdicts: Mapping[tuple, Verdict],
 def extraction_table(rows: Sequence[EffectSizeRecord], out_stem: str | Path, *,
                      verdicts: Sequence[Verdict] = (), candidates: Sequence[Candidate] = (),
                      primary: Sequence[EffectSizeRecord] | None = None,
+                     best_guess: Mapping[tuple[str, str], Mapping[str, Any]] | None = None,
                      formats: Sequence[str] = ("csv", "json", "xlsx")) -> dict[str, Path]:
     """One row per dataset × outcome, with the raw values and where each of them was read.
 
@@ -261,6 +280,10 @@ def extraction_table(rows: Sequence[EffectSizeRecord], out_stem: str | Path, *,
     aggregation replaced and the ones held for review — because this is the table a reviewer
     checks the review with. `primary` names the subset that actually entered the pool; each row
     then carries `primary_row`. Without it the column is left empty rather than guessed.
+
+    `best_guess` is `pipeline.bestguess.best_guess_cells` — `(dataset_id, outcome_key)` to the
+    second line's view of that row. It is passed in rather than recomputed so that the run-wide
+    table and the per-outcome ones show the SAME decision.
     """
     by_cell = {(v.dataset_id, v.outcome_key, v.group): v for v in verdicts}
     by_id = {c.candidate_id: c for c in candidates}
@@ -268,7 +291,9 @@ def extraction_table(rows: Sequence[EffectSizeRecord], out_stem: str | Path, *,
                   else {(r.dataset_id, r.outcome_key) for r in primary})
     table = [extraction_row(record, by_cell, by_id,
                             None if in_primary is None
-                            else (record.dataset_id, record.outcome_key) in in_primary)
+                            else (record.dataset_id, record.outcome_key) in in_primary,
+                            None if best_guess is None
+                            else best_guess.get((record.dataset_id, record.outcome_key)))
              for record in rows]
     moderator_columns: list[str] = []
     for row in table:
@@ -340,20 +365,33 @@ LOO_COLUMNS: tuple[str, ...] = ("omitted_label", "omitted_dataset_id", "omitted_
                                 "estimate", "se", "ci_low", "ci_high", "tau2", "I2", "Q", "Q_p")
 
 
-def leave_one_out_table(rows: Sequence[EffectSizeRecord], settings: StatsSettings,
-                        out_stem: str | Path,
-                        formats: Sequence[str] = ("csv", "json")) -> dict[str, Path]:
-    """`metafor::leave1out` over the pooled rows: which study, if any, is carrying the result."""
+def leave_one_out_rows(rows: Sequence[EffectSizeRecord],
+                       settings: StatsSettings) -> list[dict[str, Any]]:
+    """The leave-one-out table as data — empty below k = 3, where the question is meaningless.
+
+    Separate from the writer because the best-guess line needs the same numbers in
+    `pooled.json` (how far one guessed row moves the line) as it writes to
+    `leave_one_out_best_guess.csv`, and computing them twice is how two artefacts of one run
+    start to disagree.
+    """
     keep, yi, vi = _poolable(rows)
     if len(keep) < 3:
-        return write_rows([], out_stem, LOO_COLUMNS, formats)
+        return []
     results = leave_one_out(yi, vi, method=settings.tau2_method, level=settings.ci_level,
                             labels=[_label(r) for r in keep])
-    table = [{"omitted_label": r.label, "omitted_dataset_id": keep[r.omitted].dataset_id,
-              "omitted_paper_id": keep[r.omitted].paper_id, "k": r.k, "estimate": r.estimate,
-              "se": r.se, "ci_low": r.ci_low, "ci_high": r.ci_high, "tau2": r.tau2, "I2": r.I2,
-              "Q": r.Q, "Q_p": r.Q_p} for r in results]
-    return write_rows(table, out_stem, LOO_COLUMNS, formats)
+    return [{"omitted_label": r.label, "omitted_dataset_id": keep[r.omitted].dataset_id,
+             "omitted_paper_id": keep[r.omitted].paper_id, "k": r.k, "estimate": r.estimate,
+             "se": r.se, "ci_low": r.ci_low, "ci_high": r.ci_high, "tau2": r.tau2, "I2": r.I2,
+             "Q": r.Q, "Q_p": r.Q_p} for r in results]
+
+
+def leave_one_out_table(rows: Sequence[EffectSizeRecord], settings: StatsSettings,
+                        out_stem: str | Path,
+                        formats: Sequence[str] = ("csv", "json"),
+                        table: Sequence[Mapping[str, Any]] | None = None) -> dict[str, Path]:
+    """`metafor::leave1out` over the pooled rows: which study, if any, is carrying the result."""
+    entries = leave_one_out_rows(rows, settings) if table is None else list(table)
+    return write_rows(entries, out_stem, LOO_COLUMNS, formats)
 
 
 # ----------------------------------------------------------------------------- sensitivity set
@@ -417,11 +455,30 @@ def _entry(name: str, description: str, rows: Sequence[EffectSizeRecord],
 
 
 def sensitivity_analyses(rows: Sequence[EffectSizeRecord], settings: StatsSettings, *,
-                         needs_human_rows: Sequence[EffectSizeRecord] = ()) -> dict[str, Any]:
-    """The named analyses of amendment H, each as a pooled result next to the primary one."""
+                         needs_human_rows: Sequence[EffectSizeRecord] = (),
+                         best_guess_rows: Sequence[EffectSizeRecord] | None = None
+                         ) -> dict[str, Any]:
+    """The named analyses of amendment H, each as a pooled result next to the primary one.
+
+    `best_guess_rows` is DECISION A's second line (the primary rows plus the held rows a rule
+    admitted). Without it the entry is the primary set itself — which is exactly what the line is
+    when no held row could be admitted, so the analysis is always present and never invented.
+    """
     primary = pool_rows(rows, settings)
     def add(name, description, subset, **kw):
         return _entry(name, description, subset, settings, primary=primary, **kw)
+
+    held_back = add("include_needs_human", "rows held for human review added back",
+                    [*rows, *needs_human_rows])
+    # amendment H's honesty rule: an analysis that says "held rows added back" while several of
+    # them carry no effect size to add is reporting a set it did not analyse. The note counts
+    # them, so the k beside it can be read for what it is.
+    unusable = len(needs_human_rows) - len(_poolable(needs_human_rows)[0])
+    if needs_human_rows:
+        held_back["note"] = "; ".join(x for x in [
+            held_back.get("note") or "",
+            f"{unusable} of {len(needs_human_rows)} held row(s) could not be included "
+            f"(no usable effect size and variance)"] if x)
 
     analyses: list[dict[str, Any]] = [
         add("primary", "every row in the primary analysis, as configured", rows),
@@ -429,8 +486,10 @@ def sensitivity_analyses(rows: Sequence[EffectSizeRecord], settings: StatsSettin
             [r for r in rows if not _is_figure_route(r.route)]),
         add("exclude_test_statistic_derived", "rows converted from a t/F/p statistic removed",
             [r for r in rows if not _is_statistic_route(r.route)]),
-        add("include_needs_human", "rows held for human review added back",
-            [*rows, *needs_human_rows]),
+        held_back,
+        add("best_guess", "the best-guess line: the primary analysis plus every held row a "
+                          "named rule admitted at its own value (DECISION A)",
+            list(rows) if best_guess_rows is None else list(best_guess_rows)),
         add("hartung_knapp", "Hartung-Knapp variance and t(k-1) confidence interval", rows,
             hakn=True),
         add("normal_z", "normal (z) confidence interval, no Hartung-Knapp", rows, hakn=False),
@@ -532,9 +591,11 @@ def _sensitivity_figure(payload: Mapping[str, Any], out_stem: Path,
 def sensitivity_outputs(rows: Sequence[EffectSizeRecord], settings: StatsSettings,
                         out_stem: str | Path, *,
                         needs_human_rows: Sequence[EffectSizeRecord] = (),
+                        best_guess_rows: Sequence[EffectSizeRecord] | None = None,
                         formats: Sequence[str] = ("png",)) -> dict[str, Path]:
     """`sensitivity.json` plus the small-multiples figure."""
-    payload = sensitivity_analyses(rows, settings, needs_human_rows=needs_human_rows)
+    payload = sensitivity_analyses(rows, settings, needs_human_rows=needs_human_rows,
+                                   best_guess_rows=best_guess_rows)
     stem = Path(out_stem)
     out = {"json": dump_json(payload, stem.with_suffix(".json"))}
     out.update(_sensitivity_figure(payload, stem, formats))

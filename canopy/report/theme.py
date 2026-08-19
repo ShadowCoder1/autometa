@@ -31,7 +31,8 @@ from ..stats.meta import MetaResult                    # noqa: E402
 
 __all__ = ["SURFACE", "INK", "INK_SECONDARY", "MUTED", "GRID", "AXIS", "MARK", "ACCENT",
            "ACCENT_SOFT", "HOLLOW_FACE", "ROUTE_GLYPHS", "ROUTE_LABELS", "GLYPH_LEGEND",
-           "OVERRIDE_FLAG", "OVERRIDE_MARK", "DPI", "route_glyph", "is_overridden",
+           "OVERRIDE_FLAG", "OVERRIDE_MARK", "BEST_GUESS_CAVEAT", "DPI", "route_glyph",
+           "is_overridden",
            "conventions_footer", "estimator_label", "variance_label", "pi_label", "fmt_p",
            "figure_style", "save_figure", "study_label", "fmt", "fmt_ci"]
 
@@ -71,6 +72,12 @@ ROUTE_LABELS: dict[str, str] = {
 #: a value a human replaced carries this flag (the review workflow writes it) and this marker
 OVERRIDE_FLAG = "human_override"
 OVERRIDE_MARK = "△"
+
+#: DECISION A. Printed on every best-guess artefact — the forest's subtitle, the report's cards,
+#: the SPA's second tab — because the one real risk of a second line is that it becomes the
+#: quoted number. It says what the line is, in one sentence, wherever the line is shown.
+BEST_GUESS_CAVEAT = ("Best guess, not the primary analysis: this line adds rows held for human "
+                     "review, each taken at the value the tool read, and each still unconfirmed.")
 
 
 def route_glyph(route: str) -> str:

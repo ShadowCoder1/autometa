@@ -545,6 +545,176 @@ def test_write_outcome_outputs_still_writes_when_there_is_nothing_to_pool(tmp_pa
     assert "forest_png" not in out                       # nothing to draw, and it says so
 
 
+# ------------------------------------------------------- DECISION A: the best-guess line
+def _nine_outputs(tmp_path, key, *, held_update=None, one_row_per_paper=False):
+    """Write one outcome of the `runs/nine` fixture into `tmp_path`, exactly as a run does.
+
+    `held_update(record) -> dict | None` may hand a held row the fields a later stage will give
+    it (a value a categorical point read produces, a direction a ballot settled); everything else
+    is the record the resolver actually wrote.
+    """
+    from canopy.pipeline.run import _split_rows
+    from canopy.report import write_outcome_outputs
+    from canopy.report.tables import pool_rows
+    from tests.helpers import nine
+
+    protocol = nine.protocol()
+    protocol.stats.one_row_per_paper = one_row_per_paper
+    split = _split_rows(nine.records(key), protocol.stats)
+    held = [r.model_copy(update=(held_update(r) or {})) if held_update else r for r in split.held]
+    cells: dict = {}
+    out = write_outcome_outputs(tmp_path, protocol.outcome(key), split.primary,
+                                pool_rows(split.primary, protocol.stats), protocol.stats,
+                                needs_human_rows=held, all_rows=split.every,
+                                primary_pre_agg=split.primary_pre_agg, best_guess_cells=cells,
+                                protocol=protocol, warnings=[])
+    return out, json.loads(out["pooled_json"].read_text()), cells
+
+
+def _same(fixture, written, path=""):
+    """Every key the fixture recorded is present and equal — NaN included, subsets allowed.
+
+    Lists are compared as multisets. `pooled.json`'s lists are all per-row (the held ids, `yi`,
+    `vi`, the weights) and their ORDER is the order the run's papers finished — they are read
+    here in path order instead — so a permutation of them is a property of concurrency, not of
+    the analysis. Every pooled number, which is what the key claim is about, is compared exactly.
+    """
+    if isinstance(fixture, dict):
+        assert isinstance(written, dict), path
+        for key, value in fixture.items():
+            assert key in written, f"{path}.{key} disappeared"
+            _same(value, written[key], f"{path}.{key}")
+        return
+    if isinstance(fixture, float) and math.isnan(fixture):
+        assert isinstance(written, float) and math.isnan(written), path
+        return
+    if isinstance(fixture, list):
+        assert isinstance(written, list) and len(fixture) == len(written), path
+        for a, b in zip(sorted(fixture), sorted(written)):
+            _same(a, b, f"{path}[]")
+        return
+    assert fixture == written, path
+
+
+def test_pooled_json_keeps_strict_keys_at_top_level_and_adds_best_guess(tmp_path):
+    """A0: the second line is additive. Every number the primary analysis published is still
+
+    published, at the same key, with the same value — the fixture's own `pooled.json` is the
+    witness, because it was written before this feature existed.
+    """
+    from tests.helpers import nine
+
+    _, payload, _ = _nine_outputs(tmp_path, "late_adaptation")
+    fixture = json.loads(
+        (nine.NINE / "results" / "late_adaptation" / "pooled.json").read_text())
+    _same(fixture, payload)
+    assert payload["analysis_lines"] == ["strict", "best_guess"]
+    assert payload["best_guess"]["k"] >= 5
+    assert payload["best_guess"]["k"] >= payload["k"]
+    assert payload["best_guess"]["note"]
+
+
+def test_every_held_row_is_named_in_exactly_one_of_the_best_guess_lists(tmp_path):
+    _, payload, _ = _nine_outputs(tmp_path, "late_adaptation")
+    added = {a["dataset_id"] for a in payload["best_guess"]["added"]}
+    held_back = {n["dataset_id"] for n in payload["best_guess"]["not_added"]}
+    assert not (added & held_back)
+    assert added | held_back == set(payload["needs_human_dataset_ids"])
+    assert all(n["veto"] and n["reason"] for n in payload["best_guess"]["not_added"])
+
+
+def test_forest_best_guess_written_only_when_rows_were_added(tmp_path):
+    """No added row means the best-guess line IS the strict line, and it gets no second plot."""
+    late, late_payload, _ = _nine_outputs(tmp_path / "late", "late_adaptation")
+    assert late_payload["best_guess"]["n_added"] >= 1
+    assert late["forest_best_guess_png"].exists()
+
+    aft, aft_payload, _ = _nine_outputs(tmp_path / "aft", "aftereffect")
+    assert aft_payload["best_guess"]["n_added"] == 0
+    assert "forest_best_guess_png" not in aft
+
+
+def test_aftereffect_has_best_guess_forest_without_strict_forest(tmp_path):
+    """Strict k = 1, best-guess k = 3: the outcome no primary analysis can report, reported.
+
+    The two Vachon aftereffect rows are given the value D3's categorical point read produces
+    (acceptance 5) over the group sizes the SAME datasets carry on their late-adaptation rows —
+    the paper's own n, not a number invented for the test.
+    """
+    from canopy.stats.effect_sizes import se_smd
+    from tests.helpers import nine
+
+    reads = {"b7523a41b03a:d1": 0.13, "b7523a41b03a:d2": 1.24}
+
+    def point_read(record):
+        if record.dataset_id not in reads:
+            return None
+        late = nine.record(record.dataset_id, "late_adaptation")
+        es = reads[record.dataset_id]
+        se = se_smd(es, late.n_a, late.n_b)
+        return {"route": "figure", "es": es, "se": se, "var": se * se, "n_a": late.n_a,
+                "n_b": late.n_b, "not_convertible_reason": "",
+                "flags": [f for f in record.flags if f != "not_convertible"]
+                         + ["categorical_point_read"]}
+
+    out, payload, _ = _nine_outputs(tmp_path, "aftereffect", held_update=point_read)
+    assert payload["k"] < 2 and "forest_png" not in out
+    assert payload["best_guess"]["k"] >= 3 and payload["best_guess"]["n_added"] == 2
+    assert out["forest_best_guess_png"].exists()
+    assert "Best guess" in out["forest_best_guess_svg"].read_text(encoding="utf-8")
+
+
+def test_each_line_aggregates_its_own_rows_and_a_mixed_composite_is_a_guess(tmp_path):
+    """`one_row_per_paper` runs once per line, over that line's members (DECISION A).
+
+    Buch contributes one strict row to neither line and two held rows to the best guess; the
+    composite that stands for the paper is therefore a best-guess row wholesale, and says which
+    of its members were guessed.
+    """
+    out, payload, cells = _nine_outputs(tmp_path, "late_adaptation", one_row_per_paper=True)
+    composite = next(a for a in payload["best_guess"]["added"] if "+" in a["dataset_id"])
+    for member in composite["dataset_id"].split("+"):
+        assert member in composite["reason"]
+        assert cells[(member, "late_adaptation")]["in_best_guess"] is True
+    assert payload["k"] == 2 and payload["best_guess"]["k"] == 4
+    assert out["forest_best_guess_png"].exists()
+
+
+def test_extraction_columns_have_best_guess_before_moderators(tmp_path):
+    from canopy.report.tables import EXTRACTION_COLUMNS
+
+    added = ("in_best_guess", "best_guess_rule", "best_guess_reason", "best_guess_es",
+             "best_guess_se")
+    assert EXTRACTION_COLUMNS[-len(added):] == added      # nothing but `mod_*` follows them
+
+    out, _, cells = _nine_outputs(tmp_path, "late_adaptation")
+    table = {r["dataset_id"]: r for r in json.loads(out["extraction_json"].read_text())}
+    columns = list(table["5039533c85ef:d1"])
+    assert columns.index("best_guess_se") < min(i for i, c in enumerate(columns)
+                                                if c.startswith("mod_"))
+    guessed = table["5039533c85ef:d1"]
+    assert guessed["in_best_guess"] is True
+    assert guessed["best_guess_rule"] == "low_confidence_value" and guessed["best_guess_reason"]
+    assert guessed["best_guess_es"] == guessed["es"]
+    refused = table["b7523a41b03a:d2"]
+    assert refused["in_best_guess"] is False and refused["best_guess_rule"] == ""
+    assert refused["best_guess_reason"].startswith("contradicted_value:")
+    assert table["b511dbb76fa6:d1"]["in_best_guess"] is True      # a strict row is in the line
+    assert table["b511dbb76fa6:d1"]["best_guess_rule"] == ""      # but it is not a guess
+
+
+def test_include_needs_human_note_counts_what_it_could_not_include(tmp_path):
+    out, _, _ = _nine_outputs(tmp_path, "late_adaptation")
+    payload = json.loads(out["sensitivity_json"].read_text())
+    entry = next(a for a in payload["analyses"] if a["name"] == "include_needs_human")
+    assert "4 of 8 held row(s) could not be included" in entry["note"]
+    assert entry["k"] == 2 + 4                            # the four that carry a usable value
+    # and the best-guess line is NOT that set: one of the four is vetoed `contradicted_value`,
+    # which is the whole difference between "add everything held" and "add what a rule admits"
+    best_guess = next(a for a in payload["analyses"] if a["name"] == "best_guess")
+    assert best_guess["k"] == 5 and best_guess["delta_vs_primary"] is not None
+
+
 # --------------------------------------------------------------------------- HTML report
 def _manifest(tmp_path, protocol_hash="abc123"):
     from canopy.models import PaperStatus, RunManifest, StatsSettings

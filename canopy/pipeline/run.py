@@ -1485,6 +1485,11 @@ class _Split:
     every: list[EffectSizeRecord] = field(default_factory=list)
     exclusions: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    #: `primary` BEFORE `one_row_per_paper` combined anything — the rows the best-guess line adds
+    #: to (DECISION A). Aggregation happens once per analysis line, over that line's own rows, so
+    #: a composite is never built half from the strict line and half from the other one. Equal to
+    #: `primary` when the protocol does not aggregate.
+    primary_pre_agg: list[EffectSizeRecord] = field(default_factory=list)
 
 
 def _split_rows(records: Sequence[EffectSizeRecord], settings: StatsSettings) -> _Split:
@@ -1502,6 +1507,7 @@ def _split_rows(records: Sequence[EffectSizeRecord], settings: StatsSettings) ->
             split.primary.append(record)
         else:
             split.held.append(record)
+    split.primary_pre_agg = list(split.primary)
     if settings.one_row_per_paper and split.primary:
         aggregated: Aggregation = aggregate_one_row_per_paper(split.primary, settings)
         composites = [r for r in aggregated.rows if AGGREGATED_FLAG in r.flags]
@@ -1642,6 +1648,9 @@ def _write_outputs(ctx: RunContext, manifest: RunManifest, results: Sequence[Pap
 
     every_row: list[EffectSizeRecord] = []
     primary_rows: list[EffectSizeRecord] = []
+    #: filled per outcome by `write_outcome_outputs`, so the run-wide extraction table below
+    #: shows the SAME best-guess decision the per-outcome one does rather than a second opinion
+    best_guess_cells: dict[tuple[str, str], dict] = {}
     for outcome in ctx.protocol.outcomes:
         mine = [r for r in records if r.outcome_key == outcome.key]
         split = _split_rows(mine, settings)
@@ -1657,7 +1666,11 @@ def _write_outputs(ctx: RunContext, manifest: RunManifest, results: Sequence[Pap
                                           needs_human_rows=held, verdicts=verdicts,
                                           candidates=candidates,
                                           moderators=ctx.protocol.moderators or None,
-                                          all_rows=split.every)
+                                          all_rows=split.every,
+                                          primary_pre_agg=split.primary_pre_agg,
+                                          best_guess_cells=best_guess_cells,
+                                          protocol=ctx.protocol,
+                                          warnings=manifest.warnings)
         outputs.update({f"{outcome.key}.{k}": v for k, v in artefacts.items()})
         per_outcome[outcome.key] = {"pooled": pooled, "outputs": artefacts, "rows": primary,
                                     "needs_human_rows": held}
@@ -1679,7 +1692,7 @@ def _write_outputs(ctx: RunContext, manifest: RunManifest, results: Sequence[Pap
     # the raw values, the route and whether it was pooled — the file a reviewer opens first
     outputs.update({f"extraction_table_all.{k}": v for k, v in extraction_table(
         every_row, out / "results" / "extraction_table_all", verdicts=verdicts,
-        candidates=candidates, primary=primary_rows).items()})
+        candidates=candidates, primary=primary_rows, best_guess=best_guess_cells).items()})
 
     manifest.human_review_queue = sort_review_queue(review)
     if manifest.human_review_queue:
