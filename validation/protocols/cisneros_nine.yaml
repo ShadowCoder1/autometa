@@ -1,0 +1,109 @@
+title: Ageing and upper-extremity sensorimotor adaptation
+research_question: Do older adults differ from younger adults in adaptation to an upper-extremity visuomotor
+  or force-field perturbation, and in the aftereffect once the perturbation is removed?
+group_a:
+  key: A
+  label: Older adults
+  definition: The older of the two age groups compared by the study (older / elderly / aged participants),
+    as the study itself defines and labels it.
+  synonyms:
+  - older
+  - older adults
+  - elderly
+  - aged
+  - old
+  - seniors
+  - senior adults
+  - older group
+group_b:
+  key: B
+  label: Younger adults
+  definition: The younger of the two age groups compared by the study (young / younger participants),
+    as the study itself defines and labels it.
+  synonyms:
+  - younger
+  - younger adults
+  - young
+  - young adults
+  - youths
+  - younger group
+outcomes:
+- key: late_adaptation
+  label: Late adaptation
+  definition: Adaptive change late in the perturbation block; when an average of overall performance is
+    provided use it, otherwise the last measure of overall adaptation in the group time series.
+  measurement_window: The end of the initial perturbation block, while the perturbation is still applied.
+    Use the block average when the paper reports one; otherwise the final point of the group time series
+    during the perturbation.
+  higher_is_better_hint: Depends on the measure. Error-like measures (directional error, angular deviation,
+    absolute error) are better when smaller; adaptation-like measures (percent compensation, adaptation
+    index, extent of adaptation) are better when larger. Decide per dataset from the paper's own wording
+    and record the supporting quote.
+  positive_direction_label: Enhanced in Old
+  negative_direction_label: Reduced in Old
+  units_hint: degrees, cm, N, or a unitless index — record exactly what the paper prints.
+- key: aftereffect
+  label: Aftereffect
+  definition: Performance after removal of the perturbation and feedback (implicit recalibration).
+  measurement_window: The post-learning phase immediately following the initial perturbation block, perturbation
+    removed and feedback withheld. Use the block average when reported, otherwise the first available
+    measure of that phase.
+  higher_is_better_hint: The aftereffect is a magnitude of implicit recalibration. A larger deviation
+    from baseline after the perturbation is removed means MORE adaptation, whatever sign the paper plots
+    it with (a signed error that grows more negative is a larger aftereffect, not a worse one). Only when
+    the paper itself defines its aftereffect measure as an error to be minimised is smaller better. Decide
+    per dataset from the paper's wording and record the quote.
+  positive_direction_label: Enhanced in Old
+  negative_direction_label: Reduced in Old
+  units_hint: degrees, cm, N, or a unitless index — record exactly what the paper prints.
+eligibility:
+- The study used an upper-extremity motor adaptation task with a visuomotor displacement of feedback or
+  a force field.
+- The study reported data comparing older adults with younger adults.
+- The study reported performance measures during the perturbation block and/or during the post-learning
+  phase with the perturbation removed.
+- The study is written in English.
+dataset_rules:
+- When the same participants took part in two experiments, include only the first experiment.
+- When a study used multiple perturbation blocks, use the initial round of adaptation.
+- Exclude experiments in which a contextual change (hand, direction or size) occurred between the learning
+  phase and the aftereffect phase.
+moderators:
+- task_type
+- perturbation_size_deg
+- n_targets
+stats:
+  profile: cisneros2024
+  estimator: cohen
+  variance: hedges_olkin_df
+  tau2_method: REML
+  hakn: false
+  pi_method: HTS
+  route_precedence:
+  - text_mean_sd
+  - table
+  - text_mean_se_ci
+  - figure
+  - test_statistic
+  - p_value
+  - reported_d
+  late_window_sd: paper_reported_block
+  ci_to_sd_dist: auto
+  primary_analysis_includes:
+  - auto_accept
+  - accept_with_note
+  shared_control_strategy: split_n
+  multi_group_policy: closest_to_definition
+  digitization_variance: sensitivity
+  one_row_per_paper: false
+  within_paper_r: 0.5
+  ci_level: 0.95
+digitize:
+  readouts_min: 2
+  readouts_max: 3
+  overlay_verify: on_disagreement
+  max_tool_calls: 6
+  collapse_across_categorical_x: true
+notes: task_type = "visuomotor" or "force_field"; perturbation_size_deg = the magnitude as printed (rotation
+  in degrees, or force-field gain/direction); n_targets = number of movement targets. Group A is older,
+  B younger, so positive = Enhanced in Old.
