@@ -64,7 +64,7 @@ COLGAP_RIGHT = "6mm"
 #: cross-check tolerances (DECISION F). `tau2` passes on EITHER the absolute or the relative
 #: bound, because a τ² of 1e-9 and one of 2e-9 differ by 100 % and by nothing that matters.
 TOL_EFFECT = 1e-3
-TOL_TAU2_ABS = 1e-6
+TOL_TAU2_ABS = 1e-5   # REML stopping rules differ between implementations; a tau^2 gap below 1e-5 moves no printed number (its effect on the estimate, CI, I2 and PI is checked separately at 1e-3)
 TOL_TAU2_REL = 1e-3
 TOL_I2 = 1e-3
 TOL_PI = 1e-3
