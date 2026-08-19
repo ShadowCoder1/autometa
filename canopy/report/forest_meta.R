@@ -156,7 +156,7 @@ m <- metagen(TE = TE, seTE = seTE, studlab = studlab, data = dat,
              method.tau = opt$method_tau,
              method.random.ci = opt$method_random_ci,
              method.predict = opt$method_predict,
-             level = opt$level,
+             level = opt$level, level.ma = opt$level, level.predict = opt$level,
              subgroup = subgroup,
              subgroup.name = if (is.null(subgroup)) NULL else "Line",
              title = if (is.null(opt$title)) "" else opt$title)
