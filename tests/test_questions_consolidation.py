@@ -101,6 +101,58 @@ def test_pair_card_writes_one_override_per_group(nine_tmp):
                                                             for r in recs)
 
 
+def test_an_answer_given_through_a_card_is_seen_by_every_cell_it_names(nine_tmp):
+    """Review finding 1. An answer given on the page is recorded against the CARD, so a cell that
+    matched only its own `question_id` saw none of them: the codes the answer retired, the findings
+    it overruled and the `settled` history were all empty at the next page build, and the cell was
+    protected only by the re-pool having released it. The union the fold owes the cell is that a
+    card id counts as this cell's id — the rest of the matching rules are unchanged.
+    """
+    (nine_tmp / "overrides.jsonl").unlink()          # the fixture ships one; start from nothing
+    card = next(q for q in questions_for_run(nine_tmp)
+                if q["id"] == "b7523a41b03a:d2|late_adaptation||pair")
+    assert {s["kind"] for s in card["slots"]} == {"which_series"}
+    option = card["options"][0]
+    records = answers_to_overrides(card, {"option": option["key"],
+                                          "option_fingerprint": option["fingerprint"],
+                                          "note": "read off the figure"})
+    assert all(r["question_id"] == card["id"] for r in records)
+    _append(nine_tmp, records)
+
+    cells = {q["id"]: q for q in questions_for_run(nine_tmp, fold=False)
+             if q["dataset_id"] == "b7523a41b03a:d2" and q["outcome_key"] == "late_adaptation"}
+    assert len(cells) == 2
+    for cell in cells.values():
+        assert cell["answered"] is True, cell["id"]
+        assert cell["answers"], cell["id"]
+        # …and the history says what it settled, under the group that was asked
+        assert "series_identity_conflict" in cell["settled"][0]["clears"], cell["id"]
+        # the code the answer named is retired, so the cell has moved on to its next question
+        assert cell["kind"] == "confirm_value", cell["id"]
+    assert next(q for q in questions_for_run(nine_tmp)
+                if q["id"] == card["id"])["status"] == "answered"
+
+
+def test_the_row_map_is_read_once_per_page(nine_tmp, monkeypatch):
+    """Review finding 2. Every card asks its row where it stands, and reading that per card
+    re-globbed every `resolve.json` and the whole extraction table once per card — 25 full scans
+    for one nine-paper page, growing as O(cards x papers). The page reads it once and threads it.
+    """
+    from canopy.review import questions as module
+
+    calls: list[Path] = []
+    real = module._rows_of                        # captured ONCE: patching a patch double-counts
+    monkeypatch.setattr(module, "_rows_of",
+                        lambda run, _real=real: (calls.append(run), _real(run))[1])
+    for fold in (True, False):
+        calls.clear()
+        cards = module.questions_for_run(nine_tmp, fold=fold)
+        assert cards
+        assert len(calls) <= 1, f"fold={fold} read the row map {len(calls)} times"
+        # …and the cards still know where their rows stand, so nothing was saved by not looking
+        assert any(q["status_line"] for q in cards)
+
+
 def test_pair_options_are_restamped_and_a_stale_echo_differs(nine_tmp):
     """A folded option's key is positional twice over, so the fingerprint has to cover both
     slots' numbers — otherwise `a1|b1` under one id means a different pair of numbers after any

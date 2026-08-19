@@ -301,8 +301,15 @@ def questions_for_run(run_dir: str | Path, *,
                              rows.get((dataset_id, outcome_key)) or {}))
     out.extend(_excluded_questions(run, overrides, out))
     out.extend(_map_questions(run, overrides, pending, consumed))
-    cards = _consolidate(out, run, overrides, pending, consumed) if fold else \
-        [_as_cell_card(q, run, overrides) for q in out]
+    # ONE read of the run's rows for the whole page. Every card asks its row where it stands (the
+    # best-guess line's rule or veto, D1's flag), and reading that per card re-globbed every
+    # `resolve.json` and the whole table once per card — 25 full scans and 432 file reads for one
+    # nine-paper page, growing as O(cards x papers). Threaded rather than memoised on the module,
+    # because the map has to be re-read after a re-pool and a cache keyed on mtimes is a harder
+    # thing to get right than an argument.
+    row_map = _rows_of(run)
+    cards = _consolidate(out, run, overrides, pending, consumed, row_map) if fold else \
+        [_as_cell_card(q, run, overrides, row_map) for q in out]
     cards.sort(key=_rank)
     for i, q in enumerate(cards, 1):
         q["number"] = i
@@ -425,6 +432,19 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
     # page name their question; a decision taken elsewhere (the manual form, an older log) is
     # matched by what this question writes, which is the best the record can say.
     question_id = "|".join([str(entry.get("dataset_id") or ""), outcome_key, group or "", kind])
+    # …and the ids of the CARDS this cell can be folded into (§C1). An answer given on the page is
+    # recorded against the card the reviewer was shown, and a cell that compared only against its
+    # own id saw none of them — so a card answer left no trace on the cell it settled and the
+    # cell's history read as though nobody had ever been here.
+    #
+    # A card id is KIND-FREE, which is the whole difference: this cell's own id carries the kind it
+    # was asked (`…|which_axis`), so it can never match a later question; `…||pair` matches every
+    # question this cell will ever ask. So a card id is admitted on the STRICTER test below — the
+    # record must NAME what it settled — and never on "it wrote the kind this question writes",
+    # which would tick off the next question with the answer to the last one.
+    fold_ids = {f"{entry.get('dataset_id') or ''}|{outcome_key}||pair",
+                f"{entry.get('dataset_id') or ''}|{outcome_key}||precedence_override",
+                _measure_id(str(entry.get("paper_id") or ""), outcome_key, measure)}
     writes = _answer_kind(kind)
 
     def answers_this(override: Mapping[str, Any]) -> bool:
@@ -433,18 +453,21 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
         if override.get("kind") in MAP_KINDS:
             return override.get("decision") == "exclude"
         if override.get("question_id"):
-            if override["question_id"] != question_id:
+            on_a_card = override["question_id"] in fold_ids
+            if override["question_id"] != question_id and not on_a_card:
                 return False
             if kind == "verifier_refuted":
                 # a number does not retire a refutation: the verifier said the value is wrong, and
                 # a different value is not an answer to that. Only overruling it on the record —
                 # or removing the cell, handled above — settles this question.
                 return "verifier_refuted" in (override.get("overrules") or [])
+            named = bool(override.get("overrules")) or bool(override.get("clears"))
+            if on_a_card:
+                return named
             # …and answering "no, the right number is this one" is not answering "is this right?":
             # the question is settled by the decision it advertises, or by one that names what it
             # retires. Anything else changed the cell and left the question standing.
-            return (override.get("kind") == writes or bool(override.get("overrules"))
-                    or bool(override.get("clears")))
+            return override.get("kind") == writes or named
         # a record written outside the questions page — the manual override form, a log older than
         # `question_id` — cannot say which question it answered, and the cell's question changes as
         # answers land. Matching it by kind marked a question the reviewer had never been shown as
@@ -1726,7 +1749,9 @@ def _rank(card: Mapping[str, Any]) -> tuple[bool, float, int, str]:
 
 
 def _consolidate(out: Sequence[Question], run: Path, overrides: Sequence[Mapping[str, Any]],
-                 pending: Mapping[int, str], consumed: Collection[int] = ()) -> list[Question]:
+                 pending: Mapping[int, str], consumed: Collection[int] = (),
+                 rows: Mapping[tuple[str, str], Mapping[str, Any]] | None = None
+                 ) -> list[Question]:
     """The per-cell questions, folded into the decisions they are (§C1).
 
     Folded AFTER building, never instead of building: every builder above is untouched, every card
@@ -1735,35 +1760,37 @@ def _consolidate(out: Sequence[Question], run: Path, overrides: Sequence[Mapping
     what a reviewer is shown — one decision at a time instead of one cell at a time.
     """
     preview = _Preview(run)
+    rows = _rows_of(run) if rows is None else rows
     cards: list[Question] = []
     rest = list(out)
 
     # a paper nobody read, and a dataset's analysed size: neither is a held cell, so neither can
     # come out of the queue — they are read from the run's own exclusion table and verify stages.
     cards += _excluded_paper_questions(run, overrides, pending, consumed)
-    cards += _analysed_n_questions(run, overrides, pending, consumed)
+    cards += _analysed_n_questions(run, overrides, pending, consumed, rows)
 
     # D1 first, because its card REPLACES the value-picking cards of the cell it is about: the row
     # was built from a candidate pair, so "which of these numbers is group A's" is no longer the
     # decision — "which pair is this row" is.
     precedence, rest = _precedence_override_questions(run, rest, overrides, pending, consumed,
-                                                      preview)
+                                                      preview, rows)
     cards += precedence
-    orientation, rest = _fold_orientation(rest, run, overrides)
+    orientation, rest = _fold_orientation(rest, run, overrides, rows)
     cards += orientation
-    pairs, rest = _fold_pairs(rest, run, overrides, preview)
+    pairs, rest = _fold_pairs(rest, run, overrides, preview, rows)
     cards += pairs
-    cards += [_as_cell_card(q, run, overrides) for q in rest]
+    cards += [_as_cell_card(q, run, overrides, rows) for q in rest]
     return cards
 
 
 # ------------------------------------------------------------------ the cell, as a card of one
 def _as_cell_card(question: Question, run: Path,
-                  overrides: Sequence[Mapping[str, Any]] = ()) -> Question:
+                  overrides: Sequence[Mapping[str, Any]] = (),
+                  rows: Mapping[tuple[str, str], Mapping[str, Any]] | None = None) -> Question:
     """A question nothing folded, wearing the same shape as everything else on the page."""
     dataset_id = str(question.get("dataset_id") or "")
     outcome_key = str(question.get("outcome_key") or "")
-    row = _row_record(run, dataset_id, outcome_key)
+    row = _row_of_cell(rows, run, dataset_id, outcome_key)
     card = _blank(**{key: question[key] for key in question if key in _CARD_DEFAULTS})
     card.update({
         "scope": "cell",
@@ -1850,7 +1877,9 @@ def _measure_id(paper_id: str, outcome_key: str, measure: str) -> str:
 
 
 def _fold_orientation(rest: Sequence[Question], run: Path,
-                      overrides: Sequence[Mapping[str, Any]]) -> tuple[list[Question], list[Question]]:
+                      overrides: Sequence[Mapping[str, Any]],
+                      rows: Mapping[tuple[str, str], Mapping[str, Any]] | None = None
+                      ) -> tuple[list[Question], list[Question]]:
     """One direction card per (paper, outcome, normalised measure) — the override's own scope.
 
     `_apply_orientation` settles every dataset of a paper's outcome that measures the same thing,
@@ -1868,7 +1897,7 @@ def _fold_orientation(rest: Sequence[Question], run: Path,
     cards: list[Question] = []
     for card_id, members in groups.items():
         head = members[0]
-        cards.append(_folded(card_id, "orientation", "measure", members, run, overrides,
+        cards.append(_folded(card_id, "orientation", "measure", members, run, overrides, rows,
                              options=_stamped(list(head.get("options") or [])),
                              prompt=_measure_prompt(head, members, run),
                              why=str(head.get("why") or ""),
@@ -1928,7 +1957,9 @@ def _outcome_definition(run: Path, outcome_key: str) -> str:
 
 
 def _fold_pairs(rest: Sequence[Question], run: Path, overrides: Sequence[Mapping[str, Any]],
-                preview: "_Preview") -> tuple[list[Question], list[Question]]:
+                preview: "_Preview",
+                rows: Mapping[tuple[str, str], Mapping[str, Any]] | None = None
+                ) -> tuple[list[Question], list[Question]]:
     """Both groups of one dataset/outcome, decided together — when that is honest (§C1).
 
     Three conditions, and each of them is a way the fold could hide a hold. Both groups must be
@@ -1955,12 +1986,13 @@ def _fold_pairs(rest: Sequence[Question], run: Path, overrides: Sequence[Mapping
                 or len(options[0]) * len(options[1]) > _MAX_COMBINATIONS:
             keep.extend(members)
             continue
-        cards.append(_pair_card(dataset_id, outcome_key, a, b, run, overrides, preview))
+        cards.append(_pair_card(dataset_id, outcome_key, a, b, run, overrides, preview, rows))
     return cards, keep
 
 
 def _pair_card(dataset_id: str, outcome_key: str, a: Question, b: Question, run: Path,
-               overrides: Sequence[Mapping[str, Any]], preview: "_Preview") -> Question:
+               overrides: Sequence[Mapping[str, Any]], preview: "_Preview",
+               rows: Mapping[tuple[str, str], Mapping[str, Any]] | None = None) -> Question:
     card_id = "|".join([dataset_id, outcome_key, "", "pair"])
     combinations: list[dict[str, Any]] = []
     patch_sets: list[dict[str, dict[str, Any]]] = []
@@ -1971,7 +2003,7 @@ def _pair_card(dataset_id: str, outcome_key: str, a: Question, b: Question, run:
             combinations.append(_combination(f"a{i}|b{j}", (a, option_a), (b, option_b),
                                              dataset_id, outcome_key, preview, patches))
     writes = {str(a.get("answer_writes") or ""), str(b.get("answer_writes") or "")}
-    card = _folded(card_id, "pair", "dataset", [a, b], run, overrides,
+    card = _folded(card_id, "pair", "dataset", [a, b], run, overrides, rows,
                    options=_stamped(combinations),
                    prompt=_pair_prompt(a, b),
                    why=" || ".join(dict.fromkeys(x for x in (str(a.get("why") or ""),
@@ -2046,12 +2078,14 @@ def _patch(question: Mapping[str, Any], option: Mapping[str, Any]) -> dict[str, 
 
 
 def _folded(card_id: str, kind: str, scope: str, members: Sequence[Question], run: Path,
-            overrides: Sequence[Mapping[str, Any]], **fields: Any) -> Question:
+            overrides: Sequence[Mapping[str, Any]],
+            rows: Mapping[tuple[str, str], Mapping[str, Any]] | None = None,
+            **fields: Any) -> Question:
     """The common shape of a card built out of per-cell questions."""
     head = members[0]
     dataset_id = str(head.get("dataset_id") or "")
     outcome_key = str(head.get("outcome_key") or "")
-    row = _row_record(run, dataset_id, outcome_key)
+    row = _row_of_cell(rows, run, dataset_id, outcome_key)
     card = _blank(
         id=card_id, kind=kind, scope=scope,
         paper=str(head.get("paper") or ""), paper_id=str(head.get("paper_id") or ""),
@@ -2114,7 +2148,9 @@ def _stamp_impact(card: Question, members: Sequence[Mapping[str, Any]],
 def _precedence_override_questions(run: Path, rest: Sequence[Question],
                                    overrides: Sequence[Mapping[str, Any]],
                                    pending: Mapping[int, str], consumed: Collection[int],
-                                   preview: "_Preview") -> tuple[list[Question], list[Question]]:
+                                   preview: "_Preview",
+                                   rows: Mapping[tuple[str, str], Mapping[str, Any]] | None = None
+                                   ) -> tuple[list[Question], list[Question]]:
     """One card per row the resolver built from a candidate pair instead of the printed value.
 
     It REPLACES the cell cards that pick a value for that row, because after D1 those are not the
@@ -2124,7 +2160,7 @@ def _precedence_override_questions(run: Path, rest: Sequence[Question],
     """
     keep = list(rest)
     cards: list[Question] = []
-    for (dataset_id, outcome_key), row in _rows_of(run).items():
+    for (dataset_id, outcome_key), row in (_rows_of(run) if rows is None else rows).items():
         if PRECEDENCE_OVERRIDE_FLAG not in set(row.get("flags") or []):
             continue
         card_id = "|".join([dataset_id, outcome_key, "", "precedence_override"])
@@ -2276,8 +2312,9 @@ def _group_shown(group: Any) -> str:
 
 # ------------------------------------------------------------------ D4-lite: the analysed n
 def _analysed_n_questions(run: Path, overrides: Sequence[Mapping[str, Any]],
-                          pending: Mapping[int, str],
-                          consumed: Collection[int] = ()) -> list[Question]:
+                          pending: Mapping[int, str], consumed: Collection[int] = (),
+                          rows: Mapping[tuple[str, str], Mapping[str, Any]] | None = None
+                          ) -> list[Question]:
     """One card per DATASET whose n may be a recruited count, never one per cell (D4-lite).
 
     How many people were analysed is a fact about the two arms: it holds for every outcome
@@ -2310,19 +2347,20 @@ def _analysed_n_questions(run: Path, overrides: Sequence[Mapping[str, Any]],
             if was is None or (not isinstance(was.get("excluded"), int)
                                and isinstance(said["excluded"], int)):
                 entry["groups"][group] = said
-    return [_analysed_n_card(run, dataset_id, entry, overrides, pending, consumed)
+    return [_analysed_n_card(run, dataset_id, entry, overrides, pending, consumed, rows)
             for dataset_id, entry in found.items()]
 
 
 def _analysed_n_card(run: Path, dataset_id: str, entry: Mapping[str, Any],
                      overrides: Sequence[Mapping[str, Any]], pending: Mapping[int, str],
-                     consumed: Collection[int]) -> Question:
+                     consumed: Collection[int],
+                     rows: Mapping[tuple[str, str], Mapping[str, Any]] | None = None) -> Question:
     card_id = "|".join([dataset_id, "", "", "analysed_n"])
     paper_id = str(entry.get("paper_id") or "")
     study, dataset = _dataset(run, paper_id, dataset_id)
     citation = study.get("citation") or {}
     groups = dict(entry.get("groups") or {})
-    recorded = {group: _recorded_n(run, dataset_id, group, groups)
+    recorded = {group: _recorded_n(run, dataset_id, group, groups, rows)
                 for group in ("A", "B")}
     options: list[dict[str, Any]] = [
         {"key": "recorded", "n_a": recorded["A"], "n_b": recorded["B"],
@@ -2369,11 +2407,12 @@ def _analysed_n_card(run: Path, dataset_id: str, entry: Mapping[str, Any],
 
 
 def _recorded_n(run: Path, dataset_id: str, group: str,
-                groups: Mapping[str, Mapping[str, Any]]) -> int | None:
+                groups: Mapping[str, Mapping[str, Any]],
+                rows: Mapping[tuple[str, str], Mapping[str, Any]] | None = None) -> int | None:
     said = groups.get(group) or {}
     if said.get("n"):
         return int(said["n"])
-    for (ds, _outcome), row in _rows_of(run).items():
+    for (ds, _outcome), row in (_rows_of(run) if rows is None else rows).items():
         if ds == dataset_id and row.get(f"n_{group.lower()}"):
             return int(row[f"n_{group.lower()}"])
     return None
@@ -2501,8 +2540,13 @@ def _rows_of(run: Path) -> dict[tuple[str, str], dict[str, Any]]:
     return out
 
 
-def _row_record(run: Path, dataset_id: str, outcome_key: str) -> dict[str, Any]:
-    return _rows_of(run).get((dataset_id, outcome_key)) or {}
+def _row_of_cell(rows: Mapping[tuple[str, str], Mapping[str, Any]] | None, run: Path,
+                 dataset_id: str, outcome_key: str) -> Mapping[str, Any]:
+    """One cell's row, out of the map the page read once. `run` is the fallback for a caller that
+    has no map — there is none inside `questions_for_run`, and there should not be one."""
+    if rows is None:
+        rows = _rows_of(run)
+    return rows.get((dataset_id, outcome_key)) or {}
 
 
 def _status_line(row: Mapping[str, Any]) -> str:
