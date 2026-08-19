@@ -1337,7 +1337,8 @@
       ]));
     }
     card.appendChild(stat(guess ? "best-guess estimate" : "pooled estimate", num(pooled.estimate)));
-    card.appendChild(stat("95% CI", "[" + num(pooled.ci_low, 2) + ", " + num(pooled.ci_high, 2) + "]"));
+    var ciLevel = (settings && settings.ci_level !== null && settings.ci_level !== undefined) ? Number(settings.ci_level) : 0.95;
+    card.appendChild(stat((ciLevel * 100) + "% CI", "[" + num(pooled.ci_low, 2) + ", " + num(pooled.ci_high, 2) + "]"));
     card.appendChild(stat("k", String(pooled.k), "from " + (pooled.k_papers || pooled.k) + " papers"));
     // I² is a fraction in `pooled.json`, on both lines, and this card is where a reader reads it
     card.appendChild(stat("I²", num(100 * (Number(pooled.I2) || 0), 1) + "%"));
