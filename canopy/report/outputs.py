@@ -24,6 +24,7 @@ from typing import Any, Sequence
 
 from ..models import EffectSizeRecord, OutcomeDef, Protocol, StatsSettings, Verdict, Candidate
 from ..stats.meta import MetaResult, prediction_interval
+from .conclusion import conclusion_payload, outcome_conclusion
 from .forest import forest_plot
 from .tables import (dump_json, extraction_table, funnel_plot, leave_one_out_rows,
                      leave_one_out_table, pool_rows, poolable_rows, sensitivity_outputs)
@@ -151,7 +152,8 @@ def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
                              best_guess=cells)
     out.update({f"extraction_{k}": v for k, v in table.items()})
 
-    loo = leave_one_out_table(rows, settings, directory / "leave_one_out")
+    loo_rows = leave_one_out_rows(rows, settings)
+    loo = leave_one_out_table(rows, settings, directory / "leave_one_out", table=loo_rows)
     out.update({f"leave_one_out_{k}": v for k, v in loo.items()})
 
     sensitivity = sensitivity_outputs(rows, settings, directory / "sensitivity",
@@ -186,5 +188,12 @@ def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
     payload = _pooled_payload(pooled, rows, needs_human_rows, outcome, settings)
     payload["analysis_lines"] = ["strict", "best_guess"]
     payload["best_guess"] = bg_payload
+    # DECISION B: the paragraph is computed once, here, beside the numbers it is about — the
+    # report and the SPA read it out of this file rather than each deriving a sentence of its own
+    payload["conclusion"] = conclusion_payload(outcome_conclusion(
+        outcome, settings, pooled=pooled, rows=rows, held=needs_human_rows,
+        best_guess=bg_payload, loo=loo_rows,
+        group_a=None if protocol is None else protocol.group_a,
+        group_b=None if protocol is None else protocol.group_b))
     out["pooled_json"] = dump_json(payload, directory / "pooled.json")
     return out

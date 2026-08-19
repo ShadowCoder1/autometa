@@ -23,6 +23,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from ..models import EffectSizeRecord, Protocol, RunManifest
 from ..stats.meta import MetaResult, prediction_interval
 from . import theme
+from .conclusion import Conclusion, conclusion_from_payload, overall_conclusion, render_text
 from .naming import url_path
 from .theme import estimator_label, pi_label, variance_label
 
@@ -71,6 +72,7 @@ code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-si
 pre { background: var(--panel); border: 1px solid var(--grid); border-radius: .5rem;
   padding: .8rem; overflow-x: auto; color: var(--ink-2); white-space: pre-wrap; }
 .warn { color: var(--warn); }
+.conclusion { border-left: 2px solid var(--grid); padding-left: .8rem; }
 """
 
 
@@ -280,6 +282,42 @@ def methods_paragraph(manifest: RunManifest, protocol: Protocol,
     return "\n".join(lines)
 
 
+# ----------------------------------------------------------------------------- conclusion
+def _conclusions(results: Mapping[str, Mapping[str, Any]]) -> dict[str, Conclusion]:
+    """Each outcome's conclusion as `write_outcome_outputs` wrote it into its `pooled.json`.
+
+    Read rather than re-derived, deliberately (DECISION B): the paragraph in the report, the
+    block in `pooled.json` and the card the SPA draws are then the same sentences, and a run
+    whose numbers were re-pooled cannot end up with a report that disagrees with its own file.
+    """
+    out: dict[str, Conclusion] = {}
+    for key, payload in results.items():
+        path = (payload.get("outputs") or {}).get("pooled_json")
+        if path is None:
+            continue
+        try:
+            block = json.loads(Path(path).read_text(encoding="utf-8")).get("conclusion")
+        except (OSError, ValueError):                      # a report never dies over one file
+            continue
+        if block:
+            out[key] = conclusion_from_payload(block)
+    return out
+
+
+def _conclusion_markdown(protocol: Protocol, conclusions: Mapping[str, Conclusion]) -> str:
+    """`conclusion.md`, beside `methods.md` — the same text, in the form a reader can paste."""
+    lines = [f"## Conclusion — {protocol.title}", ""]
+    if conclusions:
+        lines.extend([overall_conclusion(protocol, conclusions), ""])
+    else:
+        lines.extend(["No outcome produced a conclusion: nothing was pooled and nothing was "
+                      "held.", ""])
+    for key, conclusion in conclusions.items():
+        lines.extend([f"### {conclusion.facts.get('outcome_label') or key}", "",
+                      render_text(conclusion), ""])
+    return "\n".join(lines)
+
+
 # ----------------------------------------------------------------------------- the report
 def provenance_table(entries: Mapping[str, Mapping[str, Any]], run_dir: Path) -> str:
     """One row per value that reached the analysis, linking the image its evidence lives in."""
@@ -314,7 +352,7 @@ def write_html_report(run_dir: str | Path, manifest: RunManifest, protocol: Prot
                       provenance: Mapping[str, Mapping[str, Any]] | None = None,
                       run_outputs: Mapping[str, Any] | None = None,
                       filename: str = "report.html") -> dict[str, Path]:
-    """Write `report.html` and `methods.md` into the run directory; returns both paths."""
+    """Write `report.html`, `methods.md` and `conclusion.md` into the run directory."""
     directory = Path(run_dir)
     directory.mkdir(parents=True, exist_ok=True)
     results = results or {}
@@ -324,6 +362,10 @@ def write_html_report(run_dir: str | Path, manifest: RunManifest, protocol: Prot
     methods = methods_paragraph(manifest, protocol, results)
     methods_path = directory / "methods.md"
     methods_path.write_text(methods, encoding="utf-8")
+
+    conclusions = _conclusions(results)
+    conclusion_path = directory / "conclusion.md"
+    conclusion_path.write_text(_conclusion_markdown(protocol, conclusions), encoding="utf-8")
 
     parts: list[str] = []
     parts.append(f"<h1>{_e(protocol.title)}</h1>")
@@ -343,6 +385,18 @@ def write_html_report(run_dir: str | Path, manifest: RunManifest, protocol: Prot
                  f'(<code>{_e(manifest.git_commit or "unknown")}</code>) · profile '
                  f'<code>{_e(settings.profile)}</code></p>')
 
+    # DECISION B: the conclusion sits immediately after the header cards, because it is the part
+    # of this page a reader quotes — and every sentence of it was assembled from the numbers
+    # below by `report.conclusion`, with no model in the path
+    if conclusions:
+        parts.append("<h2>Conclusion</h2>")
+        parts.extend(f"<p>{_e(line)}</p>"
+                     for line in overall_conclusion(protocol, conclusions).split("\n")
+                     if line.strip())
+        parts.extend(f'<p class="conclusion">{_e(render_text(c))}</p>'
+                     for c in conclusions.values())
+        parts.append('<p class="files"><a href="conclusion.md">conclusion.md</a></p>')
+
     for key, payload in results.items():
         outputs = dict(payload.get("outputs") or {})
         pooled: MetaResult | None = payload.get("pooled")
@@ -361,6 +415,9 @@ def write_html_report(run_dir: str | Path, manifest: RunManifest, protocol: Prot
                 ("τ²", f"{pooled.tau2:.3f}"),
                 ("held for review", len(held)),
             ]))
+        conclusion = conclusions.get(key)
+        if conclusion is not None:                         # the same paragraph, above the forest
+            parts.append(f'<p class="conclusion">{_e(render_text(conclusion))}</p>')
         forest = outputs.get("forest_png")
         if forest is not None:
             parts.append(
@@ -446,4 +503,4 @@ def write_html_report(run_dir: str | Path, manifest: RunManifest, protocol: Prot
             "</main></body></html>\n")
     path = directory / filename
     path.write_text(page, encoding="utf-8")
-    return {"html": path, "methods": methods_path}
+    return {"html": path, "methods": methods_path, "conclusion": conclusion_path}
