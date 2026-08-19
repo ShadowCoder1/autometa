@@ -644,13 +644,29 @@ def _extract_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                 f"{source.figure_id or source.locator!r}, which ingestion did not find")
             continue
         target = target_for_source(source, dataset, sources, ctx.protocol, ctx.settings)
-        digitised = digitize(ctx.client, paper, figure, target, source=source, dataset=dataset,
-                             out_dir=figures_dir, caption=figure.caption,
-                             models=(ctx.models["primary"],),
-                             settings=ctx.protocol.digitize,
-                             n_readouts=ctx.protocol.digitize.readouts_max,
-                             cell_key=f"{paper.sha256[:12]}/{dataset.dataset_id}/{key}/"
-                                      f"{figure.id}")
+        try:
+            digitised = digitize(ctx.client, paper, figure, target, source=source,
+                                 dataset=dataset,
+                                 out_dir=figures_dir, caption=figure.caption,
+                                 models=(ctx.models["primary"],),
+                                 settings=ctx.protocol.digitize,
+                                 n_readouts=ctx.protocol.digitize.readouts_max,
+                                 cell_key=f"{paper.sha256[:12]}/{dataset.dataset_id}/{key}/"
+                                          f"{figure.id}")
+        except (BudgetExceeded, PaperBudgetExceeded):
+            raise                               # money is the run's business, not the cell's
+        except TruncatedOutput as exc:
+            # C8, same rule as the verifier's own catch below: a read-out that wrote past its
+            # output limit twice is a reading this cell DOES NOT HAVE — an absence, not
+            # evidence, and not a reason for the whole paper to die with every other cell's
+            # candidates unread (Cornelis 2022 lost a 30-file run's paper to one such call).
+            # The cell keeps whatever its other sources produced; with none it resolves
+            # `not_convertible` and is held, which is the honest state of an unread figure.
+            status.warnings.append(
+                f"{dataset.dataset_id}/{key}: digitize truncated at its output limit twice on "
+                f"{figure.id} — that reading was not produced ({str(exc)[:120]}); the cell "
+                f"keeps its other candidates and the figure is unread, not misread")
+            continue
         out.extend(digitised if isinstance(digitised, list) else digitised.candidates)
     return out
 

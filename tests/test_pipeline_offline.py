@@ -841,6 +841,40 @@ def test_a_truncated_verifier_leaves_the_cell_unverified_not_the_paper_dead(
     assert rows, "and it still has rows"
 
 
+def test_a_truncated_digitizer_leaves_the_figure_unread_not_the_paper_dead(
+        tmp_path, bock_dir, hard_specs):
+    """Cornelis 2022 in the 30-file run: one figure read-out ran past its output limit twice, the
+    exception left `_extract_cell`, and a paper that had already spent $10.54 died with every
+    other cell's candidates unread. Same C8 rule as the verifier's catch: a reading that could
+    not be produced is an ABSENCE — the cell keeps its other sources, the paper keeps its rows.
+    """
+    from canopy.llm.errors import TruncatedOutput
+    from canopy.pipeline.run import run_pipeline
+
+    router = fake_router(hard_specs)
+    hit = {"n": 0}
+
+    def truncating_readout(request: LLMRequest) -> Any:
+        if request.tools:                       # the digitiser's tool loop — every figure read
+            hit["n"] += 1
+            raise TruncatedOutput("response hit max_tokens=32000 twice (request req_test)")
+        return router(request)
+
+    client = LLMClient(provider=FakeProvider([truncating_readout]), allow_live=True,
+                       cache_dir=None)
+    out = tmp_path / "run"
+    manifest = run_pipeline(bock_dir, PROTOCOL, out, client=client, concurrency=1)
+    assert hit["n"], "the fake run never reached a figure read — the test tested nothing"
+    paper = manifest.papers[0]
+    assert paper.status == "resolved", (paper.status, paper.error)
+    assert any("digitize truncated" in w and "unread, not misread" in w
+               for w in paper.warnings), paper.warnings
+    # the figure was never read, so no candidate pretends it was
+    extract = json.loads((out / "papers" / paper.paper_id[:12] / "extract.json").read_text())
+    assert not [c for c in extract["candidates"]
+                if str(c.get("extractor_id", "")).startswith("digitize:")]
+
+
 def test_an_eligible_paper_with_no_dataset_never_leaves_the_run_in_silence(
         tmp_path, papers_dir, fake_specs):
     """It contributes no row, so it has to appear in the exclusions table and say why.
