@@ -434,3 +434,29 @@ table.grid td.paper .hint { font-size: .72rem; font-family: var(--mono); }
               border-radius: 999px; background: var(--accent, #2a6); color: #fff;
               font-size: .75em; line-height: 1.5; text-align: center; }
 .pill.ok { background: rgba(40,160,100,.15); }
+
+/* ── the two analysis lines (DECISION A) ── */
+.line-row { display: flex; align-items: center; gap: .8rem; margin-bottom: .6rem; }
+.line-row .hint { margin: 0; }
+.line-btn { appearance: none; border: 0; background: none; font: inherit; font-size: .82rem;
+            padding: .3rem .85rem; border-radius: 100px; color: var(--muted); cursor: pointer; }
+.line-btn.is-on { background: var(--accent-wash); color: var(--accent-ink); }
+.line-btn[disabled] { opacity: .45; cursor: not-allowed; }
+.pill.guess { color: var(--warn); border-color: color-mix(in oklab, var(--warn) 45%, var(--rule)); }
+.badge.guess { color: var(--warn); border-color: color-mix(in oklab, var(--warn) 40%, var(--rule)); }
+.caveat { color: var(--warn); font-size: .82rem; margin: .4rem 0 0; }
+.conclusion-card p { margin: 0 0 .5rem; max-width: 46rem; }
+.conclusion-card p:last-child { margin-bottom: 0; }
+.conclusion-card h2 { font-size: 1rem; margin: 0 0 .5rem; }
+
+/* ── question sections (DECISION C4: what moves the result, then everything else) ── */
+.q-section { margin-bottom: 1.6rem; }
+.q-section > h3 { font-size: .95rem; margin: 0 0 .2rem; }
+.q-section > .hint { margin: 0 0 .7rem; }
+.q-status { font-size: .84rem; color: var(--ink-soft); margin: 0 0 .5rem;
+            border-left: 2px solid var(--rule-strong); padding-left: .55rem; }
+.q-settles { margin-top: .6rem; font-size: .84rem; color: var(--muted); }
+.q-settles ul { margin: .35rem 0 0; padding-left: 1.1rem; }
+.q-slot { border: 1px solid var(--rule); border-radius: 6px; padding: .45rem .5rem; }
+.q-slot > legend { font-size: .8rem; color: var(--muted); padding: 0 .3rem; }
+.q-was { font-size: .78rem; color: var(--muted); margin: .3rem 0 0; }

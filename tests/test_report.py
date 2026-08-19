@@ -1028,3 +1028,74 @@ def test_the_effect_size_and_its_interval_are_separate_named_columns(tmp_path, g
     # the combined form is gone: no cell prints an estimate and its interval together
     row = gold_rows[0]
     assert f"{row.es:.2f} [" not in svg
+
+
+# ------------------------------------------------- DECISION A/B/F: the report's two lines
+def _nine_report(run: Path):
+    """The nine-paper run written as a real report: both outcomes, both analysis lines.
+
+    Late adaptation pools two rows and admits three more by rule; aftereffect pools NOTHING
+    (strict k = 1) while its best-guess line has three — the shape DECISION A gives its own
+    heading. The aftereffect's two Vachon rows are given the value a categorical point read
+    produces over the same datasets' own group sizes, exactly as
+    `test_aftereffect_has_best_guess_forest_without_strict_forest` does.
+    """
+    from canopy.pipeline.run import _split_rows
+    from canopy.report import write_html_report
+    from canopy.report.tables import pool_rows
+    from canopy.stats.effect_sizes import se_smd
+    from tests.helpers import nine
+
+    reads = {"b7523a41b03a:d1": 0.13, "b7523a41b03a:d2": 1.24}
+
+    def point_read(record):
+        if record.dataset_id not in reads:
+            return None
+        late = nine.record(record.dataset_id, "late_adaptation")
+        es = reads[record.dataset_id]
+        se = se_smd(es, late.n_a, late.n_b)
+        return {"route": "figure", "es": es, "se": se, "var": se * se, "n_a": late.n_a,
+                "n_b": late.n_b, "not_convertible_reason": "",
+                "flags": [f for f in record.flags if f != "not_convertible"]
+                         + ["categorical_point_read"]}
+
+    protocol = nine.protocol()
+    results = {}
+    for key, update in (("late_adaptation", None), ("aftereffect", point_read)):
+        out, _payload, _cells = _nine_outputs(run, key, held_update=update)
+        split = _split_rows(nine.records(key), protocol.stats)
+        held = [r.model_copy(update=(update(r) or {})) if update else r for r in split.held]
+        results[key] = {"pooled": pool_rows(split.primary, protocol.stats), "outputs": out,
+                        "rows": split.primary, "needs_human_rows": held}
+    manifest = _manifest(run, protocol.hash())
+    (run / "manifest.json").write_text(manifest.model_dump_json(indent=1), encoding="utf-8")
+    write_html_report(run, manifest, protocol, results=results)
+    return run
+
+
+@pytest.fixture(scope="module")
+def tmp_run(tmp_path_factory) -> Path:
+    return _nine_report(tmp_path_factory.mktemp("nine_report"))
+
+
+def test_report_html_sections_in_order(tmp_run):
+    """The conclusion first, the primary analysis next, the guess last — and never unlabelled."""
+    from canopy.report import theme
+    from tests.helpers import nine
+
+    html = (tmp_run / "report.html").read_text(encoding="utf-8")
+    assert html.index("<h2>Conclusion</h2>") < html.index("Best guess (not the primary analysis)")
+    assert theme.BEST_GUESS_CAVEAT in html
+    # the outcome's own heading (its strict cards) comes before its guess
+    label = nine.protocol().outcome("late_adaptation").label
+    assert html.index(f"<h2>{label}</h2>") < html.index("Best guess (not the primary analysis)")
+    assert "results/late_adaptation/forest_best_guess.png" in html
+    assert "low_confidence_value" in html and "contradicted_value" in html
+    # …and the guess's own artefacts are real files, not a second name for the strict ones
+    missing = sorted({t for t in local_links(html) if not (tmp_run / t).exists()})
+    assert missing == [], f"dead links in report.html: {missing}"
+
+
+def test_aftereffect_report_says_best_guess_only(tmp_run):
+    assert ("Best guess only — nothing could be pooled for the primary analysis."
+            in (tmp_run / "report.html").read_text(encoding="utf-8"))

@@ -38,6 +38,7 @@ from ..config import MODELS, api_key, live_enabled, load_env
 from ..models import Protocol, StatsSettings
 from ..protocol import (apply_profile, available_profiles, dump_protocol, load_protocol,
                         load_yaml_strict)
+from ..report import theme
 from .jobs import Job, JobBusy, JobManager, TooManyRuns
 from .overrides import (OverrideRejected, append_override, apply_overrides_and_repool,
                         override_summary, read_overrides, repool_lock)
@@ -596,6 +597,12 @@ def create_app(runs_dir: str | Path = "runs", *,
             paper = papers.get(str(row.get("paper_id") or ""), {})
             rows.append({**row, "in_primary": row.get("dataset_id") not in held,
                          "overridden": "human_override" in flags,
+                         # DECISION A: which line each row is in, and on whose authority. Named
+                         # here even when the table predates them, so the page can ask the
+                         # question of any run instead of only of a freshly pooled one.
+                         "in_best_guess": row.get("in_best_guess"),
+                         "best_guess_rule": row.get("best_guess_rule") or "",
+                         "best_guess_reason": row.get("best_guess_reason") or "",
                          "study_label": (named.get("study_label")
                                          or _study_label(row, paper.get("filename", ""))),
                          "dataset_label": named.get("dataset_label") or row.get("label") or "",
@@ -611,6 +618,18 @@ def create_app(runs_dir: str | Path = "runs", *,
             "forest": {name: _file_url(job, directory / f"forest.{name}")
                        for name in ("svg", "png", "pdf")
                        if (directory / f"forest.{name}").exists()},
+            # DECISION A/B/F: the second line, the paragraph and who drew the plots — all read
+            # out of `pooled.json` rather than derived here, so the page, the report and the file
+            # cannot end up saying three different things about one run.
+            "best_guess": pooled.get("best_guess") or {},
+            "forest_best_guess": {
+                name: _file_url(job, directory / f"forest_best_guess.{name}")
+                for name in ("svg", "png", "pdf")
+                if (directory / f"forest_best_guess.{name}").exists()},
+            "best_guess_caveat": theme.BEST_GUESS_CAVEAT,
+            "conclusion": pooled.get("conclusion") or {},
+            "renderer": pooled.get("renderer") or {},
+            "renderer_best_guess": pooled.get("renderer_best_guess") or {},
             "figures": {name: _file_url(job, directory / f"{name}.png")
                         for name in ("sensitivity", "funnel")
                         if (directory / f"{name}.png").exists()},

@@ -55,7 +55,11 @@
   var state = {
     settings: null, examples: [], runId: "", token: "", run: null, results: null,
     outcome: "", files: [], events: [], papers: {}, source: null, mode: "guided",
-    started: false, returnFocus: null, live: {}, poll: null, names: {}
+    started: false, returnFocus: null, live: {}, poll: null, names: {},
+    // which analysis line the headline, the forest and the row badges are about. "strict" is
+    // the primary analysis and is the default everywhere; "best_guess" is the second line, and
+    // the two are never on screen at the same time (DECISION A).
+    line: "strict"
   };
 
   /* The run a reload must not lose. Tokens are kept per run id (so any run this browser
@@ -87,6 +91,24 @@
   function forgetCurrentRun() { store(STORE_CURRENT, null); }
 
   function tokenFor(runId) { return (stored(STORE_TOKENS, {}) || {})[runId] || ""; }
+
+  /* Which line this TAB is looking at, per run. Deliberately sessionStorage rather than the
+     local one the tokens live in: "show me the guess" is a thing a reviewer does while reading,
+     not a preference — a link they send, or the same run opened tomorrow, starts on the primary
+     analysis again. */
+  function lineKey(runId) { return "canopy.line." + (runId || state.runId); }
+
+  function storedLine(runId) {
+    try {
+      return window.sessionStorage.getItem(lineKey(runId)) === "best_guess"
+        ? "best_guess" : "strict";
+    } catch (err) { return "strict"; }
+  }
+
+  function rememberLine(runId, line) {
+    try { window.sessionStorage.setItem(lineKey(runId), line); }
+    catch (err) { /* private mode: the toggle still works, it just does not survive a reload */ }
+  }
 
   function toast(message) {
     var box = $("toast");
@@ -839,14 +861,92 @@
         text: "Nothing to ask: every cell was settled by the tool itself." }));
       return;
     }
-    questions.forEach(function (q) { holder.appendChild(questionCard(q)); });
+    // DECISION C4: what answering is WORTH decides where a card sits. The tool never answers a
+    // low-impact card for the reviewer — it just stops putting it at the top of their day.
+    var moving = [], low = [], answered = [];
+    questions.forEach(function (q) {
+      if (q.answered) { answered.push(q); }
+      else if (q.impact_band === "low") { low.push(q); }
+      else { moving.push(q); }
+    });
+    [["Decisions that move the result", moving,
+      "Ordered by how far the pooled estimate moves when this is settled."],
+     ["Low impact — answer if you have time", low,
+      "Every answer on offer here moves this row's effect size by less than 0.10 and the pooled "
+      + "estimate by less than 0.05. They are still open; nothing was decided for you."],
+     ["Answered", answered,
+      "Kept on the page with what was decided and when — a re-pool has already used them."]
+    ].forEach(function (part) {
+      if (!part[1].length) { return; }
+      var section = h("section", { cls: "q-section" }, [
+        h("h3", { text: part[0] + " (" + part[1].length + ")" }),
+        h("p", { cls: "hint", text: part[2] })
+      ]);
+      part[1].forEach(function (q) { section.appendChild(questionCard(q)); });
+      holder.appendChild(section);
+    });
   }
 
-  // a question whose answers are a menu, not a number: a direction, an inclusion and a choice of
-  // measure are all answered by picking one of the things offered, so a "type it yourself" box
-  // could only add a way to answer with nothing.
+  // a question whose answers are a menu, not a number: a direction, an inclusion, a choice of
+  // measure, a paper's eligibility, which pair of numbers a row is and how many people an arm
+  // analysed are all answered by picking one of the things offered, so a "type it yourself" box
+  // could only add a way to answer with nothing. (The analysed-n card's own "type it" option is
+  // an OPTION, with the two boxes it needs — that is a different thing from free text.)
   function isChoiceOnly(q) {
-    return q.kind === "orientation" || q.kind === "include_dataset" || q.kind === "which_measure";
+    return q.kind === "orientation" || q.kind === "include_dataset" || q.kind === "which_measure"
+      || q.kind === "include_paper" || q.kind === "precedence_override" || q.kind === "analysed_n";
+  }
+
+  // what a card is worth, in the words the queue used to price it
+  function impactPill(q) {
+    var basis = q.impact_basis || "unknown";
+    if (basis === "unknown") {
+      return h("span", { cls: "pill", text: "impact not priced",
+        attrs: { title: "nothing on the record says what answering this would move" } });
+    }
+    var moves = basis === "pooled" ? "moves the pooled estimate by "
+                                   : "spreads this row's effect size over ";
+    return h("span", { cls: q.impact_band === "low" ? "pill" : "pill on",
+      text: (q.impact_band === "low" ? "low impact · " : "") + moves + num(q.impact, 2),
+      attrs: { title: basis === "pooled"
+        ? "how far the pooled estimate moves if this row's value changes"
+        : "the spread of the effect sizes this card's own options imply" } });
+  }
+
+  // A card whose options are COMBINATIONS: one answer settles both groups at once, and each
+  // option carries the per-slot keys (`a`, `b`) it is made of. The page therefore asks the two
+  // questions the card is made of, one radio group per slot, and resolves the pair back to the
+  // combination the server offered — the key alone is positional twice over.
+  function isCombination(q) {
+    var options = q.options || [];
+    return (q.slots || []).length >= 2 && options.length > 0
+      && options.every(function (o) { return o.a && o.b; });
+  }
+
+  function slotPrefix(slot, i) {
+    var group = String((slot || {}).group || "").toUpperCase();
+    return group === "B" ? "b" : (group === "A" ? "a" : String(i));
+  }
+
+  function combinationOf(q, form) {
+    var picks = {};
+    (q.slots || []).forEach(function (slot, i) {
+      var prefix = slotPrefix(slot, i);
+      var input = form.querySelector("input[name=option_" + prefix + "]:checked");
+      if (input) { picks[prefix] = input.value; }
+    });
+    if (picks.a === undefined || picks.b === undefined) { return null; }
+    var found = null;
+    (q.options || []).forEach(function (o) {
+      if (o.a === picks.a && o.b === picks.b) { found = o; }
+    });
+    return found;
+  }
+
+  function optionText(o) {
+    return o.label
+      + (o.backed_by && o.backed_by.length ? " — " + o.backed_by.join(", ") : "")
+      + (o.quote ? " “" + String(o.quote).slice(0, 140) + "”" : "");
   }
 
   function questionCard(q) {
@@ -861,7 +961,8 @@
         ? h("span", { cls: "pill off", text: "answered — pending re-run",
                       attrs: { title: q.pending_why || "" } })
         : q.answered ? h("span", { cls: "pill ok", text: "answered" })
-                     : h("span", { cls: "pill", text: q.kind.replace(/_/g, " ") })
+                     : h("span", { cls: "pill", text: q.kind.replace(/_/g, " ") }),
+      impactPill(q)
     ]);
     var body = h("div", { cls: "q-body" });
     if (q.image && q.image.url) {
@@ -876,20 +977,57 @@
     }
     var right = h("div", { cls: "q-right" });
     right.appendChild(h("p", { cls: "q-prompt", text: q.prompt }));
+    // where the ROW this card is about stands while the card is open: the best-guess line either
+    // admits it under a rule or vetoes it, and which of those it is changes what answering is for
+    if (q.status_line) {
+      right.appendChild(h("p", { cls: "q-status", text: q.status_line }));
+    }
     var form = h("form", { cls: "q-form", on: { submit: function (event) {
       event.preventDefault();
       submitAnswer(q, form);
     } } });
-    (q.options || []).forEach(function (o, i) {
-      var id = "q" + q.number + "-o" + i;
-      var backed = o.backed_by && o.backed_by.length ? " — " + o.backed_by.join(", ") : "";
-      var quote = o.quote ? " “" + String(o.quote).slice(0, 140) + "”" : "";
-      form.appendChild(h("label", { cls: "q-option" }, [
-        h("input", { attrs: { type: "radio", name: "option", value: o.key, id: id,
-          "data-fingerprint": o.fingerprint || "" } }),
-        h("span", { text: o.label + backed + quote })
-      ]));
-    });
+    var combination = isCombination(q);
+    var implied = h("p", { cls: "hint" });
+    if (combination) {
+      (q.slots || []).forEach(function (slot, i) {
+        var prefix = slotPrefix(slot, i);
+        var box = h("fieldset", { cls: "q-slot" }, [
+          h("legend", { text: (slot.group_label || ("group " + slot.group)) + " · "
+            + String(slot.kind || "").replace(/_/g, " ") })
+        ]);
+        if (slot.prompt) { box.appendChild(h("p", { cls: "hint", text: slot.prompt })); }
+        (slot.options || []).forEach(function (o, j) {
+          box.appendChild(h("label", { cls: "q-option" }, [
+            h("input", { attrs: { type: "radio", name: "option_" + prefix, value: o.key,
+              id: "q" + q.number + "-" + prefix + j } }),
+            h("span", { text: optionText(o) })
+          ]));
+        });
+        // history, never a tick: what this group's recorded answers already cleared, and when
+        (slot.settled || []).forEach(function (was) {
+          box.appendChild(h("p", { cls: "q-was", text: "already recorded"
+            + (was.at ? " (" + was.at + ")" : "") + ": " + (was.justification || "") }));
+        });
+        form.appendChild(box);
+      });
+      form.appendChild(implied);
+    } else {
+      (q.options || []).forEach(function (o, i) {
+        var id = "q" + q.number + "-o" + i;
+        var wrap = h("label", { cls: "q-option" }, [
+          h("input", { attrs: { type: "radio", name: "option", value: o.key, id: id,
+            "data-fingerprint": o.fingerprint || "" } }),
+          h("span", { text: optionText(o) })
+        ]);
+        form.appendChild(wrap);
+        // an option that is a FORM rather than an answer (the analysed-n card's "type it"): the
+        // boxes it is waiting for, named as it names them
+        (o.needs_input || []).forEach(function (field) {
+          wrap.appendChild(h("input", { cls: "q-needs", attrs: { type: "number", step: "1",
+            name: field, placeholder: field.replace(/_/g, " ") } }));
+        });
+      });
+    }
     var freeId = "q" + q.number + "-free";
     if (!isChoiceOnly(q)) {
       form.appendChild(h("label", { cls: "q-option" }, [
@@ -900,6 +1038,16 @@
       ]));
     }
     var free = h("div", { cls: "q-free", attrs: { hidden: true } });
+    if (combination) {
+      // a typed value on a card that settles two cells has to say WHICH cell it is: the record
+      // this becomes names one group, and the slot it names is the question it answers
+      var who = h("select", { attrs: { name: "group" } });
+      (q.slots || []).forEach(function (slot) {
+        who.appendChild(h("option", { text: slot.group_label || ("group " + slot.group),
+          attrs: { value: slot.group } }));
+      });
+      free.appendChild(who);
+    }
     if (isChoiceOnly(q)) {
       free.appendChild(h("span", { cls: "hint", text: "" }));
     } else if (q.kind === "no_value") {
@@ -922,7 +1070,15 @@
     form.addEventListener("change", function () {
       var picked = form.querySelector("input[name=option]:checked");
       show(free, !!picked && picked.value === "__free__");
+      if (combination) {
+        var chosen = combinationOf(q, form);
+        implied.textContent = chosen ? chosen.label
+          : "Pick one answer for each group; what the pair implies appears here.";
+      }
     });
+    if (combination) {
+      implied.textContent = "Pick one answer for each group; what the pair implies appears here.";
+    }
     form.appendChild(h("input", { cls: "q-note", attrs: { type: "text", name: "note",
       placeholder: (q.kind === "orientation")
         ? "the sentence in the paper that says so — recorded with the direction"
@@ -937,15 +1093,40 @@
     // exclusion of such a dataset is the `include_dataset` question's own answer.
     if (q.kind !== "which_measure") {
       actions.appendChild(h("button", { cls: "btn small ghost", attrs: { type: "button" },
-        text: "Exclude this cell",
+        // one decision can be about more than one cell, and the button has to say so: a card
+        // that folded two groups excludes the dataset, not "this cell"
+        text: (q.cells || []).length > 1 ? "Exclude these cells" : "Exclude this cell",
         on: { click: function () { submitAnswer(q, form, true); } } }));
     }
     form.appendChild(actions);
     right.appendChild(form);
+    // what this one answer settles: a fold must never hide a hold, so the cells are listed
+    var cells = q.cells || [];
+    if (cells.length > 1 || (q.scope && q.scope !== "cell" && q.scope !== "paper")) {
+      var list = h("ul");
+      cells.forEach(function (cell) {
+        list.appendChild(h("li", { text: (cell.dataset_label || cell.dataset_id)
+          + " · " + String(cell.outcome_key || "").replace(/_/g, " ")
+          + (cell.group_label || cell.group ? " · " + (cell.group_label || cell.group) : "") }));
+      });
+      right.appendChild(h("details", { cls: "q-settles" }, [
+        h("summary", { text: "this settles " + cells.length + " cell(s)" }), list
+      ]));
+    }
+    // the reason, one sentence per thing that is holding it — a card folded from two cells
+    // carries both cells' reasons, and a wall of them joined by `||` reads as neither
     var why = h("details", { cls: "q-why" }, [
-      h("summary", { text: "why the tool could not decide" }),
-      h("p", { text: q.why || "" })
+      h("summary", { text: "why the tool could not decide" })
     ]);
+    String(q.why || "").split(" || ").forEach(function (reason) {
+      if (reason.trim()) { why.appendChild(h("p", { text: reason.trim() })); }
+    });
+    (q.slots || []).forEach(function (slot) {
+      if ((q.slots || []).length < 2 || !slot.why) { return; }
+      why.appendChild(h("p", { cls: "hint",
+        text: (slot.group_label || ("group " + slot.group)) + " was asked "
+          + String(slot.kind || "").replace(/_/g, " ") + ": " + slot.why }));
+    });
     right.appendChild(why);
     if (q.answered && q.answers && q.answers.length) {
       right.appendChild(h("p", { cls: "hint",
@@ -960,16 +1141,23 @@
 
   function submitAnswer(q, form, exclude) {
     var picked = form.querySelector("input[name=option]:checked");
+    var free = !!picked && picked.value === "__free__";
+    // a combination card has no flat list of radios: the answer is the pair of per-slot picks,
+    // resolved back to the option the server offered (and to ITS fingerprint)
+    var combined = (!free && isCombination(q)) ? combinationOf(q, form) : null;
     // the number is a position in a list that moves as answers land, so the answer names the
     // question it answers and the server refuses it if that is no longer question #n.
     var payload = { id: q.id, note: (form.querySelector("input[name=note]") || {}).value || "" };
     if (exclude) { payload.exclude = true; }
-    else if (!picked) { toast("Choose an answer first."); return; }
-    else if (picked.value === "__free__") {
-      ["hint", "mean", "dispersion_value", "dispersion_type", "n"].forEach(function (name) {
-        var input = form.querySelector("[name=" + name + "]");
-        if (input && input.value !== "") { payload[name] = input.value; }
-      });
+    else if (!picked && !combined) {
+      toast(isCombination(q) ? "Choose an answer for each group first." : "Choose an answer first.");
+      return;
+    } else if (free) {
+      ["hint", "mean", "dispersion_value", "dispersion_type", "n", "group"].forEach(
+        function (name) {
+          var input = form.querySelector("[name=" + name + "]");
+          if (input && input.value !== "") { payload[name] = input.value; }
+        });
       if (q.kind !== "no_value" && !isChoiceOnly(q) && payload.mean === undefined
           && payload.dispersion_value === undefined
           && payload.n === undefined) { toast("Type at least a mean, a spread or an n."); return; }
@@ -979,10 +1167,23 @@
         return;
       }
     } else {
-      payload.option = picked.value;
+      payload.option = combined ? combined.key : picked.value;
       // what this option MEANT when it was drawn: the keys are positional and the list is rebuilt
       // on every request, so the server refuses an answer echoing a number it no longer offers.
-      payload.option_fingerprint = picked.getAttribute("data-fingerprint") || "";
+      payload.option_fingerprint = combined
+        ? (combined.fingerprint || "")
+        : (picked.getAttribute("data-fingerprint") || "");
+      // an option that is a form (the analysed-n card's "type it") carries the boxes it named
+      var chosen = combined || (q.options || []).filter(function (o) {
+        return o.key === picked.value;
+      })[0] || {};
+      var missing = false;
+      (chosen.needs_input || []).forEach(function (field) {
+        var input = form.querySelector("[name=" + field + "]");
+        if (input && input.value !== "") { payload[field] = input.value; }
+        else { missing = true; }
+      });
+      if (missing) { toast("Fill in the numbers this answer is waiting for."); return; }
     }
     var buttons = form.querySelectorAll("button");
     Array.prototype.forEach.call(buttons, function (b) { b.disabled = true; });
@@ -991,15 +1192,20 @@
       .then(function (body) {
         // an answer the tool cannot act on itself says so, in the reviewer's own moment: a map
         // answer waits for the resume that buys the extraction, and "recorded" alone would read
-        // as "done".
+        // as "done". One decision can be more than one record (§C1) — every one of them is
+        // checked, because a card that settles two cells can have one of them waiting.
+        var records = body.overrides || (body.override ? [body.override] : []);
+        var seqs = records.map(function (record) { return record.seq; });
         var waiting = (body.repool && body.repool.pending || []).filter(function (p) {
-          return p.seq === (body.override || {}).seq;
+          return seqs.indexOf(p.seq) >= 0;
         })[0];
+        var wrote = records.length > 1 ? " (" + records.length + " overrides)" : "";
         var waitingCount = body.n_pending
           ? " " + body.n_pending + " answered decision(s) waiting for a re-run." : "";
-        toast(waiting ? "Recorded — " + waiting.why
-                      : "Recorded. " + (body.n_open ? body.n_open + " question(s) still open."
-                                                    : "No open questions.") + waitingCount);
+        toast(waiting ? "Recorded" + wrote + " — " + waiting.why
+                      : "Recorded" + wrote + ". "
+                        + (body.n_open ? body.n_open + " question(s) still open."
+                                       : "No open questions.") + waitingCount);
         return refreshRun().then(loadResults).then(loadQuestions);
       })
       .catch(function (error) {
@@ -1034,6 +1240,9 @@
     return api("/api/runs/" + state.runId + "/results/" + encodeURIComponent(state.outcome))
       .then(function (results) {
         state.results = results;
+        // the line this tab was last reading for THIS run; the toggle is the only writer, so
+        // reading it back here is what survives a reload and an outcome change
+        state.line = storedLine(state.runId);
         goto("results");
         renderPooled(results);
         highlightRepool(false);
@@ -1046,12 +1255,66 @@
       .catch(function (error) { toast(error.message); });
   }
 
+  /* ── the two analysis lines (DECISION A) ──────────────────────────────────────────────────
+     One headline at a time. Which one is `state.line`; everything that carries a number the
+     reader could quote — the pooled card, the forest, the row badges — reads it, so there is no
+     state of this page in which the strict estimate and the guess are both on screen. */
+  function hasGuess(results) {
+    var guess = (results || {}).best_guess || {};
+    return !!(guess.k || guess.n_added);
+  }
+
+  function guessing(results) {
+    return state.line === "best_guess" && hasGuess(results || state.results);
+  }
+
+  function setLine(line) {
+    state.line = line === "best_guess" ? "best_guess" : "strict";
+    rememberLine(state.runId, state.line);
+    var results = state.results;
+    if (!results) { return Promise.resolve(null); }
+    renderPooled(results);
+    drawRows();
+    return renderForest(results);
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll("#line-toggle .line-btn"),
+    function (button) {
+      button.addEventListener("click", function () {
+        if (button.disabled) { return; }
+        setLine(button.getAttribute("data-line"));
+      });
+    });
+
+  function drawLineToggle(results) {
+    var guess = (results || {}).best_guess || {};
+    var possible = hasGuess(results);
+    if (!possible && state.line === "best_guess") { state.line = "strict"; }
+    Array.prototype.forEach.call(document.querySelectorAll("#line-toggle .line-btn"),
+      function (button) {
+        var mine = button.getAttribute("data-line");
+        var on = mine === state.line;
+        button.classList.toggle("is-on", on);
+        button.setAttribute("aria-pressed", on ? "true" : "false");
+        button.disabled = mine === "best_guess" && !possible;
+      });
+    $("line-note").textContent = !possible
+      ? "No second line: no held row could be admitted by a rule."
+      : (state.line === "best_guess"
+        ? guess.note || "Not the primary analysis."
+        : "The primary analysis. " + (guess.n_added || 0)
+          + " held row(s) a rule would admit are on the other line.");
+  }
+
   function renderPooled(results) {
-    var pooled = results.pooled || {};
+    var guess = guessing(results);
+    var pooled = guess ? (results.best_guess || {}) : (results.pooled || {});
     var outcome = results.outcome || {};
     var settings = results.settings || {};
     $("results-title").textContent = outcome.label || state.outcome;
     $("results-sub").textContent = outcome.definition || "";
+    drawLineToggle(results);
+    renderConclusion(results);
     var card = $("pooled-card");
     clear(card);
     if (!pooled.k) {
@@ -1065,18 +1328,50 @@
           small ? h("small", { text: " " + small }) : null])
       ]);
     }
-    card.appendChild(stat("pooled estimate", num(pooled.estimate)));
+    if (guess) {
+      // the caveat is the report's own sentence, served with the results — one wording for the
+      // page, the report and the plot, rather than three that drift apart
+      card.appendChild(h("div", { cls: "stat wide" }, [
+        h("span", { cls: "pill guess", text: "best guess — not the primary analysis" }),
+        h("p", { cls: "caveat", text: results.best_guess_caveat || "" })
+      ]));
+    }
+    card.appendChild(stat(guess ? "best-guess estimate" : "pooled estimate", num(pooled.estimate)));
     card.appendChild(stat("95% CI", "[" + num(pooled.ci_low, 2) + ", " + num(pooled.ci_high, 2) + "]"));
     card.appendChild(stat("k", String(pooled.k), "from " + (pooled.k_papers || pooled.k) + " papers"));
-    card.appendChild(stat("I²", num(pooled.I2, 1) + "%"));
+    // I² is a fraction in `pooled.json`, on both lines, and this card is where a reader reads it
+    card.appendChild(stat("I²", num(100 * (Number(pooled.I2) || 0), 1) + "%"));
     card.appendChild(stat("τ²", num(pooled.tau2, 3)));
-    card.appendChild(stat("held for review", String(pooled.n_needs_human || 0)));
+    card.appendChild(stat(guess ? "still held" : "held for review",
+      String((guess ? pooled.n_still_held : pooled.n_needs_human) || 0)));
+    if (guess) {
+      card.appendChild(stat("rows added", String(pooled.n_added || 0),
+        pooled.delta_vs_strict === null || pooled.delta_vs_strict === undefined
+          ? "" : "moves the estimate by " + num(pooled.delta_vs_strict, 2)));
+    }
     card.appendChild(h("div", { cls: "stat wide" }, [
       h("span", { cls: "k", text: "conventions" }),
       h("span", { cls: "v", text: [settings.estimator, settings.variance, settings.tau2_method,
         settings.hakn ? "Hartung-Knapp" : "z intervals",
         "PI " + settings.pi_method].filter(Boolean).join(" · ") })
     ]));
+  }
+
+  /* ── the conclusion (DECISION B): the run's own sentences, as text nodes and nothing else ──
+     Not written here and not re-derived here: `pooled.json` carries the paragraph the report
+     prints, and this card shows those sentences so the page and the file cannot disagree. */
+  function renderConclusion(results) {
+    var card = $("conclusion-card");
+    clear(card);
+    var conclusion = (results || {}).conclusion || {};
+    var sentences = conclusion.sentences || [];
+    if (!sentences.length) { show(card, false); return; }
+    card.appendChild(h("h2", { text: "Conclusion" }));
+    sentences.forEach(function (sentence) { card.appendChild(h("p", { text: sentence })); });
+    (conclusion.caveats || []).forEach(function (caveat) {
+      card.appendChild(h("p", { cls: "hint", text: caveat }));
+    });
+    show(card, true);
   }
 
   /* ── the forest: fetched as SVG, stripped of anything executable, then made clickable ── */
@@ -1178,18 +1473,35 @@
   function renderForest(results) {
     var holder = $("forest");
     clear(holder);
-    var url = (results.forest || {}).svg;
+    var guess = guessing(results);
+    var forest = (guess ? results.forest_best_guess : results.forest) || {};
+    var renderer = (guess ? results.renderer_best_guess : results.renderer) || {};
+    var url = forest.svg;
     if (!url) {
       holder.appendChild(h("p", { cls: "hint",
-        text: "No forest plot: fewer than two rows reached the primary analysis." }));
+        text: guess
+          ? "No best-guess forest plot: this line has fewer than two rows, or it added none."
+          : "No forest plot: fewer than two rows reached the primary analysis." }));
       return Promise.resolve(null);
+    }
+    // who drew it, and why — the same sentence the report prints under the same figure
+    function caption() {
+      var parts = [];
+      if (guess) { parts.push(results.best_guess_caveat || ""); }
+      if (renderer.renderer) {
+        parts.push("Drawn by " + renderer.renderer
+          + (renderer.reason ? " — " + renderer.reason : "") + ".");
+      }
+      var text = parts.filter(Boolean).join(" ");
+      if (text) { holder.appendChild(h("p", { cls: guess ? "caveat" : "hint", text: text })); }
     }
     return fetch(withToken(url)).then(function (response) { return response.text(); })
       .then(function (text) {
         var svg = sanitizeSvg(text);
         if (!svg) {
-          holder.appendChild(h("img", { attrs: { src: withToken((results.forest || {}).png || url),
+          holder.appendChild(h("img", { attrs: { src: withToken(forest.png || url),
             alt: "Forest plot" } }));
+          caption();
           return;
         }
         holder.appendChild(svg);
@@ -1198,6 +1510,7 @@
           holder.appendChild(h("p", { cls: "hint",
             text: "Click a row in the extraction table for its evidence." }));
         }
+        caption();
       })
       .catch(function (error) { toast("The forest plot could not be drawn: " + error.message); });
   }
@@ -1250,6 +1563,7 @@
 
     var route = $("filter-route").value, confidence = $("filter-confidence").value;
     var needle = $("filter-text").value.trim().toLowerCase();
+    var guess = guessing(results);
     (results.rows || []).forEach(function (row) {
       if (route && row.route !== route) { return; }
       if (confidence && row.confidence !== confidence) { return; }
@@ -1267,7 +1581,15 @@
       });
       var marks = h("td");
       if (row.overridden) { marks.appendChild(h("span", { cls: "badge warn", text: "△ override" })); }
-      if (!row.in_primary) { marks.appendChild(h("span", { cls: "badge", text: "held" })); }
+      // on the best-guess line a held row this line admits is no longer simply "held": it is IN
+      // the estimate above, by a named rule, and the reason it is a guess is its title.
+      if (!row.in_primary) {
+        marks.appendChild(guess && row.in_best_guess
+          ? h("span", { cls: "badge guess", text: "best guess",
+            attrs: { title: row.best_guess_reason || row.best_guess_rule || "" } })
+          : h("span", { cls: "badge", text: "held",
+            attrs: { title: guess ? row.best_guess_reason || "" : "" } }));
+      }
       marks.appendChild(h("span", { cls: "badge", text: "open" }));
       tr.appendChild(marks);
       body.appendChild(tr);
@@ -1476,6 +1798,11 @@
     $("drawer-title").textContent = (citation.first_author || citation.authors || "This paper")
       + (citation.year ? " " + citation.year : "");
 
+    // which line this row is in, and on whose authority (DECISION A): a row can be held out of
+    // the primary analysis and still be carrying weight in the guess a reader is looking at.
+    var line = record.in_best_guess === true
+      ? "in the best guess" + (record.best_guess_rule ? " by rule " + record.best_guess_rule : "")
+      : record.in_best_guess === false ? "in neither line" : "";
     body.appendChild(section("What was pooled", [
       kv([
         ["dataset", evidence.dataset_id],
@@ -1484,6 +1811,8 @@
         ["n (A/B)", (record.n_a || "?") + " / " + (record.n_b || "?")],
         ["route", record.route],
         ["confidence", record.confidence],
+        ["best guess", line],
+        ["why", record.best_guess_reason],
         ["title", citation.title]
       ])
     ]));

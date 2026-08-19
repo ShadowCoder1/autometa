@@ -211,7 +211,21 @@
         <select id="outcome-picker"></select></label>
     </div>
 
+    <!-- DECISION A: one headline at a time. The primary analysis is what this page shows unless
+         a reviewer asks for the other line, and the choice is remembered per run for this tab
+         only — a link someone shares opens on the primary analysis. -->
+    <div class="line-row">
+      <div class="seg" id="line-toggle" role="group" aria-label="Which analysis line to show">
+        <button type="button" class="line-btn is-on" data-line="strict"
+                aria-pressed="true">Strict</button>
+        <button type="button" class="line-btn" data-line="best_guess"
+                aria-pressed="false">Best guess</button>
+      </div>
+      <p class="hint" id="line-note"></p>
+    </div>
+
     <div class="headline card" id="pooled-card"></div>
+    <div class="card conclusion-card" id="conclusion-card" hidden></div>
 
     <div class="tabs" role="tablist" aria-label="Results views">
       <button type="button" class="tab is-on" data-tab="forest" role="tab" id="tab-forest"

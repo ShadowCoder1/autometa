@@ -1455,3 +1455,45 @@ def test_every_run_file_an_image_points_at_carries_the_runs_token():
         if "/api/" in value or value.endswith(".url") or value in ("url", "imageUrl"):
             assert "withToken" in value or value == "imageUrl", value
     assert "var imageUrl = withToken(q.image.url);" in app_js
+
+
+# ==================================================== DECISION A/B/F: both lines, on the page
+@pytest.fixture(scope="module")
+def client_nine(tmp_path_factory) -> TestClient:
+    """The nine-paper run, RE-POOLED, served read-only.
+
+    The recorded fixture was written before the best-guess line, the conclusion and the renderer
+    block existed, so its `pooled.json` carries none of them. Re-pooling it here is the run's own
+    path (`apply_overrides_and_repool`, no model call), which is how a reviewer's browser gets
+    those keys on a run that predates them — and it means this test reads what the pipeline
+    writes rather than a payload the test invented.
+    """
+    from canopy.pipeline.overrides import apply_overrides_and_repool
+    from canopy.server.app import create_app
+    from tests.helpers import nine
+
+    runs = tmp_path_factory.mktemp("nine-lines")
+    run_dir = nine.copy_to(runs)
+    apply_overrides_and_repool(run_dir)
+    token = "l" * 43
+    (run_dir / "job.json").write_text(json.dumps({
+        "run_id": run_dir.name, "token": token, "title": "nine", "created_at": "2026-08-18",
+        "status": "done", "options": {}, "n_files": 9, "cost_usd": 0.0, "error": "",
+        "started_at": "2026-08-18", "finished_at": "2026-08-18", "kind": "run"}), encoding="utf-8")
+    return TestClient(create_app(runs_dir=runs), headers=auth(token))
+
+
+def test_results_endpoint_carries_both_lines_and_conclusion(client_nine):
+    body = client_nine.get("/api/runs/nine/results/late_adaptation").json()
+    assert body["best_guess"]["k"] >= 5 and body["conclusion"]["sentences"] \
+        and body["renderer"]["renderer"] and "png" in body["forest_best_guess"]
+    assert any(r["in_best_guess"] and not r["in_primary"] and r["best_guess_rule"]
+               for r in body["rows"])
+
+
+def test_app_js_has_the_hooks():
+    """The SPA's half of DECISION A/C: the toggle, the badge, the card, the new kinds."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    for needle in ("line-toggle", "state.line", "pill guess", "q-status", 'name: "option_"',
+                   "body.overrides", "include_paper", "precedence_override", "analysed_n"):
+        assert needle in js, needle

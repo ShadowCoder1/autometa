@@ -332,6 +332,94 @@ def _renderers(results: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, 
     return out
 
 
+def _best_guesses(results: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Each outcome's `best_guess` block (DECISION A), read out of its own `pooled.json`.
+
+    Same rule as the conclusion and the renderer: the second line the report prints is the second
+    line the file records. Nothing here re-pools, re-admits or re-vetoes anything — the report has
+    no opinion of its own about which held rows a rule lets in.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for key, payload in results.items():
+        path = (payload.get("outputs") or {}).get("pooled_json")
+        if path is None:
+            continue
+        try:
+            block = json.loads(Path(path).read_text(encoding="utf-8")).get("best_guess")
+        except (OSError, ValueError):                      # a report never dies over one file
+            continue
+        if isinstance(block, Mapping):
+            out[key] = dict(block)
+    return out
+
+
+#: DECISION A's two headings. The second one is the whole section's title when the primary
+#: analysis pooled nothing at all: a reader who lands on that outcome must not be able to take
+#: the number below it for a result the review is claiming.
+BEST_GUESS_HEADING = "Best guess (not the primary analysis)"
+BEST_GUESS_ONLY_HEADING = ("Best guess only — nothing could be pooled for the primary "
+                           "analysis.")
+
+
+def _best_guess_section(key: str, label: str, best: Mapping[str, Any],
+                        outputs: Mapping[str, Any], renderer: Mapping[str, Any] | None,
+                        settings: Any, directory: Path, *, strict_k: int) -> list[str]:
+    """The second line of one outcome: its heading, its caveat, its numbers, its two tables.
+
+    Written only when a rule actually admitted something. A line that added no row IS the primary
+    analysis, and printing it a second time under a second name is how one result starts being
+    read as two.
+    """
+    if not best or int(best.get("n_added") or 0) < 1:
+        return []
+    only = strict_k < 2 and int(best.get("k") or 0) >= 2
+    parts = [f"<h3>{_e(BEST_GUESS_ONLY_HEADING if only else BEST_GUESS_HEADING)}</h3>",
+             f'<p class="callout">{_e(theme.BEST_GUESS_CAVEAT)}</p>']
+    if best.get("k"):
+        parts.append(_cards([
+            (f"best guess {estimator_label(settings)}", _num(best.get("estimate"))),
+            (f"{settings.ci_level * 100:g}% CI",
+             f"{_num(best.get('ci_low'))} to {_num(best.get('ci_high'))}"),
+            ("k datasets", best.get("k")),
+            ("k papers", best.get("k_papers")),
+            ("I²", "—" if best.get("I2") is None else f"{100 * float(best['I2']):.0f}%"),
+            ("τ²", _num(best.get("tau2"), 3)),
+            ("rows added", best.get("n_added")),
+            ("still held", best.get("n_still_held")),
+        ]))
+    if best.get("note"):
+        parts.append(f"<p>{_e(best['note'])}</p>")
+    if best.get("delta_vs_strict") is not None:
+        parts.append(f"<p>Against the primary analysis this line moves the estimate by "
+                     f"{_e(_num(best['delta_vs_strict']))}"
+                     + ("" if best.get("sign_agrees_with_strict") is None else
+                        (", in the same direction." if best["sign_agrees_with_strict"]
+                         else ", and in the OTHER direction."))
+                     + "</p>")
+    forest = outputs.get("forest_best_guess_png")
+    if forest is not None:
+        parts.append(_renderer_callout(renderer))
+        parts.append(f'<figure><img src="{_link(forest, directory)}" '
+                     f'alt="Best-guess forest plot for {_e(label)}">'
+                     f"<figcaption>{_e(forest_caption(renderer))}</figcaption></figure>")
+    parts.append("<h3>Rows this line added</h3>")
+    parts.append(_table(
+        ["Dataset", "Study", "Rule", estimator_label(settings), "CI", "Weight", "Why"],
+        [[a.get("dataset_id", ""), a.get("label", ""), a.get("rule", ""), _num(a.get("es")),
+          f"{_num(a.get('ci_low'))} to {_num(a.get('ci_high'))}",
+          "—" if a.get("weight_pct") is None else f"{float(a['weight_pct']):.1f}%",
+          a.get("reason", "")] for a in best.get("added") or []], numeric=(3, 5)))
+    parts.append("<h3>Rows still held, in neither line</h3>")
+    parts.append(_table(
+        ["Dataset", "Study", "Veto", "Why"],
+        [[n.get("dataset_id", ""), n.get("label", ""), n.get("veto", ""), n.get("reason", "")]
+         for n in best.get("not_added") or []]))
+    parts.append(_links(outputs, directory, [
+        "forest_best_guess_png", "forest_best_guess_svg", "forest_best_guess_pdf",
+        "leave_one_out_best_guess_csv"]))
+    return parts
+
+
 def _crosscheck_failed(renderer: Mapping[str, Any] | None) -> bool:
     check = (renderer or {}).get("crosscheck")
     return isinstance(check, Mapping) and check.get("ok") is False
@@ -433,6 +521,7 @@ def write_html_report(run_dir: str | Path, manifest: RunManifest, protocol: Prot
 
     conclusions = _conclusions(results)
     renderers = _renderers(results)
+    best_guesses = _best_guesses(results)
     conclusion_path = directory / "conclusion.md"
     conclusion_path.write_text(_conclusion_markdown(protocol, conclusions), encoding="utf-8")
 
@@ -508,6 +597,12 @@ def write_html_report(run_dir: str | Path, manifest: RunManifest, protocol: Prot
             "forest_png", "forest_svg", "forest_pdf", "extraction_csv", "extraction_json",
             "extraction_xlsx", "leave_one_out_csv", "sensitivity_json", "sensitivity_png",
             "funnel_png", "funnel_json", "pooled_json"]))
+        # DECISION A: the second line comes AFTER the primary analysis of the same outcome,
+        # under its own heading and its own caveat — never mixed into the cards above.
+        parts.extend(_best_guess_section(
+            key, str(outcome.label if outcome else key), best_guesses.get(key) or {}, outputs,
+            renderers.get(f"{key}_best_guess"), settings, directory,
+            strict_k=0 if pooled is None else pooled.k))
 
     methods_fig = run_outputs.get("methods_fig_png")
     if methods_fig is not None:
