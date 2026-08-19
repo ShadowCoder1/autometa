@@ -22,7 +22,7 @@ PROOF = REPO / "runs" / "proof"
 # ------------------------------------------------------------------ the module, on real records
 @pytest.mark.skipif(not (PROOF / "manifest.json").exists(), reason="runs/proof is not on this machine")
 def test_every_held_cell_of_a_real_run_becomes_a_question_with_a_picture_and_a_reason():
-    qs = questions_for_run(PROOF)
+    qs = questions_for_run(PROOF, fold=False)       # the per-cell questions the page is built from
     queue = json.loads((PROOF / "human_review_queue.json").read_text())
     assert len(qs) == len(queue), "one question per held cell — nothing dropped, nothing invented"
     for q in qs:
@@ -498,12 +498,17 @@ def test_answering_every_question_the_run_asks_leaves_no_cell_held(tmp_path):
             break
         rounds += 1
         for question in open_now:
-            assert question["options"], f"#{question['number']} ({question['kind']}) asks nothing"
+            slots = [s for s in question["slots"] if s.get("answerable") and s.get("options")]
+            assert question["options"] or slots, \
+                f"#{question['number']} ({question['kind']}) asks nothing"
             # §C1: one answer, one override per cell the card names — appending only the first
             # would leave a folded card's other group unanswered and the run would never converge.
-            for record in answers_to_overrides(
-                    question, {"option": question["options"][0]["key"],
-                               "note": "answered in test"}):
+            # A card answered one slot at a time (second fold) is answered on every slot.
+            answer = ({"option": question["options"][0]["key"], "note": "answered in test"}
+                      if question["options"] else
+                      {"slots": [{"slot": s["member_id"], "option": s["options"][0]["key"],
+                                  "note": "answered in test"} for s in slots]})
+            for record in answers_to_overrides(question, answer):
                 append_override(run, record)
         apply_overrides_and_repool(run)
     assert 1 <= rounds <= 3, f"the run needed {rounds} rounds of answering"
@@ -1322,17 +1327,43 @@ def _answer_everything(run: Path, *, prefer_last: bool = False, rounds: int = 6)
 
     done = 0
     while done < rounds:
-        open_now = [q for q in questions_for_run(run) if q["status"] == "open" and q["options"]]
+        open_now = [q for q in questions_for_run(run) if q["status"] == "open"
+                    and (q["options"] or any(s.get("answerable") and s.get("options")
+                                             for s in q["slots"]))]
         if not open_now:
             break
         done += 1
         for question in open_now:
-            option = question["options"][-1 if prefer_last else 0]
-            if prefer_last and _excludes(question, option):
-                option = question["options"][0]           # excluding the cell is not "a number"
-            _answer(run, question, option["key"])
+            if question["options"]:
+                option = question["options"][-1 if prefer_last else 0]
+                if prefer_last and _excludes(question, option):
+                    option = question["options"][0]       # excluding the cell is not "a number"
+                _answer(run, question, option["key"])
+                continue
+            # a card answered one slot at a time (§C1, second fold): every slot, by the same rule
+            picks = []
+            for slot in question["slots"]:
+                if not (slot.get("answerable") and slot.get("options")):
+                    continue
+                option = slot["options"][-1 if prefer_last else 0]
+                if prefer_last and _slot_excludes(question, slot, option):
+                    option = slot["options"][0]
+                picks.append({"slot": slot["member_id"], "option": option["key"],
+                              "note": "answered in test"})
+            for record in answers_to_overrides(question, {"slots": picks}):
+                append_override(run, record)
         _repool(run)
     return done
+
+
+def _slot_excludes(question: dict, slot: dict, option: dict) -> bool:
+    try:
+        return any(r.get("kind") == "exclude_dataset"
+                   for r in answers_to_overrides(question, {"slots": [
+                       {"slot": slot["member_id"], "option": option["key"],
+                        "note": "answered in test"}]}))
+    except Exception:
+        return False
 
 
 @pytest.mark.skipif(not _HAS_RERUN, reason="runs/rerun-fixed is not on this machine")
@@ -1598,8 +1629,13 @@ def test_marking_both_cells_reviewed_does_not_pool_a_row_the_screen_refused(tmp_
     held = [(e["dataset_id"], e["outcome_key"], e["group"])
             for e in json.loads((run / "human_review_queue.json").read_text())]
     assert [g for d, o, g in held if (d, o) == cell] == ["A", "B"], held
-    asked = [q for q in questions_for_run(run) if (q["dataset_id"], q["outcome_key"]) == cell]
+    asked = [q for q in questions_for_run(run, fold=False)
+             if (q["dataset_id"], q["outcome_key"]) == cell]
     assert len(asked) == 2 and all(q["status"] == "open" for q in asked)
+    # …and the page shows the two as ONE card of two slots (§C1, second fold), still open
+    shown = [q for q in questions_for_run(run) if (q["dataset_id"], q["outcome_key"]) == cell]
+    assert len(shown) == 1 and shown[0]["kind"] == "cell" and shown[0]["status"] == "open"
+    assert [s["group"] for s in shown[0]["slots"] if s["answerable"]] == ["A", "B"]
 
 
 @pytest.mark.skipif(not _HAS_RERUN, reason="runs/rerun-fixed is not on this machine")
@@ -1627,7 +1663,8 @@ def test_a_re_pool_keeps_the_cells_of_a_row_held_by_a_rule_no_cell_carries(tmp_p
     _repool(run)
     assert queued() == [(cell[0], cell[1], "A"), (cell[0], cell[1], "B")], "the re-pool kept them"
     # and the cells the row put in the queue are asked about the denominator, not about a number
-    asked = [q for q in questions_for_run(run) if (q["dataset_id"], q["outcome_key"]) == cell]
+    asked = [q for q in questions_for_run(run, fold=False)
+             if (q["dataset_id"], q["outcome_key"]) == cell]
     assert [q["kind"] for q in asked] == ["dispersion_doubt", "dispersion_doubt"]
 
 
@@ -1716,7 +1753,7 @@ def test_an_excluded_cell_leaves_the_queue_and_shows_one_answered_question(tmp_p
     run = _clone_run(tmp_path)
     _repool(run)
     cell = (f"{HEUER}:d1", "aftereffect")
-    before = questions_for_run(run)
+    before = questions_for_run(run, fold=False)
     assert len([q for q in before if (q["dataset_id"], q["outcome_key"]) == cell]) == 2
 
     _answer(run, _ask(run, *cell, "A"), "not_reported", "the paper does not print it")

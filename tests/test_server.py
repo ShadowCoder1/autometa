@@ -1400,6 +1400,50 @@ def test_stale_option_fingerprint_still_409s(nine_served):
     assert named.status_code == 201, named.text
 
 
+def test_a_cell_card_is_answered_one_slot_at_a_time_through_the_endpoint(nine_served):
+    """§C1, second fold: a `cell` card carries its slots' own options, and the POST names the slot
+    each pick is for (`slots`). The same two guards as a card-level pick — the slot must be one
+    the card answers on its own, and a pick must echo the fingerprint it was shown under — and
+    one override per slot answered, on that slot's group."""
+    api, run_id, token = nine_served["api"], nine_served["run_id"], nine_served["token"]
+    body = api.get(f"/api/runs/{run_id}/questions", headers=auth(token)).json()
+    card = next(q for q in body["questions"] if q["kind"] == "cell")
+    assert card["slot_answers"] is True and card["options"] == []
+    slots = [s for s in card["slots"] if s["answerable"]]
+    assert len(slots) >= 2
+    url = f"/api/runs/{run_id}/questions/{card['number']}/answer"
+    first, second = slots[0], slots[1]
+    option = first["options"][0]
+    unknown = api.post(url, headers=auth(token), json={"id": card["id"], "slots": [
+        {"slot": "nope|x||y", "option": option["key"], "option_fingerprint": option["fingerprint"]}]})
+    assert unknown.status_code == 409 and "no slot" in unknown.json()["detail"]
+    unechoed = api.post(url, headers=auth(token), json={"id": card["id"], "slots": [
+        {"slot": first["member_id"], "option": option["key"]}]})
+    assert unechoed.status_code == 422 and "fingerprint" in unechoed.json()["detail"]
+    stale = api.post(url, headers=auth(token), json={"id": card["id"], "slots": [
+        {"slot": first["member_id"], "option": option["key"], "option_fingerprint": "0" * 12}]})
+    assert stale.status_code == 409 and "not the option you were shown" in stale.json()["detail"]
+    twice = api.post(url, headers=auth(token), json={"id": card["id"], "slots": [
+        {"slot": first["member_id"], "option": option["key"],
+         "option_fingerprint": option["fingerprint"]},
+        {"slot": first["member_id"], "option": option["key"],
+         "option_fingerprint": option["fingerprint"]}]})
+    assert twice.status_code == 422 and "twice" in twice.json()["detail"]
+    empty = api.post(url, headers=auth(token), json={"id": card["id"], "slots": [
+        {"slot": first["member_id"]}]})
+    assert empty.status_code == 422 and "no answer" in empty.json()["detail"]
+    posted = api.post(url, headers=auth(token), json={"id": card["id"], "note": "read it", "slots": [
+        {"slot": first["member_id"], "option": option["key"],
+         "option_fingerprint": option["fingerprint"]},
+        {"slot": second["member_id"], "option": second["options"][0]["key"],
+         "option_fingerprint": second["options"][0]["fingerprint"]}]})
+    assert posted.status_code == 201, posted.text
+    records = posted.json()["overrides"]
+    assert len(records) == 2
+    assert [r["group"] for r in records] == [first["group"], second["group"]]
+    assert [r["question_id"] for r in records] == [first["member_id"], second["member_id"]]
+
+
 def test_the_badge_counts_open_questions_and_reports_the_ones_waiting_for_a_re_run(cloned):
     """M7. `n_open` counted "not answered", so a run whose every remaining answer was waiting for
     a resume reported "No open questions" while nothing had been applied."""
@@ -1501,8 +1545,17 @@ def test_app_js_has_the_hooks():
     """The SPA's half of DECISION A/C: the toggle, the badge, the card, the new kinds."""
     js = (STATIC / "app.js").read_text(encoding="utf-8")
     for needle in ("line-toggle", "state.line", "pill guess", "q-status", 'name: "option_"',
-                   "body.overrides", "include_paper", "precedence_override", "analysed_n"):
+                   "body.overrides", "include_paper", "precedence_override", "analysed_n",
+                   # §C1, second fold: slots answered one at a time, posted as `slots`
+                   "q.slot_answers", 'name: "slot_" + i', "payload.slots = slotPicks",
+                   # the free-text trigger on a slot card is a checkbox (a lone radio can never
+                   # be unchecked), and a typed value beside slot picks is refused, not dropped
+                   'name: "free_toggle"', "not both in one submit"):
         assert needle in js, needle
+    # the results page lands on the best-guess line when the run has one; a tab that switched
+    # to strict stays there, and a run with no guess falls back to strict in `drawLineToggle`
+    stored = js.split("function storedLine(")[1].split("\n  }")[0]
+    assert 'stored === "strict" ? "strict" : "best_guess"' in stored
 
 
 def test_app_js_card_actions_do_what_they_say():

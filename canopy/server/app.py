@@ -850,6 +850,48 @@ def create_app(runs_dir: str | Path = "runs", *,
                                     detail=f"{chosen!r} on question #{number} is not the option "
                                            f"you were shown ({option.get('label')!r}); reload "
                                            f"the questions")
+        # …and the same two checks for every SLOT answered on a card that takes its slots one at
+        # a time (§C1, second fold): the slot must be one the card offers for answering on its
+        # own, and a picked option must echo the fingerprint it was shown under.
+        slot_answers = (body or {}).get("slots")
+        if slot_answers is not None and not isinstance(slot_answers, list):
+            raise HTTPException(status_code=422, detail="`slots` must be a list of slot answers")
+        seen_slots: set[str] = set()
+        for entry in slot_answers or []:
+            if not isinstance(entry, dict):
+                raise HTTPException(status_code=422, detail="each slot answer must be an object")
+            named = str(entry.get("slot") or "")
+            slot = next((s for s in question.get("slots") or []
+                         if str(s.get("member_id") or "") == named and s.get("answerable")), None)
+            if slot is None:
+                raise HTTPException(status_code=409,
+                                    detail=f"question #{number} has no slot {named!r} that is "
+                                           f"answered on its own; reload the questions")
+            if named in seen_slots:
+                raise HTTPException(status_code=422,
+                                    detail=f"slot {named!r} is answered twice in one request; "
+                                           f"one answer per slot")
+            seen_slots.add(named)
+            picked = str(entry.get("option") or "")
+            if not picked:
+                # a typed value or a hint is an answer; an entry with nothing in it is not, and
+                # `answers_to_overrides` refuses it below (422) rather than recording "reviewed"
+                continue
+            option = next((o for o in slot.get("options") or [] if o.get("key") == picked), None)
+            if option is None:
+                raise HTTPException(status_code=409,
+                                    detail=f"slot {named!r} of question #{number} no longer "
+                                           f"offers {picked!r}")
+            echoed = str(entry.get("option_fingerprint") or "")
+            if not echoed:
+                raise HTTPException(status_code=422,
+                                    detail="a slot answer that picks an option must echo its "
+                                           "`fingerprint`")
+            if echoed != option.get("fingerprint"):
+                raise HTTPException(status_code=409,
+                                    detail=f"{picked!r} on slot {named!r} of question #{number} "
+                                           f"is not the option you were shown; reload the "
+                                           f"questions")
         # one answer, one override per CELL it names (DECISION §C1). A card can settle both
         # groups of a dataset at once, and the record of it is still one record per group — each
         # naming its own group and carrying only its own option's `clears`. They are appended

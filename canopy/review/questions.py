@@ -62,6 +62,8 @@ QUESTION_KINDS: tuple[str, ...] = (
     # eligibility to a paper, an analysed n to two arms. The per-cell kinds above are still what
     # the page is built from — `_consolidate` folds them, and every card keeps its members.
     "pair",               # both groups of one dataset/outcome, decided together
+    "cell",               # everything still open on one cell, one slot per question, answered
+                          # one at a time (the second fold — what a pair could not combine)
     "precedence_override",  # D1: this row was built from a candidate pair, not the printed value
     "analysed_n",         # D4-lite: the n the row was divided by is a recruited count
     "include_paper",      # C3: a paper the MAPPER excluded — does this review include it?
@@ -445,6 +447,8 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
     fold_ids = {f"{entry.get('dataset_id') or ''}|{outcome_key}||pair",
                 f"{entry.get('dataset_id') or ''}|{outcome_key}||precedence_override",
                 _measure_id(str(entry.get("paper_id") or ""), outcome_key, measure)}
+    # (a `cell` card's slot answers name the SLOT's own question, never the card — see
+    # `_slot_record` — so the card id is not one a cell accepts answers under)
     writes = _answer_kind(kind)
 
     def answers_this(override: Mapping[str, Any]) -> bool:
@@ -1550,6 +1554,8 @@ def _answer_kind(kind: str) -> str:
             # (`_pair_card` narrows it when they agree); the other three write one kind each.
             "pair": "value", "precedence_override": "value",
             "analysed_n": "group_n", "include_paper": "eligibility",
+            # the second fold's card writes what its slots write; each slot carries its own
+            "cell": "value",
             }.get(kind, "mark_reviewed")
 
 
@@ -1717,7 +1723,7 @@ _CARD_KEYS: tuple[str, ...] = (
     "answer_writes", "why", "confidence", "route", "impact", "answered", "status", "pending_why",
     "answers",
     "scope", "member_ids", "cells", "slots", "settled", "impact_basis", "impact_rank",
-    "impact_band", "blocking_rank", "status_line", "best_guess")
+    "impact_band", "blocking_rank", "status_line", "best_guess", "slot_answers")
 
 _CARD_DEFAULTS: dict[str, Any] = {
     "id": "", "kind": "other", "prompt": "", "paper": "", "paper_id": "", "dataset_id": "",
@@ -1728,6 +1734,10 @@ _CARD_DEFAULTS: dict[str, Any] = {
     "scope": "cell", "member_ids": [], "cells": [], "slots": [], "settled": [],
     "impact_basis": "unknown", "impact_rank": -1.0, "impact_band": "high", "blocking_rank": 0,
     "status_line": "", "best_guess": {},
+    # §C1, second fold: a card whose `slots` are answered one at a time — each answerable slot
+    # carries its own options and writes its own record, and the card stays open until every
+    # slot it names is settled. `pair` cards are NOT this: their answer is one combination.
+    "slot_answers": False,
 }
 
 
@@ -1774,13 +1784,142 @@ def _consolidate(out: Sequence[Question], run: Path, overrides: Sequence[Mapping
     # decision — "which pair is this row" is.
     precedence, rest = _precedence_override_questions(run, rest, overrides, pending, consumed,
                                                       preview, rows)
+    # …and whatever else is still asked about the row a precedence card decides (a refutation,
+    # a series identity) rides on that card as its own slot, so the row is one place on the page.
+    rest = _attach_to_precedence(precedence, rest, run, overrides)
     cards += precedence
     orientation, rest = _fold_orientation(rest, run, overrides, rows)
     cards += orientation
     pairs, rest = _fold_pairs(rest, run, overrides, preview, rows)
     cards += pairs
+    # the second fold (§C1): everything still open on ONE cell, on one card — a refutation beside
+    # the value question it objects to, both groups of a cell a pair could not combine. Each slot
+    # keeps its own options and writes its own record; nothing is merged into a combination.
+    cells, rest = _fold_cells(rest, run, overrides, rows)
+    cards += cells
     cards += [_as_cell_card(q, run, overrides, rows) for q in rest]
     return cards
+
+
+# ------------------------------------------------------------------ the cell fold
+def _cell_key(question: Mapping[str, Any]) -> tuple[str, str]:
+    return (str(question.get("dataset_id") or ""), str(question.get("outcome_key") or ""))
+
+
+def _answerable_slot(question: Question, run: Path,
+                     overrides: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    return {**_slot_of(question, run, overrides), "answerable": True}
+
+
+def _attach_to_precedence(precedence: Sequence[Question], rest: Sequence[Question], run: Path,
+                          overrides: Sequence[Mapping[str, Any]]) -> list[Question]:
+    """The questions D1 does not answer but that are about D1's row — carried on D1's card.
+
+    The card's own three answers stay exactly what they are; each attached question is a slot of
+    its own, answered through `slots` in the POST, and the card is open while any of them is. A
+    reviewer deciding "which pair is this row" sees the verifier's objection to that pair on the
+    same card, and the objection still has to be overruled BY NAME (the standing rule) — an
+    answer to the precedence decision does not quietly retire it.
+    """
+    keep = list(rest)
+    for card in precedence:
+        if str(card.get("status") or "open") != "open":
+            # the decision is recorded: whatever the row's cells still ask goes back to its own
+            # card (a pair, a cell card), as `_precedence_override_questions` says it does
+            continue
+        # the same kinds the cell fold takes, for the same reasons: a direction is the measure
+        # card's (one place, one answer), a `no_value` is a typed hint, a map question is not a
+        # cell's; and a slot with nothing to pick is not a slot
+        mine = [q for q in keep
+                if _cell_key(q) == (str(card.get("dataset_id") or ""),
+                                    str(card.get("outcome_key") or ""))
+                and str(q.get("kind") or "") not in _NOT_CELL_FOLDABLE
+                and (q.get("options") or [])]
+        if not mine:
+            continue
+        keep = [q for q in keep if q not in mine]
+        card["slots"] = [*(card.get("slots") or []),
+                         *(_answerable_slot(q, run, overrides) for q in mine)]
+        card["member_ids"] = [*(card.get("member_ids") or []), *(str(q["id"]) for q in mine)]
+        card["cells"] = [*(card.get("cells") or []), *(_cell_of(q) for q in mine)]
+        card["settled"] = [*(card.get("settled") or []),
+                           *(s for q in mine
+                             for s in _settled(overrides, str(q.get("dataset_id") or ""),
+                                               str(q.get("outcome_key") or ""), q.get("group")))]
+        card["slot_answers"] = True
+        # the card was open (checked above) and stays open: the attached questions are the
+        # row's own open questions, and their history travels with them
+        card["answers"] = [*(card.get("answers") or []),
+                           *(a for q in mine for a in (q.get("answers") or []))]
+        card["prompt"] = (f"{card.get('prompt') or ''} This row also has {len(mine)} other open "
+                          f"question(s), below — each is answered on its own.").strip()
+    return keep
+
+
+def _fold_cells(rest: Sequence[Question], run: Path, overrides: Sequence[Mapping[str, Any]],
+                rows: Mapping[tuple[str, str], Mapping[str, Any]] | None = None
+                ) -> tuple[list[Question], list[Question]]:
+    """Every cell still asked about more than once, asked about once (§C1, second fold).
+
+    A `pair` is the stronger fold — one combination, with the effect size each one implies —
+    and it has already taken every cell it honestly could. What reaches here is the rest: a
+    refutation beside a value question, two groups with more options than a combination screen
+    holds, a series question beside an axis question. Those are still ONE cell a reviewer reads
+    once, so they go on one card — as separate slots, each with its own options and its own
+    record, never combined. A fold of slots hides nothing a fold of combinations would show: the
+    slot IS the question, unchanged.
+    """
+    cells: "OrderedDict[tuple[str, str], list[Question]]" = OrderedDict()
+    cards: list[Question] = []
+    keep: list[Question] = []
+    for question in rest:
+        # a map question is not a cell's question: the dataset has nothing extracted yet, and its
+        # answer is a decision about the review's protocol (§C6/C7) that a resume acts on
+        if str(question.get("kind") or "") in _NOT_CELL_FOLDABLE:
+            keep.append(question)
+            continue
+        cells.setdefault(_cell_key(question), []).append(question)
+    for (dataset_id, outcome_key), members in cells.items():
+        if len(members) < 2 or not dataset_id or not outcome_key \
+                or any(not (q.get("options") or []) for q in members):
+            keep.extend(members)
+            continue
+        cards.append(_cell_card(dataset_id, outcome_key, members, run, overrides, rows))
+    return cards, keep
+
+
+#: kinds the cell fold leaves alone: the map's own questions; a direction (folded per measure);
+#: `no_value`, whose answer is a typed hint that buys a re-extraction, not a pick from a list
+_NOT_CELL_FOLDABLE: frozenset[str] = frozenset(MAP_KINDS) | {"include_dataset", "which_measure",
+                                                              "orientation", "no_value"}
+
+
+def _cell_card(dataset_id: str, outcome_key: str, members: Sequence[Question], run: Path,
+               overrides: Sequence[Mapping[str, Any]],
+               rows: Mapping[tuple[str, str], Mapping[str, Any]] | None = None) -> Question:
+    card_id = "|".join([dataset_id, outcome_key, "", "cell"])
+    # what the card writes is what its slots write, when they agree (`_pair_card` does the same)
+    writes = {str(m.get("answer_writes") or "") for m in members}
+    card = _folded(card_id, "cell", "dataset", list(members), run, overrides, rows,
+                   options=[], prompt=_cell_prompt(members),
+                   why=" || ".join(dict.fromkeys(str(m.get("why") or "") for m in members
+                                                 if m.get("why"))),
+                   group=None, group_label="",
+                   answer_writes=(writes.pop() if len(writes) == 1 else "value"),
+                   slot_answers=True)
+    card["slots"] = [{**slot, "answerable": True} for slot in card["slots"]]
+    return card
+
+
+def _cell_prompt(members: Sequence[Mapping[str, Any]]) -> str:
+    """What is still open on this cell, one clause per question, each named by its group. The
+    full question travels in its slot (`slot.prompt`), which is where the page asks it."""
+    said = "; ".join(
+        f"{str(m.get('group_label') or ('group ' + str(m.get('group') or '?')))} — "
+        f"{str(m.get('kind') or '').replace('_', ' ')}"
+        for m in members)
+    return (f"{len(members)} questions are still open on this cell, answered one at a time "
+            f"below: {said}.")
 
 
 # ------------------------------------------------------------------ the cell, as a card of one
@@ -1838,6 +1977,10 @@ def _slot_of(question: Mapping[str, Any], run: Path,
             "image": dict(question.get("image") or {}),
             "where": str(question.get("where") or ""),
             "unit": str(question.get("unit") or ""),
+            # whether the page may answer THIS slot on its own (a `cell` card, a refutation
+            # carried on a precedence card, a paper's analysed-n slots). A pair's slots are not:
+            # their answer is the combination the card offers.
+            "answerable": False,
             "settled": _settled(overrides, str(question.get("dataset_id") or ""),
                                 str(question.get("outcome_key") or ""), question.get("group"))}
 
@@ -2347,8 +2490,64 @@ def _analysed_n_questions(run: Path, overrides: Sequence[Mapping[str, Any]],
             if was is None or (not isinstance(was.get("excluded"), int)
                                and isinstance(said["excluded"], int)):
                 entry["groups"][group] = said
-    return [_analysed_n_card(run, dataset_id, entry, overrides, pending, consumed, rows)
-            for dataset_id, entry in found.items()]
+    cards = [_analysed_n_card(run, dataset_id, entry, overrides, pending, consumed, rows)
+             for dataset_id, entry in found.items()]
+    return _fold_analysed_n_by_paper(cards)
+
+
+def _fold_analysed_n_by_paper(cards: Sequence[Question]) -> list[Question]:
+    """A paper's analysed sizes, asked once per paper when it has more than one flagged dataset.
+
+    The fact is still per dataset — each dataset's arms are its own people, and each slot writes
+    its own `group_n` record naming its own dataset — but the exclusion sentence is one passage
+    of one paper, and a reviewer who has found it answers every dataset from it. One card, one
+    slot per dataset, answered one at a time.
+    """
+    by_paper: "OrderedDict[str, list[Question]]" = OrderedDict()
+    for card in cards:
+        by_paper.setdefault(str(card.get("paper_id") or ""), []).append(card)
+    out: list[Question] = []
+    for paper_id, mine in by_paper.items():
+        if len(mine) < 2 or not paper_id:
+            out.extend(mine)
+            continue
+        out.append(_analysed_n_paper_card(paper_id, mine))
+    return out
+
+
+def _analysed_n_paper_card(paper_id: str, members: Sequence[Question]) -> Question:
+    card_id = "|".join([sha12(paper_id), "", "", "analysed_n"])
+    head = members[0]
+    slots = [{"group": None,
+              "group_label": str(m.get("dataset_label") or m.get("dataset_id") or ""),
+              "kind": "analysed_n", "member_id": str(m.get("id") or ""),
+              "dataset_id": str(m.get("dataset_id") or ""), "outcome_key": "",
+              "prompt": str(m.get("prompt") or ""), "why": str(m.get("why") or ""),
+              "answer_writes": "group_n", "options": list(m.get("options") or []),
+              "image": {}, "where": "", "unit": "",
+              # a dataset already answered is history on the card, not a second chance to write
+              # a second `group_n` for the same arms; its record is what the slot shows
+              "answerable": str(m.get("status") or "open") == "open",
+              "settled": [{"clears": [], "overrules": [], "kind": "group_n",
+                           "at": str(a.get("at") or ""), "actor": "",
+                           "justification": _short(a.get("justification"), 300)}
+                          for a in (m.get("answers") or [])]}
+             for m in members]
+    card = _blank(
+        id=card_id, kind="analysed_n", scope="paper",
+        paper=str(head.get("paper") or ""), paper_id=paper_id,
+        options=[], answer_writes="group_n", slot_answers=True,
+        prompt=(f"{len(members)} datasets of this paper are divided by group sizes that look "
+                f"like the numbers the paper RECRUITED, not the numbers it analysed. How many "
+                f"people are in each group's analysis? Each dataset is answered on its own, "
+                f"below."),
+        why=str(head.get("why") or ""), confidence="needs_human", route="",
+        member_ids=[str(m.get("id") or "") for m in members],
+        cells=[dict(c) for m in members for c in (m.get("cells") or [])],
+        slots=slots)
+    _answered_from(card, members)
+    card["blocking_rank"] = len(card["cells"])
+    return card
 
 
 def _analysed_n_card(run: Path, dataset_id: str, entry: Mapping[str, Any],
@@ -2782,15 +2981,98 @@ def answers_to_overrides(question: Mapping[str, Any],
     answers clear only what they name.
     """
     kind = str(question.get("kind") or "")
+    slot_answers = answer.get("slots")
+    if isinstance(slot_answers, list) and slot_answers:
+        # §C1, second fold: the card's own answer (if one was given) and then one record per slot
+        # answered — each through the slot's OWN question, so a refutation is overruled by name
+        # and a value lands on the group it names. An answer naming a slot the card does not
+        # carry, one the card does not let the page answer alone, one that names a slot twice,
+        # or one with nothing in it, is refused whole: half a decision is not recorded as one.
+        named = [str((e or {}).get("slot") or "") for e in slot_answers]
+        if len(set(named)) != len(named):
+            from ..pipeline.overrides import OverrideRejected
+
+            raise OverrideRejected("a slot is named twice in one answer; one answer per slot")
+        rest = {key: value for key, value in answer.items() if key != "slots"}
+        out = answers_to_overrides(question, rest) if _has_card_answer(rest) else []
+        return [*out, *(_slot_record(question, entry) for entry in slot_answers)]
     if kind == "pair":
         return _pair_answers(question, answer)
+    if kind == "cell":
+        return _cell_answers(question, answer)
     if kind == "precedence_override":
         return _precedence_answers(question, answer)
     if kind == "analysed_n":
+        if question.get("slot_answers"):
+            from ..pipeline.overrides import OverrideRejected
+
+            raise OverrideRejected("this card asks one dataset per slot: answer it through "
+                                   "`slots`, naming the dataset each size is for")
         return [_analysed_n_answer(question, answer)]
     if kind == "include_paper":
         return [_eligibility_answer(question, answer)]
     return [_single_override(question, answer)]
+
+
+#: the payload fields that are an answer to the CARD (as opposed to `slots`, `note`, `id`).
+#: `group` and `dispersion_type` are not here: the one only says WHICH slot a typed value is
+#: for, the other only says what a typed spread is — neither is an answer on its own.
+_CARD_ANSWER_FIELDS = ("option", "exclude", "mean", "dispersion_value", "n", "hint",
+                       "decision", "n_a", "n_b", "rule", "quote")
+#: the fields that make a slot entry an answer (an option, a typed number, a hint, an exclusion)
+_SLOT_ANSWER_FIELDS = ("option", "mean", "dispersion_value", "n", "hint", "n_a", "n_b", "exclude")
+
+
+def _has_card_answer(answer: Mapping[str, Any]) -> bool:
+    return any(answer.get(field) not in (None, "", False) for field in _CARD_ANSWER_FIELDS)
+
+
+def _cell_answers(card: Mapping[str, Any], answer: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """A card-level answer on a `cell` card: the row's exclusion, or a typed value that names its
+    group — which is that slot's own question, answered by hand. Anything else is refused: the
+    card offers no options of its own, so an `option` here is one the card never showed, and a
+    fall-through that recorded it as "a human looked at it" would be the overclaim §C4 removed.
+    """
+    from ..pipeline.overrides import OverrideRejected
+
+    if answer.get("exclude"):
+        return [_single_override(card, answer)]
+    slots = {str(s.get("group") or ""): s for s in card.get("slots") or [] if s.get("answerable")}
+    if answer.get("option"):
+        raise OverrideRejected(f"{str(answer.get('option'))!r} is not one of this card's answers: "
+                               f"answer a slot by name through `slots`")
+    named = str(answer.get("group") or "")
+    if named not in slots:
+        raise OverrideRejected("a typed value on this card has to say which group it is for "
+                               f"({', '.join(sorted(slots)) or 'no slot is open'})")
+    if not any(answer.get(f) not in (None, "", False) for f in _SLOT_ANSWER_FIELDS):
+        raise OverrideRejected("nothing was typed; an answer that decides nothing is not "
+                               "recorded as one that does")
+    slot = slots[named]
+    return [_slot_answer(card, slot, {**answer, "option": None},
+                         name=str(slot.get("member_id") or "") or None)]
+
+
+def _slot_record(card: Mapping[str, Any], entry: Mapping[str, Any]) -> dict[str, Any]:
+    """One slot's answer, as the record its own question writes."""
+    from ..pipeline.overrides import OverrideRejected
+
+    wanted = str((entry or {}).get("slot") or "")
+    slot = next((s for s in card.get("slots") or []
+                 if str(s.get("member_id") or "") == wanted and s.get("answerable")), None)
+    if slot is None:
+        raise OverrideRejected(f"this card has no slot {wanted or 'unnamed'!r} that can be "
+                               f"answered on its own; reload the questions")
+    if not any((entry or {}).get(f) not in (None, "", False) for f in _SLOT_ANSWER_FIELDS):
+        raise OverrideRejected(f"slot {wanted!r} was sent with no answer in it; an answer that "
+                               f"decides nothing is not recorded as one that does")
+    if str(slot.get("kind") or "") == "analysed_n":
+        # the record names the DATASET's own card, which is what `_named` settles it by
+        view = {"id": slot.get("member_id"), "number": card.get("number"),
+                "kind": "analysed_n", "paper_id": card.get("paper_id", ""),
+                "dataset_id": slot.get("dataset_id") or "", "options": list(slot.get("options") or [])}
+        return _analysed_n_answer(view, entry)
+    return _slot_answer(card, slot, entry, name=str(slot.get("member_id") or "") or None)
 
 
 def answer_to_override(question: Mapping[str, Any], answer: Mapping[str, Any]) -> dict[str, Any]:
@@ -2838,10 +3120,14 @@ def _pair_answers(card: Mapping[str, Any],
 
 
 def _slot_answer(card: Mapping[str, Any], slot: Mapping[str, Any],
-                 answer: Mapping[str, Any]) -> dict[str, Any]:
-    """One slot's own question, answered the way it would have been answered on its own card —
-    and the record names the CARD, because that is the question the reviewer was shown."""
-    view = {"id": card.get("id"), "number": card.get("number"),
+                 answer: Mapping[str, Any], *, name: str | None = None) -> dict[str, Any]:
+    """One slot's own question, answered the way it would have been answered on its own card.
+
+    The record names the CARD for a pair (one combination was the question the reviewer was
+    shown), and the SLOT's own question when `name` says so — a slot answered on its own (§C1,
+    second fold) is that question, and a record naming the card would be read by every later
+    question the same cell asks as an answer to it too (the `on_a_card` rule in `_question`)."""
+    view = {"id": name or card.get("id"), "number": card.get("number"),
             "kind": slot.get("kind"), "group": slot.get("group"),
             "paper_id": card.get("paper_id", ""),
             "dataset_id": slot.get("dataset_id") or card.get("dataset_id", ""),
@@ -2981,10 +3267,17 @@ def write_questions(run_dir: str | Path, questions: Sequence[Mapping[str, Any]] 
                 for c in q.get("cells") or []))
             md += ["", f"_This answer settles {len(q.get('cells') or [])} cell(s): {named}._"]
         for slot in q.get("slots") or []:
-            if len(q.get("slots") or []) < 2:
+            if len(q.get("slots") or []) < 2 and not slot.get("answerable"):
                 continue
             md += ["", f"_{_md(slot.get('group_label') or slot.get('group'))} was asked "
                        f"`{_md(slot.get('kind'))}`: {_md(slot.get('prompt'))}_"]
+            # a slot answered on its own carries its own answers (§C1, second fold): the file
+            # has to print them, or it prints a question with nothing to answer it by
+            if slot.get("answerable"):
+                for o in slot.get("options") or []:
+                    extra = (f" — backed by {_md(', '.join(o['backed_by']))}"
+                             if o.get("backed_by") else "")
+                    md.append(f"  - **{_md(o['label'])}**{extra}")
             for was in slot.get("settled") or []:
                 md.append(f"  - _already recorded ({_md(was.get('at'))}): "
                           f"{_md(was.get('justification'))}_")

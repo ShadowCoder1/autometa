@@ -57,8 +57,9 @@
     outcome: "", files: [], events: [], papers: {}, source: null, mode: "guided",
     started: false, returnFocus: null, live: {}, poll: null, names: {},
     // which analysis line the headline, the forest and the row badges are about. "strict" is
-    // the primary analysis and is the default everywhere; "best_guess" is the second line, and
-    // the two are never on screen at the same time (DECISION A).
+    // the primary analysis; "best_guess" is the second line and the one the results page lands
+    // on when the run has it (see `storedLine`). The two are never on screen at the same time
+    // (DECISION A).
     line: "strict"
   };
 
@@ -99,10 +100,13 @@
   function lineKey(runId) { return "canopy.line." + (runId || state.runId); }
 
   function storedLine(runId) {
+    // the page LANDS on the best-guess line when the run has one (the fuller picture, labelled
+    // as not the primary analysis); a reviewer who switched to strict in this tab stays there.
+    // `drawLineToggle` falls back to strict on a run whose guess admitted nothing.
     try {
-      return window.sessionStorage.getItem(lineKey(runId)) === "best_guess"
-        ? "best_guess" : "strict";
-    } catch (err) { return "strict"; }
+      var stored = window.sessionStorage.getItem(lineKey(runId));
+      return stored === "strict" ? "strict" : "best_guess";
+    } catch (err) { return "best_guess"; }
   }
 
   function rememberLine(runId, line) {
@@ -961,7 +965,9 @@
         ? h("span", { cls: "pill off", text: "answered — pending re-run",
                       attrs: { title: q.pending_why || "" } })
         : q.answered ? h("span", { cls: "pill ok", text: "answered" })
-                     : h("span", { cls: "pill", text: q.kind.replace(/_/g, " ") }),
+                     : h("span", { cls: "pill", text: (q.kind === "cell" && q.slot_answers)
+                         ? (q.slots || []).length + " questions, one cell"
+                         : q.kind.replace(/_/g, " ") }),
       impactPill(q)
     ]);
     var body = h("div", { cls: "q-body" });
@@ -1028,17 +1034,58 @@
         });
       });
     }
+    // A card whose slots are answered ONE AT A TIME (`slot_answers`): everything still open on
+    // one cell, or one paper's analysed sizes, each slot with its own options and its own
+    // record. Nothing is combined — a slot left blank stays open, and the card stays open with
+    // it. (A `pair` is the other shape: its slots resolve to one combination above.)
+    if (q.slot_answers) {
+      (q.slots || []).forEach(function (slot, i) {
+        // an answerable slot gets its radios; a slot already answered (a paper's analysed-n
+        // dataset) is shown as history only; a slot the card only carries for context is not
+        // drawn here at all (it is listed under "why the tool could not decide")
+        if (!slot.answerable && !(slot.settled || []).length) { return; }
+        var box = h("fieldset", { cls: "q-slot", attrs: { "data-slot": slot.member_id || "" } }, [
+          h("legend", { text: (slot.group_label || ("group " + slot.group)) + " · "
+            + String(slot.kind || "").replace(/_/g, " ")
+            + (slot.answerable ? "" : " · answered") })
+        ]);
+        if (slot.prompt && slot.answerable) {
+          box.appendChild(h("p", { cls: "hint", text: slot.prompt }));
+        }
+        (slot.answerable ? (slot.options || []) : []).forEach(function (o, j) {
+          var wrap = h("label", { cls: "q-option" }, [
+            h("input", { attrs: { type: "radio", name: "slot_" + i, value: o.key,
+              id: "q" + q.number + "-s" + i + "-" + j, "data-fingerprint": o.fingerprint || "" } }),
+            h("span", { text: optionText(o) })
+          ]);
+          box.appendChild(wrap);
+          (o.needs_input || []).forEach(function (field) {
+            wrap.appendChild(h("input", { cls: "q-needs", attrs: { type: "number", step: "1",
+              name: field + "__" + i, placeholder: field.replace(/_/g, " ") } }));
+          });
+        });
+        (slot.settled || []).forEach(function (was) {
+          box.appendChild(h("p", { cls: "q-was", text: "already recorded"
+            + (was.at ? " (" + was.at + ")" : "") + ": " + (was.justification || "") }));
+        });
+        form.appendChild(box);
+      });
+    }
     var freeId = "q" + q.number + "-free";
     if (!isChoiceOnly(q)) {
+      // on a card answered slot by slot there is no card-level option list for this radio to
+      // sit in — a radio with no siblings can never be unchecked — so there it is a checkbox
       form.appendChild(h("label", { cls: "q-option" }, [
-        h("input", { attrs: { type: "radio", name: "option", value: "__free__", id: freeId } }),
+        h("input", { attrs: q.slot_answers
+          ? { type: "checkbox", name: "free_toggle", value: "__free__", id: freeId }
+          : { type: "radio", name: "option", value: "__free__", id: freeId } }),
         h("span", { text: (q.kind === "no_value")
           ? "it is here (say where), or it is not reported"
           : "none of these — I will type it" })
       ]));
     }
     var free = h("div", { cls: "q-free", attrs: { hidden: true } });
-    if (combination) {
+    if (combination || (q.slot_answers && q.kind === "cell")) {
       // a typed value on a card that settles two cells has to say WHICH cell it is: the record
       // this becomes names one group, and the slot it names is the question it answers
       var who = h("select", { attrs: { name: "group" } });
@@ -1069,7 +1116,8 @@
     form.appendChild(free);
     form.addEventListener("change", function () {
       var picked = form.querySelector("input[name=option]:checked");
-      show(free, !!picked && picked.value === "__free__");
+      var freeBox = form.querySelector("input[name=free_toggle]");
+      show(free, (!!picked && picked.value === "__free__") || !!(freeBox && freeBox.checked));
       if (combination) {
         var chosen = combinationOf(q, form);
         implied.textContent = chosen ? chosen.label
@@ -1149,17 +1197,50 @@
 
   function submitAnswer(q, form, exclude) {
     var picked = form.querySelector("input[name=option]:checked");
-    var free = !!picked && picked.value === "__free__";
+    var freeBox = form.querySelector("input[name=free_toggle]");
+    var free = (!!picked && picked.value === "__free__") || !!(freeBox && freeBox.checked);
     // a combination card has no flat list of radios: the answer is the pair of per-slot picks,
     // resolved back to the option the server offered (and to ITS fingerprint)
     var combined = (!free && isCombination(q)) ? combinationOf(q, form) : null;
     // the number is a position in a list that moves as answers land, so the answer names the
     // question it answers and the server refuses it if that is no longer question #n.
     var payload = { id: q.id, note: (form.querySelector("input[name=note]") || {}).value || "" };
+    // the slots answered one at a time (`slot_answers`): each pick names its slot and echoes the
+    // fingerprint it was shown under; a slot left blank is simply not in the list
+    var slotPicks = [];
+    if (q.slot_answers && !exclude) {
+      (q.slots || []).forEach(function (slot, i) {
+        if (!slot.answerable) { return; }
+        var input = form.querySelector("input[name=slot_" + i + "]:checked");
+        if (!input) { return; }
+        var entry = { slot: slot.member_id || "", option: input.value,
+                      option_fingerprint: input.getAttribute("data-fingerprint") || "",
+                      note: payload.note };
+        var chosenSlot = (slot.options || []).filter(function (o) {
+          return o.key === input.value;
+        })[0] || {};
+        (chosenSlot.needs_input || []).forEach(function (field) {
+          var box = form.querySelector("[name=" + field + "__" + i + "]");
+          if (box && box.value !== "") { entry[field] = box.value; }
+          else { entry.__missing = true; }
+        });
+        slotPicks.push(entry);
+      });
+      if (slotPicks.some(function (e) { return e.__missing; })) {
+        toast("Fill in the numbers this answer is waiting for."); return;
+      }
+      slotPicks.forEach(function (e) { delete e.__missing; });
+    }
     if (exclude) { payload.exclude = true; }
-    else if (!picked && !combined) {
+    else if (free && slotPicks.length) {
+      // a typed value and slot picks in one submit would drop one of them on the floor: the
+      // typed value goes to one group, the picks to others, and the page cannot know which
+      toast("Answer the slots above, or type a value — not both in one submit."); return;
+    } else if (!picked && !combined && !slotPicks.length && !free) {
       toast(isCombination(q) ? "Choose an answer for each group first." : "Choose an answer first.");
       return;
+    } else if (slotPicks.length && !picked && !combined) {
+      payload.slots = slotPicks;
     } else if (free) {
       ["hint", "mean", "dispersion_value", "dispersion_type", "n", "group"].forEach(
         function (name) {
@@ -1193,6 +1274,9 @@
       });
       if (missing) { toast("Fill in the numbers this answer is waiting for."); return; }
     }
+    // a card-level pick and slot picks travel together (a precedence decision with the
+    // refutation it carries): one POST, one record per thing decided
+    if (slotPicks.length && !payload.slots) { payload.slots = slotPicks; }
     var buttons = form.querySelectorAll("button");
     Array.prototype.forEach.call(buttons, function (b) { b.disabled = true; });
     api("/api/runs/" + state.runId + "/questions/" + q.number + "/answer",

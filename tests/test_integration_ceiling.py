@@ -1815,10 +1815,15 @@ def test_a_row_converted_from_a_printed_statistic_asks_about_the_statistic(tmp_p
     assert record.route == "test_statistic" and record.confidence == "needs_human"
     assert round(record.d, 4) == -1.0206
 
-    questions = questions_for_run(out)
+    # the per-cell questions the page is built from (the page itself folds the two groups'
+    # questions onto one card of two slots — §C1, second fold)
+    questions = questions_for_run(out, fold=False)
     assert {q["kind"] for q in questions} == {"converted_statistic"}, \
         [q["kind"] for q in questions]
     asked = questions[0]
+    card = questions_for_run(out)
+    assert [q["kind"] for q in card] == ["cell"]
+    assert all("t(22) = 2.5" in s["prompt"] for s in card[0]["slots"])
     # the statistic itself, as extracted — not a paraphrase and not the cell's missing value
     for part in ("t(22) = 2.5", "independent_t", "contrast groups", "-1.021"):
         assert part in asked["prompt"], (part, asked["prompt"])
@@ -1836,7 +1841,7 @@ def test_accepting_the_converted_effect_pools_the_row_the_statistic_implies(tmp_
     out = tmp_path / "run"
     paper, key, record = _statistic_run(out)
     for group in ("A", "B"):
-        question = next(q for q in questions_for_run(out) if q["group"] == group)
+        question = next(q for q in questions_for_run(out, fold=False) if q["group"] == group)
         override = answer_to_override(question, {
             "option": "accept",
             "note": "the Results paragraph names the two age groups this t compares"})
@@ -1870,7 +1875,7 @@ def test_a_statistic_whose_contrast_is_unestablished_is_not_releasable_at_all(tm
 
     # …and it is asked for the group values, not "where is the value" (re-review N3): the paper
     # printed a number, the gate refused its provenance, and no `accept` is on offer.
-    asked = questions_for_run(out)
+    asked = questions_for_run(out, fold=False)
     assert {q["kind"] for q in asked} == {"needs_group_values"}, [q["kind"] for q in asked]
     assert all("accept" not in [o["key"] for o in q["options"]] for q in asked)
     with pytest.raises(OverrideRejected):
@@ -2099,8 +2104,9 @@ def test_the_contradiction_question_quotes_the_reader_that_was_actually_discarde
         direction, {"option": "lower_is_more",
                     "note": "a larger angular error is a worse score on this measure"}))
 
-    asked = [q for q in questions_for_run(out) if q["kind"] == "reader_contradicts_values"]
-    assert asked, [q["kind"] for q in questions_for_run(out)]
+    asked = [q for q in questions_for_run(out, fold=False)
+             if q["kind"] == "reader_contradicts_values"]
+    assert asked, [q["kind"] for q in questions_for_run(out, fold=False)]
     said = {"a_greater": "group A came out higher",
             "b_greater": "group B came out higher"}[thrown_out[0]["direction_stated_in_text"]]
     for question in asked:
@@ -2237,8 +2243,10 @@ def test_the_other_two_answers_to_a_converted_row_do_what_they_say(tmp_path):
     group values the paper prints after all moves the row onto the group route (and the cell asks
     the ordinary "is it right?" next, not the conversion question again); "not usable" removes it.
     """
-    from canopy.pipeline.overrides import append_override, apply_overrides_and_repool
-    from canopy.review.questions import answer_to_override, questions_for_run
+    from canopy.pipeline.overrides import (OverrideRejected, append_override,
+                                           apply_overrides_and_repool)
+    from canopy.review.questions import (answer_to_override, answers_to_overrides,
+                                         questions_for_run)
 
     typed = tmp_path / "typed"
     _statistic_run(typed)
@@ -2258,10 +2266,19 @@ def test_the_other_two_answers_to_a_converted_row_do_what_they_say(tmp_path):
 
     gone = tmp_path / "gone"
     _statistic_run(gone)
-    question = questions_for_run(gone)[0]
+    question = questions_for_run(gone, fold=False)[0]
     override = answer_to_override(question, {"option": "not_usable",
                                              "note": "the t is the block × age interaction"})
     assert override["kind"] == "exclude_dataset"
+    # …and the CARD the page shows (the two cells folded, §C1 second fold) refuses a card-level
+    # option it never offered rather than recording "reviewed" for "not usable"
+    card = questions_for_run(gone)[0]
+    assert card["kind"] == "cell"
+    with pytest.raises(OverrideRejected):
+        answer_to_override(card, {"option": "not_usable", "note": "the t is the interaction"})
+    by_slot = answers_to_overrides(card, {"slots": [
+        {"slot": card["slots"][0]["member_id"], "option": "not_usable", "note": "interaction"}]})
+    assert [r["kind"] for r in by_slot] == ["exclude_dataset"]
     append_override(gone, override)
     apply_overrides_and_repool(gone)
     assert json.loads((gone / "results" / "extraction_table_all.json").read_text()) == []
@@ -2282,9 +2299,10 @@ def test_the_question_names_the_statistic_the_row_actually_converted_from(tmp_pa
     paper, key, record = _statistic_run(out, decoy=True)
     assert record.route == "test_statistic" and round(record.d, 4) == -1.0206
 
-    prompt = questions_for_run(out)[0]["prompt"]
-    assert "t(22) = 2.5" in prompt and "independent_t" in prompt, prompt
-    assert "F(1, 22)" not in prompt and "mixed_main_effect" not in prompt, prompt
+    for prompt in (questions_for_run(out, fold=False)[0]["prompt"],
+                   questions_for_run(out)[0]["slots"][0]["prompt"]):
+        assert "t(22) = 2.5" in prompt and "independent_t" in prompt, prompt
+        assert "F(1, 22)" not in prompt and "mixed_main_effect" not in prompt, prompt
 
 
 def test_the_page_and_the_resolver_pick_the_statistic_with_the_same_function():
@@ -2322,7 +2340,7 @@ def test_a_cell_whose_statistic_the_gate_refused_is_asked_for_the_group_values(t
     paper, key, record = _statistic_run(out, df=None)
     assert record.route == "not_convertible"
 
-    asked = questions_for_run(out)
+    asked = questions_for_run(out, fold=False)
     assert {q["kind"] for q in asked} == {"needs_group_values"}, [q["kind"] for q in asked]
     prompt = asked[0]["prompt"]
     assert "t = 2.5" in prompt and "NO degrees of freedom" in prompt, prompt

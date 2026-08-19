@@ -196,23 +196,72 @@ def test_settled_history_on_the_vachon_pair(nine_tmp):
     assert "series_identity_conflict" in settled[0]["clears"] and settled[0]["at"]
 
 
-def test_a_mixed_kind_pair_is_not_folded(nine_tmp):
-    """A fold that hid a hold would be worse than the repetition it removes: `verifier_refuted`
-    has no per-slot objection option, so a cell carrying one keeps its own card."""
+def test_a_mixed_kind_cell_is_one_card_of_independent_slots(nine_tmp):
+    """A `verifier_refuted` has no per-slot objection a combination could carry, so it is never a
+    `pair` — but it is still the same cell as the axis question beside it. The second fold puts
+    both on one `cell` card as slots answered ONE AT A TIME: each keeps its own options, each
+    writes its own record, and the card is open until both are settled. Nothing is hidden: the
+    slot IS the per-cell question, unchanged."""
     qs = questions_for_run(nine_tmp)
     assert not any(q["id"] == "3570e4ce2a9c:d2|late_adaptation||pair" for q in qs)
-    assert {q["id"] for q in qs if q["dataset_id"] == "3570e4ce2a9c:d2"
-            and q["outcome_key"] == "late_adaptation"} == {
-        "3570e4ce2a9c:d2|late_adaptation|A|which_axis",
-        "3570e4ce2a9c:d2|late_adaptation|B|verifier_refuted"}
+    mine = [q for q in qs if q["dataset_id"] == "3570e4ce2a9c:d2"
+            and q["outcome_key"] == "late_adaptation"]
+    assert [q["id"] for q in mine] == ["3570e4ce2a9c:d2|late_adaptation||cell"]
+    card = mine[0]
+    assert card["kind"] == "cell" and card["scope"] == "dataset" and card["slot_answers"] is True
+    assert card["options"] == []
+    assert card["member_ids"] == ["3570e4ce2a9c:d2|late_adaptation|A|which_axis",
+                                  "3570e4ce2a9c:d2|late_adaptation|B|verifier_refuted"]
+    assert [(s["kind"], s["group"], s["answerable"]) for s in card["slots"]] == [
+        ("which_axis", "A", True), ("verifier_refuted", "B", True)]
+    cells = {q["id"]: q for q in questions_for_run(nine_tmp, fold=False)}
+    for slot in card["slots"]:
+        assert slot["options"] == cells[slot["member_id"]]["options"]
+    # one slot answered: one record, naming the card, through that slot's OWN question
+    axis, refuted = card["slots"]
+    stands = next(o for o in refuted["options"] if o["key"] == "stands")
+    recs = answers_to_overrides(card, {"slots": [
+        {"slot": refuted["member_id"], "option": "stands", "note": "read it; the value stands"}]})
+    assert len(recs) == 1 and recs[0]["group"] == "B"
+    # the record names the SLOT's own question, not the card: a record naming the card would be
+    # read by the cell's next question as an answer to it too
+    assert recs[0]["question_id"] == refuted["member_id"]
+    assert "verifier_refuted" in recs[0]["overrules"]
+    _append(nine_tmp, recs)
+    # …and the cell is STILL OPEN: the axis question was not answered. The refutation is retired
+    # (group B asks its next question, which is what lets the cell fold as a pair now), and the
+    # overruling is on group B's record where the card shows it.
+    cells_after = {q["id"]: q for q in questions_for_run(nine_tmp, fold=False)}
+    assert refuted["member_id"] not in cells_after
+    assert cells_after[axis["member_id"]]["status"] == "open"
+    shown = [q for q in questions_for_run(nine_tmp) if q["dataset_id"] == "3570e4ce2a9c:d2"
+             and q["outcome_key"] == "late_adaptation"]
+    assert len(shown) == 1 and shown[0]["status"] == "open"
+    assert any("verifier_refuted" in was["overrules"]
+               for slot in shown[0]["slots"] if slot["group"] == "B" for was in slot["settled"])
+    # both slots at once (on the card as it was): one record per slot, each on its own group
+    both = answers_to_overrides(card, {"slots": [
+        {"slot": axis["member_id"], "option": axis["options"][0]["key"], "note": "left axis"},
+        {"slot": refuted["member_id"], "option": stands["key"], "note": "stands"}]})
+    assert [r["group"] for r in both] == ["A", "B"]
+    # a slot the card does not carry is refused whole
+    from canopy.pipeline.overrides import OverrideRejected
+
+    with pytest.raises(OverrideRejected):
+        answers_to_overrides(card, {"slots": [{"slot": "nope|x||y", "option": "stands"}]})
 
 
-def test_a_pair_with_more_than_nine_combinations_stays_two_cards(nine_tmp):
-    """Six-by-six is not a decision anybody can read off one screen."""
+def test_a_pair_with_more_than_nine_combinations_is_one_cell_card_of_two_slots(nine_tmp):
+    """Six-by-six is not a decision anybody can read off one screen as COMBINATIONS — so it is
+    not a pair. It is still one cell: two slots on one card, six options each, answered one at a
+    time."""
     qs = questions_for_run(nine_tmp)
     assert not any(q["id"] == "592b3b55a318:d2|aftereffect||pair" for q in qs)
-    assert len([q for q in qs if q["dataset_id"] == "592b3b55a318:d2"
-                and q["outcome_key"] == "aftereffect"]) == 2
+    mine = [q for q in qs if q["dataset_id"] == "592b3b55a318:d2"
+            and q["outcome_key"] == "aftereffect"]
+    assert len(mine) == 1 and mine[0]["kind"] == "cell"
+    assert [len(s["options"]) for s in mine[0]["slots"]] == [6, 6]
+    assert all(s["answerable"] for s in mine[0]["slots"])
 
 
 # ----------------------------------------------------------------- C3: include_paper
@@ -275,7 +324,135 @@ def test_the_other_two_answers_to_a_precedence_override(nine_tmp):
     assert [r["kind"] for r in gone] == ["exclude_dataset"]
 
 
+def test_a_precedence_card_carries_the_refutations_on_its_row(nine_tmp):
+    """D1's card replaces the value questions of its row; the refutations it does NOT answer ride
+    on the same card as slots of their own, so the row is one place on the page — and the
+    objection is still overruled by name, never retired by the precedence decision."""
+    _override_the_heuer_row(nine_tmp)
+    qs = questions_for_run(nine_tmp)
+    card = next(q for q in qs if q["id"] == "3570e4ce2a9c:d1|late_adaptation||precedence_override")
+    assert not any(q["dataset_id"] == "3570e4ce2a9c:d1" and q["outcome_key"] == "late_adaptation"
+                   and q["id"] != card["id"] for q in qs)
+    assert card["slot_answers"] is True
+    refutations = [s for s in card["slots"] if s["kind"] == "verifier_refuted"]
+    assert [s["group"] for s in refutations] == ["A", "B"] and all(s["answerable"]
+                                                                   for s in refutations)
+    assert all(not s["answerable"] for s in card["slots"] if s["kind"] != "verifier_refuted")
+    assert [o["key"] for o in card["options"]] == ["use_candidates", "keep_printed", "exclude"]
+    assert "3570e4ce2a9c:d1|late_adaptation|A|verifier_refuted" in card["member_ids"]
+    # the precedence decision alone leaves both refutations open: the decision is recorded, and
+    # the objections go back to a card of their own (a `cell` card of the two refutations)
+    _append(nine_tmp, answers_to_overrides(card, {"option": "use_candidates", "note": "pair"}))
+    again = {q["id"]: q for q in questions_for_run(nine_tmp)
+             if q["dataset_id"] == "3570e4ce2a9c:d1" and q["outcome_key"] == "late_adaptation"}
+    assert again[card["id"]]["status"] != "open" and again[card["id"]]["slot_answers"] is False
+    assert "3570e4ce2a9c:d1|late_adaptation||cell" in again
+    assert [s["kind"] for s in again["3570e4ce2a9c:d1|late_adaptation||cell"]["slots"]] == [
+        "verifier_refuted", "verifier_refuted"]
+    # the decision AND the refutations in one POST (on the card as it was shown): two values,
+    # two overrulings, on their groups
+    recs = answers_to_overrides(card, {"option": "use_candidates", "note": "pair", "slots": [
+        {"slot": s["member_id"], "option": "stands"} for s in refutations]})
+    assert [r["kind"] for r in recs] == ["value", "value", "mark_reviewed", "mark_reviewed"]
+    assert [r["group"] for r in recs] == ["A", "B", "A", "B"]
+    assert all("verifier_refuted" in r["overrules"] for r in recs[2:])
+    _append(nine_tmp, recs[2:])
+    done = [q for q in questions_for_run(nine_tmp) if q["dataset_id"] == "3570e4ce2a9c:d1"
+            and q["outcome_key"] == "late_adaptation" and q["status"] == "open"]
+    assert not any(s["kind"] == "verifier_refuted" for q in done for s in q["slots"]), done
+
+
+def test_a_cell_card_refuses_every_answer_that_decides_nothing(nine_tmp):
+    """Review findings 2, 3, 8, 9 on the second fold. A `cell` card offers no options of its own,
+    so a card-level `option` is one it never showed; a slot entry with nothing in it, a slot named
+    twice, and a bare `group` (the selector, not an answer) are all refused rather than recorded as
+    "a human looked at it" — the overclaim §C4 removed."""
+    from canopy.pipeline.overrides import OverrideRejected
+
+    card = next(q for q in questions_for_run(nine_tmp) if q["kind"] == "cell")
+    slot = card["slots"][0]
+    with pytest.raises(OverrideRejected):
+        answers_to_overrides(card, {"option": "stands", "note": "never offered here"})
+    with pytest.raises(OverrideRejected):
+        answers_to_overrides(card, {"slots": [{"slot": slot["member_id"]}]})
+    with pytest.raises(OverrideRejected):
+        answers_to_overrides(card, {"slots": [
+            {"slot": slot["member_id"], "option": slot["options"][0]["key"]},
+            {"slot": slot["member_id"], "option": slot["options"][-1]["key"]}]})
+    with pytest.raises(OverrideRejected):
+        answers_to_overrides(card, {"group": "A", "note": "picked a group, typed nothing"})
+    # a bare `group` beside real slot answers is not a second, phantom answer
+    recs = answers_to_overrides(card, {"group": slot["group"], "note": "x", "slots": [
+        {"slot": slot["member_id"], "option": slot["options"][0]["key"]}]})
+    assert len(recs) == 1 and recs[0]["group"] == slot["group"]
+    # …and the two things a cell card DOES take at card level: the row's exclusion, and a typed
+    # value that names its group (recorded as that slot's own question)
+    gone = answers_to_overrides(card, {"exclude": True, "note": "unreadable"})
+    assert [r["kind"] for r in gone] == ["exclude_dataset"]
+    typed = answers_to_overrides(card, {"group": slot["group"], "mean": 12.5,
+                                        "dispersion_value": 2.0, "dispersion_type": "SD",
+                                        "n": 10, "note": "Table 1"})
+    assert len(typed) == 1 and typed[0]["group"] == slot["group"]
+    assert typed[0]["question_id"] == slot["member_id"] and typed[0]["kind"] == "value"
+
+
+def test_a_precedence_card_never_carries_a_direction_or_a_typed_hint(nine_tmp):
+    """Review finding 4: the attach uses the cell fold's own filter. A direction is the measure
+    card's (one place, one answer — never twice on one card as two contradictory records) and a
+    `no_value` is a typed hint, not a pick."""
+    from canopy.review.questions import _NOT_CELL_FOLDABLE
+
+    nine.with_record(nine_tmp, "d1f2946e7e81:d2", "late_adaptation",
+                     flags=["precedence_override", "group_statistics_missing"],
+                     precedence_override_reason="text converts to nothing")
+    qs = questions_for_run(nine_tmp)
+    card = next(q for q in qs
+                if q["id"] == "d1f2946e7e81:d2|late_adaptation||precedence_override")
+    assert not any(s["kind"] in _NOT_CELL_FOLDABLE for s in card["slots"] if s["answerable"])
+    measure = [q for q in qs if q["kind"] == "orientation" and q["paper_id"].startswith("d1f29")]
+    assert measure and len(measure[0]["slots"]) >= 2, "the measure card still owns the direction"
+
+
 # ----------------------------------------------------------------- D4-lite: analysed_n
+def test_analysed_n_is_one_card_per_paper_with_a_slot_per_dataset(nine_tmp):
+    """Two flagged datasets of one paper: one card, one answerable slot each, and each slot's
+    answer is the dataset's own `group_n` record — settling that slot and no other."""
+    for dataset in ("b7523a41b03a:d1", "b7523a41b03a:d2"):
+        for g in ("A", "B"):
+            nine.with_flags(nine_tmp, dataset, "late_adaptation", g, ["n_before_exclusions"])
+    qs = [q for q in questions_for_run(nine_tmp) if q["kind"] == "analysed_n"]
+    assert len(qs) == 1 and qs[0]["scope"] == "paper" and qs[0]["slot_answers"] is True
+    card = qs[0]
+    assert card["id"].endswith("|||analysed_n") and card["options"] == []
+    assert [s["dataset_id"] for s in card["slots"]] == ["b7523a41b03a:d1", "b7523a41b03a:d2"]
+    assert card["member_ids"] == ["b7523a41b03a:d1|||analysed_n", "b7523a41b03a:d2|||analysed_n"]
+    from canopy.pipeline.overrides import OverrideRejected
+
+    with pytest.raises(OverrideRejected):
+        answers_to_overrides(card, {"option": "typed", "n_a": 18, "n_b": 16})
+    recs = answers_to_overrides(card, {"slots": [
+        {"slot": "b7523a41b03a:d1|||analysed_n", "option": "typed", "n_a": 18, "n_b": 16}]})
+    assert len(recs) == 1 and recs[0]["kind"] == "group_n"
+    assert recs[0]["dataset_id"] == "b7523a41b03a:d1" and (recs[0]["n_a"], recs[0]["n_b"]) == (18, 16)
+    assert recs[0]["question_id"] == "b7523a41b03a:d1|||analysed_n"
+    _append(nine_tmp, recs)
+    after = next(q for q in questions_for_run(nine_tmp) if q["kind"] == "analysed_n")
+    assert after["status"] == "open" and after["id"] == card["id"]      # d2 is still open
+    # review finding 7: the answered dataset is history on the card, not a second chance to
+    # write a second `group_n` for the same arms
+    d1, d2 = after["slots"]
+    assert d1["answerable"] is False and d1["settled"] and "18/16" in d1["settled"][0]["justification"]
+    assert d2["answerable"] is True
+    with pytest.raises(OverrideRejected):
+        answers_to_overrides(after, {"slots": [
+            {"slot": "b7523a41b03a:d1|||analysed_n", "option": "typed", "n_a": 1, "n_b": 1}]})
+    recs2 = answers_to_overrides(after, {"slots": [
+        {"slot": "b7523a41b03a:d2|||analysed_n", "option": "typed", "n_a": 17, "n_b": 17}]})
+    _append(nine_tmp, recs2)
+    done = [q for q in questions_for_run(nine_tmp) if q["kind"] == "analysed_n"]
+    assert done and all(q["status"] != "open" for q in done)
+
+
 def test_analysed_n_is_one_card_per_dataset(nine_tmp):
     for g in ("A", "B"):
         nine.with_flags(nine_tmp, "b7523a41b03a:d1", "late_adaptation", g,
@@ -360,9 +537,12 @@ def test_nine_folds_within_the_measured_arithmetic(nine_tmp):
     """
     qs = [q for q in questions_for_run(nine_tmp) if not q["answered"]]
     kinds = {kind: len([q for q in qs if q["kind"] == kind]) for kind in {q["kind"] for q in qs}}
-    assert kinds == {"pair": 6, "orientation": 4, "verifier_refuted": 9, "which_axis": 3,
-                     "which_value": 2, "include_paper": 3}
-    assert len(qs) == 27
+    # the second fold (`cell`): six cells that were two cards each — a refutation beside an axis
+    # question, two refutations, two six-option groups — are one card each; the two refutations
+    # left alone are the two cells whose other group is not held.
+    assert kinds == {"pair": 6, "orientation": 4, "cell": 6, "verifier_refuted": 2,
+                     "include_paper": 3}
+    assert len(qs) == 21
     # …out of the 34 per-cell questions the run recorded. The three paper-level cards are not a
     # fold of anything: no cell was ever read in those papers, so the unfolded path has none.
     assert len(questions_for_run(nine_tmp, fold=False)) == 34
@@ -386,7 +566,9 @@ def test_every_answer_to_every_card_is_one_the_log_accepts(nine_tmp):
             assert card["scope"] in ("cell", "dataset", "measure", "paper")
             assert card["impact_basis"] in ("pooled", "row", "unknown")
             assert card["impact_band"] in ("low", "high")
-            assert card["options"] or card["answered"], f"{card['id']} asks nothing"
+            slots = [s for s in card["slots"] if s.get("answerable")]
+            assert card["options"] or card["answered"] or slots, f"{card['id']} asks nothing"
+            assert bool(slots) == bool(card["slot_answers"]), card["id"]
             for option in card["options"]:
                 assert option.get("fingerprint")
                 if option.get("needs_input"):
@@ -395,6 +577,17 @@ def test_every_answer_to_every_card_is_one_the_log_accepts(nine_tmp):
                 assert records, (card["id"], option["key"])
                 for record in records:
                     _validate(record)
+            # …and every option of every slot answered on its own, through `slots`
+            for slot in slots:
+                assert slot["options"], (card["id"], slot["member_id"])
+                for option in slot["options"]:
+                    assert option.get("fingerprint")
+                    if option.get("needs_input"):
+                        continue
+                    records = answers_to_overrides(card, {"slots": [
+                        {"slot": slot["member_id"], "option": option["key"], "note": "checked"}]})
+                    assert len(records) == 1, (card["id"], slot["member_id"], option["key"])
+                    _validate(records[0])
 
 
 def test_the_unfolded_path_is_what_the_page_is_built_from(nine_tmp):
