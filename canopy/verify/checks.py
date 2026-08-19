@@ -1105,10 +1105,19 @@ _EXCLUSION_CUE = re.compile(
     r"|were not included|data (?:were|was) lost)\w*", re.I)
 #: "4 younger", "153 of" — a count and the word immediately after it
 _COUNTED = re.compile(r"\b(\d+)\s+([A-Za-z][\w-]*)")
-#: "…, 4 were excluded" — a count that runs INTO the cue, at most two words short of it. The
-#: exclusion count is usually the subject of the cue's own verb, and in that shape it is the only
-#: number in the sentence that is not the size being excluded from.
-_COUNT_INTO_CUE = re.compile(r"\b(\d+)\s+(?:\w+\s+){0,2}$")
+#: "…, 4 were excluded" / "…, 4 participants were excluded" — the count that is the cue's own
+#: subject. Group 2 is the word immediately after the count, and it is what decides whether the
+#: count is a count of PEOPLE: "5 trials were excluded" is the same grammar about a different
+#: noun (Heuer 2008 prints exactly that), and reading it as an arm is the one mistake this whole
+#: function exists to avoid.
+_COUNT_INTO_CUE = re.compile(r"\b(\d+)\s+([A-Za-z][\w-]*)(?:\s+\w+)?\s*$")
+#: the followers that make a bare count a count of people: a person noun, or the auxiliary of the
+#: cue's own verb ("4 were excluded"). It overlaps `_GENERIC_GROUP_WORDS` below and the two sets
+#: do opposite jobs — there these words are useless because BOTH arms share them, here they are
+#: the whole evidence that the number counts participants at all.
+_PERSON_WORDS: frozenset[str] = frozenset({
+    "adult", "adults", "participant", "participants", "subject", "subjects", "person", "people",
+    "volunteer", "volunteers", "patient", "patients", "were", "was", "had"})
 #: words every arm of every review shares, so a count standing next to one says nothing about
 #: WHICH group lost it. They are dropped from a group's vocabulary before the count is read.
 _GENERIC_GROUP_WORDS: frozenset[str] = frozenset({
@@ -1156,6 +1165,12 @@ def excluded_count(text: str, group_terms: Sequence[str]) -> tuple[int | None, s
     — a recruited size read out of the fallback — is what `n_before_exclusions`' `0 < count <
     printed` guard is for: a count that is not a strict part of the size it is taken from is not
     an exclusion count, whatever it stands next to.
+
+    A bare count read out of the fallback must still be a count of PEOPLE: the word after it has
+    to be a person noun, an arm word, or the auxiliary of the cue's own verb. Without that test
+    "In the younger group's session, 5 trials were excluded" reads as five lost participants —
+    the trial-versus-participant confusion this function was written to refuse, arriving through
+    the back door.
     """
     words = _group_words(group_terms)
     if not words:
@@ -1169,11 +1184,17 @@ def excluded_count(text: str, group_terms: Sequence[str]) -> tuple[int | None, s
             if match.group(2).casefold() in words:
                 return (int(match.group(1)), match.group(0).strip(),
                         _sentence(text, cue.start(), cue.start() + match.end()))
-        # 2. the count that IS the cue's own subject: "…, 4 were excluded". It is taken only when
-        #    the same window names this arm, so a sentence about the other group's exclusions
-        #    cannot supply a number for this one.
+        # 2. the count that IS the cue's own subject: "…, 4 were excluded". Two conditions, and
+        #    both are load-bearing: the word after the count must name PEOPLE or be the auxiliary
+        #    of the cue's verb (so "5 trials were excluded" is not an arm's loss), and the same
+        #    window must name THIS arm (so a clause about the other group cannot supply a number
+        #    for this one). The arm test is on WORDS, not on substrings: "old" inside "household"
+        #    is not this arm being named.
         into = _COUNT_INTO_CUE.search(behind)
-        if into is not None and any(word in behind.casefold() for word in words):
+        named = set(re.split(r"[^\w]+", behind.casefold())) & words
+        if (into is not None and named
+                and (into.group(2).casefold() in _PERSON_WORDS
+                     or into.group(2).casefold() in words)):
             # the phrase is the bare count: the words between it and the cue are the sentence's
             # own grammar ("4 were excluded"), and quoting them back after "it excluded" would
             # read as nonsense. The sentence itself travels in the quote.
@@ -1227,7 +1248,7 @@ def n_before_exclusions(pages: Sequence[str], cand: Candidate,
             # not a size"): a card option nobody can answer. The FINDING still stands, because it
             # rests on the printed size and the exclusion sentence, not on the subtraction; what
             # is dropped is the subtraction, so the card offers no `recruited_minus_excluded`.
-            if count is not None and not 0 < count < printed:
+            if not 0 < count < printed:
                 count = None
             detail = {"recruited": printed, "excluded": count, "quote": quote}
             if count is None:

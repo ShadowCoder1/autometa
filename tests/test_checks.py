@@ -1037,12 +1037,27 @@ def test_a_size_the_paper_never_prints_as_a_number_is_not_a_recruited_count():
     assert n_before_exclusions(pages, vachon(20, "A"), ["older", "old"]) is None
 
 
+#: the same trial exclusion in the shape the cue-subject fallback reads — a bare count running
+#: into the cue, with this arm named a few words earlier. Heuer's own wording is only refused by
+#: the punctuation it happens to carry ("(1.1%) were excluded"); this sentence carries none, so it
+#: is the one that says whether the follower test is doing the work or the punctuation is.
+TRIALS_NOT_PEOPLE = ("Participants (n = 20).\n"
+                     "In the younger group's session, 5 trials were excluded because of blinks.")
+
+
 def test_a_trial_level_exclusion_never_supplies_the_count():
     """153 of 13,920 trials is not 153 people: no number beside the cue belongs to the group."""
-    from canopy.verify.checks import excluded_count
+    from canopy.verify.checks import excluded_count, n_before_exclusions
 
     assert excluded_count(HEUER_TRIAL_EXCLUSIONS, ["younger", "young"]) == (None, "", "")
     assert excluded_count(HEUER_TRIAL_EXCLUSIONS, ["older", "old"]) == (None, "", "")
+    # …and neither is "5 trials were excluded", which is the cue's own subject and this arm's
+    # own paragraph — everything the fallback looks for except a count of people
+    assert excluded_count(TRIALS_NOT_PEOPLE, ["younger", "young"]) == (None, "", "")
+    assert n_before_exclusions([TRIALS_NOT_PEOPLE], vachon(20), ["younger", "young"]) is None
+    # the same sentence about PEOPLE is read, so the rule is the noun and not the shape
+    people = TRIALS_NOT_PEOPLE.replace("5 trials", "5 participants")
+    assert excluded_count(people, ["younger", "young"])[0] == 5
     # …and Vachon's own sentence, read for each arm in turn, is where the counts do belong
     count, phrase, quote = excluded_count(
         "We excluded 4 younger (all from the non-instructed group) and 3 older (1 non-instructed,"
