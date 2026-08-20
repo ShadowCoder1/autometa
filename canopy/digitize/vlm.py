@@ -30,6 +30,7 @@ from PIL import Image
 
 from ..ingest.images import PreparedImage, prepare_for_claude
 from ..llm.client import EPHEMERAL, LLMClient, ToolLoopResult
+from ..llm.context import REVIEWER_HINT_LABEL
 from ..llm.schemas import assert_no_derived_stats, assert_valid_output_schema
 from .calibrate import parse_number
 from .cv import (Axes, TickLabels, detect_bars, detect_markers, find_axes, find_tick_marks,
@@ -134,6 +135,11 @@ class TargetSpec:
     group_a_synonyms: tuple[str, ...] = ()
     group_b_synonyms: tuple[str, ...] = ()
     notes: str = ""
+    #: a human's answer to "where is this value?" (`re_extract`), when a reviewer has given one for
+    #: this cell. It sits BESIDE `panel_hint` and never replaces it: the mapper's locator is what
+    #: the paper says, the hint is what a reader of the review says, and a read-out that saw only
+    #: the second would have lost the evidence the first rests on.
+    reviewer_hint: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return dict(self.__dict__)
@@ -156,6 +162,7 @@ class TargetSpec:
             ("expected unit", self.unit_hint),
             ("time-series rule", self.late_window_sd if self.x_hint else ""),
             ("mapper notes", self.notes),
+            (REVIEWER_HINT_LABEL, self.reviewer_hint),
         ]
         lines = [f"- {label}: {value}" for label, value in rows if str(value).strip()]
         return "\n".join(lines) or "- (the mapper gave no details)"

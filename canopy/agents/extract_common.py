@@ -18,7 +18,7 @@ from typing import Any, Iterable, Sequence
 
 from ..ingest.pdf import PaperRecord
 from ..llm.client import EPHEMERAL
-from ..llm.context import page_blocks, text_block
+from ..llm.context import page_blocks, reviewer_hint_line, text_block
 from ..models import DatasetSpec, GroupSpec, Protocol, Source, SourceKind
 from ..verify.grounding import ground_candidate, normalize
 # the mapper owns these three; sharing them (rather than copying) is what keeps one prompt-cache
@@ -101,10 +101,17 @@ def groups_text(dataset: DatasetSpec) -> str:
     return "\n".join(lines)
 
 
-def sources_text(sources: Sequence[Source]) -> str:
-    """Where a previous agent said the numbers live — a starting point, not a limit."""
+def sources_text(sources: Sequence[Source], *, reviewer_hint: str = "") -> str:
+    """Where a previous agent said the numbers live — a starting point, not a limit.
+
+    `reviewer_hint` is a human's answer to "where is this value?" (a `re_extract` override). It is
+    appended to the mapper's locations and never substituted for them: the hint is why this cell
+    is being read a second time, not a ruling about where the first reading should have looked.
+    """
+    hint = reviewer_hint_line(reviewer_hint)
     if not sources:
-        return "(no locations were recorded for this outcome)"
+        return "\n".join(["(no locations were recorded for this outcome)", hint] if hint
+                         else ["(no locations were recorded for this outcome)"])
     lines = []
     for source in sources:
         head = f"- page {source.page} | {source.kind.value}"
@@ -120,6 +127,8 @@ def sources_text(sources: Sequence[Source]) -> str:
         if source.error_bar_type.value not in ("UNKNOWN", "NONE"):
             lines.append(f"    a previous reader thought the ± value here is "
                          f"{source.error_bar_type.value} — check it yourself")
+    if hint:
+        lines.append(hint)
     return "\n".join(lines)
 
 

@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import MappingProxyType
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Collection, Mapping, Sequence
 
 from ..agents.adjudicator import adjudicate
 from ..agents.extract_stats import extract_test_statistics
@@ -72,7 +72,7 @@ from ..verify.vote import (LOCATOR_CONFLICT, LOCATOR_CONFLICT_NOTE, VoteResult,
                            model_family, vote_groups)
 from .aggregate import AGGREGATED_FLAG, Aggregation, aggregate_one_row_per_paper
 from .overrides import (OVERRIDES_FILE, apply_overrides_and_repool, eligibility_answers,
-                        map_answers, read_overrides)
+                        map_answers, read_overrides, re_extract_answers)
 from .resolve import resolve_effect_with_fallback
 from .rows import (DISPERSION_APPROXIMATED, approximation_flags, cell_candidates, prepare_rows,
                    reported_values, statistic_values, vote_candidates)
@@ -146,12 +146,16 @@ class PaperResult:
 
 # ----------------------------------------------------------------------------- digitiser target
 def target_for_source(source: Source, dataset: DatasetSpec, outcome_sources: OutcomeSources,
-                      protocol: Protocol, settings: StatsSettings) -> TargetSpec:
+                      protocol: Protocol, settings: StatsSettings,
+                      reviewer_hint: str = "") -> TargetSpec:
     """The mapper's figure `Source` as the digitiser's `TargetSpec`.
 
     Every hint is copied from the protocol or from what the mapper read in the paper; the x hint is
     the protocol's own measurement window, which is what makes "read the late part of the block"
     a protocol statement rather than something this code knows.
+
+    `reviewer_hint` is the one line that comes from neither: a human's `re_extract` answer for this
+    cell. It travels beside `panel_hint`, never instead of it.
     """
     outcome = protocol.outcome(outcome_sources.outcome_key)
     return TargetSpec(
@@ -170,7 +174,8 @@ def target_for_source(source: Source, dataset: DatasetSpec, outcome_sources: Out
         collapse_across_x=(source.x_axis_kind == "categorical"
                            and protocol.digitize.collapse_across_categorical_x),
         notes="; ".join(part for part in (source.quote, source.values_in_text, source.notes)
-                        if part)[:400])
+                        if part)[:400],
+        reviewer_hint=reviewer_hint)
 
 
 #: source kinds that put NUMBERS in characters somewhere a text reader could find them. A source
@@ -262,6 +267,47 @@ def _needs_a_fresh_map(ctx: "RunContext", paper: PaperRecord) -> list[int]:
                    and answer["seq"] not in bought})
 
 
+#: the extract stage's own record of the cells it has RE-read under a reviewer's hint and whose
+#: readings changed, and — in `verify.json` / `resolve.json` — each later stage's record of the
+#: ones it has already rebuilt for. Two keys, on disk, because the instruction to rebuild must be
+#: exactly as durable as the `consumed_override_seqs` written beside it: `save()` records the
+#: consumption as each cell is read, so an interruption between the extract stage and the verify
+#: stage of the same paper would otherwise leave a verdict standing over readings the stage file
+#: no longer holds — with the seq consumed, so no resume would look at the cell again and no card
+#: anywhere would ask about it. The difference between the two keys is what a resume repairs, and
+#: it is idempotent: a stage that dies before writing its own key simply repairs again.
+#: (`REMAPPED_FOR` above is the same pattern for §C3's maps.)
+REREAD_CELLS = "cells_reread_for_override"
+REREAD_APPLIED = "cells_reread_applied"
+
+
+def _cells(names: Any) -> set[tuple[str, str]]:
+    """`["d1/late_adaptation", …]` as `{(dataset_id, outcome_key), …}`."""
+    return {(str(name).split("/", 1)[0], str(name).split("/", 1)[1])
+            for name in names or () if isinstance(name, str) and "/" in name}
+
+
+def _reread_on_record(ctx: "RunContext", paper: PaperRecord) -> list[str]:
+    """Every cell the extract stage says it has re-read under a hint, freshest file wins."""
+    if not stage_done(ctx.out_dir, paper.sha256, "extract"):
+        return []
+    payload = read_stage(ctx.out_dir, paper.sha256, "extract") or {}
+    return sorted({str(name) for name in payload.get(REREAD_CELLS) or [] if isinstance(name, str)})
+
+
+def _stale_cells(ctx: "RunContext", paper: PaperRecord, stage: str) -> set[tuple[str, str]]:
+    """Cells a hinted re-read has changed that `stage` has not rebuilt for yet.
+
+    Read from the stage files rather than carried in memory, so the in-process case and the
+    interrupted one are the same case: what this stage owes is the difference between what the
+    extract stage recorded re-reading and what this stage recorded acting on.
+    """
+    applied: Any = ()
+    if stage_done(ctx.out_dir, paper.sha256, stage):
+        applied = (read_stage(ctx.out_dir, paper.sha256, stage) or {}).get(REREAD_APPLIED)
+    return _cells(_reread_on_record(ctx, paper)) - _cells(applied)
+
+
 #: map answers that can only be acted on by BUYING a reading. "Exclude it" needs no model call and
 #: is applied by `overrides.apply_overrides_and_repool` at re-pool time; these two are decisions
 #: about what to EXTRACT, so they stay pending until an extract stage has read the cells they
@@ -293,10 +339,97 @@ def _answer_cells(answer: Mapping[str, Any], study: StudyMap, keys: set[str],
             and (dataset.dataset_id, sources.outcome_key) not in blocked_cells]
 
 
+def _hinted_cells(ctx: "RunContext", paper: PaperRecord, study: StudyMap, keys: set[str],
+                  blocked_datasets: Mapping[str, str],
+                  blocked_cells: Mapping[tuple[str, str], str],
+                  consumed: Collection[int] = ()) -> dict[str, list[dict[str, Any]]]:
+    """`{cell: [re_extract answer, ...]}` for the cells a reviewer has asked to have read again.
+
+    Only cells THIS map still asks for: a hint on a dataset the review has since excluded, or on a
+    cell an unanswered map question blocks, is a reading no resume may buy — the same rule
+    `_answer_cells` applies to an inclusion, and for the same reason (whole-diff L4).
+
+    A cell is in only while one of its hints is unconsumed. That is what makes the hint buy ONE
+    reading rather than one per resume for ever: the seqs go into `consumed_override_seqs` when the
+    reading is bought, and the next resume sees nothing left to act on.
+    """
+    done = {int(seq) for seq in consumed if isinstance(seq, int)}
+    live = {f"{dataset.dataset_id}/{sources.outcome_key}"
+            for dataset in study.datasets if dataset.dataset_id not in blocked_datasets
+            for sources in dataset.outcomes
+            if sources.outcome_key in keys
+            and (dataset.dataset_id, sources.outcome_key) not in blocked_cells}
+    cells: dict[str, list[dict[str, Any]]] = {}
+    for answer in re_extract_answers(ctx.out_dir, paper.sha256):
+        cell = f"{answer.get('dataset_id') or ''}/{answer.get('outcome_key') or ''}"
+        if cell in live:
+            cells.setdefault(cell, []).append(answer)
+    return {cell: answers for cell, answers in cells.items()
+            if any(answer.get("seq") not in done for answer in answers)}
+
+
+#: how much of one hint the readers are shown, and how many hints. The line they end up in is
+#: truncated whole (`llm.context.reviewer_hint_line`), so an unbounded join would let a further
+#: hint fall off the end — producing a byte-identical prompt, hence the same cache key, hence a
+#: `seq` consumed by a reading nothing new was bought for. Bounded here instead, where the reason
+#: is visible: four hints of 200 characters cannot reach the line's own limit.
+_HINT_CHARS, _HINTS_SHOWN = 200, 4
+
+
+def _hint_text(answers: Sequence[Mapping[str, Any]]) -> str:
+    """Every hint a reviewer has given this cell, as the one line the readers see.
+
+    Joined rather than reduced to the freshest: each is a place a person says the value is, and a
+    reader given two locations reads both. Duplicates are dropped — the same words twice are one
+    instruction, and two copies of it in a prompt read as emphasis nobody wrote — and only the
+    most recent `_HINTS_SHOWN` are carried, so the line can never grow past the point where a new
+    hint stops changing it.
+
+    The `group` a hint may carry is deliberately not read here: the extractors answer both arms in
+    one call, so there is no such thing as re-reading one of them, and the cell is what is re-read.
+    That is said out loud on the card and in the resume's warning rather than silently assumed.
+    """
+    hints = [" ".join(str(answer.get("hint") or "").split())[:_HINT_CHARS] for answer in answers]
+    return "; ".join(list(dict.fromkeys(hint for hint in hints if hint))[-_HINTS_SHOWN:])
+
+
+def _absorb_reread(cell: tuple[str, str], candidates: list[Candidate],
+                   fresh: Sequence[Candidate], superseded: list[Candidate]) -> bool:
+    """Merge a hinted re-read into the cell's readings, losing none of them. Did anything change?
+
+    **A hinted re-read never removes a reading that found a value.** A hint is a request for a
+    better reading, not permission to lose the one the run already paid for: the questions page
+    writes a `re_extract` the moment a reviewer types into `hint` — on any card, not only a
+    valueless one — so "somebody asked" is not evidence that the cell had nothing. A re-read that
+    comes back `not_on_these_pages`, which is what a hint pointing at the wrong place produces,
+    therefore leaves the cell exactly as it was; and it leaves BOTH arms as they were, because a
+    hint recorded against one group said nothing about the other.
+
+    Ids are deterministic (`dataset:outcome:group:extractor#index`), so a reader's two readings of
+    one cell collide by construction and exactly one of each pair may stand: the fresh one when it
+    found something, the earlier one otherwise. The loser is not dropped — it goes to
+    `superseded_candidates` in the stage file, because a reading a run bought is evidence about
+    the paper whether or not the analysis weighs it.
+
+    Returns whether the cell's readings actually changed, which is what makes the verdict and the
+    row built from them stale. A re-read that changed nothing has nothing to rebuild.
+    """
+    won = {c.candidate_id for c in fresh if c.status == "found"}
+    kept = [c for c in candidates if (c.dataset_id, c.outcome_key) != cell
+            or c.candidate_id not in won]
+    standing = {c.candidate_id for c in kept}
+    added = [c for c in fresh if c.candidate_id not in standing]
+    superseded.extend(c for c in candidates
+                      if (c.dataset_id, c.outcome_key) == cell and c.candidate_id in won)
+    superseded.extend(c for c in fresh if c.candidate_id in standing)
+    candidates[:] = [*kept, *added]
+    return bool(added or won)
+
+
 def _consumed_seqs(ctx: "RunContext", paper: PaperRecord, study: StudyMap, keys: set[str],
                    extracted: Sequence[str], already: Sequence[Any] = (),
-                   blocked_cells: Mapping[tuple[str, str], str] = MappingProxyType({})
-                   ) -> list[int]:
+                   blocked_cells: Mapping[tuple[str, str], str] = MappingProxyType({}),
+                   re_read: Sequence[int] = ()) -> list[int]:
     """The `seq` of every answer this stage has now acted on, unioned with what is on record.
 
     An answer is acted on when every cell it asks for has been extracted — not merely when the
@@ -316,6 +449,10 @@ def _consumed_seqs(ctx: "RunContext", paper: PaperRecord, study: StudyMap, keys:
     # this paper has been read at all, because being read IS what it asked for. Without this the
     # card said "not applied yet" for ever on a paper the resume had extracted.
     seqs.update(_eligibility_seqs(ctx, paper, extracted))
+    # …and the re-extraction hints whose cell this stage has just read AGAIN. Passed in rather
+    # than derived, because "the cell is in `cells_extracted`" is true of every cell an earlier
+    # run read without the hint: what retires a hint is the reading bought FOR it.
+    seqs.update(int(seq) for seq in re_read if isinstance(seq, int))
     return sorted(seqs)
 
 
@@ -510,13 +647,31 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
     stopped = ""
     consumed: list[Any] = []
     only: set[str] | None = None
+    #: C4's other half: the cells a reviewer has answered "it is over there" about, and the seqs
+    #: this stage retires by re-reading them. A hint is the one answer whose consequence is a
+    #: READING, so it is acted on here or nowhere.
+    hints: dict[str, list[dict[str, Any]]] = {}
+    re_read: list[int] = []
+    #: the cells a hinted re-read has CHANGED, and the readings it displaced. Both go in the stage
+    #: file: the first is what the stages after this one owe a rebuild for, the second is the
+    #: evidence a re-read is not allowed to lose.
+    reread: set[str] = set()
+    superseded: list[Candidate] = []
 
     if ctx.resume and stage_done(ctx.out_dir, paper.sha256, "extract"):
         payload = read_stage(ctx.out_dir, paper.sha256, "extract")
         candidates = [Candidate.model_validate(c) for c in payload["candidates"]]
+        superseded = [Candidate.model_validate(c)
+                      for c in payload.get("superseded_candidates") or []]
+        reread = {str(cell) for cell in payload.get(REREAD_CELLS) or [] if isinstance(cell, str)}
         done = [str(cell) for cell in payload.get("cells_extracted") or []]
         consumed = list(payload.get("consumed_override_seqs") or [])
-        only = _cells_still_unread(study, keys, blocked_datasets, blocked_cells, done, candidates)
+        hints = _hinted_cells(ctx, paper, study, keys, blocked_datasets, blocked_cells, consumed)
+        # a cell nobody has read, or one a reviewer has asked to have read AGAIN. The second is
+        # not "still unread" by any test the stage file can apply — it was read, and came back
+        # with nothing usable — so it is unioned in rather than folded into that rule.
+        only = _cells_still_unread(study, keys, blocked_datasets, blocked_cells, done,
+                                   candidates) | set(hints)
         if not only:
             # nothing new to read. The stage file is still rewritten when an answer has finished
             # being acted on, so a decision whose cells were already extracted stops being pending
@@ -527,10 +682,20 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
                                                                    "consumed_override_seqs": seqs})
             status.stages["extract"] = "skipped"
             return candidates
-        status.warnings.append(
-            f"{len(only)} cell(s) this map asks for had never been extracted "
-            f"({', '.join(sorted(only))}) — the extract stage was re-entered for those cells "
-            f"only; every other cell keeps the reading an earlier run paid for")
+        unread = sorted(only - set(hints))
+        if unread:
+            status.warnings.append(
+                f"{len(unread)} cell(s) this map asks for had never been extracted "
+                f"({', '.join(unread)}) — the extract stage was re-entered for those cells "
+                f"only; every other cell keeps the reading an earlier run paid for")
+        if hints:
+            status.warnings.append(
+                f"{len(hints)} cell(s) are being read again with a reviewer's hint "
+                f"({', '.join(sorted(hints))}) — the WHOLE cell is re-read, both groups, "
+                f"whichever group the hint was recorded against; a reading that found a value is "
+                f"replaced only by a re-reading that finds one")
+    else:
+        hints = _hinted_cells(ctx, paper, study, keys, blocked_datasets, blocked_cells, consumed)
 
     def save(complete: bool) -> None:
         # written after EVERY cell, not once at the end: Buch 2003 spent $14.37 against a $14 cap
@@ -546,7 +711,15 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
                      # answer that needs a model call is pending for ever and the review page can
                      # never say which decisions are still outstanding.
                      "consumed_override_seqs": _consumed_seqs(ctx, paper, study, keys, done,
-                                                              consumed, blocked_cells)})
+                                                              consumed, blocked_cells, re_read),
+                     # the readings a hinted re-read displaced. Kept, not dropped: a reading the
+                     # run bought is evidence about the paper whether or not the analysis weighs
+                     # it, and a re-read that overwrote it unrecoverably would make the hint a
+                     # way of losing data.
+                     "superseded_candidates": [c.model_dump(mode="json") for c in superseded],
+                     # …and which cells that re-reading actually changed, for the stages after
+                     # this one. Written beside the consumption, so the two can never disagree.
+                     REREAD_CELLS: sorted(reread)})
 
     for dataset in study.datasets:
         if dataset.dataset_id in blocked_datasets:
@@ -570,17 +743,36 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
             if stopped:                       # the cap stops NEW cells; it does not undo old ones
                 exhausted.append(cell)
                 continue
+            hint = _hint_text(hints.get(cell, ()))
+            pair = (dataset.dataset_id, sources.outcome_key)
+            # a hinted re-read is read into a scratch list and merged afterwards, never over the
+            # cell's own readings: nothing may be removed before the reading meant to replace it
+            # is known to have found anything. A cap that lands mid-cell takes the same path, so
+            # the merge happens either way and the readings already paid for are kept.
+            fresh: list[Candidate] = []
             try:
                 _extract_cell(ctx, paper, dataset, sources, figures_dir, status,
-                              out=candidates)
+                              out=fresh if hint else candidates, reviewer_hint=hint)
             except PaperBudgetExceeded as exc:
+                if hint:
+                    _absorb_reread(pair, candidates, fresh, superseded)
                 stopped = str(exc)
                 exhausted.append(cell)
                 status.warnings.append(
                     f"{cell}: budget_exhausted — {exc}; the rows this cell had already produced "
                     f"are kept, the cells after it were not started")
                 continue
-            done.append(cell)
+            if cell not in done:
+                done.append(cell)
+            if hint:
+                # …and only now: the seqs are retired by the reading, not by the stage reaching
+                # the cell. A re-read that changed the cell's readings makes the verdict and the
+                # row built from them stale, and that is recorded in the stage file beside the
+                # consumption it pairs with — never in memory alone (see `REREAD_CELLS`).
+                if _absorb_reread(pair, candidates, fresh, superseded):
+                    reread.add(cell)
+                re_read.extend(int(answer["seq"]) for answer in hints[cell]
+                               if isinstance(answer.get("seq"), int))
             save(complete=False)
     if exhausted:
         status.warnings.append(
@@ -594,11 +786,17 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
 
 def _extract_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                   sources: OutcomeSources, figures_dir: Path,
-                  status: PaperStatus, out: list[Candidate] | None = None) -> list[Candidate]:
+                  status: PaperStatus, out: list[Candidate] | None = None,
+                  reviewer_hint: str = "") -> list[Candidate]:
     """Both text variants, the statistic reader, and the digitiser once per figure source.
 
     `out` is filled as each reader answers rather than returned at the end, so a budget death half
     way through a cell keeps the readings that were already paid for.
+
+    `reviewer_hint` is a human's `re_extract` answer for this cell, and it reaches EVERY reader —
+    the two text variants, the statistic pass and each figure read-out — because a reviewer who
+    says where the value is has not said which reader should find it there. It is added to the
+    locations the mapper gave and never substituted for them.
     """
     key = sources.outcome_key
     out = out if out is not None else []
@@ -624,12 +822,15 @@ def _extract_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
     if _has_printed_source(readable):
         out.extend(extract_group_stats(ctx.client, paper, ctx.protocol, dataset, key,
                                        readable, variant="table_first",
+                                       reviewer_hint=reviewer_hint,
                                        model=ctx.models["primary"]))
         out.extend(extract_group_stats(ctx.client, paper, ctx.protocol, dataset, key,
                                        readable, variant="narrative_first",
+                                       reviewer_hint=reviewer_hint,
                                        model=ctx.models["secondary"]))
         out.extend(extract_test_statistics(ctx.client, paper, ctx.protocol, dataset, key,
-                                           readable, model=ctx.models["primary"]))
+                                           readable, reviewer_hint=reviewer_hint,
+                                           model=ctx.models["primary"]))
     else:
         status.warnings.append(
             f"{dataset.dataset_id}/{key}: every source the mapper found for this outcome is a "
@@ -643,7 +844,8 @@ def _extract_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                 f"{dataset.dataset_id}/{key}: the mapper pointed at figure "
                 f"{source.figure_id or source.locator!r}, which ingestion did not find")
             continue
-        target = target_for_source(source, dataset, sources, ctx.protocol, ctx.settings)
+        target = target_for_source(source, dataset, sources, ctx.protocol, ctx.settings,
+                                   reviewer_hint)
         try:
             digitised = digitize(ctx.client, paper, figure, target, source=source,
                                  dataset=dataset,
@@ -1142,6 +1344,20 @@ def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: li
         payload = read_stage(ctx.out_dir, paper.sha256, "verify")
         verdicts = [Verdict.model_validate(v) for v in payload["verdicts"]]
         extra = [Candidate.model_validate(c) for c in payload.get("extra_candidates", [])]
+        # …except for a cell whose readings a hinted re-read has changed and this stage has not
+        # rebuilt for: what it holds there is a verdict over readings the stage file no longer
+        # has, and a re-opened candidate bought to settle them. Both are dropped, which puts the
+        # cell back in the case below — candidates and no verdict — and it is verified from the
+        # new reading like any other newly extracted cell. The debt is read off the stage files,
+        # so an interrupted resume owes exactly the repair this one would have made.
+        stale = _stale_cells(ctx, paper, "verify")
+        if stale:
+            verdicts = [v for v in verdicts if (v.dataset_id, v.outcome_key) not in stale]
+            extra = [c for c in extra if (c.dataset_id, c.outcome_key) not in stale]
+            status.warnings.append(
+                f"{len(stale)} cell(s) were read again with a reviewer's hint "
+                f"({', '.join(f'{d}/{k}' for d, k in sorted(stale))}) — the verdict an earlier "
+                f"run reached over the readings that re-reading replaced was dropped, not kept")
         # the same rule as the extract stage's, one stage on: this stage is not done while a cell
         # that now HAS candidates has no verdict. Without it an answer acted on by the resumed
         # extract stage produced candidates and no row, which is the same dead end one layer up.
@@ -1150,6 +1366,15 @@ def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: li
                 and (c.dataset_id, c.outcome_key) not in blocked_cells} - {
                     (v.dataset_id, v.outcome_key) for v in verdicts}
         if not only:
+            if stale:
+                # a re-read cell the map now blocks: there is nothing to verify and nothing left
+                # to owe, so the debt is settled on the file rather than re-attempted, silently
+                # and for nothing, on every resume after this one.
+                write_stage(ctx.out_dir, paper.sha256, "verify",
+                            {**payload,
+                             "verdicts": [v.model_dump(mode="json") for v in verdicts],
+                             "extra_candidates": [c.model_dump(mode="json") for c in extra],
+                             REREAD_APPLIED: _reread_on_record(ctx, paper)})
             status.stages["verify"] = "skipped"
             candidates.extend(extra)
             return verdicts
@@ -1240,6 +1465,9 @@ def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: li
                         for k, v in orientations.items()},
         "adjudications": adjudications,
         "source_rank": source_ranks,
+        # which hinted re-reads this stage has now rebuilt for. Written LAST, with the verdicts it
+        # rebuilt: a stage that dies before this file exists still owes the repair, and says so.
+        REREAD_APPLIED: _reread_on_record(ctx, paper),
         "reopens": reopens})
     status.stages["verify"] = "done"
     return verdicts
@@ -1339,12 +1567,26 @@ def _resolve(ctx: RunContext, paper: PaperRecord, study: StudyMap,
     if ctx.resume and stage_done(ctx.out_dir, paper.sha256, "resolve"):
         payload = read_stage(ctx.out_dir, paper.sha256, "resolve")
         records = [EffectSizeRecord.model_validate(r) for r in payload["records"]]
+        # a row for a cell that has been read again is a row over numbers this run has replaced,
+        # so it is not a record of anything: dropped here, it makes the cell "verified with no
+        # row" and the stage recomputes — over every verdict, as below. Off the stage files, for
+        # the reason `_verify` reads it there: this stage owes the same repair after a resume that
+        # died before it as it owes inside the run that re-read the cell.
+        stale = _stale_cells(ctx, paper, "resolve")
+        records = [r for r in records if (r.dataset_id, r.outcome_key) not in stale]
         # the same rule again, at the last stage: not done while a cell that now has verdicts has
         # no record. This stage buys nothing — it is arithmetic over the verdicts — so it is
         # recomputed in full rather than merged, which cannot drift from a fresh run.
         missing = {(v.dataset_id, v.outcome_key) for v in verdicts} - {
             (r.dataset_id, r.outcome_key) for r in records}
         if not missing:
+            if stale:
+                # the re-read cell has no verdict either (its dataset is blocked now): there is
+                # no row to rebuild, so the file is brought in line with what this stage returns
+                # and the debt is settled rather than re-attempted on every resume.
+                write_stage(ctx.out_dir, paper.sha256, "resolve",
+                            {"records": [r.model_dump(mode="json") for r in records],
+                             REREAD_APPLIED: _reread_on_record(ctx, paper)})
             status.stages["resolve"] = "skipped"
             return records
         status.warnings.append(
@@ -1394,7 +1636,8 @@ def _resolve(ctx: RunContext, paper: PaperRecord, study: StudyMap,
         records.append(record)
 
     write_stage(ctx.out_dir, paper.sha256, "resolve",
-                {"records": [r.model_dump(mode="json") for r in records]})
+                {"records": [r.model_dump(mode="json") for r in records],
+                 REREAD_APPLIED: _reread_on_record(ctx, paper)})
     status.stages["resolve"] = "done"
     return records
 

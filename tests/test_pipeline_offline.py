@@ -1410,3 +1410,308 @@ def test_an_alternate_measure_is_kept_on_the_record_and_never_read_for_the_value
     assert not [c for c in extract["candidates"]
                 if "other operationalization" in str(c.get("locator", ""))]
     assert [w for w in paper.warnings if "alternate source" in w], paper.warnings
+
+
+# ------------------------------------------------- C4: a re-extraction hint is acted on at --resume
+def _blind_router(specs: "list[FakeSpec]", state: dict[str, Any]):
+    """`fake_router`, but every reader comes back empty until `state["found"]` is set.
+
+    The one shape the offline fake could not make: a cell whose readers all answer
+    `not_on_these_pages`, which is what a `no_value` question is asked about. Flipping the flag is
+    the reviewer's hint working — a second reading of the same cell that now finds the value.
+    """
+    router = fake_router(specs)
+
+    def route(request: LLMRequest) -> Any:
+        props = _properties(request)
+        payload = router(request)
+        if state.get("found") or not isinstance(payload, dict):
+            return payload
+        if "groups" in props and "rationale" in props:     # the adjudicator has nothing to weigh
+            return {"rationale": "no reader found a value for either group on these pages",
+                    "needs_human": True, "notes": "", "groups": []}
+        if "groups" in props:                              # the two text readers
+            return {"notes": "", "groups": [
+                {**row, "status": "not_on_these_pages", "mean": None, "value_as_written": "",
+                 "dispersion_value": None, "dispersion_type": "UNKNOWN", "n": None}
+                for row in payload["groups"]]}
+        return payload
+    return route
+
+
+def _hinted_run(tmp_path, bock_dir, fake_specs, state):
+    """A finished run of one paper whose only cell found nothing, plus its `no_value` question."""
+    from canopy.pipeline.run import run_pipeline
+    from canopy.review.questions import questions_for_run
+
+    out = tmp_path / "run"
+    client = LLMClient(provider=FakeProvider([_blind_router([fake_specs[0]], state)]),
+                       allow_live=True, cache_dir=tmp_path / "cache")
+    manifest = run_pipeline(bock_dir, PROTOCOL, out, client=client, concurrency=1)
+    questions = [q for q in questions_for_run(out, fold=False) if q["kind"] == "no_value"]
+    assert questions, [q["kind"] for q in questions_for_run(out, fold=False)]
+    return out, manifest, questions[0]
+
+
+def _resume(out, bock_dir, fake_specs, state, cache):
+    from canopy.pipeline.run import run_pipeline
+
+    client = LLMClient(provider=FakeProvider([_blind_router([fake_specs[0]], state)]),
+                       allow_live=True, cache_dir=cache)
+    return run_pipeline(bock_dir, PROTOCOL, out, client=client, concurrency=1, resume=True), client
+
+
+def test_a_resume_re_reads_the_cell_a_reviewer_hinted_at_and_settles_its_question(
+        tmp_path, bock_dir, fake_specs):
+    """The wiring this build deferred: a hint is a request for a reading, and `--resume` buys it.
+
+    Before this the reviewer was told the answer was recorded and nothing would ever act on it.
+    Now the extract stage re-enters for exactly the hinted cell, the readers see the reviewer's
+    words, and the seq lands in `consumed_override_seqs` — which is what turns the card from
+    "pending re-run" into an answer that happened.
+    """
+    from canopy.pipeline.overrides import (append_override, apply_overrides_and_repool,
+                                           override_summary)
+    from canopy.pipeline.state import sha12
+    from canopy.review.questions import answer_to_override, questions_for_run
+
+    state: dict[str, Any] = {"found": False}
+    out, manifest, question = _hinted_run(tmp_path, bock_dir, fake_specs, state)
+    paper_id = manifest.papers[0].paper_id
+
+    record = append_override(out, answer_to_override(
+        question, {"hint": "Table 2 on page 5, the row labelled 'older'",
+                   "justification": "the value is printed in the table, not in the results text"}))
+    pending = apply_overrides_and_repool(out)["pending"]
+    assert [p for p in pending if p["seq"] == record["seq"]], "recorded, and nothing bought it yet"
+    assert pending[0]["why"].endswith("with the hint"), pending[0]["why"]
+    assert "both groups" in pending[0]["why"], "a hint on one arm re-reads the whole cell"
+
+    state["found"] = True
+    resumed, client = _resume(out, bock_dir, fake_specs, state, tmp_path / "cache")
+    assert client.calls(), "the resume bought no reading at all"
+    extract = json.loads((out / "papers" / sha12(paper_id) / "extract.json").read_text())
+    assert record["seq"] in (extract.get("consumed_override_seqs") or [])
+    # the row the re-reading produced is in the analysis
+    rows = list(csv.DictReader((out / "results" / "late_adaptation" / "extraction_table.csv")
+                               .open(newline="", encoding="utf-8")))
+    assert rows and rows[0]["outcome_key"] == "late_adaptation"
+    # the question that asked where the value was is settled: the cell HAS one now
+    assert not [q for q in questions_for_run(out, fold=False)
+                if q["kind"] == "no_value" and q["dataset_id"] == question["dataset_id"]]
+    summary = override_summary(out)
+    assert summary["applied"] >= 1
+    assert record["seq"] not in [entry.get("seq") for entry in summary["pending"]]
+    assert resumed.papers[0].status == "resolved"
+
+
+def test_a_hinted_re_read_that_finds_nothing_re_opens_the_question_with_what_it_bought(
+        tmp_path, bock_dir, fake_specs):
+    """C8's rule, one layer up: a reading that was bought and came back empty is an ABSENCE.
+
+    The card must not go green on it. The reviewer asked for a re-reading, the run paid for one,
+    and the cell still has no value — so the question is open again and says exactly that, rather
+    than showing an answered tick on a cell nothing changed about.
+    """
+    from canopy.pipeline.overrides import append_override
+    from canopy.review.questions import answer_to_override, questions_for_run
+
+    state: dict[str, Any] = {"found": False}
+    out, _, question = _hinted_run(tmp_path, bock_dir, fake_specs, state)
+    record = append_override(out, answer_to_override(
+        question, {"hint": "Figure 2b, the right-hand pair of bars",
+                   "justification": "the value is plotted rather than printed"}))
+
+    _resume(out, bock_dir, fake_specs, state, tmp_path / "cache")      # still finds nothing
+    again = [q for q in questions_for_run(out, fold=False)
+             if q["kind"] == "no_value" and q["dataset_id"] == question["dataset_id"]
+             and q["group"] == question["group"]]
+    assert again, "the cell has no value and no question — the state C4 exists to remove"
+    assert again[0]["status"] == "open", again[0]["status"]
+    why = again[0]["why"]
+    assert "Figure 2b, the right-hand pair of bars" in why
+    assert "absence" in why and "no usable value" in why
+    # …and the card carries the answer it is re-opening FROM: a reviewer must be able to see that
+    # their hint was recorded and acted on, not a question that looks as though nobody had been
+    # here except for a paragraph of prose
+    assert [a for a in again[0]["answers"] if a["kind"] == "re_extract"], again[0]["answers"]
+    assert record["seq"] in json.loads(
+        (out / "papers" / question["paper_id"][:12] / "extract.json").read_text()
+    ).get("consumed_override_seqs", []), "the reading WAS bought; the log must say so"
+
+
+def test_the_reviewers_hint_reaches_the_text_reader_and_the_figure_read_out(tmp_path, bock_dir,
+                                                                            hard_specs):
+    """The hint has to reach the READERS, not merely the log — and both kinds of reader.
+
+    Additive: the mapper's own locator is still there. A hint that replaced it would trade one
+    reviewer's guess for the map's evidence, which is the opposite of what a review adds.
+    """
+    from canopy.llm.context import REVIEWER_HINT_LABEL
+    from canopy.pipeline.overrides import append_override
+    from canopy.pipeline.run import run_pipeline
+
+    spec = FakeSpec(hard_specs[0].paper, 44.6, 30.2, figure_id="fig01")
+    out = tmp_path / "run"
+    run_pipeline(bock_dir, PROTOCOL, out,
+                 client=LLMClient(provider=FakeProvider([fake_router([spec])]), allow_live=True,
+                                  cache_dir=None), concurrency=1)
+    study = json.loads(next((out / "papers").glob("*/map.json")).read_text())["study"]
+    dataset_id = study["datasets"][0]["dataset_id"]
+    hint = "Table 3, the last row — not the figure"
+    append_override(out, {"kind": "re_extract", "dataset_id": dataset_id,
+                          "outcome_key": "late_adaptation", "group": "A", "hint": hint,
+                          "justification": "the printed table is the source, the plot is a copy"})
+
+    seen: list[LLMRequest] = []
+    router = fake_router([spec])
+
+    def watch(request: LLMRequest) -> Any:
+        seen.append(request)
+        return router(request)
+
+    run_pipeline(bock_dir, PROTOCOL, out,
+                 client=LLMClient(provider=FakeProvider([watch]), allow_live=True,
+                                  cache_dir=None), concurrency=1, resume=True)
+    line = f"{REVIEWER_HINT_LABEL}: {hint}"
+    text_reads = [r for r in seen if "groups" in _properties(r) and not r.tools]
+    figure_reads = [r for r in seen if r.tools]
+    assert text_reads and figure_reads, "the resume bought neither kind of reading"
+    assert all(line in _request_text(r) for r in text_reads), "a text reader never saw the hint"
+    assert any(line in _request_text(r) for r in figure_reads), "no read-out saw the hint"
+    # …and the mapper's own locator is still in front of both readers
+    assert any("Results" in _request_text(r) for r in text_reads)
+    assert all(("Fig 1" in _request_text(r)) or ("panel" in _request_text(r))
+               for r in figure_reads if "read numeric values" in _system_text(r))
+
+
+def test_a_consumed_re_extraction_is_not_bought_again_on_the_next_resume(tmp_path, bock_dir,
+                                                                        fake_specs):
+    """`--resume` is not an optimisation: a hint buys ONE reading, not one per resume for ever."""
+    from canopy.pipeline.overrides import append_override
+    from canopy.review.questions import answer_to_override
+
+    state: dict[str, Any] = {"found": False}
+    out, _, question = _hinted_run(tmp_path, bock_dir, fake_specs, state)
+    append_override(out, answer_to_override(
+        question, {"hint": "Table 2, page 5", "justification": "printed in the table"}))
+
+    state["found"] = True
+    _resume(out, bock_dir, fake_specs, state, tmp_path / "cache")
+    _, third = _resume(out, bock_dir, fake_specs, state, tmp_path / "cache2")
+    assert third.calls() == [], "the second resume re-bought a reading nobody asked for"
+
+
+def test_a_hinted_read_cannot_replay_a_reading_cached_without_the_hint():
+    """No key is hand-built for a re-extraction: the hint is PROMPT TEXT, and `cache_key` already
+    hashes the messages. So the property comes out of the existing keying — a reading cached
+    before the reviewer spoke is a reading of a different question and is never replayed for the
+    one they asked for."""
+    from canopy.agents.extract_common import sources_text
+    from canopy.digitize.vlm import TargetSpec
+    from canopy.llm.cache import cache_key
+    from canopy.models import Source, SourceKind
+
+    sources = [Source(kind=SourceKind.text_mean_sd, page=3, locator="Results ¶1")]
+    plain, hinted = sources_text(sources), sources_text(sources, reviewer_hint="Table 2, p. 5")
+    assert plain in hinted and "Results ¶1" in hinted        # additive, never a replacement
+    # a target with a real locator on it: `describe()` prints "- (the mapper gave no details)"
+    # for a target with no rows at all, and a hint REPLACES that placeholder rather than extending
+    # it. That is not the property being asserted — a placeholder is not the mapper's locator —
+    # and the one that is (a locator a mapper wrote is never displaced) is what `panel_hint` puts
+    # in front of the assertion below.
+    target = TargetSpec(outcome_key="late_adaptation", panel_hint="Fig 1")
+    described = target.describe()
+    with_hint = target.__class__(**{**target.to_dict(), "reviewer_hint": "Table 2, p. 5"}).describe()
+    assert described in with_hint and "Fig 1" in with_hint
+
+    def key(prompt: str) -> str:
+        return cache_key(model="claude-opus-5", system="s",
+                         messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}])
+
+    assert key(plain) != key(hinted)
+    assert key(described) != key(with_hint)
+
+
+def test_a_hint_never_loses_a_reading_the_run_already_paid_for(tmp_path, bock_dir, fake_specs):
+    """A hint asks for a BETTER reading; it is not permission to lose the one the run has.
+
+    The questions page writes a `re_extract` the moment a reviewer types into `hint` — on any
+    card, not only a valueless one — so "the reviewer asked for this" is not evidence that the
+    cell had nothing. A re-read that comes back `not_on_these_pages` (the commonest outcome of a
+    hint pointing at the wrong place) must therefore leave the cell exactly as it was, and it must
+    leave BOTH arms as they were: a hint recorded against group A said nothing about group B.
+    """
+    from canopy.pipeline.overrides import append_override
+    from canopy.pipeline.state import sha12
+
+    state: dict[str, Any] = {"found": True}                # the first run reads the values
+    out = tmp_path / "run"
+    from canopy.pipeline.run import run_pipeline
+
+    manifest = run_pipeline(bock_dir, PROTOCOL, out, concurrency=1,
+                            client=LLMClient(provider=FakeProvider([_blind_router([fake_specs[0]],
+                                                                                  state)]),
+                                             allow_live=True, cache_dir=None))
+    paper_id = manifest.papers[0].paper_id
+    before = list(csv.DictReader((out / "results" / "late_adaptation" / "extraction_table.csv")
+                                 .open(newline="", encoding="utf-8")))
+    assert before and before[0]["es"], before
+    study = json.loads((out / "papers" / sha12(paper_id) / "map.json").read_text())["study"]
+    dataset_id = study["datasets"][0]["dataset_id"]
+
+    record = append_override(out, {
+        "kind": "re_extract", "dataset_id": dataset_id, "outcome_key": "late_adaptation",
+        "group": "A", "hint": "Table 9, the row that is not there",
+        "justification": "a reviewer who believes the printed table is a better source"})
+
+    state["found"] = False                                 # …and the hinted place has nothing
+    _resume(out, bock_dir, fake_specs, state, None)
+    after = list(csv.DictReader((out / "results" / "late_adaptation" / "extraction_table.csv")
+                                .open(newline="", encoding="utf-8")))
+    assert after and after[0]["es"] == before[0]["es"], "the row the run had is gone"
+    extract = json.loads((out / "papers" / sha12(paper_id) / "extract.json").read_text())
+    found = [c for c in extract["candidates"] if c["status"] == "found"]
+    assert {c["group"] for c in found} >= {"A", "B"}, "an arm nobody spoke about lost its reading"
+    # the reading that WAS bought is still on the record, under its own key
+    assert extract.get("superseded_candidates"), "the re-read's own answers were thrown away"
+    assert record["seq"] in extract["consumed_override_seqs"], "the reading was bought"
+
+
+def test_an_interrupted_hinted_re_read_is_repaired_by_the_next_resume(tmp_path, bock_dir,
+                                                                      fake_specs):
+    """The marker that says "rebuild this cell" must be as durable as the consumption beside it.
+
+    `consumed_override_seqs` is written to `extract.json` as each cell is read. If the instruction
+    to rebuild the stages after it lived only in memory, a process killed between the extract
+    stage and the verify stage would leave a verdict standing over readings the stage file no
+    longer holds — with the seq consumed, so no resume would ever look at the cell again, and no
+    card anywhere asking about it. The run would pool a row whose provenance is not in the run.
+    """
+    from canopy.pipeline.overrides import append_override
+    from canopy.pipeline.state import sha12
+    from canopy.review.questions import answer_to_override
+
+    state: dict[str, Any] = {"found": False}
+    out, manifest, question = _hinted_run(tmp_path, bock_dir, fake_specs, state)
+    paper = sha12(manifest.papers[0].paper_id)
+    stale = {name: (out / "papers" / paper / f"{name}.json").read_text()
+             for name in ("verify", "resolve")}
+
+    append_override(out, answer_to_override(
+        question, {"hint": "Table 2, page 5", "justification": "printed in the table"}))
+    state["found"] = True
+    _resume(out, bock_dir, fake_specs, state, tmp_path / "cache")
+
+    for name, text in stale.items():                       # killed between extract and verify
+        (out / "papers" / paper / f"{name}.json").write_text(text, encoding="utf-8")
+    _resume(out, bock_dir, fake_specs, state, tmp_path / "cache")
+
+    verify = json.loads((out / "papers" / paper / "verify.json").read_text())
+    means = {v["group"]: v["mean"] for v in verify["verdicts"]
+             if v["dataset_id"] == question["dataset_id"]}
+    assert means and all(m is not None for m in means.values()), \
+        "the verdict still stands over readings the stage file no longer holds"
+    rows = list(csv.DictReader((out / "results" / "late_adaptation" / "extraction_table.csv")
+                               .open(newline="", encoding="utf-8")))
+    assert rows and rows[0]["es"], "the repaired verdict produced no row"

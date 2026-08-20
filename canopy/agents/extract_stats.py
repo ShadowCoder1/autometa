@@ -299,6 +299,7 @@ def _nothing_found(paper: PaperRecord, dataset: DatasetSpec, outcome_key: str, e
 # ----------------------------------------------------------------------------- the agent
 def extract_test_statistics(client: LLMClient, paper: PaperRecord, protocol: Protocol,
                             dataset: DatasetSpec, outcome_key: str, sources: Sequence[Source], *,
+                            reviewer_hint: str = "",
                             model: str = MODELS["primary"]) -> list[Candidate]:
     """Transcribe every statistic and printed effect size for one outcome on the pages in `sources`.
 
@@ -324,7 +325,7 @@ def extract_test_statistics(client: LLMClient, paper: PaperRecord, protocol: Pro
         "extract_stats",
         OUTCOME=outcome_text(protocol, outcome_key, dataset),
         GROUPS=groups_text(dataset),
-        LOCATIONS=sources_text(usable))))
+        LOCATIONS=sources_text(usable, reviewer_hint=reviewer_hint))))
 
     result = client.structured(
         model=model, system=SYSTEM, schema=EXTRACT_STATS_SCHEMA, effort=EFFORT,

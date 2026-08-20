@@ -242,12 +242,17 @@ def _missing_group(group: str, *, paper: PaperRecord, dataset: DatasetSpec, outc
 def extract_group_stats(client: LLMClient, paper: PaperRecord, protocol: Protocol,
                         dataset: DatasetSpec, outcome_key: str, sources: Sequence[Source], *,
                         variant: Variant = "table_first",
+                        reviewer_hint: str = "",
                         model: str | None = None) -> list[Candidate]:
     """Transcribe one outcome for both groups from the text/table locations in `sources`.
 
     Returns one `Candidate` per group (`kind="group_stats"`), grounded. An empty list means there
     was nothing for this extractor to read — no text or table source inside the document — which is
     different from having read the pages and found nothing.
+
+    `reviewer_hint` is a human's `re_extract` answer for this cell, added to the locations rather
+    than replacing them. It changes the prompt, so a reading cached without it is never reused for
+    the hinted re-read — which is the whole point of buying one.
     """
     if variant not in VARIANTS:
         raise ValueError(f"unknown variant {variant!r} (have {sorted(VARIANTS)})")
@@ -269,7 +274,7 @@ def extract_group_stats(client: LLMClient, paper: PaperRecord, protocol: Protoco
         settings["prompt"],
         OUTCOME=outcome_text(protocol, outcome_key, dataset),
         GROUPS=groups_text(dataset),
-        LOCATIONS=sources_text(usable))))
+        LOCATIONS=sources_text(usable, reviewer_hint=reviewer_hint))))
 
     result = client.structured(
         model=model, system=SYSTEM, schema=EXTRACT_TEXT_SCHEMA, effort=settings["effort"],

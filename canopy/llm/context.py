@@ -17,6 +17,24 @@ from .errors import LiveCallsDisabled, LLMError
 FILES_API_BETA = "files-api-2025-04-14"
 FILE_ID_NAME = "file_id.txt"
 
+#: how a reviewer's `re_extract` hint is put to a reader. ONE phrasing, here rather than beside
+#: either consumer, because the text extractors and the digitiser's read-out must say the same
+#: thing about it: a hint is one more place to look, ADDED to the locations the mapper found and
+#: never a replacement for them. A reviewer saying where a value is does not un-say where the map
+#: looked, and a reader given only the hint would stop being a second opinion about the paper.
+REVIEWER_HINT_LABEL = "a reviewer says the value is at"
+
+
+def reviewer_hint_line(hint: str) -> str:
+    """`- a reviewer says the value is at: <hint>`, or "" when no reviewer has said anything.
+
+    In the prompt TEXT rather than in a parameter beside it, which is what puts it in the cache
+    key: a cached reading taken without the hint is a reading of a different question, and reusing
+    it would let a resume report a re-extraction it never bought.
+    """
+    text = " ".join(str(hint or "").split())[:1000]
+    return f"- {REVIEWER_HINT_LABEL}: {text}" if text else ""
+
 
 # ----------------------------------------------------------------------------- lookups
 def _page(paper: PaperRecord, number: int) -> PageRecord:

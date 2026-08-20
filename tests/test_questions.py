@@ -1016,8 +1016,13 @@ def test_a_re_extraction_changes_nothing_until_a_run_says_it_consumed_it(tmp_pat
     """The `re_extract` half of the per-kind regression, and M8's clearing rule.
 
     A hint is a request for a model call: until a stage records the seq it acted on, the cell is
-    exactly where it was and the question reads "answered — pending re-run". Once a stage records
-    it, the question is answered outright — before this it never stopped saying "not applied yet".
+    exactly where it was and the question reads "answered — pending re-run".
+
+    And once a stage HAS recorded it on a cell that still has no value — which is what this
+    fixture's hand-written seq stands for, a reading bought that came back with nothing — the
+    question is open again, carrying what the re-read returned. A green tick there would be the
+    overclaim §C4 removed from the answers themselves: a settled question on a cell nothing
+    changed about, and a `needs_human` row with nothing left on the page to ask about it.
     """
     run = _clone_run(tmp_path)
     _repool(run)
@@ -1038,7 +1043,9 @@ def test_a_re_extraction_changes_nothing_until_a_run_says_it_consumed_it(tmp_pat
     payload["consumed_override_seqs"] = [record["seq"]]
     stage.write_text(json.dumps(payload), encoding="utf-8")
     assert _repool(run)["applied"] == 1
-    assert _ask(run, *cell, "A")["status"] == "answered"
+    reopened = _ask(run, *cell, "A")
+    assert reopened["status"] == "open"
+    assert "Table 2, row 'older'" in reopened["why"] and "absence" in reopened["why"]
 
 
 @pytest.mark.skipif(not _HAS_RERUN, reason="runs/rerun-fixed is not on this machine")

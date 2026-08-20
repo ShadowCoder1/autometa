@@ -463,6 +463,15 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
             return True                     # the cell has left the analysis: nothing is still open
         if override.get("kind") in MAP_KINDS:
             return override.get("decision") == "exclude"
+        if kind == "no_value" and override.get("kind") == "re_extract":
+            # a hint answers "where is it?" only until the reading it asks for has been bought.
+            # Once the extract stage has re-read the cell with it and the cell STILL has no usable
+            # value, the question is open again: the run has now paid to look where the reviewer
+            # pointed and come back with nothing, which is an absence and not an answer. Ticking
+            # the card on it would be the overclaim §C4 exists to remove — a settled question on a
+            # cell nothing changed about — and it would leave a `needs_human` row with no open
+            # question anywhere on the page.
+            return override.get("seq") not in consumed
         if override.get("question_id"):
             on_a_card = override["question_id"] in fold_ids
             if override["question_id"] != question_id and not on_a_card:
@@ -500,6 +509,11 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
         return (kind == "no_value" and override.get("kind") == "value"
                 and set(GROUP_STATISTICS) <= typed)
 
+    # the hints this cell's re-reading was actually bought for, before `already` is narrowed to the
+    # answers that SETTLE the question — a consumed hint no longer settles a `no_value` (above),
+    # and the reviewer still has to be told what their hint bought.
+    bought = [o for o in already
+              if o.get("kind") == "re_extract" and o.get("seq") in consumed]
     already = [o for o in already if answers_this(o)]
     status, pending_why = _answer_status(already, pending, consumed)
     label = _group_label(dataset, group)
@@ -526,6 +540,8 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
     if kind == "reader_contradicts_values":
         prompt = _contradiction_prompt(prompt, run, entry, dataset, outcome_key, measure)
     why = _why(entry, verdict)
+    if kind == "no_value" and bought:
+        why = _reread_why(bought, why)
     if kind == "orientation":
         why = _with_ballots(why, run, str(entry.get("paper_id") or ""), outcome_key, measure)
     if kind == "reader_contradicts_values" and recorded_direction is not None:
@@ -564,10 +580,46 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
         ("answered", bool(already)),
         ("status", status),
         ("pending_why", pending_why),
+        # what has been recorded on this question — including the hint a re-opened `no_value` is
+        # re-opening FROM, which `answers_this` no longer counts as settling it. The two lists are
+        # deliberately different: `already` decides the STATUS, this decides what the reviewer is
+        # shown, and a question that came back open after a re-reading is not a question nobody
+        # has ever been here for.
         ("answers", [{"kind": o.get("kind"), "justification": o.get("justification"),
                       "mean": o.get("mean"), "at": o.get("at") or o.get("timestamp")}
-                     for o in already]),
+                     for o in _history(already, bought)]),
     ]))
+
+
+def _history(already: Sequence[Mapping[str, Any]],
+             bought: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """The records to SHOW on a card: what settles it, plus the acted-on hints that no longer do.
+
+    In log order, and never twice — a record can be in both lists on a question a hint does settle.
+    """
+    seen = {record.get("seq") for record in already if isinstance(record.get("seq"), int)}
+    extra = [record for record in bought if record.get("seq") not in seen]
+    return sorted([*already, *extra],
+                  key=lambda record: record.get("seq") if isinstance(record.get("seq"), int)
+                  else 0)
+
+
+def _reread_why(bought: Sequence[Mapping[str, Any]], why: str) -> str:
+    """What a reviewer's hint bought, on the question it did not settle.
+
+    The C8 rule, one layer up from the truncated read-out: a reading that was PAID FOR and came
+    back with nothing is an absence, not evidence that the paper prints no value. So the card says
+    both halves — the hint was acted on, and this is what it returned — rather than reappearing
+    identical, which reads as though nobody had ever answered it.
+    """
+    hints = "; ".join(dict.fromkeys(
+        " ".join(str(record.get("hint") or "").split()) for record in bought
+        if str(record.get("hint") or "").strip()))
+    return (f"NEW, since the hint was recorded: the extract stage bought a re-reading of this "
+            f"cell with the reviewer's hint (“{hints[:300]}”) and the readers came back with no "
+            f"usable value from it. That is an absence, not evidence that the paper prints none — "
+            f"the hinted location was read and returned nothing. The question is open again "
+            f"because the cell still has no number, not because the answer was ignored. || {why}")
 
 
 def _holding_codes(verdict: Mapping[str, Any]) -> set[str]:

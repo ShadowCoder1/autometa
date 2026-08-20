@@ -17,7 +17,7 @@ Six decisions (amendment I, plus C4's `orientation`):
 | `mark_reviewed` | a human has checked the cell: it moves into the primary analysis at `accept_with_note` |
 | `exclude_dataset` | that dataset leaves the analysis, and appears in the exclusion table |
 | `eligibility` | a paper is in or out, whatever the mapper decided |
-| `re_extract` | "read it again, with this hint" — needs a model, so `repool` reports it as pending |
+| `re_extract` | "read it again, with this hint" — needs a model, so it waits for the `--resume` that buys the reading |
 | `include_dataset` | C7's map question answered: this dataset is in the review, or out under a named rule |
 | `which_measure` | C6's map question answered: which measure this outcome carries |
 
@@ -66,7 +66,7 @@ __all__ = ["GROUP_STATISTICS", "KINDS", "MAP_KINDS", "MAP_PENDING", "ORIENTATION
            "OVERRULABLE", "RE_EXTRACT_PENDING", "codes_cleared_by_value", "consumed_seqs",
            "recorded_flags", "recorded_holds", "row_flags", "append_override", "append_overrides",
            "read_overrides", "apply_overrides_and_repool", "map_answers", "eligibility_answers",
-           "override_summary", "repool_lock"]
+           "re_extract_answers", "override_summary", "repool_lock"]
 
 OVERRIDES_FILE = "overrides.jsonl"
 SUMMARY_FILE = "overrides_applied.json"
@@ -77,12 +77,14 @@ KINDS: tuple[str, ...] = ("value", "mark_reviewed", "exclude_dataset", "eligibil
 #: exclusion, which needs no reading — the pipeline applies them on the next `--resume`, not here.
 MAP_KINDS: tuple[str, ...] = ("include_dataset", "which_measure")
 MAP_PENDING = "extraction was never bought for this; re-run with --resume to extract it"
-#: the other answer whose consequence is a model call — and the one nothing buys. `--resume`
-#: re-reads the cached stages; it does not hand a reviewer's hint to an extractor, and no branch in
-#: this build does (`re_extract` wiring is deferred). The questions page prints this text, so
-#: telling a reviewer to run a resume that will not act on their answer is worse than telling them
-#: nothing: it says what is true instead (DECISION §C4).
-RE_EXTRACT_PENDING = "recorded; this build does not act on a re-extraction hint at --resume"
+#: the other answer whose consequence is a model call. `run._extract` reads the log on `--resume`,
+#: re-enters the extract stage for exactly the hinted cells and hands the reviewer's words to that
+#: cell's readers — so the honest thing to tell a reviewer is what will happen, and when. It says
+#: "both groups" because the extractors answer both arms in one call: a hint recorded against one
+#: group re-reads the whole cell, and a reviewer is entitled to know that before they type it.
+#: The questions page prints this text (DECISION §C4).
+RE_EXTRACT_PENDING = ("recorded; the next --resume re-reads this cell — both groups — with the "
+                      "hint")
 _MAX_TEXT = 4000
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
@@ -630,6 +632,42 @@ def map_answers(run_dir: str | Path, paper_id: str) -> list[dict[str, Any]]:
         latest.pop(key, None)               # the later answer wins, and stands at its own place
         latest[key] = record
     return list(latest.values())
+
+
+def re_extract_answers(run_dir: str | Path, paper_id: str) -> list[dict[str, Any]]:
+    """Validated `re_extract` records that could name a cell of this paper, in log order.
+
+    The sibling of `map_answers`, for the answer whose consequence is a READING: `run._extract`
+    calls it on `--resume`, re-enters the extract stage for exactly the cells these records name
+    and hands their hints to that cell's readers.
+
+    Cumulative, not last-wins. A map answer is one decision that may change its mind, so applying
+    a superseded one excludes a dataset the reviewer has since kept; two hints on one cell are two
+    places a person looked, and a reader given both looks in both. That is also what keeps the
+    record honest: every hint on a cell is consumed by the reading that was bought for it, so none
+    is left saying "not applied yet" about a re-read that happened.
+
+    A record with no `paper_id` is offered to every paper — the manual override form records one
+    (`test_server`'s does), and the caller matches on `dataset_id`, which is minted per paper and
+    so belongs to exactly one map.
+    """
+    wanted = sha12(str(paper_id or ""))
+    if not wanted:
+        raise ValueError("re_extract_answers needs a paper_id; '' is not a paper")
+    out: list[dict[str, Any]] = []
+    for raw in read_overrides(run_dir):
+        if raw.get("kind") != "re_extract":
+            continue
+        named = str(raw.get("paper_id") or "")
+        if named and sha12(named) != wanted:
+            continue
+        try:
+            record = _validate(raw)
+        except OverrideRejected:            # a record this log would not accept is not an answer
+            continue
+        record.update({key: raw[key] for key in ("seq", "at", "actor") if key in raw})
+        out.append(record)
+    return out
 
 
 def eligibility_answers(run_dir: str | Path, paper_id: str) -> list[dict[str, Any]]:
