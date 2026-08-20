@@ -22,12 +22,12 @@ from __future__ import annotations
 
 import math
 import statistics
-from typing import Any, Iterable, NamedTuple, Sequence
+from typing import Any, Iterable, Mapping, NamedTuple, Sequence
 
 from ..models import (Adjudication, Candidate, CheckFlag, ConfidenceBucket, DatasetSpec,
                       DispersionType, OrientationVerdict, VerifierVerdict, Verdict)
 from ..stats.effect_sizes import cohens_d, pooled_sd, se_smd
-from .checks import MAX_PLAUSIBLE_D, run_checks
+from .checks import MAX_PLAUSIBLE_D, run_checks, severity_of
 from .grounding import is_short_quote
 from .vote import VoteResult, digitizer_path, is_figure_route, modality, vote
 
@@ -39,7 +39,8 @@ __all__ = ["confidence", "resolve_cell", "figure_gate", "AUTO_ACCEPT", "ACCEPT_W
            "BUCKET_NOT_SCORED",
            "conversion_gate_bucket", "CONVERTED_ROUTES", "UNVERIFIED_CONTRAST_FLAGS",
            "DF_SHORTFALL_PREFIX", "dispersion_plausibility_bucket", "IMPLAUSIBLE_DISPERSION",
-           "ROW_REFUSAL_CODES"]
+           "ROW_REFUSAL_CODES",
+           "unverified_variance_bucket", "UNVERIFIED_VARIANCE_FLAGS"]
 
 AUTO_ACCEPT = 0.75              # at or above this the pipeline pools the row without a human
 ACCEPT_WITH_NOTE = 0.45         # below this a human decides
@@ -575,6 +576,94 @@ def conversion_gate_bucket(bucket: ConfidenceBucket, route: str, flags: Sequence
             f"{', '.join(shortfall)}: the printed degrees of freedom do not equal n_a + n_b - 2 "
             f"and the shortfall is explained, so the conversion is allowed but never automatic"]
     return bucket, []
+
+
+#: ------------------------------------------- the denominator's own provenance, weighed as a pair
+#: The gate above asks whether the row's NUMERATOR is the contrast it claims to be. This one asks
+#: whether anything on the record establishes the DENOMINATOR it was divided by, and it is keyed on
+#: two codes `canopy.verify.checks` already raises:
+#:
+#: `dispersion_unknown` — a spread was read and nobody could say what kind it is. An SD and an SE
+#:   are printed identically ("41.5 ± 3.1"), and reading one as the other scales the effect size by
+#:   √n: the same pair at n = 19 is |d| = 0.31 or |d| = 1.35 depending on which it was.
+#: `n_missing` — no group size was transcribed beside the value, so the size the conversion scaled
+#:   by came from the map's reading of the methods rather than from the number's own neighbourhood.
+#:
+#: Either one ALONE is an ordinary warning, priced by the score and floored like every other, and
+#: that is right: a typed SD beside a guessed n has a magnitude that is settled and a variance that
+#: is approximate, and an untyped ± beside a printed n can be checked against a reported statistic
+#: or against the paper's own interval. Both were left poolable on purpose — holding on either
+#: alone withholds readings that agree with a hand-built reference analysis, which is the failure
+#: the whole calibration exists to avoid.
+#:
+#: TOGETHER they are not two warnings. They are the same doubt arriving twice, and it is the doubt
+#: that decides the row's magnitude: the only number on the record that could tell an SD from an SE
+#: is the n, and the n was guessed too. Nothing says what |d| this row has — so, like the gate
+#: above, it is a cap on the BUCKET rather than on the score ("below auto_accept" still includes
+#: `accept_with_note`, which pools), and a human decides.
+#:
+#: It deliberately adds NO code of its own. Both codes are already on the row, put there by the
+#: cells that raised them, so a `ROW_REFUSAL_CODES` entry would be a third name for a doubt the
+#: record already carries — and a row refusal vetoes the best-guess line (`bestguess.VETO_ROW_FLAGS`)
+#: and the release paths treat it as unanswerable. This row's value may well be the best estimate
+#: anyone has of the contrast; what is unverified is its SCALE. So the strict line may not take it
+#: and the best-guess line still may, under `low_confidence_value` — held, not refused.
+#:
+#: And it is a CONJUNCTION rather than a set with a threshold, so the hold is answerable — see the
+#: function, which says which answer, on which arm, because only one of the two codes has one.
+#:
+#: **Read on ONE arm, never across the pair** (adversarial review, fix round). The row's `flags`
+#: are the UNION of both cells' codes (`resolve.ResolvedValues.from_verdicts`), so a row-level
+#: reading of this conjunction fired whenever the two doubts sat on DIFFERENT arms — an arm whose
+#: untyped ± sits beside a printed n (so the spread is checkable against it) paired with an arm
+#: whose spread is typed and only its n is guessed. Neither of those arms is "the same doubt
+#: arriving twice", which is the entire justification above: the reason is a statement about ONE
+#: number, so the rule has to be evaluated on one number.
+UNVERIFIED_VARIANCE_FLAGS: frozenset[str] = frozenset({"dispersion_unknown", "n_missing"})
+
+#: …and the codes are real ones. A bare `assert` is stripped under `python -O`, which is exactly
+#: when a gate keyed on a typo would go quiet, so `severity_of` is called for its own KeyError.
+for _code in sorted(UNVERIFIED_VARIANCE_FLAGS):
+    severity_of(_code)
+del _code
+
+
+def unverified_variance_bucket(bucket: ConfidenceBucket,
+                               arm_flags: Mapping[str, Sequence[str]]
+                               ) -> tuple[ConfidenceBucket, list[str]]:
+    """The bucket a row keeps once the provenance of its DENOMINATOR has been weighed.
+
+    `arm_flags` is the codes each independently-read number carried, keyed by the arm it was read
+    for (`{"A": [...], "B": [...]}` for a resolved row; `{"<member>|A": [...], ...}` for a
+    composite). It is a MAPPING and not the row's flat flag list on purpose: unioning arm sets can
+    never manufacture a conjunction, while unioning code sets — which is what the row's own `flags`
+    are, and what `aggregate.composite_row` does again a level up — silently can.
+
+    Called by whoever builds a row that can pool: `canopy.pipeline.resolve._finish` beside the
+    conversion gate and C9's `|d|` screen, and `canopy.pipeline.aggregate.composite_row`, which
+    builds an `EffectSizeRecord` without passing through the resolver at all. Every rebuild an
+    answer triggers goes back through `_finish`, so this re-derives from the codes the cells then
+    carry rather than from anything a reviewer stamped.
+
+    Route-independent on purpose. Whatever the row converted through, `dispersion_unknown` and
+    `n_missing` are statements about the numbers the cells resolved, and no route makes an untyped
+    spread beside a guessed n into a verified variance.
+    """
+    held = [arm for arm in sorted(arm_flags)
+            if UNVERIFIED_VARIANCE_FLAGS <= set(arm_flags[arm] or ())]
+    if not held:
+        return bucket, []
+    named = ", ".join(sorted(UNVERIFIED_VARIANCE_FLAGS))
+    where = ", ".join(f"group {arm}" for arm in held)
+    return "needs_human", [
+        f"{named} on {where}: that arm's spread was never typed and its group size was never "
+        f"transcribed, so nothing on the record establishes the denominator the effect size was "
+        f"divided by. An SD read as an SE (or the reverse) changes |d| by a factor of √n, and the "
+        f"n that would have told them apart is the number that is missing — so the magnitude is "
+        f"unverified rather than merely uncorroborated. The answer asked for is the group size "
+        f"for {where}: nothing a reviewer can type retires {sorted(UNVERIFIED_VARIANCE_FLAGS)[0]} "
+        f"(it is in no `overrides.VALUE_CLEARS_*` family), so the n is the half of the pair that "
+        f"can be broken. A human decides"]
 
 
 #: the code the ROW carries when its resolved |d| fails the plausibility screen. Same code the

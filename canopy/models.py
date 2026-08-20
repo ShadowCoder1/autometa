@@ -745,6 +745,13 @@ class EffectSizeRecord(CanopyModel):
     #: the verified cell by the orchestrator so the sensitivity set can split rows by metric
     analysis_metric: AnalysisMetric = "unknown"
     flags: list[str] = Field(default_factory=list)
+    #: `flags`, kept per ARM instead of unioned — `{"A": [...], "B": [...]}`, and
+    #: `{"<member>|A": [...], ...}` on a composite. A rule about ONE number (an untyped spread
+    #: beside a guessed group size, say) must not be satisfiable by two of them, and `flags` alone
+    #: cannot tell the two cases apart: it is a union, so it reads the same whether both codes
+    #: describe one arm or one each. Unioning ARM SETS is safe; unioning code sets is not. Empty on
+    #: a row nothing recorded arms for, which is a row no per-arm rule may fire on.
+    arm_flags: dict[str, list[str]] = Field(default_factory=dict)
     moderators: dict[str, str] = Field(default_factory=dict)
     citation: Citation = Field(default_factory=Citation)
     notes: str = ""

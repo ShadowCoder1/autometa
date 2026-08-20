@@ -35,7 +35,8 @@ from ..stats.conversions import (mean_sd_from_five_number, mean_sd_from_median_i
                                  combine_groups, partial_variance, split_control)
 from ..stats.effect_sizes import NotConvertible, SMDResult
 from ..verify.confidence import (DF_SHORTFALL_PREFIX, IMPLAUSIBLE_DISPERSION, ROW_REFUSAL_CODES,
-                                 conversion_gate_bucket, dispersion_plausibility_bucket)
+                                 conversion_gate_bucket, dispersion_plausibility_bucket,
+                                 unverified_variance_bucket)
 from ..verify.vote import modality as reading_modality
 
 __all__ = ["resolve_effect", "resolve_effect_with_fallback", "available_routes",
@@ -203,6 +204,12 @@ class ResolvedValues(CanopyModel):
     route_available: list[str] = Field(default_factory=list)
     confidence: ConfidenceBucket = "needs_human"
     flags: list[str] = Field(default_factory=list)
+    #: the SAME codes, kept per arm rather than unioned into `flags` above. A rule about one
+    #: number — "this arm's spread has no type AND this arm's group size was never transcribed" —
+    #: reads `flags` as satisfied when the two codes sit on different arms, which is a row neither
+    #: arm's doubt justifies withholding. Written by `from_verdicts`; travels onto the record as
+    #: `EffectSizeRecord.arm_flags` so aggregation can keep the attribution too.
+    group_flags: dict[str, list[str]] = Field(default_factory=dict)
     #: `candidate_id -> the verifier's objection to it`, for the readings this cell's verifiers
     #: doubted or refuted. The verdict's flags carry codes and this carries the sentence, because
     #: D1's precedence override has to quote the objection to the reading it falls back to: a row
@@ -222,17 +229,27 @@ class ResolvedValues(CanopyModel):
     def from_verdicts(cls, verdict_a: Verdict, verdict_b: Verdict, *,
                       test_statistic: StatisticValues | None = None,
                       reported: ReportedValues | None = None,
-                      higher_is_better: bool | None = None) -> "ResolvedValues":
-        """Two `Verdict`s into one set of inputs; the weaker confidence governs the pair."""
+                      higher_is_better: bool | None = None,
+                      candidates: Sequence[Candidate] = ()) -> "ResolvedValues":
+        """Two `Verdict`s into one set of inputs; the weaker confidence governs the pair.
+
+        `candidates` are this cell's readings, and they are what makes `group_flags` possible: the
+        codes themselves say which CANDIDATE they were raised on, and only a candidate says which
+        arm it was read for. Without them the per-arm map is empty, and a rule that reads it simply
+        does not fire — the safe direction, and never the case on a real path (`rows.prepare_rows`
+        passes the cell, and every rebuild goes through it).
+        """
         buckets = sorted((verdict_a.confidence, verdict_b.confidence),
                          key=lambda b: _BUCKET_ORDER.get(b, 0))
         direction = higher_is_better
         if direction is None:
             direction = verdict_a.higher_is_better if verdict_a.higher_is_better is not None \
                 else verdict_b.higher_is_better
+        per_arm = _codes_by_arm(verdict_a, verdict_b, candidates)
         flags = sorted({flag.code for verdict in (verdict_a, verdict_b)
                         for flag in verdict.flags if flag.severity in ("warn", "error")})
         return cls(dataset_id=verdict_a.dataset_id or verdict_b.dataset_id,
+                   group_flags=per_arm,
                    outcome_key=verdict_a.outcome_key or verdict_b.outcome_key,
                    group_a=GroupValues.from_verdict(verdict_a),
                    group_b=GroupValues.from_verdict(verdict_b),
@@ -244,6 +261,35 @@ class ResolvedValues(CanopyModel):
                                for verdict in (verdict_a, verdict_b) for note in verdict.verifiers
                                if note.verdict in ("refuted", "ambiguous")
                                and note.candidate_id and note.reason})
+
+
+def _codes_by_arm(verdict_a: Verdict, verdict_b: Verdict,
+                  candidates: Sequence[Candidate]) -> dict[str, list[str]]:
+    """The warn/error codes raised on EACH arm's own readings — `{"A": [...], "B": [...]}`.
+
+    `confidence.resolve_cell` puts the whole cell's flag list on BOTH groups' verdicts, because
+    `run_checks` runs over the cell rather than over one arm. So "which arm is this doubt about?"
+    cannot be answered by asking which verdict carries the code — every code is on both — and is
+    answered instead by the flag's own `candidate_ids` and the group the candidate was read for.
+
+    Each arm is attributed from ITS OWN verdict, never from the pair. That is what keeps the map
+    honest after a human answers: `overrides._apply_value` removes a cleared code from the
+    ANSWERED cell's flags and leaves the other cell's list alone, so reading both would find a
+    code on the arm whose reviewer had just retired it, and the row would stay held for ever.
+
+    A code raised on no candidate at all describes the CELL rather than one of its numbers, so it
+    lands on neither arm: a rule about one number may not fire on it. Such codes are still in
+    `flags`, which is the union and where every reader of the row looks.
+    """
+    group_of = {c.candidate_id: c.group for c in candidates if c.candidate_id}
+    out: dict[str, set[str]] = {"A": set(), "B": set()}
+    for arm, verdict in (("A", verdict_a), ("B", verdict_b)):
+        for flag in verdict.flags:
+            if flag.severity not in ("warn", "error"):
+                continue
+            if any(group_of.get(cid) == arm for cid in flag.candidate_ids):
+                out[arm].add(flag.code)
+    return {arm: sorted(codes) for arm, codes in out.items()}
 
 
 # ----------------------------------------------------------------------------- route availability
@@ -653,7 +699,8 @@ def resolve_effect(dataset: DatasetSpec, outcome_def: OutcomeDef, resolved_value
         label=dataset.label or outcome_def.label, estimator=settings.estimator,
         variance_method=settings.variance, level=settings.ci_level,
         higher_is_better=values.higher_is_better, confidence=values.confidence,
-        moderators=dict(dataset.moderators), flags=list(values.flags))
+        moderators=dict(dataset.moderators), flags=list(values.flags),
+        arm_flags={arm: list(codes) for arm, codes in values.group_flags.items()})
 
     routes, why_missing = available_routes(values)
     record.routes_available = list(routes)
@@ -996,6 +1043,25 @@ def _finish(record: EffectSizeRecord, name: str, result: SMDResult, inputs: dict
     record.confidence = capped
     if why:                              # said even when the row was already held, so the reason
         steps.extend(why)                # a reviewer reads names the conversion, not just the cell
+        record.conversion_steps = steps
+        record.conversion_chain = "; ".join(steps)
+
+    # …and the same question asked of the DENOMINATOR. The gate above establishes that the row's
+    # numerator is the contrast it claims to be; this one asks whether anything on the record says
+    # what the spread it was divided by actually is. `dispersion_unknown` and `n_missing` are each
+    # an ordinary warning the cells' scores already priced — but ONE ARM carrying both was divided
+    # by a spread of unknown type scaled by a group size nobody transcribed, and those two are the
+    # same doubt: the n is the only number that could have told an SD from an SE. A bucket cap, not
+    # a flag: both codes are already on the row, and this holds the row without refusing its value,
+    # so the best-guess line may still take it under `low_confidence_value`.
+    #
+    # Per ARM, and `record.flags` is therefore the wrong input: it is the union of both cells, so
+    # it reads the same whether one arm carries both codes or each carries one. The second is a row
+    # neither arm's doubt justifies withholding (adversarial review, fix round).
+    weighed, said = unverified_variance_bucket(record.confidence, record.arm_flags)
+    record.confidence = weighed
+    if said:
+        steps.extend(said)
         record.conversion_steps = steps
         record.conversion_chain = "; ".join(steps)
 

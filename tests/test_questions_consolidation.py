@@ -686,3 +686,248 @@ def test_a_later_per_cell_n_is_not_overwritten_by_an_earlier_dataset_n(nine_tmp)
         (nine_tmp / "results" / "extraction_table_all.json").read_text())}[(ds, key)]
     assert row["n_a"] == 12 and row["n_b"] == 16
     assert "√12" in row["conversion_chain"], "and the row is DIVIDED by the n the table shows"
+
+
+# ----------------------------------------------------- the answered question that came back open
+def _conflicted_readers(run: Path, dataset_id: str, outcome_key: str) -> None:
+    """C3's "the two readers named opposite directions" on a cell whose direction was decided —
+    the state the fixture predates, in the shape `verify.checks` writes it."""
+    for group in ("A", "B"):
+        nine.with_flags(run, dataset_id, outcome_key, group, ["orientation_direction_conflict"])
+
+
+def test_a_recorded_direction_settles_the_measure_card_and_is_not_asked_again(nine_tmp):
+    """One real run holds 879 identical answers to one measure card, because the card came back
+    open after every one of them. A recorded direction retired `orientation_unknown` and nothing
+    else, so `orientation_direction_conflict` — the readers' quarrel, which is a reason to ASK for
+    a direction and not a second question — was still on the cell, `_kind` went on returning
+    `orientation`, and the page asked the answered question for ever. One answer settles it.
+    """
+    _conflicted_readers(nine_tmp, "5039533c85ef:d1", "late_adaptation")
+    card = next(q for q in questions_for_run(nine_tmp)
+                if q["kind"] == "orientation" and q["paper_id"].startswith("5039533c85ef"))
+    _append(nine_tmp, answers_to_overrides(
+        card, {"option": card["options"][0]["key"], "note": "the paper's own wording, p. 3"}))
+
+    after = questions_for_run(nine_tmp)
+    assert not [q for q in after if q["id"] == card["id"] and q["status"] == "open"]
+    assert not [q for q in after
+                if q["kind"] == "orientation" and q["paper_id"] == card["paper_id"]
+                and q["measure_name"] == card["measure_name"] and q["status"] == "open"], \
+        "nor its successor for the same measure"
+
+
+def test_every_code_that_asks_for_a_direction_is_one_a_direction_retires():
+    """The page and the analysis read ONE set. `_apply_orientation` strips exactly what the page
+    stops asking about, so a code that raises the direction question but is not in that set would
+    be asked for ever — the shape of the 879-answer defect. Pinned rather than commented, because
+    a comment cannot fail when someone adds the next orientation code to `_FLAG_TO_KIND`."""
+    from canopy.pipeline.overrides import ORIENTATION_ANSWERED
+    from canopy.review.questions import _FLAG_TO_KIND, _ORIENTATION_ASKING
+
+    asks = {code for code, kind in _FLAG_TO_KIND if kind == "orientation"}
+    assert asks <= ORIENTATION_ANSWERED, sorted(asks - ORIENTATION_ANSWERED)
+    assert _ORIENTATION_ASKING is ORIENTATION_ANSWERED
+    # …and the contradiction between a stated direction and the cell's own means is NOT one of
+    # them: no direction answers it, and retiring it would swallow the only mechanical check there
+    assert "orientation_reader_contradicts_values" not in ORIENTATION_ANSWERED
+
+
+def test_a_direction_the_means_check_refuses_comes_back_as_the_contradiction_not_as_itself(
+        nine_tmp):
+    """The other half of the rule: settling the card must not swallow the one mechanical
+    contradiction this pipeline has. C3's means check — a stated direction against this cell's own
+    resolved raw means — is an `error` of its own (`orientation_reader_contradicts_values`), and a
+    recorded direction does not retire it: the cell asks THAT, with its own three answers, and its
+    `why` says the recorded answer is the one the means contradict. Never the same question again.
+    """
+    _conflicted_readers(nine_tmp, "5039533c85ef:d1", "late_adaptation")
+    card = next(q for q in questions_for_run(nine_tmp)
+                if q["kind"] == "orientation" and q["paper_id"].startswith("5039533c85ef"))
+    _append(nine_tmp, answers_to_overrides(
+        card, {"option": card["options"][0]["key"], "note": "the paper's own wording, p. 3"}))
+    for group in ("A", "B"):
+        nine.with_flags(nine_tmp, "5039533c85ef:d1", "late_adaptation", group,
+                        ["orientation_reader_contradicts_values"])
+
+    asked = [q for q in questions_for_run(nine_tmp, fold=False)
+             if (q["dataset_id"], q["outcome_key"]) == ("5039533c85ef:d1", "late_adaptation")]
+    assert asked and {q["kind"] for q in asked} == {"reader_contradicts_values"}
+    for question in asked:
+        assert "contradicted by this cell's own resolved raw means" in question["why"], \
+            question["why"]
+        assert question["options"], "and it is answerable, which the direction card no longer is"
+
+
+# --------------------------------------------------- a number is the answer to "where is a number"
+def _blanked_cell(run: Path) -> tuple[str, str]:
+    """One cell of the fixture whose paper printed NOTHING — the state `no_value` is asked about.
+
+    The candidates are dropped from the copied stage files rather than invented, which is the same
+    device `test_integration_ceiling` uses for this question and leaves everything else the run
+    recorded about the cell exactly as the pipeline wrote it.
+    """
+    from canopy.pipeline.state import read_stage, write_stage
+
+    paper, cell = "b7523a41b03a", ("b7523a41b03a:d1", "aftereffect")
+    for stage, field in (("extract", "candidates"), ("verify", "extra_candidates")):
+        payload = read_stage(run, paper, stage)
+        write_stage(run, paper, stage, {**payload, field: [
+            c for c in payload.get(field) or []
+            if (c.get("dataset_id"), c.get("outcome_key")) != cell]})
+    return cell
+
+
+def test_a_typed_value_settles_the_no_value_question_for_the_cell_it_names(nine_tmp):
+    """A cell whose paper printed nothing asks "where is this value, if it is reported at all?".
+    A reviewer typed both groups' numbers on the manual override form — which writes no
+    `question_id`, because it is not the questions page — the row pooled, and both `no_value`
+    cards stayed open: `answers_this` refuses every unnamed record, on the rule that a decision of
+    the same KIND taken elsewhere is not an answer to the question in front of the reviewer. For
+    this one kind it is: the question asks for a number and the record carries the whole of one."""
+    cell = _blanked_cell(nine_tmp)
+    asked = {q["group"]: q for q in questions_for_run(nine_tmp, fold=False)
+             if (q["dataset_id"], q["outcome_key"]) == cell}
+    assert {g: q["kind"] for g, q in asked.items()} == {"A": "no_value", "B": "no_value"}
+
+    _append(nine_tmp, [{"kind": "value", "dataset_id": cell[0], "outcome_key": cell[1],
+                        "group": "A", "mean": 12.5, "dispersion_value": 3.5,
+                        "dispersion_type": "SD", "n": 9,
+                        "justification": "Table 2, the older group's row, typed from the paper"}])
+    after = {q["group"]: q for q in questions_for_run(nine_tmp, fold=False)
+             if (q["dataset_id"], q["outcome_key"]) == cell}
+    assert after["A"]["status"] != "open" and after["A"]["answered"] is True
+    assert after["B"]["status"] == "open", "and the arm nobody typed a number for still asks"
+
+
+def test_a_value_that_names_another_question_does_not_settle_the_no_value_card(nine_tmp):
+    """"Answers clear only what they name" is the standing rule, and the exception above is for
+    records that name NOTHING — the manual override form's. A record that does name a question
+    names a different one, and reinterpreting it settles a card its reviewer never saw."""
+    cell = _blanked_cell(nine_tmp)
+    _append(nine_tmp, [{"kind": "value", "dataset_id": cell[0], "outcome_key": cell[1],
+                        "group": "A", "question_id": f"{cell[0]}|{cell[1]}|A|which_value",
+                        "mean": 12.5, "dispersion_value": 3.5, "dispersion_type": "SD", "n": 9,
+                        "justification": "Table 2, the older group's row, typed from the paper"}])
+    asked = {q["group"]: q for q in questions_for_run(nine_tmp, fold=False)
+             if (q["dataset_id"], q["outcome_key"]) == cell}
+    assert asked["A"]["status"] == "open" and asked["B"]["status"] == "open"
+
+
+def test_a_mean_with_no_spread_and_no_n_leaves_the_no_value_card_open(nine_tmp):
+    """A mean alone is a legal `value` record and is NOT a group's statistics: the row still has
+    no effect size and stays `needs_human`, and both cells stay in the review queue. Ticking the
+    card on it left a held row with no open question anywhere on the page — the §C4 state the
+    review layer exists to remove, and a worse failure than the question it silenced."""
+    cell = _blanked_cell(nine_tmp)
+    _append(nine_tmp, [{"kind": "value", "dataset_id": cell[0], "outcome_key": cell[1],
+                        "group": group, "mean": mean,
+                        "justification": "the number in the text, no spread or n printed with it"}
+                       for group, mean in (("A", 12.5), ("B", 7.2))])
+    _repool(nine_tmp)
+    row = next(r for r in json.loads(
+        (nine_tmp / "results" / "extraction_table_all.json").read_text())
+        if (r["dataset_id"], r["outcome_key"]) == cell)
+    assert row["es"] is None and row["confidence"] == "needs_human", "the row is still held"
+    open_cards = [q for q in questions_for_run(nine_tmp)
+                  if q["status"] == "open"
+                  and any((c["dataset_id"], c["outcome_key"]) == cell for c in q["cells"])]
+    assert open_cards, "a held row must leave a question open somewhere on the page"
+
+
+# ------------------------------------------------------ a later answer that states nothing new
+def test_a_series_answer_that_names_no_spread_type_never_displaces_a_typed_one(nine_tmp):
+    """Fix round: the Langan rows. Both groups' values were typed and the rows resolved; a later
+    "this series is this group" was recorded off a candidate whose error bars nobody could
+    identify, so it carried `dispersion_type: UNKNOWN` — and `_apply_value` wrote that over the
+    spread type a person had typed. A row whose spreads have no type converts by no route at all,
+    so cells holding both typed numbers read `one_group_only` with the numbers still on them.
+
+    A recorded human value stays in force until a LATER record states another; an answer that
+    states nothing about a field leaves that field where the last answer put it."""
+    ds, key = "b7523a41b03a:d2", "late_adaptation"
+    _append(nine_tmp, [
+        {"kind": "value", "dataset_id": ds, "outcome_key": key, "group": group, "mean": mean,
+         "dispersion_value": sd, "dispersion_type": "SD", "n": n,
+         "justification": "typed off Figure 3; the caption says the bars are SDs"}
+        for group, mean, sd, n in (("A", 30.2, 1.5, 19), ("B", 28.0, 1.6, 21))])
+    _repool(nine_tmp)
+
+    def row() -> dict[str, Any]:
+        return next(r for r in json.loads(
+            (nine_tmp / "results" / "extraction_table_all.json").read_text())
+            if (r["dataset_id"], r["outcome_key"]) == (ds, key))
+
+    typed = row()
+    assert typed["es"] is not None and (typed["mean_a"], typed["mean_b"]) == (30.2, 28.0)
+
+    _append(nine_tmp, [{"kind": "value", "dataset_id": ds, "outcome_key": key, "group": "A",
+                        "mean": 30.2, "dispersion_value": 1.5, "dispersion_type": "UNKNOWN",
+                        "n": 19, "clears": ["series_identity_conflict"],
+                        "justification": "the upper series is the older group, per the legend"}])
+    _repool(nine_tmp)
+    after = row()
+    assert (after["mean_a"], after["mean_b"]) == (30.2, 28.0)
+    assert after["dispersion_type_a"] == "SD" and after["dispersion_type_b"] == "SD"
+    assert after["es"] == typed["es"] and after["var"] == typed["var"]
+
+
+def test_an_unknown_type_stated_about_a_new_spread_never_borrows_the_old_spread_s_label(nine_tmp):
+    """The other side of the same rule, and the one that decides whether it is safe. Carrying a
+    spread TYPE forward is honest only while the spread is the same number: a label is a statement
+    about the number it was stated for. A record that types a DIFFERENT spread and says nobody
+    could identify it has typed an unknown-type spread, and the row must go back to being held and
+    visible — never converted with the label of the number this one replaced."""
+    ds, key = "b7523a41b03a:d2", "late_adaptation"
+    _append(nine_tmp, [
+        {"kind": "value", "dataset_id": ds, "outcome_key": key, "group": group, "mean": mean,
+         "dispersion_value": sd, "dispersion_type": "SD", "n": n,
+         "justification": "typed off Figure 3; the caption says the bars are SDs"}
+        for group, mean, sd, n in (("A", 30.2, 1.5, 19), ("B", 28.0, 1.6, 21))])
+    _repool(nine_tmp)
+
+    def row() -> dict[str, Any]:
+        return next(r for r in json.loads(
+            (nine_tmp / "results" / "extraction_table_all.json").read_text())
+            if (r["dataset_id"], r["outcome_key"]) == (ds, key))
+
+    typed_es = row()["es"]
+    assert row()["dispersion_type_a"] == "SD" and typed_es is not None
+    _append(nine_tmp, [{"kind": "value", "dataset_id": ds, "outcome_key": key, "group": "A",
+                        "mean": 41.5, "dispersion_value": 6.2, "dispersion_type": "UNKNOWN",
+                        "n": 19, "clears": ["series_identity_conflict"],
+                        "justification": "the upper series is the older group; its bars are "
+                                         "drawn but the caption never says what they are"}])
+    _repool(nine_tmp)
+    after = row()
+    assert after["dispersion_a"] == 6.2, "the spread the record states does land"
+    assert after["dispersion_type_a"] == "UNKNOWN", "and it carries no label nobody stated for it"
+    # …so the typed pair converts by no route, which is what an untyped spread has always meant.
+    # Whatever the row is built from afterwards is the resolver's own business (here D1's fallback
+    # pair), and it is held either way — never the reviewer's 6.2 divided as though it were an SD.
+    assert "group_statistics_missing" in after["flags"]
+    assert after["confidence"] == "needs_human"
+    assert after["es"] != typed_es, "and the pooled number is not the old label on the new spread"
+
+
+def test_a_new_spread_with_no_stated_type_does_not_inherit_the_old_label_either(nine_tmp):
+    """Re-review MINOR A: the same defect one branch up. A record that states a different spread
+    and says nothing at all about its type has still replaced the number the old label described —
+    the label may not survive onto it through the absence of a `dispersion_type` field."""
+    ds, key = "b7523a41b03a:d2", "late_adaptation"
+    _append(nine_tmp, [
+        {"kind": "value", "dataset_id": ds, "outcome_key": key, "group": group, "mean": mean,
+         "dispersion_value": sd, "dispersion_type": "SD", "n": n,
+         "justification": "typed off Figure 3; the caption says the bars are SDs"}
+        for group, mean, sd, n in (("A", 30.2, 1.5, 19), ("B", 28.0, 1.6, 21))])
+    _repool(nine_tmp)
+    _append(nine_tmp, [{"kind": "value", "dataset_id": ds, "outcome_key": key, "group": "A",
+                        "mean": 41.5, "dispersion_value": 6.2, "n": 19,
+                        "justification": "re-read the figure; the bars' meaning is not stated"}])
+    _repool(nine_tmp)
+    after = next(r for r in json.loads(
+        (nine_tmp / "results" / "extraction_table_all.json").read_text())
+        if (r["dataset_id"], r["outcome_key"]) == (ds, key))
+    assert after["dispersion_a"] == 6.2
+    assert after["dispersion_type_a"] == "UNKNOWN"
+    assert after["confidence"] == "needs_human"

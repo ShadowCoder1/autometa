@@ -1608,7 +1608,12 @@ def _split_rows(records: Sequence[EffectSizeRecord], settings: StatsSettings) ->
     if settings.one_row_per_paper and split.primary:
         aggregated: Aggregation = aggregate_one_row_per_paper(split.primary, settings)
         composites = [r for r in aggregated.rows if AGGREGATED_FLAG in r.flags]
-        split.primary = aggregated.rows
+        # the confidence filter again, because aggregation can DOWNGRADE: a composite built
+        # from a doubly-unverified member arm comes back `needs_human`, and a held row is not
+        # combined into the estimate — it is held for the human, same as before aggregation
+        split.primary = [r for r in aggregated.rows if r.confidence in admitted]
+        split.held = [*split.held,
+                      *[r for r in aggregated.rows if r.confidence not in admitted]]
         split.every = [*split.every, *composites]
         split.exclusions.extend(aggregated.exclusions)
         split.notes.extend(f"one_row_per_paper: {note}" for note in aggregated.notes)

@@ -28,7 +28,8 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Collection, Iterable, Mapping, Sequence
 
-from ..pipeline.overrides import (MAP_KINDS, ROW_REFUSALS, codes_cleared_by_value, consumed_seqs)
+from ..pipeline.overrides import (GROUP_STATISTICS, MAP_KINDS, ORIENTATION_ANSWERED, ROW_REFUSALS,
+                                  codes_cleared_by_value, consumed_seqs)
 from ..pipeline.rows import converted_route
 from ..pipeline.state import paper_dir, read_json, sha12
 
@@ -294,13 +295,13 @@ def questions_for_run(run_dir: str | Path, *,
             flags = [f for f in verdict.get("flags") or []
                      if str(f.get("code") or "") not in retired
                      and (settled is None
-                          or str(f.get("code") or "") not in _ORIENTATION_UNRESOLVED)]
+                          or str(f.get("code") or "") not in _ORIENTATION_ASKING)]
             verdict = {**verdict, "flags": flags}
             if settled is not None:
                 verdict["higher_is_better"] = settled
         out.append(_question(entry, verdict, candidates, study, dataset, provenance,
                              run, already, pending, answered_value, consumed, overruled,
-                             rows.get((dataset_id, outcome_key)) or {}))
+                             rows.get((dataset_id, outcome_key)) or {}, settled))
     out.extend(_excluded_questions(run, overrides, out))
     out.extend(_map_questions(run, overrides, pending, consumed))
     # ONE read of the run's rows for the whole page. Every card asks its row where it stands (the
@@ -409,7 +410,8 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
               pending: Mapping[int, str], answered_value: bool = False,
               consumed: Collection[int] = (),
               overruled: Collection[str] = (),
-              row: Mapping[str, Any] | None = None) -> Question:
+              row: Mapping[str, Any] | None = None,
+              recorded_direction: bool | None = None) -> Question:
     group = entry.get("group") if entry.get("group") in ("A", "B") else None
     outcome_key = str(entry.get("outcome_key") or "")
     # a cell is held by what its ROW carries too: C9's screen on the resolved |d| is a refusal no
@@ -450,6 +452,11 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
     # (a `cell` card's slot answers name the SLOT's own question, never the card — see
     # `_slot_record` — so the card id is not one a cell accepts answers under)
     writes = _answer_kind(kind)
+    # which of a group's own statistics the log's value records have put on THIS cell, taken
+    # together: the FIELDS, not the numbers, because what the tail of `answers_this` has to know is
+    # whether a person has supplied the whole statistic — not in which submit they supplied it.
+    typed = {field for o in already if o.get("kind") == "value"
+             for field in GROUP_STATISTICS if o.get(field) is not None}
 
     def answers_this(override: Mapping[str, Any]) -> bool:
         if override.get("kind") == "exclude_dataset":
@@ -477,7 +484,21 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
         # answers land. Matching it by kind marked a question the reviewer had never been shown as
         # answered, on the strength of an older decision of the same kind. It settles nothing here;
         # what it settles is on the record, and the cell asks until the page is answered.
-        return False
+        #
+        # ONE kind is different, and only for records that name nothing — which is why this sits
+        # here rather than ahead of the branch above, where it settled cards whose reviewer had
+        # been shown another question entirely. `no_value` asks "where is this group's value, if it
+        # is reported at all?", and a person who has typed the group's own statistics onto the cell
+        # has answered exactly that, however they recorded it. The whole trio is required, and it
+        # is read off the CELL rather than one record: a mean alone builds no row, so ticking the
+        # card on one left a `needs_human` row with no open question anywhere on the page — the
+        # state §C4 exists to remove, and worse than the question it silenced. Reading the cell
+        # rather than the record is what stops the mirror image of that: a reviewer who types the
+        # spread in a second submit would otherwise be asked for ever where a number they had
+        # already given was. (`already` is narrowed to this cell and this group at the call site,
+        # and `_validate` refuses a `value` with no group, so nothing from another arm is in it.)
+        return (kind == "no_value" and override.get("kind") == "value"
+                and set(GROUP_STATISTICS) <= typed)
 
     already = [o for o in already if answers_this(o)]
     status, pending_why = _answer_status(already, pending, consumed)
@@ -507,6 +528,17 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
     why = _why(entry, verdict)
     if kind == "orientation":
         why = _with_ballots(why, run, str(entry.get("paper_id") or ""), outcome_key, measure)
+    if kind == "reader_contradicts_values" and recorded_direction is not None:
+        # first, because it is the whole reason this cell is being asked anything about direction
+        # again: a direction IS on the record, and this cell still carries C3's mechanical
+        # contradiction — the only one there is — between a stated direction and its own resolved
+        # raw means. That is new information about the answer, not the direction question again,
+        # and it is asked as its own kind with its own three answers.
+        why = (f"NEW, since the direction was recorded: a reviewer has already answered the "
+               f"direction of this measure (higher_is_better = {bool(recorded_direction)}), and "
+               f"the run's means check contradicts the direction stated for this cell — the "
+               f"recorded answer is contradicted by this cell's own resolved raw means. That is "
+               f"why this is asked again, and it is a different question. || {why}")
     return Question(OrderedDict([
         ("id", question_id),
         ("kind", kind),
@@ -564,6 +596,15 @@ def _holding_codes(verdict: Mapping[str, Any]) -> set[str]:
 #: reason to ask, not a reason to outrank a cell's other blockers (it sits in `_FLAG_TO_KIND`).
 _ORIENTATION_UNRESOLVED: frozenset[str] = frozenset({
     "orientation_unknown", "orientation_unresolved"})
+
+#: every code whose QUESTION is the direction, so that a recorded direction retires all of them and
+#: `_kind` stops returning `orientation` on a cell whose direction is on the record. It is the
+#: ANALYSIS's own set (`pipeline.overrides.ORIENTATION_ANSWERED`) rather than a second list here:
+#: `_apply_orientation` strips exactly these from the cell, and a page that retired a different set
+#: would ask about a code the re-pool had removed, or tick off one it had not.
+#: `tests/test_questions_consolidation.py` pins that every `_FLAG_TO_KIND` code asking for a
+#: direction is in it — a new one that is not would be asked for ever, which is the bug this fixes.
+_ORIENTATION_ASKING: frozenset[str] = ORIENTATION_ANSWERED
 
 
 def _orientation_unresolved(verdict: Mapping[str, Any], flags: Sequence[str]) -> bool:

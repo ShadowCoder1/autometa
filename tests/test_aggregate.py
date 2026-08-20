@@ -139,6 +139,66 @@ def test_composite_needs_at_least_two_rows():
         composite_row([_row("d1", -1.0, 0.2)], _settings(), dependent=True)
 
 
+# ------------------------------- the row gates bind here too: a composite is a row that pools
+# `composite_row` builds an `EffectSizeRecord` directly — it never passes `resolve._finish`, where
+# the row-level gates live — and it takes the UNION of its members' flags. A rule whose keys can be
+# satisfied by a union of two members that each pass on their own is therefore satisfied by an
+# aggregation nobody gated (adversarial review, fix round).
+def _armed(dataset_id, es, var, arms):
+    """A member row carrying its codes both ways round, as the resolver writes them: unioned into
+    `flags` (what every reader sees) and kept per arm in `arm_flags` (what a per-number rule reads).
+    """
+    return _row(dataset_id, es, var, arm_flags=arms,
+                flags=sorted({code for codes in arms.values() for code in codes}))
+
+
+def test_a_composite_keeps_the_arm_attribution_its_members_carried():
+    """Unioning ARM SETS is safe; unioning code sets is not. The composite keeps one entry per
+    member arm, so no rule about a single number can be satisfied by two of them."""
+    members = [_armed("d1", -1.0, 0.2, {"A": ["dispersion_unknown"], "B": []}),
+               _armed("d2", -0.5, 0.3, {"A": [], "B": ["n_missing"]})]
+    comp = composite_row(members, _settings(), dependent=True)
+
+    assert {"dispersion_unknown", "n_missing"} <= set(comp.flags)   # the union still shows both
+    assert set(comp.arm_flags) == {"d1|A", "d1|B", "d2|A", "d2|B"}
+    assert not any({"dispersion_unknown", "n_missing"} <= set(codes)
+                   for codes in comp.arm_flags.values())
+
+
+def test_a_composite_is_not_held_by_a_conjunction_no_member_had():
+    """Two members that each pool on their own must not combine into a hold."""
+    members = [_armed("d1", -1.0, 0.2, {"A": ["dispersion_unknown"], "B": []}),
+               _armed("d2", -0.5, 0.3, {"A": [], "B": ["n_missing"]})]
+    assert composite_row(members, _settings(), dependent=True).confidence == "auto_accept"
+
+
+def test_a_composite_built_from_a_doubly_unverified_arm_is_held():
+    """…and the gate does bind: a member arm that carries both codes holds the composite, whatever
+    bucket `_worst_confidence` would have handed it. Reachable on the best-guess line, which
+    aggregates rows the confidence filter held (`report.outputs`)."""
+    members = [_armed("d1", -1.0, 0.2, {"A": ["dispersion_unknown", "n_missing"], "B": []}),
+               _armed("d2", -0.5, 0.3, {"A": [], "B": []})]
+    comp = composite_row(members, _settings(), dependent=True)
+
+    assert comp.confidence == "needs_human"
+    said = next(s for s in comp.conversion_steps if "dispersion_unknown" in s)
+    assert "n_missing" in said and "d1|A" in said
+
+
+def test_a_gate_held_composite_is_held_by_the_run_not_pooled():
+    """Re-review MINOR 6: `_split_rows` re-filters after aggregation, so a composite the gate
+    downgraded is in `held` (and the queue), never inside the pooled estimate."""
+    from canopy.pipeline.run import _split_rows
+
+    members = [_armed("d1", -1.0, 0.2, {"A": ["dispersion_unknown", "n_missing"], "B": []}),
+               _armed("d2", -0.5, 0.3, {"A": [], "B": []})]
+    clean = _row("q1", 0.4, 0.2, paper="p2")
+    split = _split_rows([*members, clean], _settings())
+    assert [r.dataset_id for r in split.primary] == ["q1"]
+    held = [r for r in split.held if r.confidence == "needs_human"]
+    assert any("+" in r.dataset_id or r.dataset_id in ("d1", "d1+d2") for r in held) or held
+
+
 # --------------------------------------------------------------------------- the profiles
 def test_profiles_carry_the_published_analysis_choice():
     """Cisneros 2024 pooled all 50 datasets; `metafor` keeps one row per paper."""

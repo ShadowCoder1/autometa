@@ -1066,3 +1066,58 @@ def test_two_pairs_that_convert_hold_the_row_instead_of_taking_the_first():
     assert "Fig 4, left panel" in rec.not_convertible_reason
     assert "Fig 3, top-right panel" in rec.not_convertible_reason
     assert rec.conversion_chain.endswith(rec.not_convertible_reason)
+
+
+# ------------------------- which ARM a doubt is about (adversarial review, fix round MINOR 4)
+# `confidence.resolve_cell` puts the whole cell's flag list on BOTH groups' verdicts, so "which
+# arm?" is answered by the flag's `candidate_ids` and the candidate's group — never by which
+# verdict carries the code, because every code is on both.
+def _armed_verdict(group, *flags):
+    from canopy.models import CheckFlag, Verdict
+
+    return Verdict(dataset_id="ds1", outcome_key="late_adaptation", group=group,
+                   confidence="accept_with_note",
+                   flags=[CheckFlag(code=code, severity="warn", message=code,
+                                    candidate_ids=list(cids))
+                          for code, cids in flags])
+
+
+def _armed_candidates():
+    from canopy.models import Candidate
+
+    return [Candidate(candidate_id=cid, dataset_id="ds1", outcome_key="late_adaptation",
+                      kind="group_stats", group=group, status="found", mean=1.0)
+            for cid, group in (("a1", "A"), ("a2", "A"), ("b1", "B"))]
+
+
+def test_a_doubt_is_attributed_to_the_arm_whose_reading_raised_it():
+    from canopy.pipeline.resolve import _codes_by_arm
+
+    a = _armed_verdict("A", ("dispersion_unknown", ["a1"]), ("n_missing", ["a2"]))
+    b = _armed_verdict("B", ("dispersion_unknown", ["a1"]), ("n_missing", ["a2"]))
+    by_arm = _codes_by_arm(a, b, _armed_candidates())
+    assert by_arm == {"A": ["dispersion_unknown", "n_missing"], "B": []}
+
+
+def test_a_code_raised_on_no_candidate_belongs_to_no_arm():
+    """It describes the CELL, not one of its numbers, so a per-number rule may not fire on it. It
+    is still in the row's `flags`, which is the union and where every other reader looks."""
+    from canopy.pipeline.resolve import _codes_by_arm
+
+    a = _armed_verdict("A", ("dispersion_unknown", []), ("n_missing", []))
+    b = _armed_verdict("B", ("dispersion_unknown", []), ("n_missing", []))
+    assert _codes_by_arm(a, b, _armed_candidates()) == {"A": [], "B": []}
+
+
+def test_an_answer_that_clears_a_code_on_one_arm_clears_it_for_that_arm_only():
+    """`overrides._apply_value` strips a cleared code from the ANSWERED cell's flags and leaves the
+    other cell's list alone. Reading both verdicts for one arm would find the code on the arm whose
+    reviewer had just retired it, and the row would stay held for ever — so each arm is attributed
+    from its OWN verdict."""
+    from canopy.pipeline.resolve import _codes_by_arm
+
+    answered = _armed_verdict("A", ("dispersion_unknown", ["a1"]))          # `n_missing` retired
+    other = _armed_verdict("B", ("dispersion_unknown", ["a1"]), ("n_missing", ["a2"]))
+    by_arm = _codes_by_arm(answered, other, _armed_candidates())
+    assert by_arm["A"] == ["dispersion_unknown"]                            # the pair is broken
+    assert "n_missing" not in by_arm["A"]

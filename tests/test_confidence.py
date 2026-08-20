@@ -973,7 +973,8 @@ def _row(candidates, *, adjudication=None, flags=None):
                                  vote_result=votes.get(group), verdicts=CONFIRMED, flags=flags,
                                  adjudication=adjudication, orientation=ORIENTED, n_a=12, n_b=12)
              for group in ("A", "B")}
-    values = ResolvedValues.from_verdicts(cells["A"], cells["B"], higher_is_better=False)
+    values = ResolvedValues.from_verdicts(cells["A"], cells["B"], higher_is_better=False,
+                                          candidates=candidates)
     outcome = OutcomeDef(key="late_adaptation", label="late adaptation",
                          definition="directional error at the end of the block")
     return resolve_effect(dataset(), outcome, values, StatsSettings()), cells["A"], cells["B"]
@@ -1072,6 +1073,190 @@ def test_the_cell_level_screen_is_an_early_warning_and_no_longer_decides_alone()
     assert CHECK_SEVERITY["implausible_dispersion"] == "warn"
     row, _, _ = _row(huge, flags=flags)
     assert row.confidence == "needs_human"           # …and the row is still refused
+
+
+# ------------------------------- a denominator NOTHING on the record establishes (calibration D5)
+# `dispersion_unknown` says the ± could be an SD or an SE; `n_missing` says the size the conversion
+# scaled it by was not transcribed beside the number. Each alone is priced by the score. Together
+# they are the same doubt twice, and it is the doubt that sets the magnitude: the only number that
+# could tell an SD from an SE is the n, and the n was guessed too.
+def _untyped_spread_and_no_n(cid, mean, *, group="A", model="claude-haiku-5"):
+    """A third reader of one cell: a spread nobody could type, with no group size beside it."""
+    return text_cand(cid, mean, dispersion_value=5.0, dispersion_type=DispersionType.UNKNOWN,
+                     group=group, model=model).model_copy(update={"n": None})
+
+
+def _doubly_unverified():
+    """The defect's shape: a believable |d| = 0.4 the pipeline pooled at `accept_with_note`, on a
+    denominator whose TYPE was never established and whose group size was never transcribed."""
+    return [text_cand("a1", 10.0, dispersion_value=5.0),
+            text_cand("a2", 10.0, dispersion_value=5.0, model=SONNET),
+            _untyped_spread_and_no_n("a3", 10.0),
+            text_cand("b1", 12.0, dispersion_value=5.0, group="B"),
+            text_cand("b2", 12.0, dispersion_value=5.0, group="B", model=SONNET)]
+
+
+def test_a_row_whose_spread_type_and_group_size_are_both_unverified_is_held():
+    """The whole rule. |d| = 0.4 passes the plausibility screen, both cells score well enough to
+    pool, every arithmetic check passes — and the magnitude still rests on nothing: read the ± as
+    an SE instead of an SD and the same row is |d| = 1.7."""
+    row, cell_a, cell_b = _row(_doubly_unverified())
+    assert row.route == "text_mean_sd" and abs(row.d) < 3.0        # nothing else refuses it
+    assert {"dispersion_unknown", "n_missing"} <= set(row.flags)
+    assert cell_a.confidence != "needs_human" and cell_b.confidence != "needs_human"
+    assert row.confidence == "needs_human", (row.d, row.flags)
+
+
+def test_the_held_row_names_both_codes_so_the_question_card_can_say_why():
+    """A row held with no reason a reviewer can read is a question nobody can answer."""
+    row, _, _ = _row(_doubly_unverified())
+    said = next(step for step in row.conversion_steps if "dispersion_unknown" in step)
+    assert "n_missing" in said and "SE" in said and "√n" in said
+
+
+def test_either_doubt_on_its_own_still_pools():
+    """The rule is the CONJUNCTION, and the corpus is why: an untyped spread beside a printed n,
+    and a missing n beside a typed SD, are each an ordinary warning the score already prices.
+    Holding on either alone would bury readings that match the reference analysis."""
+    typed_but_no_n = [text_cand("a1", 10.0, dispersion_value=5.0),
+                      text_cand("a2", 10.0, dispersion_value=5.0, model=SONNET),
+                      text_cand("a3", 10.0, dispersion_value=5.0,
+                                model="claude-haiku-5").model_copy(update={"n": None}),
+                      text_cand("b1", 12.0, dispersion_value=5.0, group="B"),
+                      text_cand("b2", 12.0, dispersion_value=5.0, group="B", model=SONNET)]
+    row, _, _ = _row(typed_but_no_n)
+    assert "n_missing" in row.flags and "dispersion_unknown" not in row.flags
+    assert row.confidence != "needs_human"
+
+    untyped_with_n = [text_cand("a1", 10.0, dispersion_value=5.0),
+                      text_cand("a2", 10.0, dispersion_value=5.0, model=SONNET),
+                      text_cand("a3", 10.0, dispersion_value=5.0,
+                                dispersion_type=DispersionType.UNKNOWN, model="claude-haiku-5"),
+                      text_cand("b1", 12.0, dispersion_value=5.0, group="B"),
+                      text_cand("b2", 12.0, dispersion_value=5.0, group="B", model=SONNET)]
+    row, _, _ = _row(untyped_with_n)
+    assert "dispersion_unknown" in row.flags and "n_missing" not in row.flags
+    assert row.confidence != "needs_human"
+
+
+def test_the_unverified_variance_gate_caps_the_bucket_and_not_the_score():
+    """Same reason C9's gate does: "below auto_accept" still includes `accept_with_note`, which
+    POOLS, so a score cap could never withhold the row it exists to withhold."""
+    from canopy.verify.confidence import UNVERIFIED_VARIANCE_FLAGS, unverified_variance_bucket
+
+    both = {"A": ["dispersion_unknown", "n_missing", "panel_not_isolated"], "B": []}
+    for start in ("auto_accept", "accept_with_note"):
+        bucket, reasons = unverified_variance_bucket(start, both)
+        assert bucket == "needs_human", start
+        assert reasons and all(code in reasons[0] for code in UNVERIFIED_VARIANCE_FLAGS)
+    assert unverified_variance_bucket("auto_accept", {"A": ["n_missing"]})[0] == "auto_accept"
+    assert unverified_variance_bucket(
+        "auto_accept", {"A": ["dispersion_unknown"]})[0] == "auto_accept"
+    assert unverified_variance_bucket("auto_accept", {})[0] == "auto_accept"
+
+
+# ------------------------------------------------------- fix round: the conjunction is PER ARM
+def _split_across_arms():
+    """The doubt on A is not the doubt on B. Arm A's ± has no type but its n is printed, so the
+    spread is checkable; arm B's spread is typed and only its n is missing. Neither arm is "the
+    same doubt arriving twice", so neither justifies withholding the row."""
+    return [text_cand("a1", 10.0, dispersion_value=5.0),
+            text_cand("a2", 10.0, dispersion_value=5.0, model=SONNET),
+            text_cand("a3", 10.0, dispersion_value=5.0,          # untyped, but n IS printed
+                      dispersion_type=DispersionType.UNKNOWN, model="claude-haiku-5"),
+            text_cand("b1", 12.0, dispersion_value=5.0, group="B"),
+            text_cand("b2", 12.0, dispersion_value=5.0, group="B", model=SONNET),
+            text_cand("b3", 12.0, dispersion_value=5.0, group="B",  # typed, but no n
+                      model="claude-haiku-5").model_copy(update={"n": None})]
+
+
+def test_the_conjunction_is_read_on_one_arm_and_never_across_the_pair():
+    """`ResolvedValues.from_verdicts` unions both cells' codes onto the row, so a row-level
+    conjunction fires whenever the two doubts sit on DIFFERENT arms. That row is not doubly
+    unverified — each arm carries exactly one ordinary warning — and the docstring's own reason
+    ("the only number that could tell an SD from an SE is the n, and the n was guessed too") is
+    a statement about ONE number."""
+    row, _, _ = _row(_split_across_arms())
+    assert {"dispersion_unknown", "n_missing"} <= set(row.flags)   # the union still shows both
+    assert row.confidence != "needs_human", (row.d, row.flags)
+
+    same_arm, _, _ = _row(_doubly_unverified())                    # the control, unchanged
+    assert same_arm.confidence == "needs_human"
+
+
+def test_the_row_records_which_arm_carried_which_doubt():
+    """The union is what made the cross-arm read possible, so the row keeps the codes per ARM as
+    well. Unioning ARM SETS can never manufacture a conjunction; unioning code sets can."""
+    row, _, _ = _row(_doubly_unverified())
+    assert {"dispersion_unknown", "n_missing"} <= set(row.arm_flags["A"])
+    assert not {"dispersion_unknown", "n_missing"} <= set(row.arm_flags.get("B") or [])
+
+    split, _, _ = _row(_split_across_arms())
+    assert "dispersion_unknown" in split.arm_flags["A"] and "n_missing" not in split.arm_flags["A"]
+    assert "n_missing" in split.arm_flags["B"] and "dispersion_unknown" not in split.arm_flags["B"]
+
+
+def test_the_held_arm_is_named_and_the_group_size_is_the_answer_asked_for():
+    """Fix round MINOR 5: `dispersion_unknown` is in no `overrides.VALUE_CLEARS_*` family, so
+    "either answer breaks the pair" was false for half the pair. Only the n is answerable, and the
+    sentence a reviewer reads has to say so — and say which arm."""
+    from canopy.pipeline.overrides import (VALUE_CLEARS_DISPERSION, VALUE_CLEARS_MEAN,
+                                           VALUE_CLEARS_N, VALUE_CLEARS_SPREAD_TYPE)
+
+    families = (VALUE_CLEARS_MEAN | VALUE_CLEARS_SPREAD_TYPE | VALUE_CLEARS_N
+                | VALUE_CLEARS_DISPERSION)
+    assert "dispersion_unknown" not in families      # nothing a reviewer types retires it
+    assert "n_missing" in VALUE_CLEARS_N             # …and the n is what does
+
+    row, _, _ = _row(_doubly_unverified())
+    said = next(step for step in row.conversion_steps if "dispersion_unknown" in step)
+    assert "group A" in said, said
+    assert "group size" in said and "either" not in said.lower()
+
+
+def test_the_gate_names_codes_the_checks_actually_raise():
+    """A gate keyed on a code no check emits is a gate that never fires. `severity_of` raises on a
+    code it has never heard of, which is exactly the typo this pins."""
+    from canopy.verify.checks import severity_of
+    from canopy.verify.confidence import UNVERIFIED_VARIANCE_FLAGS
+
+    assert {severity_of(code) for code in UNVERIFIED_VARIANCE_FLAGS} == {"warn"}
+
+
+def test_the_card_for_the_held_arm_names_both_doubts():
+    """Fix round MINOR 7. The gate holds a ROW, and the question a reviewer answers is on a CELL —
+    so the hold has to reach the card through the channel every other finding uses, which is
+    `state.review_entry`'s reason (what `questions._why` reads). Because the conjunction is now
+    read on ONE arm, the arm that triggered the hold is exactly the arm whose card explains it:
+    no new channel, and no row-level code that would veto the best-guess line."""
+    from canopy.models import Verdict
+    from canopy.pipeline.state import review_entry
+
+    held_arm = Verdict(
+        dataset_id="ds1", outcome_key="late_adaptation", group="A", confidence="accept_with_note",
+        flags=[CheckFlag(code="dispersion_unknown", severity="warn",
+                         message="a spread of 5.0 was read but nobody could say what kind it is"),
+               CheckFlag(code="n_missing", severity="warn",
+                         message="no group size was transcribed with this value")])
+    reason = review_entry(held_arm, paper_id="p1")["reason"]
+    assert "dispersion_unknown" in reason and "n_missing" in reason
+
+
+def test_a_doubly_unverified_row_is_still_available_to_the_best_guess_line():
+    """It is held, not refused. The value may well be the best estimate anyone has of this
+    contrast — what is missing is corroboration of its SCALE — so the strict line may not take it
+    and the best-guess line may, under the rule it already has for a row held by its bucket."""
+    from canopy.models import OutcomeDef, StatsSettings
+    from canopy.pipeline.bestguess import CONTRADICTED, VETO_ROW_FLAGS, best_guess_rows
+    from canopy.verify.confidence import UNVERIFIED_VARIANCE_FLAGS
+
+    assert not (UNVERIFIED_VARIANCE_FLAGS & (VETO_ROW_FLAGS | CONTRADICTED))
+    row, _, _ = _row(_doubly_unverified())
+    outcome = OutcomeDef(key="late_adaptation", label="late adaptation",
+                         definition="directional error at the end of the block")
+    taken, decisions = best_guess_rows([], [row], outcome=outcome, settings=StatsSettings())
+    assert [r.dataset_id for r in taken] == [row.dataset_id]
+    assert decisions[0].rule == "low_confidence_value"
 
 
 # ---------------------------------------------------------- C11 (M3): whose decision was it

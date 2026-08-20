@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from typing import Any, Sequence
 
 from ..models import EffectSizeRecord, StatsSettings
+from ..verify.confidence import unverified_variance_bucket
 from ..stats.effect_sizes import ci_smd
 from ..stats.meta import fixed_effects
 
@@ -174,8 +175,29 @@ def composite_row(members: Sequence[EffectSizeRecord], settings: StatsSettings, 
         analysis_metric=_common([m.analysis_metric for m in members], "unknown"),
         flags=sorted({f for m in members for f in m.flags}
                      | {AGGREGATED_FLAG, DEPENDENT_FLAG if dependent else INDEPENDENT_FLAG}),
+        #: one entry per MEMBER ARM, never merged. The line above unions the members' codes, and a
+        #: rule about one number read off that union is satisfied by two members that each pass on
+        #: their own — which is exactly the shape `unverified_variance_bucket` screens for.
+        arm_flags={f"{m.dataset_id}|{arm}": list(codes)
+                   for m in members for arm, codes in m.arm_flags.items()},
         moderators=moderators, citation=first.citation, sample_id="",
         notes="; ".join(x for x in [*(m.notes for m in members), rule] if x)[:2000])
+
+    # The row gates live in `resolve._finish`, and a composite never goes through it: this function
+    # builds an `EffectSizeRecord` directly and it POOLS. So the one gate whose keys a union can
+    # manufacture is re-derived here, on the attribution kept above (adversarial review, fix round).
+    #
+    # Its two neighbours are not re-derived, and deliberately: `conversion_gate_bucket` is keyed on
+    # `route`, and a composite's route is `"composite"` or a single shared member route — it can
+    # only fire on a converted statistic, which a composite is not; C9's `|d|` screen is keyed on
+    # `record.d`, which a composite has none of (its estimate is a weighted mean of its members'
+    # effect sizes, each already screened). Neither can be satisfied by a union of members that
+    # passed on their own, which is the property that made this one bind.
+    weighed, said = unverified_variance_bucket(record.confidence, record.arm_flags)
+    if said:
+        record.confidence = weighed
+        record.conversion_steps = [*record.conversion_steps, *said]
+        record.conversion_chain = "; ".join([record.conversion_chain, *said])
     return record
 
 

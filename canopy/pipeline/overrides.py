@@ -61,7 +61,8 @@ from .rows import (PreparedRow, converted_route, prepare_rows,
 from .state import (load_manifest, read_stage, review_entry, save_manifest, sha12,
                     sort_review_queue, stage_done)
 
-__all__ = ["KINDS", "MAP_KINDS", "MAP_PENDING", "OVERRIDES_FILE", "OverrideRejected",
+__all__ = ["GROUP_STATISTICS", "KINDS", "MAP_KINDS", "MAP_PENDING", "ORIENTATION_ANSWERED",
+           "OVERRIDES_FILE", "OverrideRejected",
            "OVERRULABLE", "RE_EXTRACT_PENDING", "codes_cleared_by_value", "consumed_seqs",
            "recorded_flags", "recorded_holds", "row_flags", "append_override", "append_overrides",
            "read_overrides", "apply_overrides_and_repool", "map_answers", "eligibility_answers",
@@ -1044,9 +1045,9 @@ def _apply_orientation(override: Mapping[str, Any],
 
     Scope is (paper, outcome_key, measure_name) because that is where the pipeline decides it: an
     empty `measure_name` means every dataset of that paper measuring that outcome. The answer sets
-    `higher_is_better`, retires the `orientation_unknown` flag it answers, records the reviewer's
-    quote as the cell's orientation evidence, and re-derives the row through the ordinary
-    resolution path — so the sign appears in the effect size and nowhere else.
+    `higher_is_better`, retires the codes it answers (`ORIENTATION_ANSWERED`), records the
+    reviewer's quote as the cell's orientation evidence, and re-derives the row through the
+    ordinary resolution path — so the sign appears in the effect size and nowhere else.
     """
     paper_id = str(override.get("paper_id") or "")
     outcome_key = str(override.get("outcome_key") or "")
@@ -1082,7 +1083,7 @@ def _apply_orientation(override: Mapping[str, Any],
             continue
         for verdict in (verdict_a, verdict_b):
             verdict.higher_is_better = higher_is_better
-            verdict.flags = [f for f in verdict.flags if f.code != "orientation_unknown"]
+            verdict.flags = [f for f in verdict.flags if f.code not in ORIENTATION_ANSWERED]
             # C2: a person decided this one. "older adults adapted less" read off a majority of
             # three machines is a different claim from one somebody made, and the extraction table
             # cannot tell them apart from the sign alone.
@@ -1179,6 +1180,28 @@ def _apply_analysed_n(override: Mapping[str, Any],
 #: findings about provenance, and only the question that names them can retire them (its option
 #: carries `clears`). A **spread type** answers what the error bars are, and only that. An `n` or
 #: a spread VALUE answers that the number was missing.
+#: the check codes a recorded DIRECTION answers: the abstention's own, and the readers' quarrel
+#: about which way the measure points — all of them ask for a direction, so a direction retires all
+#: of them. ONE rule, here beside the applier that strips them and read by `canopy.review.questions`
+#: to decide what a cell still asks, for the same reason `codes_cleared_by_value` lives here: the
+#: page and the analysis may not disagree about what an answer has settled. Retiring only
+#: `orientation_unknown` left `orientation_direction_conflict` standing on a cell whose direction
+#: was on the record, and the page asked the answered question for ever — 879 identical answers to
+#: one measure card in one run.
+#:
+#: `orientation_reader_contradicts_values` is deliberately absent: that is C3's contradiction
+#: between a stated direction and this cell's own resolved means, and no direction answers it.
+ORIENTATION_ANSWERED: frozenset[str] = frozenset({
+    "orientation_unknown", "orientation_unresolved", "orientation_direction_conflict"})
+
+#: what a group's OWN statistics are made of — the three fields `_apply_value` calls a cell
+#: `complete` on, and the least a typed answer must carry before a row can be built from the two
+#: cells rather than from a printed statistic. Named here, beside the clearing rules, because
+#: `canopy.review.questions` reads it to decide whether a typed answer is the whole of what "where
+#: is this value?" asked for: a mean alone builds no row, and a question ticked off by one leaves a
+#: held row with nothing open anywhere.
+GROUP_STATISTICS: tuple[str, ...] = ("mean", "dispersion_value", "n")
+
 VALUE_CLEARS_MEAN: frozenset[str] = frozenset({
     "axis_conflict", "calibration_disputed", "calibration_refuted", "calibration_single_witness",
     "calibration_missing", "value_outside_axis"})
@@ -1520,14 +1543,43 @@ def _apply_value(override: Mapping[str, Any], records: dict[tuple[str, str], Eff
 
     if override.get("mean") is not None:
         verdict.mean = float(override["mean"])
-    if override.get("dispersion_value") is not None:
+    # the spread this cell held BEFORE this record: a type is a statement about the number it was
+    # stated for, so whether the standing type may survive is decided against the standing spread
+    # and has to be read before that spread is replaced.
+    held_spread = verdict.dispersion_value
+    stated_spread = override.get("dispersion_value") is not None
+    #: a record that RESTATES the standing spread says nothing new about that number; a record
+    #: stating a different spread is a different number, and the standing label described the
+    #: number it replaced (the same rule the UNKNOWN branch below applies)
+    restated = (not stated_spread
+                or (held_spread is not None
+                    and float(override["dispersion_value"]) == float(held_spread)))
+    if stated_spread:
         verdict.dispersion_value = float(override["dispersion_value"])
+    if not override.get("dispersion_type") and not restated:
+        # a new spread with no stated label has no label — carrying the old one across would
+        # divide a number nobody typed a type for by the replaced number's semantics
+        verdict.dispersion_type = DispersionType.UNKNOWN
     if override.get("dispersion_type"):
         try:
-            verdict.dispersion_type = DispersionType(override["dispersion_type"])
+            named = DispersionType(override["dispersion_type"])
         except ValueError:
             return False, (f"unknown dispersion type {override['dispersion_type']!r} "
                            f"(expected one of {[d.value for d in DispersionType]})")
+        # `UNKNOWN` is what a candidate carries when nobody could identify the error bars, and the
+        # page copies the candidate's fields onto every value answer read off it — so a later
+        # "this series is this group" arrives saying UNKNOWN about a spread somebody has already
+        # typed the type of. When it RESTATES that same spread it has said nothing new about it and
+        # the type stands; the row went `not_convertible` on a cell holding both typed numbers, and
+        # its best-guess line read `one_group_only`.
+        #
+        # When it states a DIFFERENT spread it is a different number, and a label stated about the
+        # number it replaced is not a label about this one. Then the cell goes back to unknown-type
+        # — held, visible, in the exclusion table — which is where an untyped spread has always
+        # left it. Carrying the label across would divide a new spread by an old one's semantics
+        # and put a number nobody stated into the pooled effect size.
+        if named is not DispersionType.UNKNOWN or not restated:
+            verdict.dispersion_type = named
     if override.get("n") is not None:
         verdict.n = int(override["n"])
         # before the rebuild below, which reads it: this arm's size now comes from an answer of

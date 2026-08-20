@@ -189,7 +189,8 @@ def prepare_row_values(dataset: DatasetSpec, outcome_key: str, verdict_a: Verdic
     cell = cell_candidates(candidates, dataset.dataset_id, outcome_key)
     values = ResolvedValues.from_verdicts(
         verdict_a, verdict_b, test_statistic=statistic_values(cell),
-        reported=reported_values(cell), higher_is_better=higher_is_better)
+        reported=reported_values(cell), higher_is_better=higher_is_better,
+        candidates=cell)
     values.flags = sorted(set(values.flags)
                           | set(multi_group_flags(dataset, settings.multi_group_policy))
                           | set(approximation_flags(cell)))
@@ -311,7 +312,8 @@ def fallback_values(cell: Sequence[Candidate], primary: ResolvedValues,
             dataset_id=primary.dataset_id, outcome_key=primary.outcome_key,
             group_a=group_a, group_b=group_b, higher_is_better=primary.higher_is_better,
             route_available=list(primary.route_available), confidence=primary.confidence,
-            flags=list(primary.flags), objections=dict(primary.objections)))
+            flags=list(primary.flags), objections=dict(primary.objections),
+            group_flags={arm: list(codes) for arm, codes in primary.group_flags.items()}))
 
     order = list(settings.route_precedence)
 
