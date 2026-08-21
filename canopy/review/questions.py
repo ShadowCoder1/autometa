@@ -154,6 +154,11 @@ _FLAG_TO_KIND: tuple[tuple[str, str], ...] = (
     ("orientation_unknown", "orientation"),
 )
 
+#: the findings that make `needs_group_values` a question about a printed statistic's degrees of
+#: freedom rather than about a row that could not be built at all. The two share a kind and need
+#: different words: one names the statistic, the other says no route built anything.
+_DF_FAMILY: tuple[str, ...] = ("df_missing", "df_shortfall_unexplained", "test_stat_missing_df")
+
 _MAX_OPTIONS = 6
 
 #: a question is OPEN, ANSWERED, or answered-and-waiting: the decision is on the record and its
@@ -313,7 +318,8 @@ def questions_for_run(run_dir: str | Path, *,
         if question["kind"] in _ASKED_ONCE and _value_settled(already) \
                 and not _overrulable(verdict or {}, overruled) \
                 and not _holding_codes(verdict or {}) \
-                and not row_holds:
+                and not row_holds \
+                and not _built_nothing(row):
             # §C4's terminus, enforced: a number a person typed and then confirmed is not asked
             # about again, and the card does not stay on the page as a settled one either.
             # Everything else this cell may be held by is a DIFFERENT question and still asked —
@@ -600,7 +606,8 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
         prompt = _converted_prompt(who=label, outcome_key=outcome_key, row=row,
                                    statistic=statistic)
     if kind == "needs_group_values":
-        prompt = _needs_values_prompt(who=label, prompt=prompt, statistic=statistic, row=row)
+        prompt = _needs_values_prompt(who=label, prompt=prompt, statistic=statistic, row=row,
+                                      flags=flags)
     if kind == "reader_contradicts_values":
         prompt = _contradiction_prompt(prompt, run, entry, dataset, outcome_key, measure)
     why = _why(entry, verdict)
@@ -737,6 +744,17 @@ def _orientation_unresolved(verdict: Mapping[str, Any], flags: Sequence[str]) ->
             or bool(_ORIENTATION_UNRESOLVED & {str(f) for f in flags}))
 
 
+def _built_nothing(row: Mapping[str, Any] | None) -> bool:
+    """Did this cell's ROW end with no effect size at all?
+
+    Read from the route rather than from `es`, because a row this run has not resolved yet has no
+    `es` either and is not a refusal. `not_convertible` is the resolver's own word for "no route
+    could build this contrast from what is on the record" — and a row in that state is in neither
+    analysis line, so a question whose answer leaves it there is a question about nothing.
+    """
+    return str((row or {}).get("route") or "") == "not_convertible"
+
+
 def _converted_row(row: Mapping[str, Any] | None) -> bool:
     """Did this cell's ROW get an effect size from something other than the two cells' numbers?
 
@@ -796,6 +814,14 @@ def _kind(verdict: Mapping[str, Any], flags: Sequence[str],
         if answered_value:
             return "confirm_value"
         return "converted_statistic" if converted else "needs_group_values"
+    if _built_nothing(row) and not converted:
+        # …but the ROW converts to nothing, and no answer about THIS NUMBER can change that.
+        # Asking "is 27.9 the older group's value?" of a cell whose row was refused offers the
+        # reviewer one answer, and that answer settles nothing: they say yes, the card retires,
+        # and the row is left in neither analysis line with nothing open anywhere. What such a row
+        # lacks is both groups' own statistics — a size, a spread, a kind of spread — which is
+        # exactly what `needs_group_values` asks for and writes.
+        return "needs_group_values"
     # the number is on the record because a person put it there, so "which number is it" is not
     # the question any more. What is left is what a score measures — corroboration — and the one
     # thing that can supply it now is the person: `confirm_value` writes `mark_reviewed`, which is
@@ -993,7 +1019,7 @@ def _converted_prompt(*, who: str, outcome_key: str, row: Mapping[str, Any],
 
 
 def _needs_values_prompt(*, who: str, prompt: str, statistic: Mapping[str, Any],
-                         row: Mapping[str, Any]) -> str:
+                         row: Mapping[str, Any], flags: Sequence[str] = ()) -> str:
     """…and WHICH statistic, when the row rests on one the gate refused.
 
     `_number_trouble` reads the codes that raise `number_unusable` (a bad n, a bad SD), so on a
@@ -1002,6 +1028,21 @@ def _needs_values_prompt(*, who: str, prompt: str, statistic: Mapping[str, Any],
     whether to type the paper's group values or take the cell out (whole-diff re-review N3).
     """
     if not statistic:
+        if _built_nothing(row) and not _present(flags, *_DF_FAMILY):
+            # …and a row that converted to NOTHING, with no printed statistic behind it either,
+            # is not the cell the prompt above describes: that one tells the reviewer their effect
+            # size came from something the paper printed. Here no route could build one at all, so
+            # the card says that, and quotes the resolver's own reason for refusing every route it
+            # tried. (A row that DOES rest on a refused statistic keeps the branch below, which
+            # names the statistic — more use to a reviewer than this wording would be.)
+            group = f"the {who} group" if who else "this group"
+            why = _short(str(row.get("not_convertible_reason") or "").split("; ")[0], 320)
+            outcome = str(row.get("outcome_key") or "row").replace("_", " ")
+            return (f"No route could build this {outcome} row from what is on the record, so this "
+                    f"paper contributes nothing to it. What are {group}'s mean, spread and n — and "
+                    f"is the spread an SD, an SE or a confidence interval? Answer for the other "
+                    f"group too, or say the paper does not print them."
+                    + (f" The resolver's reason: {why}" if why else ""))
         return prompt
     said = next((part for part in str(row.get("not_convertible_reason") or "").split("; ")
                  if "degrees of freedom" in part or "estimand" in part or "contrast" in part), "")

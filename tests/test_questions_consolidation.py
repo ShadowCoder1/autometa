@@ -537,10 +537,15 @@ def test_nine_folds_within_the_measured_arithmetic(nine_tmp):
     """
     qs = [q for q in questions_for_run(nine_tmp) if not q["answered"]]
     kinds = {kind: len([q for q in qs if q["kind"] == kind]) for kind in {q["kind"] for q in qs}}
-    # the second fold (`cell`): six cells that were two cards each — a refutation beside an axis
+    # the second fold (`cell`): cells that were two cards each — a refutation beside an axis
     # question, two refutations, two six-option groups — are one card each; the two refutations
     # left alone are the two cells whose other group is not held.
-    assert kinds == {"pair": 6, "orientation": 4, "cell": 6, "verifier_refuted": 2,
+    #
+    # `pair` 4 and `cell` 8, not 6 and 6, since a cell whose ROW converts to nothing asks for the
+    # group's own statistics rather than for a confirmation of a number that builds nothing. Those
+    # cells fold to `cell` rather than pairing, so two `pair` cards became four `cell` cards. The
+    # totals below are the invariant that matters and neither of them moved.
+    assert kinds == {"pair": 4, "orientation": 4, "cell": 8, "verifier_refuted": 2,
                      "include_paper": 3}
     assert len(qs) == 21
     # …out of the 34 per-cell questions the run recorded. The three paper-level cards are not a

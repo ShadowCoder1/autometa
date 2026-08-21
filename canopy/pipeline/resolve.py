@@ -101,6 +101,12 @@ class GroupValues(CanopyModel):
     #: recorded against candidate ids, so without this the override could neither cite its
     #: evidence nor find the objection to it.
     candidate_id: str = ""
+    #: this arm's `n` came from the MAP's reading of the participants section, because no reading
+    #: of this cell transcribed one beside the number. It lives on the values rather than only in
+    #: the row's flags so `_mean_sd` can say so in the conversion chain, which is where a reviewer
+    #: reads the arithmetic: "(n = 20)" is a claim about the paper, and it must not be made about a
+    #: size the paper printed somewhere else entirely.
+    n_from_map: bool = False
 
     @classmethod
     def from_verdict(cls, verdict: Verdict) -> "GroupValues":
@@ -449,9 +455,14 @@ def _mean_sd(group: GroupValues, side: str, settings: StatsSettings, steps: list
 
     n = int(group.n)
     centre = _centre(group)
+    # where the size came from, in the sentence a reviewer reads the arithmetic in. "(n = 20)"
+    # beside "as printed" claims the paper printed the size next to the number; when the size came
+    # from the map's reading of the participants section, that is not true and the chain says so.
+    said_n = (f"n = {n}, from the map's participants section — no reading of this value carried a "
+              f"group size" if group.n_from_map else f"n = {n}")
     if kind is DispersionType.SD:
         steps.append(f"group {side}: mean {_fmt(centre)}, SD {_fmt(group.dispersion_value)} "
-                     f"as printed (n = {n})")
+                     f"as printed ({said_n})")
         return centre, float(group.dispersion_value), n, group.dispersion_sigma
 
     if kind is DispersionType.SE:

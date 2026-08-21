@@ -71,8 +71,8 @@ from ..verify.panels import apply_panel_check
 from ..verify.vote import (LOCATOR_CONFLICT, LOCATOR_CONFLICT_NOTE, VoteResult,
                            model_family, vote_groups)
 from .aggregate import AGGREGATED_FLAG, Aggregation, aggregate_one_row_per_paper
-from .overrides import (OVERRIDES_FILE, apply_overrides_and_repool, eligibility_answers,
-                        map_answers, read_overrides, re_extract_answers)
+from .overrides import (HUMAN_OVERRIDE, OVERRIDES_FILE, apply_overrides_and_repool,
+                        eligibility_answers, map_answers, read_overrides, re_extract_answers)
 from .resolve import resolve_effect_with_fallback
 from .rows import (DISPERSION_APPROXIMATED, approximation_flags, cell_candidates, prepare_rows,
                    reported_values, statistic_values, vote_candidates)
@@ -1555,7 +1555,12 @@ def cells_for_review(verdicts: Sequence[Verdict], held: Sequence[EffectSizeRecor
        and C9's `|d|` screen both are, because both need the number the conversion produced. Such
        a row was refused, drawn hollow, and named nowhere a reviewer works. `not_convertible` is
        deliberately excluded: that row is a paper that did not report enough, it is recorded in
-       `exclusions`, and the two findings are kept apart;
+       `exclusions`, and the two findings are kept apart — UNLESS a person's own answer is on it
+       (`human_override`). "The paper reports nothing" is an exclusion; "somebody answered this
+       row and it still converts to nothing" is a question, and dropping it from the queue is how
+       a reviewer's own answer made a row disappear: they were asked to confirm a number, the
+       confirmation released both cells, the row stayed unbuildable, and it left the analysis with
+       nothing anywhere to say it had;
     3. …and for a row carrying a `ROW_REFUSAL_CODES` flag, BOTH cells, whether or not one of them
        has a finding of its own. Rule 2 subtracts the cells that are held in their own right,
        which is right for an ordinary cell finding — the healthy sibling has no question — and
@@ -1571,7 +1576,7 @@ def cells_for_review(verdicts: Sequence[Verdict], held: Sequence[EffectSizeRecor
     """
     cells_held = {(v.dataset_id, v.outcome_key) for v in verdicts if v.needs_human}
     row_held = {(r.dataset_id, r.outcome_key) for r in held
-                if r.route != "not_convertible"} - cells_held
+                if r.route != "not_convertible" or HUMAN_OVERRIDE in r.flags} - cells_held
     row_held |= {(r.dataset_id, r.outcome_key) for r in held
                  if set(r.flags) & ROW_REFUSAL_CODES}
     gone_datasets = {str(e.get("dataset_id") or "") for e in exclusions

@@ -433,6 +433,11 @@ _JUSTIFIED_BY: dict[str, tuple[str, ...]] = {
     "which_value": ("no value was resolved", "disagree", "only one independent route",
                     "the readers"),
     "confirm_value": ("only one independent route", "adjudicat"),
+    # asked of a cell whose degrees of freedom cannot be reconciled, and of one whose ROW converts
+    # to nothing — there the answer that changes the row is both groups' own statistics, never a
+    # confirmation of a number the conversion already refused.
+    "needs_group_values": ("df_missing", "df_shortfall_unexplained", "test_stat_missing_df",
+                           "no value was resolved", "not_convertible"),
     "quote_not_found": ("quote_not_grounded",),
     "number_unusable": ("df_missing", "df_shortfall_unexplained", "test_stat_missing_df",
                         "n_not_integer", "n_too_small", "sd_nonpositive",

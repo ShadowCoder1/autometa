@@ -61,7 +61,7 @@ from .rows import (PreparedRow, converted_route, prepare_rows,
 from .state import (load_manifest, read_stage, review_entry, save_manifest, sha12,
                     sort_review_queue, stage_done)
 
-__all__ = ["GROUP_STATISTICS", "KINDS", "MAP_KINDS", "MAP_PENDING", "ORIENTATION_ANSWERED",
+__all__ = ["GROUP_STATISTICS", "HUMAN_OVERRIDE", "KINDS", "MAP_KINDS", "MAP_PENDING", "ORIENTATION_ANSWERED",
            "OVERRIDES_FILE", "OverrideRejected",
            "OVERRULABLE", "RE_EXTRACT_PENDING", "codes_cleared_by_value", "consumed_seqs",
            "recorded_flags", "recorded_holds", "row_flags", "append_override", "append_overrides",
@@ -1296,6 +1296,12 @@ ORIENTATION_ANSWERED: frozenset[str] = frozenset({
 #: held row with nothing open anywhere.
 GROUP_STATISTICS: tuple[str, ...] = ("mean", "dispersion_value", "n")
 
+#: on a ROW a reviewer's own answer rebuilt. It is the resolver's only way to tell "this paper did
+#: not report enough" from "a person answered this row and it still converts to nothing" — the
+#: first is an exclusion, the second is a question, and `run.cells_for_review` keeps the cells of
+#: the second in the queue on the strength of this flag.
+HUMAN_OVERRIDE = "human_override"
+
 VALUE_CLEARS_MEAN: frozenset[str] = frozenset({
     "axis_conflict", "calibration_disputed", "calibration_refuted", "calibration_single_witness",
     "calibration_missing", "value_outside_axis"})
@@ -1594,7 +1600,7 @@ def _rebuild_row(record: EffectSizeRecord, dataset: DatasetSpec, verdict_a: Verd
     prepared = _prepare(dataset, outcome_key, verdict_a, verdict_b, protocol,
                         higher_is_better=higher_is_better, state=state, verdicts=verdicts)
     values = prepared.values
-    values.flags = sorted({*values.flags, "human_override"})
+    values.flags = sorted({*values.flags, HUMAN_OVERRIDE})
     # …and through `resolve_effect_with_fallback`, which is what the run calls (D1). A row whose
     # printed values convert to nothing is built from the same-locator candidate pair `_prepare`
     # found; were this `resolve_effect` alone, answering anything about such a cell would take the
@@ -1611,7 +1617,7 @@ def _rebuild_row(record: EffectSizeRecord, dataset: DatasetSpec, verdict_a: Verd
     # C2, through `_prepare` like everything else here: the row says how its direction was settled,
     # and a rebuild that dropped it would leave a human's decision reading as two agreeing models.
     rebuilt.orientation_source = prepared.orientation_source or record.orientation_source
-    rebuilt.flags = sorted({*rebuilt.flags, "human_override"})
+    rebuilt.flags = sorted({*rebuilt.flags, HUMAN_OVERRIDE})
     rebuilt.notes = "; ".join(x for x in (record.notes,
                                           f"human override: {justification}") if x)
     return rebuilt

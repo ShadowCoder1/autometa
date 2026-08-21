@@ -1121,3 +1121,86 @@ def test_an_answer_that_clears_a_code_on_one_arm_clears_it_for_that_arm_only():
     by_arm = _codes_by_arm(answered, other, _armed_candidates())
     assert by_arm["A"] == ["dispersion_unknown"]                            # the pair is broken
     assert "n_missing" not in by_arm["A"]
+
+
+# --------------------------------------------------------------- the map's group sizes
+
+def _sized(spec_n: tuple[int | None, int | None] = (12, 12), *,
+           evidence: str = "twelve older and twelve younger adults were analysed",
+           kind: DispersionType = DispersionType.SD,
+           settled: tuple[int | None, int | None] = (None, None)) -> tuple:
+    """A pair the paper printed, whose group sizes only the map carries."""
+    spec = DatasetSpec(dataset_id="b511dbb76fa6:d1", cluster_id="b511dbb76fa6", label="pointing",
+                       group_a=GroupSpec(label="old", n=spec_n[0], n_evidence=evidence),
+                       group_b=GroupSpec(label="young", n=spec_n[1], n_evidence=evidence))
+    values = bock_values(
+        group_a=GroupValues(n=settled[0], mean=31.51, dispersion_value=11.12,
+                            dispersion_type=kind, unit="deg", route="text"),
+        group_b=GroupValues(n=settled[1], mean=12.28, dispersion_value=11.82,
+                            dispersion_type=kind, unit="deg", route="text"))
+    return spec, values
+
+
+def test_a_printed_pair_whose_size_only_the_map_carries_still_converts():
+    """The Hermans shape: means and SDs in one sentence, group sizes under Participants.
+
+    The map reads the participants section — two agents, adjudicated on disagreement — and records
+    the size with the quote that proves it. The extractors, reading the results sentence, have no
+    size to carry, and the row was refused for want of a number the run already held. Refused
+    SILENTLY, because a row that converts to nothing is in neither analysis line.
+    """
+    from canopy.pipeline.rows import N_FROM_MAP, _fill_group_n
+
+    spec, values = _sized()
+    assert _fill_group_n(values, spec) == ["A", "B"]
+    assert (values.group_a.n, values.group_b.n) == (12, 12)
+    assert values.group_a.n_from_map and values.group_b.n_from_map
+    record = resolve_effect(spec, LATE, values, StatsSettings())
+    assert record.route == "text_mean_sd"
+    assert record.es is not None
+    assert "from the map's participants section" in record.conversion_chain, \
+        "the chain claimed the paper printed a size it printed three pages earlier"
+
+
+def test_the_maps_size_may_not_complete_a_row_it_would_scale():
+    """A size that reconstructs the SD is a question for a person, not a gap for the code.
+
+    `SD = SE x sqrt(n)`, so for an SE, a CI, an IQR or a range the size is multiplied into the
+    MAGNITUDE: a size read out of a recruitment sentence would silently scale the effect. Only a
+    printed SD gives an estimate the size cannot move — there `n` merely weights the pooling.
+    """
+    from canopy.pipeline.rows import _fill_group_n
+
+    for kind in (DispersionType.SE, DispersionType.CI95, DispersionType.IQR,
+                 DispersionType.RANGE):
+        spec, values = _sized(kind=kind)
+        assert _fill_group_n(values, spec) == [], f"{kind.value} was completed from the map"
+        assert values.group_a.n is None
+
+
+def test_the_map_never_overrules_a_size_the_reading_carried():
+    """A disagreement between a transcribed size and the map's is `n_mismatch`'s to raise."""
+    from canopy.pipeline.rows import _fill_group_n
+
+    spec, values = _sized(spec_n=(12, 12), settled=(18, 16))
+    assert _fill_group_n(values, spec) == []
+    assert (values.group_a.n, values.group_b.n) == (18, 16)
+
+
+def test_a_size_that_is_not_a_size_leaves_the_row_where_it_was():
+    """Below `MIN_N`, or recorded with no quote: neither is evidence of a group size."""
+    from canopy.pipeline.rows import _fill_group_n
+
+    for spec_n, evidence in (((1, 12), "one subject"), ((12, 12), ""), ((None, 12), "n/a")):
+        spec, values = _sized(spec_n=spec_n, evidence=evidence)
+        assert "A" not in _fill_group_n(values, spec)
+
+
+def test_a_group_size_never_rescues_a_missing_mean():
+    """A size is a size. It is not evidence that the paper reported the contrast."""
+    from canopy.pipeline.rows import _fill_group_n
+
+    spec, values = _sized()
+    values.group_a.mean = None
+    assert _fill_group_n(values, spec) == ["B"]
+    assert values.group_a.n is None

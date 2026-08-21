@@ -27,15 +27,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable, Collection, Mapping, Sequence
 
-from ..models import Candidate, DatasetSpec, StatsSettings, Verdict
-from ..verify.checks import best_statistic
+from ..models import Candidate, DatasetSpec, DispersionType, StatsSettings, Verdict
+from ..verify.checks import MIN_N, best_statistic
 from ..verify.panels import set_aside_ids
 from ..verify.units import same_unit
 from ..verify.vote import LOCATOR_DROPPED, locator_key, modality
 from .resolve import (GROUP_ROUTES, GroupValues, ReportedValues, ResolvedValues,
                       StatisticValues, apply_shared_control, available_routes, multi_group_flags)
 
-__all__ = ["PreparedRow", "ENSEMBLE", "DISPERSION_APPROXIMATED", "cell_candidates",
+__all__ = ["PreparedRow", "ENSEMBLE", "DISPERSION_APPROXIMATED", "N_FROM_MAP", "cell_candidates",
            "statistic_values", "reported_values", "approximation_flags", "prepare_row_values",
            "prepare_rows", "shared_control_siblings", "converted_route",
            "converting_candidate", "reported_candidate", "vote_candidates", "fallback_values"]
@@ -45,6 +45,21 @@ ENSEMBLE = "digitize:ensemble"
 #: on the ROW, so a sensitivity analysis can pool with and without the rows whose dispersion the
 #: code built rather than the paper stated (task 16 P6: the critique's amendment to the statistic)
 DISPERSION_APPROXIMATED = "dispersion_approximated"
+
+#: on the ROW and on the ARM: this group's size is the one the MAP read out of the participants
+#: section, because no reading of this cell carried one. Its own code beside `n_missing`, which
+#: says only that no reading carried a size and not which number was used instead — a sensitivity
+#: analysis can then pool with and without the rows whose denominator came from the map.
+N_FROM_MAP = "n_from_map"
+
+#: the spread types whose EFFECT SIZE does not move when the group size does. A mean and an SD
+#: give Cohen's d through a pooled SD, and `n` only weights that pooling — the estimate is the
+#: same to machine precision whether the size is 12 or 20. An SE, a CI, an IQR or a range is
+#: different in kind: the SD is RECONSTRUCTED from the size (`SD = SE × √n`), so the size is
+#: multiplied into the magnitude, and a size read out of a recruitment sentence would silently
+#: scale the effect. So the map's size may complete a row of the first kind and never one of the
+#: second: there, the number is a question for a person, not a gap for the code to close.
+_N_CANNOT_MOVE_THE_EFFECT: frozenset[DispersionType] = frozenset({DispersionType.SD})
 
 
 def converted_route(route: str) -> bool:
@@ -191,10 +206,54 @@ def prepare_row_values(dataset: DatasetSpec, outcome_key: str, verdict_a: Verdic
         verdict_a, verdict_b, test_statistic=statistic_values(cell),
         reported=reported_values(cell), higher_is_better=higher_is_better,
         candidates=cell)
+    filled = _fill_group_n(values, dataset)
+    for arm in filled:
+        values.group_flags[arm] = sorted({*values.group_flags.get(arm, []), N_FROM_MAP})
     values.flags = sorted(set(values.flags)
                           | set(multi_group_flags(dataset, settings.multi_group_policy))
-                          | set(approximation_flags(cell)))
+                          | set(approximation_flags(cell))
+                          | ({N_FROM_MAP} if filled else set()))
     return values
+
+
+def _fill_group_n(values: ResolvedValues, dataset: DatasetSpec) -> list[str]:
+    """The MAP's analysed size for an arm no reading of this cell transcribed one for.
+
+    A paper may print "young: 2.23 ± 1.43, older: 2.29 ± 1.87" in a sentence and put its group
+    sizes three pages earlier, under Participants. The map reads that sentence — with two agents
+    and an adjudicator on disagreement — and records the size WITH the quote that proves it; the
+    extractors, reading the results sentence, have no size to carry. The row was then refused for
+    want of a number the run already held, and refused SILENTLY, since a row that converts to
+    nothing is in neither analysis line. Every figure reading in this pipeline is already divided
+    by the map's size (`digitize.digitizer._group_n` stamps it on every digitised candidate); text
+    was the one route with no path for it.
+
+    Three things this deliberately does NOT do, each of which would be a different claim:
+
+    * it fills a HOLE and never overrules a size the cell settled — a disagreement between a
+      transcribed size and the map's is what `n_mismatch` exists to surface, not something to
+      quietly resolve;
+    * it fills only where the size CANNOT move the effect size (`_N_CANNOT_MOVE_THE_EFFECT`) —
+      an SE or a CI reconstructs the SD from the size, so a recruitment-sentence size would scale
+      the estimate itself. Those rows stay refused and a person types the number;
+    * it never rescues a missing mean or a missing spread. A size is a size; it is not evidence
+      that the paper reported the contrast.
+
+    A size below `MIN_N` is not a group size, and a size the mapper recorded without a quote is
+    not evidence — both leave the hole exactly where it is.
+    """
+    filled: list[str] = []
+    for arm, spec in (("A", dataset.group_a), ("B", dataset.group_b)):
+        group = values.group(arm)
+        if group is None or group.n or group.mean is None:
+            continue
+        if group.dispersion_type not in _N_CANNOT_MOVE_THE_EFFECT:
+            continue
+        if spec.n is None or spec.n < MIN_N or not (spec.n_evidence or "").strip():
+            continue
+        group.n, group.n_from_map = int(spec.n), True
+        filled.append(arm)
+    return filled
 
 
 def _some_spread(values: GroupValues) -> bool:
