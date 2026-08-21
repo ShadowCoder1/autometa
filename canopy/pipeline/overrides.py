@@ -263,7 +263,10 @@ def _validate(payload: Mapping[str, Any]) -> dict[str, Any]:
         # The scope is enforced where it can be seen instead: `_apply_orientation` refuses when the
         # rows it matched carry MORE THAN ONE distinct measure name, which is the case that
         # re-signed Tracking RMSE from a decision about Angular pointing error.
-        record["measure_name"] = _text(payload.get("measure_name"), 300)
+        # 1000, not 300: a measure's name is whatever the map wrote, and `_apply_orientation`
+        # matches it by exact (normalised) equality — a cap shorter than the map's own field
+        # would leave long-named measures with no acceptable answer at all.
+        record["measure_name"] = _text(payload.get("measure_name"), 1000)
         record["quote"] = _text(payload.get("quote"), 1000)
     if kind == "group_n":
         # D4-lite. How many people were ANALYSED is a fact about the two arms, so it is scoped to
