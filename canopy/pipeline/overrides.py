@@ -1301,6 +1301,14 @@ VALUE_CLEARS_MEAN: frozenset[str] = frozenset({
     "calibration_missing", "value_outside_axis"})
 VALUE_CLEARS_SPREAD_TYPE: frozenset[str] = frozenset({
     "dispersion_type_from_legend", "figure_error_bar_unknown", "dispersion_type_conflict"})
+#: the spread types a typed answer can build a row from — the ONLY ones that retire the error-bar
+#: question above. A `value` override writes a mean, a spread value, an `n` and a type and nothing
+#: else, and `resolve._has_spread` accepts exactly these five from that much: RANGE wants a minimum
+#: and a maximum, and NONE and UNKNOWN are not spreads at all. Naming a type the row still cannot
+#: divide by is not an answer to "what do these error bars show?", and treating it as one is what
+#: took the last question off a cell whose row then converted to nothing.
+#: `tests/test_questions.py` pins this set against `_has_spread` itself so the two cannot drift.
+SPREAD_TYPES_A_VALUE_CONVERTS: frozenset[str] = frozenset({"SD", "SE", "CI95", "CI90", "IQR"})
 VALUE_CLEARS_N: frozenset[str] = frozenset({"n_missing", "n_not_integer", "n_too_small",
                                             "n_mismatch"})
 VALUE_CLEARS_DISPERSION: frozenset[str] = frozenset({
@@ -1342,7 +1350,17 @@ def codes_cleared_by_value(override: Mapping[str, Any], *,
     cleared = {str(code) for code in override.get("clears") or []}
     if override.get("mean") is not None:
         cleared |= VALUE_CLEARS_MEAN
-    if override.get("dispersion_type"):
+    # …and only a type this answer can actually BUILD A ROW FROM retires the error-bar question.
+    # The test used to be the field's truthiness, and every type string is truthy, so answering
+    # "the bars are unlabelled" — or "they are a range" — retired `figure_error_bar_unknown`, the
+    # very finding that asks. The cell then had nothing left to ask while `resolve._has_spread`
+    # refused the spread, so the row converted to nothing and stood in neither analysis line with
+    # no question anywhere: Langan's four rows left the forest that way. RANGE and NONE are here
+    # for the same reason as UNKNOWN and not as an afterthought — a value override writes a mean,
+    # a spread, an `n` and a type, and RANGE needs a minimum and a maximum it cannot write, so
+    # answering it names a spread the row still cannot divide by. `.strip().upper()` because this
+    # rule is public and the page calls it on raw answers, not only on validated records.
+    if str(override.get("dispersion_type") or "").strip().upper() in SPREAD_TYPES_A_VALUE_CONVERTS:
         cleared |= VALUE_CLEARS_SPREAD_TYPE
     if override.get("n") is not None:
         cleared |= VALUE_CLEARS_N

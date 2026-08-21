@@ -299,12 +299,21 @@ def questions_for_run(run_dir: str | Path, *,
             verdict = {**verdict, "flags": flags}
             if settled is not None:
                 verdict["higher_is_better"] = settled
+        row = rows.get((dataset_id, outcome_key)) or {}
         question = _question(entry, verdict, candidates, study, dataset, provenance,
                              run, already, pending, answered_value, consumed, overruled,
-                             rows.get((dataset_id, outcome_key)) or {}, settled)
+                             row, settled)
+        # what `_question` itself counted as holding this cell: the verdict's codes AND the row's
+        # own refusals (line ~479). Read the same two halves here. Reading only the verdict's
+        # meant the two ends of one function disagreed about what was still open, and the half
+        # dropped was the row's — so a cell whose ROW the resolver had refused could have its last
+        # card suppressed as settled, leaving the row in neither analysis line with nothing to
+        # answer anywhere.
+        row_holds = {str(code) for code in row.get("flags") or [] if str(code) in ROW_REFUSALS}
         if question["kind"] in _ASKED_ONCE and _value_settled(already) \
                 and not _overrulable(verdict or {}, overruled) \
-                and not _holding_codes(verdict or {}):
+                and not _holding_codes(verdict or {}) \
+                and not row_holds:
             # §C4's terminus, enforced: a number a person typed and then confirmed is not asked
             # about again, and the card does not stay on the page as a settled one either.
             # Everything else this cell may be held by is a DIFFERENT question and still asked —

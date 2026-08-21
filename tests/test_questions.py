@@ -967,8 +967,9 @@ def test_each_override_kind_clears_only_the_blocker_it_names(tmp_path):
     through its own rule; `re_extract` changes nothing at all until a model has run.
     """
     from canopy.models import CheckFlag, Verdict
-    from canopy.pipeline.overrides import (_bucket_after_orientation, _bucket_after_value,
-                                           _derived_bucket, codes_cleared_by_value)
+    from canopy.pipeline.overrides import (VALUE_CLEARS_MEAN, _bucket_after_orientation,
+                                           _bucket_after_value, _derived_bucket,
+                                           codes_cleared_by_value)
 
     def cell(**over: Any) -> Verdict:
         base = dict(dataset_id="d", outcome_key="o", group="A", agreement="agree",
@@ -984,6 +985,12 @@ def test_each_override_kind_clears_only_the_blocker_it_names(tmp_path):
     assert codes_cleared_by_value({"dispersion_type": "SE"}) == frozenset(
         {"dispersion_type_from_legend", "figure_error_bar_unknown", "dispersion_type_conflict"})
     assert codes_cleared_by_value({}) == frozenset()
+    # …and "UNKNOWN" answers nothing: it is the error-bar question restated. The test was the
+    # field's truthiness and the string is truthy, so "the paper never labels these bars" used to
+    # retire `figure_error_bar_unknown` — the finding that asks — and the cell stopped asking while
+    # its row divided by a spread of no known kind and converted to nothing.
+    assert codes_cleared_by_value({"dispersion_type": "UNKNOWN"}) == frozenset()
+    assert codes_cleared_by_value({"mean": 1.0, "dispersion_type": "UNKNOWN"}) == VALUE_CLEARS_MEAN
     assert "series_transposed" in codes_cleared_by_value({"mean": 1.0,
                                                           "clears": ["series_transposed"]})
 
@@ -2293,6 +2300,116 @@ def test_a_confirmed_value_still_asks_while_a_flag_code_withholds_the_cell(tmp_p
     queued = json.loads((run / "human_review_queue.json").read_text())
     assert [q for q in queued if q.get("dataset_id") == dataset_id
             and q.get("outcome_key") == outcome_key], "the cells are queued with nothing to answer"
+
+
+def test_only_a_spread_a_row_can_be_built_from_answers_the_error_bar_question():
+    """§C4: a type the row still cannot divide by is not an answer to "what do these bars show?".
+
+    The test in `codes_cleared_by_value` was the field's TRUTHINESS, and every type string is
+    truthy — so answering "the paper never labels them" (UNKNOWN), or picking the card's own
+    "range" button, retired `figure_error_bar_unknown`, the finding that asks. Retiring it moves
+    the cell off `error_bar_type` and on to `confirm_value`, which the §C4 terminus is allowed to
+    suppress once the value is confirmed; meanwhile `resolve._has_spread` refuses the spread, so
+    the row converts to nothing and stands in neither analysis line. Held, with no question
+    anywhere — Langan's four rows left the forest exactly that way.
+
+    The KIND is the assertion, not the mere existence of a card: before the fix every type below
+    returned `confirm_value`.
+    """
+    from canopy.review.questions import _codes_answered, _holding_codes, _kind
+    from canopy.verify.checks import severity_of
+
+    def asks_after(dispersion_type: str) -> str:
+        already = [{"kind": "value", "mean": 12.5, "dispersion_value": 1.5, "n": 9,
+                    "dispersion_type": dispersion_type}]
+        codes = [code for code in ("figure_error_bar_unknown", "dispersion_unknown")
+                 if code not in _codes_answered(already)]
+        verdict = {"flags": [{"code": code, "severity": severity_of(code), "message": code,
+                              "candidate_ids": [], "detail": {}} for code in codes],
+                   "higher_is_better": False, "confidence_score": 0.9,
+                   "verifier_verdict": "confirmed", "adjudicated": False}
+        return _kind(verdict, codes, valued=[{"mean": 12.5}], holding=_holding_codes(verdict))
+
+    for named in ("SD", "SE", "CI95", "CI90", "IQR"):
+        assert asks_after(named) != "error_bar_type", f"{named} answers the question and is ignored"
+    for unusable in ("UNKNOWN", "RANGE", "NONE"):
+        assert asks_after(unusable) == "error_bar_type", \
+            f"{unusable} builds no row, so the cell must keep asking what the bars are"
+
+
+def test_the_spread_types_that_answer_the_error_bar_question_are_the_ones_a_row_converts_from():
+    """The two halves of that rule, pinned against each other so they cannot drift.
+
+    `SPREAD_TYPES_A_VALUE_CONVERTS` is a list of strings beside the clearing rule; `_has_spread` is
+    the resolver's own test. If a type is ever added to one and not the other, either an answer
+    silences a question while the row stays unconvertible (the bug above), or a perfectly good
+    answer stops retiring the finding it settles.
+    """
+    from canopy.models import DispersionType
+    from canopy.pipeline.overrides import SPREAD_TYPES_A_VALUE_CONVERTS
+    from canopy.pipeline.resolve import GroupValues, _has_spread
+
+    for kind in DispersionType:
+        # the four fields a `value` override can write, and nothing else
+        group = GroupValues(mean=12.5, dispersion_value=1.5, n=9, dispersion_type=kind)
+        assert (kind.value in SPREAD_TYPES_A_VALUE_CONVERTS) is _has_spread(group), \
+            f"{kind.value}: the clearing rule and the resolver disagree about this spread"
+
+
+def test_no_row_refusal_can_ever_reach_the_confirmed_value_terminus():
+    """The interlock that keeps `questions_for_run`'s row-refusal guard from being needed.
+
+    A row refusal reaches `_kind` through `on_the_row`, so the cell asks that code's own question.
+    That question is not one a confirmation answers, so the §C4 terminus is never reached while a
+    row is refused. The guard in `questions_for_run` holds the invariant if this stops being true —
+    and it would stop being true silently, because a code with no `_FLAG_TO_KIND` entry falls
+    through to `confirm_value`, which IS a kind the terminus suppresses.
+    """
+    from canopy.pipeline.overrides import ROW_REFUSALS
+    from canopy.review.questions import _ASKED_ONCE, _FLAG_TO_KIND
+
+    mapped = dict(_FLAG_TO_KIND)
+    for code in ROW_REFUSALS:
+        assert code in mapped, f"{code} has no question kind, so it falls through to confirm_value"
+        assert mapped[code] not in _ASKED_ONCE, \
+            f"{code} asks {mapped[code]!r}, which a confirmation can end while the row is refused"
+
+
+def test_a_row_the_resolver_refuses_keeps_its_question_after_the_value_is_confirmed(tmp_path):
+    """§C4, the ROW's half: a refused row keeps asking, however settled its cells are.
+
+    Typed, confirmed, and still refused — `dispersion_plausibility_bucket` re-derives the screen
+    from the numbers the reviewer themselves supplied, so the row is in neither analysis line. The
+    cells must still be asking. (The suppression that ends a confirmed value's question now reads
+    the row's refusals as well as the verdict's codes — the two halves `_question` itself unions —
+    so a row refusal can never take the last card off a cell. No row-refusal code reaches that
+    branch today, because the only one maps to `dispersion_doubt`; the guard is what keeps it true
+    if one is ever added, since an unmapped code falls through to `confirm_value`.)
+    """
+    from canopy.pipeline.overrides import append_override
+
+    run = _nine(tmp_path)
+    dataset_id, outcome_key = "b7523a41b03a:d1", "aftereffect"
+    # a spread so tight that the implied effect is impossible — the screen refuses the ROW
+    for group, mean in (("A", 30.57), ("B", 24.4)):
+        append_override(run, {"kind": "value", "paper_id": "b7523a41b03a",
+                              "dataset_id": dataset_id, "outcome_key": outcome_key,
+                              "group": group, "mean": mean, "dispersion_value": 0.05,
+                              "dispersion_type": "SD", "n": 12,
+                              "justification": "typed off the figure"})
+    append_override(run, {"kind": "mark_reviewed", "paper_id": "b7523a41b03a",
+                          "dataset_id": dataset_id, "outcome_key": outcome_key,
+                          "confidence": "accept_with_note",
+                          "justification": "confirmed the numbers I typed"})
+    _repool(run)
+    row = _rows(run)[(dataset_id, outcome_key)]
+    assert "implausible_dispersion" in (row.get("flags") or []), "the screen did not refuse the row"
+    assert row.get("in_best_guess") is False, "a refused row is in neither analysis line"
+    assert [q for q in questions_for_run(run, fold=False)
+            if q["dataset_id"] == dataset_id and q["outcome_key"] == outcome_key], \
+        "a row in neither line was left with no question on either of its cells"
+    assert [c for c in questions_for_run(run) if c["dataset_id"] == dataset_id
+            and c["outcome_key"] == outcome_key], "…and none on the folded page either"
 
 
 def test_a_borrowed_direction_comes_from_the_same_measure_or_from_nowhere(tmp_path):
