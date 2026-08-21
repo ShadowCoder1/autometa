@@ -40,7 +40,7 @@ from ..agents.extract_text import extract_group_stats
 from ..agents.mapper import (HUMAN_DECIDER, HUMAN_EXCLUSION_RULE, MAP_ADJUDICATOR,
                              apply_map_answers,
                              extraction_blocks, map_study, readable_sources,
-                             source_unreadable_reason)
+                             source_unreadable_reason, unreadable_cell)
 from ..agents.orientation import combine_orientation
 from ..agents.orientation import orientation as orientation_verdict
 from ..agents.orientation import TIEBREAK_MODEL, tiebreak_ballot
@@ -53,7 +53,7 @@ from ..digitize.vlm import TargetSpec
 from ..ingest.dedupe import PaperGroup, dedupe_pdfs
 from ..ingest.pdf import FigureRegion, PaperRecord, ingest_pdf
 from ..llm.client import LLMClient
-from ..llm.context import upload_pdf
+from ..llm.context import reviewer_ruling_line, upload_pdf
 from ..llm.costs import cache_stats, cache_summary_line, cost_by_stage
 from ..llm.errors import BudgetExceeded, LLMError, TruncatedOutput
 from ..models import (Adjudication, Candidate, CheckFlag, DatasetSpec, EffectSizeRecord,
@@ -267,6 +267,28 @@ def _needs_a_fresh_map(ctx: "RunContext", paper: PaperRecord) -> list[int]:
                    and answer["seq"] not in bought})
 
 
+def _ruling_text(ctx: "RunContext", paper: PaperRecord, acting_on: Sequence[int] = ()) -> str:
+    """The reviewer's inclusion ruling, as the mapper is told it (§C3).
+
+    The mapper is given the criterion the person decided under and the paper's own words they
+    relied on — the two fields the card records for exactly this reason.
+
+    `acting_on` is the seqs this map is being bought FOR (`_needs_a_fresh_map`'s answer, which is
+    the unconsumed ones). The ruling is read from the freshest of THOSE rather than from the
+    freshest eligible record in the log, so the criterion the mapper is shown and the answer the
+    map is charged to are the same record: with two inclusions where the later one already had its
+    map, the mapper would otherwise be told a criterion nobody is currently asking about.
+    """
+    wanted = {int(seq) for seq in acting_on}
+    including = [answer for answer in eligibility_answers(ctx.out_dir, paper.sha256)
+                 if answer.get("eligible")
+                 and (not wanted or answer.get("seq") in wanted)]
+    if not including:
+        return ""
+    last = including[-1]
+    return reviewer_ruling_line(str(last.get("rule") or ""), str(last.get("quote") or ""))
+
+
 #: the extract stage's own record of the cells it has RE-read under a reviewer's hint and whose
 #: readings changed, and — in `verify.json` / `resolve.json` — each later stage's record of the
 #: ones it has already rebuilt for. Two keys, on disk, because the instruction to rebuild must be
@@ -342,18 +364,23 @@ def _answer_cells(answer: Mapping[str, Any], study: StudyMap, keys: set[str],
 def _hinted_cells(ctx: "RunContext", paper: PaperRecord, study: StudyMap, keys: set[str],
                   blocked_datasets: Mapping[str, str],
                   blocked_cells: Mapping[tuple[str, str], str],
-                  consumed: Collection[int] = ()) -> dict[str, list[dict[str, Any]]]:
+                  consumed: Collection[int] = (),
+                  unreachable: dict[str, str] | None = None
+                  ) -> dict[str, list[dict[str, Any]]]:
     """`{cell: [re_extract answer, ...]}` for the cells a reviewer has asked to have read again.
 
     Only cells THIS map still asks for: a hint on a dataset the review has since excluded, or on a
     cell an unanswered map question blocks, is a reading no resume may buy — the same rule
-    `_answer_cells` applies to an inclusion, and for the same reason (whole-diff L4).
+    `_answer_cells` applies to an inclusion, and for the same reason (whole-diff L4). Such a hint
+    is not thrown away in silence: `unreachable` collects `{cell: why}` for it, which is what the
+    stage warns about and what the review page prints instead of a re-read it will never buy.
 
     A cell is in only while one of its hints is unconsumed. That is what makes the hint buy ONE
     reading rather than one per resume for ever: the seqs go into `consumed_override_seqs` when the
     reading is bought, and the next resume sees nothing left to act on.
     """
     done = {int(seq) for seq in consumed if isinstance(seq, int)}
+    unreachable = {} if unreachable is None else unreachable
     live = {f"{dataset.dataset_id}/{sources.outcome_key}"
             for dataset in study.datasets if dataset.dataset_id not in blocked_datasets
             for sources in dataset.outcomes
@@ -364,6 +391,14 @@ def _hinted_cells(ctx: "RunContext", paper: PaperRecord, study: StudyMap, keys: 
         cell = f"{answer.get('dataset_id') or ''}/{answer.get('outcome_key') or ''}"
         if cell in live:
             cells.setdefault(cell, []).append(answer)
+        elif answer.get("seq") not in done:
+            # C4's honesty clause: a hint the map puts out of reach is not silently dropped. It
+            # buys nothing here and nothing on any later resume, so the run SAYS which cell and
+            # what is in the way — the reviewer was otherwise told "the next --resume re-reads
+            # this cell" for ever while every resume walked straight past it.
+            why = unreadable_cell(study, str(answer.get("dataset_id") or ""),
+                                  str(answer.get("outcome_key") or ""), keys)
+            unreachable[cell] = why or "this cell is not one the extract stage reads"
     return {cell: answers for cell, answers in cells.items()
             if any(answer.get("seq") not in done for answer in answers)}
 
@@ -576,9 +611,14 @@ def _map(ctx: RunContext, paper: PaperRecord, group: PaperGroup,
                                  paper_dir(ctx.out_dir, paper.sha256))
         except Exception as exc:                           # an upload failure is not fatal
             status.warnings.append(f"PDF upload failed, falling back to inline base64: {exc}")
+    # §C3: when this map is bought BECAUSE a reviewer overruled the mapper, the mapper is told so.
+    # Without it the re-map is the identical question in the identical words, so it comes back off
+    # the prompt cache with the identical answer — `eligible=True, status excluded, $0.00`, which
+    # is exactly what Wolpe and Roller did — and the reviewer's decision buys nothing at all.
     study = map_study(ctx.client, paper, ctx.protocol,
                       model_primary=ctx.models["primary"], model_check=ctx.models["secondary"],
-                      model_adjudicate=ctx.models["adjudicator"], pdf_file_id=file_id or None)
+                      model_adjudicate=ctx.models["adjudicator"], pdf_file_id=file_id or None,
+                      reviewer_ruling=_ruling_text(ctx, paper, remap_for) if remap_for else "")
     write_stage(ctx.out_dir, paper.sha256, "map",
                 {"study": study.model_dump(mode="json"), "pdf_file_id": file_id,
                  # M8's contract: `overrides.consumed_seqs` reads this key from `map.json` AND
@@ -657,6 +697,20 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
     #: evidence a re-read is not allowed to lose.
     reread: set[str] = set()
     superseded: list[Candidate] = []
+    #: hints this map puts out of reach, and what is in the way. Never silently dropped: the
+    #: promise on the card ("the next --resume re-reads this cell") is one no resume can keep.
+    unreachable: dict[str, str] = {}
+
+    def say_what_cannot_be_read() -> None:
+        """Warn once per hint nothing will ever act on — before any early return, in every branch.
+
+        Said whether or not this stage is re-entered: the hint is on the record, no resume will
+        buy the reading it asks for, and a reviewer re-running for that reading is entitled to
+        know why rather than getting the identical "it is recorded" line back for ever.
+        """
+        for cell, why in sorted(unreachable.items()):
+            status.warnings.append(
+                f"{cell}: a reviewer's re-extraction hint cannot be acted on — {why}")
 
     if ctx.resume and stage_done(ctx.out_dir, paper.sha256, "extract"):
         payload = read_stage(ctx.out_dir, paper.sha256, "extract")
@@ -666,7 +720,9 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
         reread = {str(cell) for cell in payload.get(REREAD_CELLS) or [] if isinstance(cell, str)}
         done = [str(cell) for cell in payload.get("cells_extracted") or []]
         consumed = list(payload.get("consumed_override_seqs") or [])
-        hints = _hinted_cells(ctx, paper, study, keys, blocked_datasets, blocked_cells, consumed)
+        hints = _hinted_cells(ctx, paper, study, keys, blocked_datasets, blocked_cells,
+                              consumed, unreachable)
+        say_what_cannot_be_read()
         # a cell nobody has read, or one a reviewer has asked to have read AGAIN. The second is
         # not "still unread" by any test the stage file can apply — it was read, and came back
         # with nothing usable — so it is unioned in rather than folded into that rule.
@@ -695,7 +751,9 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
                 f"whichever group the hint was recorded against; a reading that found a value is "
                 f"replaced only by a re-reading that finds one")
     else:
-        hints = _hinted_cells(ctx, paper, study, keys, blocked_datasets, blocked_cells, consumed)
+        hints = _hinted_cells(ctx, paper, study, keys, blocked_datasets, blocked_cells,
+                              consumed, unreachable)
+        say_what_cannot_be_read()
 
     def save(complete: bool) -> None:
         # written after EVERY cell, not once at the end: Buch 2003 spent $14.37 against a $14 cap

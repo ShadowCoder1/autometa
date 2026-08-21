@@ -2031,3 +2031,338 @@ def test_an_analysed_n_the_run_has_no_row_for_is_pending_not_applied(tmp_path):
     summary = apply_overrides_and_repool(run)
     assert summary["applied"] == 0 and len(summary["pending"]) == 1
     assert "nobody:d9" in summary["pending"][0]["why"]
+
+
+# ============================================ a typed pair on a cell the run itself never produced
+def _forget_cell(run: Path, dataset_id: str, outcome_key: str) -> None:
+    """Take a mapped cell out of every stage file — no candidate, no verdict, no row.
+
+    The shape a cell really has when the extract stage never reached it: the map still asks for
+    it (Roller's E1a and E3, Wolpe's second experiment), and the three files below hold nothing
+    about it at all. Written by deletion rather than by hand, so what is left is the run's own
+    record of every other cell.
+    """
+    paper = dataset_id.split(":")[0]
+    for stage, key, test in (("extract", "candidates", lambda c: c.get("dataset_id") == dataset_id
+                              and c.get("outcome_key") == outcome_key),
+                             ("verify", "verdicts", lambda v: v.get("dataset_id") == dataset_id
+                              and v.get("outcome_key") == outcome_key),
+                             ("resolve", "records", lambda r: r.get("dataset_id") == dataset_id
+                              and r.get("outcome_key") == outcome_key)):
+        path = run / "papers" / paper / f"{stage}.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload[key] = [item for item in payload.get(key) or [] if not test(item)]
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _pair(run: Path, dataset_id: str, outcome_key: str,
+          a: tuple[float, float, int], b: tuple[float, float, int]) -> None:
+    from canopy.pipeline.overrides import append_override
+
+    for group, (mean, spread, n) in (("A", a), ("B", b)):
+        append_override(run, {
+            "kind": "value", "paper_id": dataset_id.split(":")[0], "dataset_id": dataset_id,
+            "outcome_key": outcome_key, "group": group, "mean": mean,
+            "dispersion_value": spread, "dispersion_type": "SE", "n": n,
+            "justification": f"read off the printed figure for group {group}"})
+
+
+def test_a_typed_pair_builds_a_row_for_a_mapped_cell_the_run_never_read(tmp_path):
+    """§C4: a pair of human values is the whole of a cell, whether or not a reader ever saw it.
+
+    Roller's E1a and E3 and Wolpe's second experiment are mapped cells with no candidate, no
+    verdict and no row — the extract stage never reached them. A reviewer who reads the figure
+    and types both groups' numbers has supplied everything the resolver needs, and the answer
+    came back "no row for this in this run": four complete answers, no row, and a pending line
+    that no re-run could ever clear.
+    """
+    run = _nine(tmp_path)
+    cell = ("592b3b55a318:d2", "aftereffect")
+    _forget_cell(run, *cell)
+    _repool(run)
+    assert cell not in _rows(run), "the fixture was not stripped"
+
+    _pair(run, *cell, a=(5.0, 0.463, 13), b=(2.593, 0.463, 14))
+    summary = _repool(run)
+    assert not [p for p in summary["pending"] if p.get("dataset_id") == cell[0]
+                and p.get("outcome_key") == cell[1]], summary["pending"]
+    row = _rows(run).get(cell)
+    assert row is not None, "two complete group answers built no row"
+    assert row["es"] is not None, row
+    assert (row["mean_a"], row["mean_b"]) == (5.0, 2.593)
+
+
+def test_a_typed_pair_survives_every_later_repool_and_every_unrelated_answer(tmp_path):
+    """…and it stays. A row a human's numbers built is not undone by a decision about another cell.
+
+    Panouillères d1's aftereffect went into the best-guess line when its pair was typed and was
+    gone from both lines after the next round of answers — an exclusion of a SIBLING dataset and
+    an analysed n somewhere else — because nothing recreated what the typed values had made.
+    """
+    from canopy.pipeline.overrides import append_override
+
+    run = _nine(tmp_path)
+    cell = ("592b3b55a318:d2", "aftereffect")
+    _forget_cell(run, *cell)
+    _pair(run, *cell, a=(5.0, 0.463, 13), b=(2.593, 0.463, 14))
+    _repool(run)
+    es = _rows(run)[cell]["es"]
+    assert es is not None
+
+    append_override(run, {"kind": "exclude_dataset", "dataset_id": "592b3b55a318:d1",
+                          "outcome_key": "aftereffect",
+                          "justification": "a sibling dataset this review does not pool"})
+    append_override(run, {"kind": "group_n", "paper_id": "b7523a41b03a",
+                          "dataset_id": "b7523a41b03a:d1", "n_a": 18, "n_b": 16,
+                          "justification": "the analysed n, after the stated exclusions"})
+    for _ in range(2):
+        _repool(run)
+        row = _rows(run).get(cell)
+        assert row is not None, "the row a human's numbers built disappeared on a later repool"
+        assert row["es"] == es, (row["es"], es)
+
+
+# ============================================ a settled cell is not asked again on the next repool
+def test_a_confirmed_value_raises_no_further_card_however_often_the_run_is_repooled(tmp_path):
+    """§C4's terminus. Langan's two cells and Heuer's aftereffect pair came back after every round.
+
+    Answering with a value spawns a `confirm_value` card; confirming it spawns another, because
+    the rebuild puts the same row in front of the same rule. Once a person has typed a number and
+    confirmed it, the cell has nothing left to ask — until the row's value changes again.
+    """
+    from canopy.pipeline.overrides import append_override
+
+    run = _nine(tmp_path)
+    dataset_id, outcome_key = "b7523a41b03a:d1", "aftereffect"
+    _pair(run, dataset_id, outcome_key, a=(30.57, 2.1, 12), b=(24.4, 1.9, 12))
+    _repool(run)
+    open_cards = [q for q in questions_for_run(run, fold=False)
+                  if q["dataset_id"] == dataset_id and q["outcome_key"] == outcome_key]
+    assert open_cards, "the typed value settled the cell before it was confirmed"
+    assert {q["kind"] for q in open_cards} == {"confirm_value"}, [q["kind"] for q in open_cards]
+
+    for card in open_cards:                                # confirmed the way the page confirms
+        for written in answers_to_overrides(card, {"option": "yes",
+                                                   "note": "I opened the figure: this is it"}):
+            append_override(run, written)
+    for _ in range(2):
+        _repool(run)
+        assert not [q for q in questions_for_run(run, fold=False)
+                    if q["dataset_id"] == dataset_id and q["outcome_key"] == outcome_key], \
+            "a settled cell was asked again"
+
+    # …and a NEW number un-settles it: the confirmation was about the value that stood when it
+    # was made, and a cell holding a number nobody has confirmed may be asked about again.
+    from canopy.pipeline.overrides import read_overrides
+    from canopy.review.questions import _value_settled
+
+    def log_for(group: str) -> list[dict]:
+        return [o for o in read_overrides(run) if o.get("dataset_id") == dataset_id
+                and o.get("outcome_key") in ("", outcome_key)
+                and o.get("group") in (None, group)]
+
+    assert _value_settled(log_for("A")) and _value_settled(log_for("B"))
+    _pair(run, dataset_id, outcome_key, a=(31.9, 2.1, 12), b=(24.4, 1.9, 12))
+    _repool(run)
+    assert not _value_settled(log_for("A")), "a value nobody has confirmed is not a settled cell"
+    assert not _value_settled(log_for("B"))
+
+
+# ================================================== fix round 2: the map's word, and the last card
+def _map_excludes(run: Path, dataset_id: str, rule: str = "") -> None:
+    """Mark a dataset excluded on the copied run's map, the way the adjudicator marks one."""
+    path = run / "papers" / dataset_id.split(":")[0] / "map.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for dataset in payload["study"]["datasets"]:
+        if dataset["dataset_id"] == dataset_id:
+            dataset["included"] = False
+            dataset["exclusion_rule"] = rule
+            dataset["exclusion_quote"] = "the same participants took part in both experiments"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def test_a_typed_value_never_resurrects_a_dataset_the_map_excluded(tmp_path):
+    """One rule for both answers. The hint on Roller's E1a is refused because the map excluded the
+    dataset under a protocol rule; a typed value on the same cell was accepted, built the row, put
+    its cells back in the queue and let the ordinary confirmation pool it. An answer that never
+    named the exclusion cannot undo it — that is the standing rule everywhere else in this module.
+    """
+    run = _nine(tmp_path)
+    cell = ("592b3b55a318:d2", "aftereffect")
+    _forget_cell(run, *cell)
+    _map_excludes(run, cell[0], "include only the first experiment")
+    _pair(run, *cell, a=(5.0, 0.463, 13), b=(2.593, 0.463, 14))
+    summary = _repool(run)
+
+    refused = [p for p in summary["pending"]
+               if p.get("dataset_id") == cell[0] and p.get("outcome_key") == cell[1]]
+    assert len(refused) == 2, summary["pending"]
+    assert "include only the first experiment" in refused[0]["why"], refused[0]["why"]
+    assert cell not in _rows(run), "a row was built for a dataset the map excluded"
+    assert not [q for q in questions_for_run(run, fold=False) if q["dataset_id"] == cell[0]
+                and q["outcome_key"] == cell[1]]
+
+
+def test_the_block_names_a_rule_even_when_the_map_recorded_none(tmp_path):
+    """"the map excluded this dataset under ''" tells a reviewer nothing they can act on."""
+    run = _nine(tmp_path)
+    cell = ("592b3b55a318:d2", "aftereffect")
+    _forget_cell(run, *cell)
+    _map_excludes(run, cell[0], "")
+    _pair(run, *cell, a=(5.0, 0.463, 13), b=(2.593, 0.463, 14))
+    why = [p["why"] for p in _repool(run)["pending"] if p.get("dataset_id") == cell[0]][0]
+    assert "''" not in why, why
+    assert "does not record" in why, why
+
+
+def test_an_inclusion_ruling_makes_the_same_refused_answer_actionable(tmp_path):
+    """…and the refusal is not a dead end: `include_dataset` is the answer it points at.
+
+    A dataset the map adjudicator excluded carries no open question, so `apply_map_answers` used
+    to ignore an inclusion for it and there was no record a reviewer could write that would ever
+    change the message. A person overruling the map at dataset level is §C3's ruling one level
+    down, and it is now honoured — so the same typed pair, unchanged, builds its row.
+    """
+    from canopy.pipeline.overrides import append_override
+
+    run = _nine(tmp_path)
+    cell = ("592b3b55a318:d2", "aftereffect")
+    _forget_cell(run, *cell)
+    _map_excludes(run, cell[0], "include only the first experiment")
+    _pair(run, *cell, a=(5.0, 0.463, 13), b=(2.593, 0.463, 14))
+    _repool(run)
+    assert cell not in _rows(run)
+
+    append_override(run, {"kind": "include_dataset", "paper_id": "592b3b55a318",
+                          "dataset_id": cell[0], "decision": "include",
+                          "rule": "criterion 3: both experiments used different participants",
+                          "note": "the map read the design wrong; these are separate samples",
+                          "justification": "answered the map's exclusion: include this dataset"})
+    summary = _repool(run)
+    assert not [p for p in summary["pending"]
+                if p.get("dataset_id") == cell[0] and p.get("kind") == "value"], summary["pending"]
+    row = _rows(run).get(cell)
+    assert row is not None and row["es"] is not None, row
+
+
+def test_a_confirmed_value_still_asks_while_a_flag_code_withholds_the_cell(tmp_path):
+    """MAJOR 2: the terminus may not be reached by dropping the question off a held cell.
+
+    `_overrulable` knows three findings and no flag codes, so a cell forced to `needs_human` by a
+    contradiction — `sign_mismatch` and every other `CONTRADICTING_FLAGS` member — passed the
+    suppression while still held, still in the queue and with nothing on the page to answer. A
+    repeated question is visible; a vanished one is not, so that is worse than the loop it
+    replaced.
+    """
+    from canopy.pipeline.overrides import append_override
+    from tests.helpers import nine as nine_helper
+
+    run = _nine(tmp_path)
+    dataset_id, outcome_key = "b7523a41b03a:d1", "aftereffect"
+    for group in ("A", "B"):
+        nine_helper.with_flags(run, dataset_id, outcome_key, group, ["sign_mismatch"])
+    # …and nothing `_overrulable` knows about: a healthy score, no refutation, no adjudication.
+    # The contradiction is then the ONLY thing withholding the cell, which is the shape the guard
+    # could not see.
+    path = run / "papers" / "b7523a41b03a" / "verify.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for verdict in payload["verdicts"]:
+        if verdict["dataset_id"] == dataset_id and verdict["outcome_key"] == outcome_key:
+            verdict.update({"confidence_score": 0.95, "verifier_verdict": "confirmed",
+                            "adjudicated": False})
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    _pair(run, dataset_id, outcome_key, a=(30.57, 2.1, 12), b=(24.4, 1.9, 12))
+    _repool(run)
+    cards = [q for q in questions_for_run(run, fold=False)
+             if q["dataset_id"] == dataset_id and q["outcome_key"] == outcome_key]
+    assert cards, "the contradiction is not being asked about at all"
+
+    append_override(run, {"kind": "mark_reviewed", "paper_id": "b7523a41b03a",
+                          "dataset_id": dataset_id, "outcome_key": outcome_key,
+                          "confidence": "accept_with_note",
+                          "justification": "confirmed the number, said nothing about the sign"})
+    _repool(run)
+    row = _rows(run)[(dataset_id, outcome_key)]
+    assert row["confidence"] == "needs_human", "the contradiction stopped withholding the cell"
+    assert "sign_mismatch" in " ".join(row["flags"] or []) or row["confidence"] == "needs_human"
+    assert [q for q in questions_for_run(run, fold=False)
+            if q["dataset_id"] == dataset_id and q["outcome_key"] == outcome_key], \
+        "a held cell with no question anywhere is the state C4 exists to remove"
+    assert [c for c in questions_for_run(run) if c["dataset_id"] == dataset_id
+            and c["outcome_key"] == outcome_key], "…and none on the folded page either"
+    queued = json.loads((run / "human_review_queue.json").read_text())
+    assert [q for q in queued if q.get("dataset_id") == dataset_id
+            and q.get("outcome_key") == outcome_key], "the cells are queued with nothing to answer"
+
+
+def test_a_borrowed_direction_comes_from_the_same_measure_or_from_nowhere(tmp_path):
+    """MINOR 3: two datasets of one paper can measure different things under one outcome.
+
+    The orientation is decided once per (paper, outcome, MEASURE) — `_apply_orientation` refuses a
+    direction that would land on more than one measure for exactly this reason — so a sibling
+    measuring something else is not this cell's witness. An error measure and a magnitude measure
+    have opposite `higher_is_better`, and borrowing across them signs the row backwards silently.
+    """
+    run = _nine(tmp_path)
+    cell = ("592b3b55a318:d2", "aftereffect")
+    _forget_cell(run, *cell)
+    path = run / "papers" / "592b3b55a318" / "map.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    for dataset in payload["study"]["datasets"]:
+        for outcome in dataset["outcomes"]:
+            if outcome["outcome_key"] == "aftereffect" and dataset["dataset_id"] == cell[0]:
+                outcome["measure_name"] = "initial endpoint error (IEE), mm"
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    _pair(run, *cell, a=(5.0, 0.463, 13), b=(2.593, 0.463, 14))
+    _repool(run)
+    row = _rows(run)[cell]
+    assert row["higher_is_better"] is None, \
+        "a direction was borrowed from a sibling measuring something else"
+    assert row["es"] is None and "direction" in (row["not_convertible_reason"] or "")
+
+
+def test_a_refused_hint_becomes_a_promised_re_read_once_the_dataset_is_included(tmp_path):
+    """MINOR 4: the honest message names an answer, and the answer actually works.
+
+    Telling a reviewer what is in the way is only half the fix — the other half is that there is
+    something they can do about it. A dataset the map adjudicator excluded asked no question, so
+    `apply_map_answers` ignored an inclusion for it and the message could never change. Now the
+    same hint, untouched and with its seq still unconsumed, becomes one the next resume will buy.
+    """
+    from canopy.pipeline.overrides import append_override, consumed_seqs
+
+    run = _nine(tmp_path)
+    dataset_id, outcome_key = "592b3b55a318:d2", "aftereffect"
+    _map_excludes(run, dataset_id, "include only the first experiment")
+    record = append_override(run, {
+        "kind": "re_extract", "paper_id": "592b3b55a318", "dataset_id": dataset_id,
+        "outcome_key": outcome_key, "hint": "Figure 3b, the open bars",
+        "justification": "the value is plotted rather than printed"})
+    why = next(p["why"] for p in _repool(run)["pending"] if p["seq"] == record["seq"])
+    assert "include only the first experiment" in why, why
+    assert "include_dataset" in why, why
+
+    append_override(run, {"kind": "include_dataset", "paper_id": "592b3b55a318",
+                          "dataset_id": dataset_id, "decision": "include",
+                          "rule": "criterion 3: the two experiments used different participants",
+                          "justification": "answered the map's exclusion: include this dataset"})
+    after = next(p["why"] for p in _repool(run)["pending"] if p["seq"] == record["seq"])
+    assert "re-reads this cell" in after, after
+    assert record["seq"] not in consumed_seqs(run), "nothing has bought the reading yet"
+
+
+def test_a_dataset_ruling_never_resurrects_a_paper_the_screen_excluded():
+    """Re-review MAJOR 7. `include_dataset` is dataset-scoped; a paper with `eligible=False`
+    stays out of reach for hints and typed values alike until the PAPER's eligibility card says
+    otherwise."""
+    from canopy.agents.mapper import unreadable_cell
+    from canopy.models import StudyMap
+
+    study = StudyMap.model_validate({
+        "paper_id": "p" * 64, "eligible": False, "eligibility_rationale": "no older group",
+        "citation": {"first_author": "Any", "year": 2020},
+        "datasets": [{"dataset_id": "aaaaaaaaaaaa:d1", "label": "d1", "included": True,
+                      "outcomes": [{"outcome_key": "late_adaptation", "sources": []}]}]})
+    why = unreadable_cell(study, "aaaaaaaaaaaa:d1", "late_adaptation")
+    assert "screen excluded this paper" in why and "eligibility" in why

@@ -1715,3 +1715,147 @@ def test_an_interrupted_hinted_re_read_is_repaired_by_the_next_resume(tmp_path, 
     rows = list(csv.DictReader((out / "results" / "late_adaptation" / "extraction_table.csv")
                                .open(newline="", encoding="utf-8")))
     assert rows and rows[0]["es"], "the repaired verdict produced no row"
+
+
+# ------------------------- §C3: an inclusion is a fresh QUESTION to the mapper, not the cached one
+def test_the_resume_tells_the_mapper_a_reviewer_ruled_the_paper_eligible(tmp_path, bock_dir,
+                                                                         fake_specs):
+    """The map a resume buys for an included paper must be a map of a DIFFERENT question.
+
+    Wolpe and Roller both came back `eligible=True, status excluded, $0.00`: their cached maps
+    were made when the mapper stopped at "not eligible", so they list no dataset, and a re-map
+    asked in the very same words gets the very same answer off the prompt cache. The reviewer's
+    ruling therefore rides in the prompt — additively, like a re-extraction hint — which is what
+    makes the mapper's job "map its datasets" and the cache key a different one.
+    """
+    from canopy.llm.context import REVIEWER_RULING_LABEL
+    from canopy.pipeline.overrides import append_override
+    from canopy.pipeline.run import REMAPPED_FOR, run_pipeline
+    from canopy.pipeline.state import sha12
+
+    router = fake_router(fake_specs)
+    seen: list[str] = []
+
+    def unless_a_reviewer_says_so(request: LLMRequest) -> Any:
+        """The SAME mapper for both runs: only the reviewer's ruling changes its answer."""
+        payload = router(request)
+        if not isinstance(payload, dict) or "eligible" not in payload:
+            return payload
+        if REVIEWER_RULING_LABEL in _request_text(request):
+            seen.append(request.model)
+            return payload
+        return {**payload, "eligible": False, "datasets": [],
+                "exclusion_reason": "single age group",
+                "eligibility_rationale": "only younger adults took part"}
+
+    def client() -> LLMClient:
+        return LLMClient(provider=FakeProvider([unless_a_reviewer_says_so]), allow_live=True,
+                         cache_dir=tmp_path / "cache")
+
+    out = tmp_path / "run"
+    first = run_pipeline(bock_dir, PROTOCOL, out, client=client(), concurrency=1)
+    paper_id = first.papers[0].paper_id
+    map_file = out / "papers" / sha12(paper_id) / "map.json"
+    assert first.papers[0].status == "excluded"
+    assert not json.loads(map_file.read_text())["study"]["datasets"]
+    assert not seen
+
+    record = append_override(out, {
+        "kind": "eligibility", "paper_id": paper_id, "eligible": True,
+        "rule": "criterion 2: older and younger adults were compared",
+        "justification": "answered the include_paper card: the mapper misread criterion 2"})
+    resumed = run_pipeline(bock_dir, PROTOCOL, out, client=client(), concurrency=1, resume=True)
+
+    assert seen, "the mapper was never told a reviewer had ruled on this paper"
+    payload = json.loads(map_file.read_text())
+    assert payload["study"]["datasets"], "the re-map came back off the cache, unchanged"
+    assert record["seq"] in payload[REMAPPED_FOR]
+    assert resumed.papers[0].status == "resolved", resumed.papers[0].error
+    extract = json.loads((out / "papers" / sha12(paper_id) / "extract.json").read_text())
+    assert record["seq"] in (extract.get("consumed_override_seqs") or [])
+    rows = list(csv.DictReader((out / "results" / "late_adaptation" / "extraction_table.csv")
+                               .open(newline="", encoding="utf-8")))
+    assert rows and rows[0]["es"], rows
+
+    # …and the next resume buys nothing: the answer has had its map
+    again = LLMClient(provider=FakeProvider([unless_a_reviewer_says_so]), allow_live=True,
+                      cache_dir=tmp_path / "cache2")
+    third = run_pipeline(bock_dir, PROTOCOL, out, client=again, concurrency=1, resume=True)
+    assert third.papers[0].stages["map"] == "skipped"
+    assert again.calls() == [], "a second map was bought for an answer that already had one"
+
+
+# ------------------------------ C4: a hint on a fully finished paper, and one nothing can act on
+def _finished(tmp_path, bock_dir, fake_specs) -> tuple[Path, str, str]:
+    """A paper run to the end with values on the record: every stage done, nothing outstanding."""
+    from canopy.pipeline.run import run_pipeline
+    from canopy.pipeline.state import sha12
+
+    out = tmp_path / "run"
+    state: dict[str, Any] = {"found": True}
+    manifest = run_pipeline(bock_dir, PROTOCOL, out, concurrency=1,
+                            client=LLMClient(provider=FakeProvider([
+                                _blind_router([fake_specs[0]], state)]),
+                                allow_live=True, cache_dir=None))
+    paper = manifest.papers[0]
+    assert paper.status == "resolved", paper.error
+    assert all(paper.stages.get(s) == "done" for s in ("map", "extract", "verify", "resolve"))
+    study = json.loads((out / "papers" / sha12(paper.paper_id) / "map.json").read_text())["study"]
+    return out, paper.paper_id, study["datasets"][0]["dataset_id"]
+
+
+def test_a_hint_alone_re_enters_extract_on_a_paper_whose_stages_are_all_done(tmp_path, bock_dir,
+                                                                             fake_specs):
+    """Nothing about this paper is outstanding — the hint is the only reason to open it again."""
+    from canopy.pipeline.overrides import append_override
+    from canopy.pipeline.run import REREAD_CELLS, run_pipeline
+    from canopy.pipeline.state import sha12
+
+    out, paper_id, dataset_id = _finished(tmp_path, bock_dir, fake_specs)
+    record = append_override(out, {
+        "kind": "re_extract", "paper_id": paper_id, "dataset_id": dataset_id,
+        "outcome_key": "late_adaptation", "hint": "Table 2 on page 5, the row labelled 'older'",
+        "justification": "the value is printed in the table, not in the results text"})
+
+    state: dict[str, Any] = {"found": True}
+    run_pipeline(bock_dir, PROTOCOL, out, concurrency=1, resume=True,
+                 client=LLMClient(provider=FakeProvider([_blind_router([fake_specs[0]], state)]),
+                                  allow_live=True, cache_dir=None))
+    extract = json.loads((out / "papers" / sha12(paper_id) / "extract.json").read_text())
+    assert record["seq"] in (extract.get("consumed_override_seqs") or []), \
+        "a finished paper never re-entered extract for the cell a reviewer hinted at"
+    assert f"{dataset_id}/late_adaptation" in (extract.get(REREAD_CELLS) or [])
+
+
+def test_a_hint_no_resume_can_act_on_says_so_instead_of_promising_a_re_read(tmp_path, bock_dir,
+                                                                            fake_specs):
+    """Roller's E1a and E3 hints sat "the next --resume re-reads this cell" through every resume.
+
+    Their datasets were excluded by the map under a protocol rule (and E3's carries no source for
+    the outcome at all), so no resume was ever going to read them. A promise nothing can keep is
+    the failure C4 exists to remove: the record has to say what is in the way and the extract
+    stage has to warn, rather than the reviewer re-running for ever and getting the same line back.
+    """
+    from canopy.pipeline.overrides import append_override, apply_overrides_and_repool
+    from canopy.pipeline.run import run_pipeline
+
+    out, paper_id, dataset_id = _finished(tmp_path, bock_dir, fake_specs)
+    # `aftereffect` is in the protocol and NOT on this paper's map: a cell no reader can be sent to
+    record = append_override(out, {
+        "kind": "re_extract", "paper_id": paper_id, "dataset_id": dataset_id,
+        "outcome_key": "aftereffect", "hint": "Figure 3, the open bars",
+        "justification": "the reference analysis reads the aftereffect off this figure"})
+    why = next(p["why"] for p in apply_overrides_and_repool(out)["pending"]
+               if p["seq"] == record["seq"])
+    assert "aftereffect" in why and "map" in why, why
+    assert "--resume" not in why, why
+
+    state: dict[str, Any] = {"found": True}
+    client = LLMClient(provider=FakeProvider([_blind_router([fake_specs[0]], state)]),
+                       allow_live=True, cache_dir=None)
+    manifest = run_pipeline(bock_dir, PROTOCOL, out, concurrency=1, resume=True, client=client)
+    assert client.calls() == [], "a reading was bought for a cell the map does not have"
+    assert [w for w in manifest.warnings if "aftereffect" in w and "hint" in w], manifest.warnings
+    again = next(p["why"] for p in apply_overrides_and_repool(out)["pending"]
+                 if p["seq"] == record["seq"])
+    assert again == why, "the same unbuyable hint reads differently on the next resume"

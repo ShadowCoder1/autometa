@@ -34,7 +34,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import Any, Callable, Mapping, Sequence, get_args
+from typing import Any, Callable, Collection, Mapping, Sequence, get_args
 
 from ..config import MODELS
 from ..ingest.pdf import PaperRecord
@@ -47,7 +47,7 @@ from ..models import (AnalysisMetric, Citation, DatasetSpec, DispersionType, Err
                       XAxisKind)
 from . import load_prompt, render_prompt
 
-__all__ = ["apply_map_answers", "extraction_blocks", "map_study", "measure_of",
+__all__ = ["apply_map_answers", "extraction_blocks", "unreadable_cell", "map_study", "measure_of",
            "open_map_questions", "protocol_text", "readable_sources", "roster_text",
            "MAP_ADJUDICATOR",
            "roster_entries", "dataset_text", "source_unreadable_reason", "split_metrics",
@@ -1587,9 +1587,17 @@ def _apply_error_bar_rulings(study: StudyMap, rulings: list[dict[str, Any]], con
 def map_study(client: LLMClient, paper: PaperRecord, protocol: Protocol, *,
               model_primary: str = MODELS["primary"], model_check: str = MODELS["secondary"],
               model_adjudicate: str = MODELS["adjudicator"],
-              pdf_file_id: str | None = None) -> StudyMap:
-    """Map one paper against one protocol: eligibility, datasets, group Ns and source locations."""
+              pdf_file_id: str | None = None, reviewer_ruling: str = "") -> StudyMap:
+    """Map one paper against one protocol: eligibility, datasets, group Ns and source locations.
+
+    `reviewer_ruling` is §C3's other half: the one line that says a PERSON has already decided
+    this paper belongs in the review (`llm.context.reviewer_ruling_line`). It rides additively in
+    the two prompts that vote on eligibility, so the mapper is asked to map a paper rather than to
+    judge one — and because it is prompt text, the call has a cache key of its own and cannot come
+    back as the cached "not eligible, no datasets" answer the reviewer was overruling.
+    """
     sha12 = paper.sha256[:12]
+    ruling = ("\n\n" + reviewer_ruling) if reviewer_ruling else ""
     # No `cache_control` here: the mapper's four calls each carry a DIFFERENT output schema, and
     # the schema is part of the cached prefix (measured live, task 15 §A), so a marker would write
     # a fresh cache entry per call at 1.25x the input price and never be read. The whole-paper
@@ -1610,7 +1618,7 @@ def map_study(client: LLMClient, paper: PaperRecord, protocol: Protocol, *,
         model=model_primary, system=SYSTEM, schema=MAPPER_SCHEMA, effort="high", max_tokens=16000,
         betas=betas, prompt_version=PROMPT_VERSION, cell_key=f"map:{sha12}",
         messages=[{"role": "user", "content": [document, text_block(render_prompt(
-            "mapper", PROTOCOL=protocol_prompt, ROSTER=roster_prompt))]}])
+            "mapper", PROTOCOL=protocol_prompt, ROSTER=roster_prompt) + ruling)]}])
     parsed = primary.parsed or {}
     study = _build_map(parsed, paper)
     call_ids = [primary.call_id]
@@ -1626,7 +1634,7 @@ def map_study(client: LLMClient, paper: PaperRecord, protocol: Protocol, *,
             max_tokens=16000, betas=betas, prompt_version=PROMPT_VERSION,
             cache_key_extra="retry-no-datasets", cell_key=f"map:{sha12}",
             messages=[{"role": "user", "content": [document, text_block(render_prompt(
-                "mapper", PROTOCOL=protocol_prompt, ROSTER=roster_prompt))]}])
+                "mapper", PROTOCOL=protocol_prompt, ROSTER=roster_prompt) + ruling)]}])
         call_ids.append(again.call_id)
         retried = _build_map(again.parsed or {}, paper)
         disagreements.append(f"the primary map found no dataset in a paper it called eligible; "
@@ -1679,7 +1687,7 @@ def map_study(client: LLMClient, paper: PaperRecord, protocol: Protocol, *,
         max_tokens=16000, betas=betas, prompt_version=PROMPT_VERSION,
         cell_key=f"map-crosscheck:{sha12}",
         messages=[{"role": "user", "content": [document, text_block(render_prompt(
-            "mapper_crosscheck", PROTOCOL=protocol_prompt, ROSTER=roster_prompt))]}])
+            "mapper_crosscheck", PROTOCOL=protocol_prompt, ROSTER=roster_prompt) + ruling)]}])
     call_ids.append(check.call_id)
     checked = check.parsed or {}
     labels = [(d.group_a.label, d.group_b.label) for d in study.datasets]
@@ -1763,8 +1771,13 @@ def extraction_blocks(study: StudyMap) -> tuple[dict[str, str], dict[tuple[str, 
     for dataset in study.datasets:
         if dataset.included:
             continue
+        # the rule, or a sentence saying there is none: "excluded under ''" names nothing a
+        # reviewer can check the exclusion against, and the honest message is only as useful as
+        # the rule it prints.
+        rule = (dataset.exclusion_rule or "").strip()
         datasets[dataset.dataset_id] = (
-            f"the map excluded this dataset under {dataset.exclusion_rule!r}"
+            (f"the map excluded this dataset under {rule!r}" if rule
+             else "the map excluded this dataset under a protocol rule it does not record")
             + (f": {dataset.exclusion_quote}" if dataset.exclusion_quote else ""))
     for question in study.open_questions:
         why = f"an unanswered {question.kind} question: {question.question}"
@@ -1773,6 +1786,39 @@ def extraction_blocks(study: StudyMap) -> tuple[dict[str, str], dict[tuple[str, 
         else:
             datasets.setdefault(question.dataset_id, why)
     return datasets, cells
+
+
+def unreadable_cell(study: StudyMap, dataset_id: str, outcome_key: str,
+                    outcome_keys: Collection[str] = ()) -> str:
+    """Why no extract stage can be sent to this cell — `""` when one can.
+
+    C4's honesty clause for the one answer whose consequence is a READING. A `re_extract` hint on
+    a cell the map puts out of reach buys nothing on this resume and nothing on any later one, and
+    telling the reviewer "the next --resume re-reads this cell" is then a promise nothing can keep:
+    Roller's E1a and E3 hints sat on that line through every resume of a run that was never going
+    to read them, because the map had excluded both datasets under a protocol rule and E3's map
+    carried no source for the outcome at all.
+
+    ONE rule, here beside `extraction_blocks` whose answer it reads, so the run's warning and the
+    review page's pending line can never disagree about what is in the way.
+    """
+    if study.eligible is False:
+        # a dataset-level ruling never names the PAPER's eligibility: a paper the screen threw
+        # out stays out until the eligibility card that already exists says otherwise, and a
+        # typed value or a hint on one of its cells is refused with the same sentence
+        return ("the screen excluded this paper from the review; the paper's own eligibility "
+                "question is the answer that lifts this, not a dataset ruling")
+    dataset = next((d for d in study.datasets if d.dataset_id == dataset_id), None)
+    if dataset is None:
+        return f"no dataset {dataset_id!r} in this run's map of the paper"
+    if outcome_keys and outcome_key not in outcome_keys:
+        return (f"{outcome_key!r} is not an outcome of this review's protocol, so no reader is "
+                f"ever sent to it")
+    if all(sources.outcome_key != outcome_key for sources in dataset.outcomes):
+        return (f"the map lists no {outcome_key!r} source for {dataset_id}, so there is no cell "
+                f"here for a reader to be sent to")
+    datasets, cells = extraction_blocks(study)
+    return datasets.get(dataset_id) or cells.get((dataset_id, outcome_key)) or ""
 
 
 def _measure_options(outcome: OutcomeSources | None) -> list[str]:
@@ -1886,6 +1932,26 @@ def _names_location(source: Source, location: str) -> bool:
     return wanted in ids or (bool(locator) and wanted in locator)
 
 
+def _overrules_an_exclusion(study: StudyMap, kind: str, answer: Mapping[str, Any]) -> bool:
+    """Is this an inclusion for a dataset the MAP excluded, which asked no question about it?
+
+    §C3 one level down. A dataset the map adjudicator threw out on a protocol rule carries no open
+    question, so `apply_map_answers` ignored an `include_dataset` answer for it and there was no
+    record a reviewer could write that would ever put it back: the run refuses to re-read its
+    cells and tells them why, and the reason names an answer that did nothing. A person overruling
+    the mapper's reading of the protocol is exactly what the eligibility card already is for a
+    whole paper, and this is the same decision about one contrast of it.
+
+    Only an INCLUSION, and only over an exclusion the map itself made: "exclude it" needs an open
+    question, because excluding a dataset nobody proposed excluding answers nothing, and an
+    inclusion for a dataset already included changes nothing either.
+    """
+    if kind != "include_dataset" or str(answer.get("decision") or "").strip().lower() != "include":
+        return False
+    dataset_id = str(answer.get("dataset_id") or "").strip()
+    return any(d.dataset_id == dataset_id and d.included is False for d in study.datasets)
+
+
 def _answer_inclusion(dataset: DatasetSpec, answer: Mapping[str, Any]) -> bool:
     """C7 answered by a person: include it, or exclude it and say on what.
 
@@ -1897,6 +1963,11 @@ def _answer_inclusion(dataset: DatasetSpec, answer: Mapping[str, Any]) -> bool:
         return False
     if decision == "include":
         dataset.included = True
+        # …and the exclusion it overrules goes with it: a dataset the review includes may not keep
+        # the rule and the quote it was thrown out under, or `extraction_blocks` would keep
+        # refusing to read a cell a person has just put back.
+        dataset.exclusion_rule = ""
+        dataset.exclusion_quote = ""
         dataset.notes = _note(dataset.notes, f"included by {HUMAN_DECIDER}"
                                              + (f": {note}" if note else ""))
         return True
@@ -1965,7 +2036,7 @@ def apply_map_answers(study: StudyMap, answers: Sequence[Mapping[str, Any]]) -> 
             continue
         key = (kind, str(answer.get("dataset_id") or "").strip(),
                str(answer.get("outcome_key") or "").strip() if kind == "which_measure" else "")
-        if key in asked:
+        if key in asked or _overrules_an_exclusion(answered, kind, answer):
             latest[key] = answer
 
     for (kind, dataset_id, outcome_key), answer in latest.items():

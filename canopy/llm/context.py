@@ -25,6 +25,29 @@ FILE_ID_NAME = "file_id.txt"
 REVIEWER_HINT_LABEL = "a reviewer says the value is at"
 
 
+#: §C3: how a reviewer's inclusion ruling is put to the MAPPER. Same shape and same reason as the
+#: hint above — the words go in the prompt TEXT, so a re-map asked after a person overruled the
+#: mapper is a different question with a different cache key, and cannot come back as the cached
+#: "not eligible, no datasets" answer the reviewer was overruling. Additive: the protocol and the
+#: roster still say everything they said, and the ruling is one more thing the mapper is told.
+REVIEWER_RULING_LABEL = "a reviewer has ruled this paper eligible under the protocol"
+
+
+def reviewer_ruling_line(rule: str = "", quote: str = "") -> str:
+    """`- <the ruling>; map its datasets`, with the criterion and the words it rests on.
+
+    Empty when no reviewer has ruled, so an ordinary map is byte-identical to the map it always
+    was and no paper re-buys one.
+    """
+    said = " ".join(str(rule or "").split())[:500]
+    evidence = " ".join(str(quote or "").split())[:500]
+    return "\n".join(part for part in (
+        f"- {REVIEWER_RULING_LABEL}; map its datasets, groups and sources as you would for any "
+        f"eligible paper. Do not re-decide eligibility: it has been decided by a person.",
+        f"  the criterion they decided under: {said}" if said else "",
+        f"  the paper's own words they relied on: {evidence}" if evidence else "") if part)
+
+
 def reviewer_hint_line(hint: str) -> str:
     """`- a reviewer says the value is at: <hint>`, or "" when no reviewer has said anything.
 

@@ -701,6 +701,10 @@ class _RunState:
     """Everything the stage files hold, indexed the way re-pooling needs it."""
 
     def __init__(self, run_dir: Path, manifest: RunManifest):
+        #: where this state was read from. Held so the rules that need the map AS THE REVIEW HAS
+        #: IT — the map answers applied — can ask for it without every caller threading the path
+        #: down. `_out_of_reach` is the one that does.
+        self.run_dir = Path(run_dir)
         self.records: list[EffectSizeRecord] = []
         self.verdicts: list[Verdict] = []
         self.candidates: list[Candidate] = []
@@ -795,9 +799,15 @@ def apply_overrides_and_repool(run_dir: str | Path, *, protocol_path: str | Path
         dataset_id = override.get("dataset_id", "")
         outcome_key = override.get("outcome_key", "")
         if kind == "re_extract":
-            (applied if override.get("seq") in consumed
-             else pending).append(override if override.get("seq") in consumed
-                                  else {**override, "why": RE_EXTRACT_PENDING})
+            if override.get("seq") in consumed:
+                applied.append(override)
+                continue
+            # …and when no resume can act on it, the record says what is in the way instead of
+            # promising a reading nothing will ever buy (C4). The rule is the extract stage's own
+            # (`mapper.unreadable_cell`), read off the same map, so the page and the run cannot
+            # disagree about whether a hint is going anywhere.
+            blocked = _hint_out_of_reach(out, override, state, protocol)
+            pending.append({**override, "why": blocked or RE_EXTRACT_PENDING})
             continue
         if kind == "eligibility":
             hit = _apply_eligibility(override, records, dropped, excluded)
@@ -941,6 +951,49 @@ def apply_overrides_and_repool(run_dir: str | Path, *, protocol_path: str | Path
                "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     dump_json(summary, out / SUMMARY_FILE)
     return summary
+
+
+def _out_of_reach(state: "_RunState", dataset_id: str, outcome_key: str, protocol: Protocol,
+                  paper_id: str = "") -> str:
+    """Why this run's map puts this cell beyond any answer about its numbers — `""` when it does not.
+
+    ONE rule for BOTH answers whose subject is a cell of the map: the `re_extract` hint that asks
+    for it to be READ, and the `value` that supplies its numbers directly. They must refuse the
+    same cells for the same reason, or the review says two opposite things about one dataset —
+    which is what it did: the hint on Roller's E1a was refused because the map excluded the
+    dataset under a protocol rule, while a typed value on the same cell built the row, put its
+    cells back in the queue and let the ordinary confirmation pool it. An answer that never named
+    the exclusion may not undo it (§C4), and the way to keep the dataset is to say so:
+    `include_dataset`, which `apply_map_answers` now honours over a map's own exclusion.
+
+    The map as the REVIEW has it — the stage file with the log's map answers applied — which is
+    the same map `run._extract` reads.
+    """
+    from ..agents.mapper import apply_map_answers, unreadable_cell
+
+    paper = state.paper_of.get(dataset_id) or paper_id
+    study = state.studies.get(paper)
+    if study is None:
+        return f"no map for {dataset_id!r} in this run, so no reader can be sent to it"
+    answered = apply_map_answers(study, map_answers(state.run_dir, paper))
+    return unreadable_cell(answered, dataset_id, outcome_key, {o.key for o in protocol.outcomes})
+
+
+def _hint_out_of_reach(out: Path, override: Mapping[str, Any], state: "_RunState",
+                       protocol: Protocol) -> str:
+    """`_out_of_reach` for a `re_extract` record, plus the answer that would lift the block.
+
+    The refusal is not a dead end: a dataset the map excluded is one an `include_dataset` ruling
+    puts back, and a message that says what is in the way without saying what to do about it
+    leaves the reviewer exactly where the false promise did.
+    """
+    why = _out_of_reach(state, str(override.get("dataset_id") or ""),
+                        str(override.get("outcome_key") or ""), protocol,
+                        str(override.get("paper_id") or ""))
+    if why and "excluded this dataset" in why:
+        why += ("; answer the dataset's inclusion with `include_dataset` / include if this review "
+                "keeps it, and the next --resume reads the cell with this hint")
+    return why
 
 
 def _protocol_for(out: Path, manifest: RunManifest,
@@ -1564,6 +1617,69 @@ def _bucket_after_value(verdict: Verdict, override: Mapping[str, Any],
                            other=other, row_flags=row_flags, row_route=row_route)
 
 
+#: what a cell built from the log alone says about itself. Not a reading and never mistaken for
+#: one: no candidate id, no verifier, no score — `needs_human` until a person confirms it, which
+#: is what every other cell a human typed into does too.
+FROM_THE_LOG = ("this cell was never read by the run: the map asks for it and the extract stage "
+                "never reached it. It exists because a reviewer typed its numbers.")
+
+
+def _cell_the_run_never_read(dataset: DatasetSpec, outcome_key: str, state: "_RunState",
+                             records: dict[tuple[str, str], EffectSizeRecord],
+                             verdicts: dict[tuple[str, str, str], Verdict],
+                             protocol: Protocol) -> str:
+    """Make the two verdicts and the row a typed value needs. `""` on success, else why not.
+
+    Idempotent and derived from the map, so every re-pool of the same log builds the same cell:
+    the failure this exists to remove is a row that appeared when its pair was typed and was gone
+    after the next round of unrelated answers, because nothing recreated what the values had made.
+
+    The direction is not invented. It is taken from a sibling cell of the SAME paper and outcome
+    that the run did orient — the orientation is decided once per (paper, outcome, measure), so a
+    sibling's answer is this cell's answer — and left `None` when there is none, which holds the
+    row for the direction question exactly as an unoriented cell always is.
+    """
+    dataset_id = dataset.dataset_id
+    blocked = _out_of_reach(state, dataset_id, outcome_key, protocol)
+    if blocked:
+        # the SAME sentence a hint on this cell gets, for the same reason: the map put it out of
+        # reach, and a value answer is not a decision about the map (MAJOR 1).
+        return blocked
+    paper_id = state.paper_of.get(dataset_id, "")
+    # the direction is decided once per (paper, outcome, MEASURE), so the sibling must be
+    # measuring the same thing. Two datasets of one paper can carry different measures under one
+    # outcome — an error measure and a magnitude measure have opposite directions — and
+    # `_apply_orientation` refuses a direction that would land on more than one for exactly this
+    # reason. Borrowing across them would sign a row nobody read backwards, in silence.
+    mine = _measure_name(state, dataset_id, outcome_key)
+    oriented = next((v for v in verdicts.values()
+                     if v.outcome_key == outcome_key and v.higher_is_better is not None
+                     and state.paper_of.get(v.dataset_id, "") == paper_id
+                     and _same_measure(_measure_name(state, v.dataset_id, outcome_key), mine)),
+                    None)
+    for group, size in (("A", dataset.group_a.n), ("B", dataset.group_b.n)):
+        if (dataset_id, outcome_key, group) in verdicts:
+            continue
+        verdicts[(dataset_id, outcome_key, group)] = Verdict(
+            dataset_id=dataset_id, outcome_key=outcome_key, group=group,
+            n=size, confidence="needs_human", needs_human=True, route="human",
+            higher_is_better=(oriented.higher_is_better if oriented is not None else None),
+            orientation_source=(oriented.orientation_source if oriented is not None else ""),
+            verifier_reason=FROM_THE_LOG)
+    if (dataset_id, outcome_key) not in records:
+        from .run import sample_key                        # `run` imports this module, not vice
+
+        study = state.studies.get(paper_id)
+        records[(dataset_id, outcome_key)] = EffectSizeRecord(
+            paper_id=paper_id, dataset_id=dataset_id, outcome_key=outcome_key,
+            cluster_id=dataset.cluster_id or paper_id,
+            sample_id=sample_key(dataset, paper_id),
+            citation=(study.citation if study is not None else None),
+            label=dataset.label or dataset_id,
+            confidence="needs_human", notes=FROM_THE_LOG)
+    return ""
+
+
 def _apply_value(override: Mapping[str, Any], records: dict[tuple[str, str], EffectSizeRecord],
                  verdicts: dict[tuple[str, str, str], Verdict], state: _RunState,
                  protocol: Protocol, overruled: Collection[str] = ()) -> tuple[bool, str]:
@@ -1571,13 +1687,22 @@ def _apply_value(override: Mapping[str, Any], records: dict[tuple[str, str], Eff
     dataset_id, outcome_key = override["dataset_id"], override["outcome_key"]
     group = override["group"]
     key = (dataset_id, outcome_key)
-    record = records.get(key)
     dataset = state.datasets.get(dataset_id)
-    if record is None or dataset is None:
-        return False, f"no row for {dataset_id}/{outcome_key} in this run"
+    if dataset is None:
+        return False, f"no dataset {dataset_id!r} in this run"
+    # §C4: a mapped cell the run never read is still a cell, and a human's numbers are the whole
+    # of one. Roller's E1a and E3 and Panouillères's aftereffect are mapped cells with no
+    # candidate, no verdict and no row — the extract stage never reached them — and four complete
+    # answers came back "no row for this in this run", pending for ever against a reading nobody
+    # was going to buy. The cell is made HERE, from the map, on every re-pool: it is derived from
+    # the log and the stage files, so it cannot be built once and lost by the next repool.
+    missing = _cell_the_run_never_read(dataset, outcome_key, state, records, verdicts, protocol)
+    if missing:
+        return False, missing
+    record = records.get(key)
     verdict = verdicts.get((dataset_id, outcome_key, group))
-    if verdict is None:
-        return False, f"no verified cell for group {group} of {dataset_id}/{outcome_key}"
+    if record is None or verdict is None:                  # unreachable; kept as a loud refusal
+        return False, f"no row for {dataset_id}/{outcome_key} in this run"
 
     if override.get("mean") is not None:
         verdict.mean = float(override["mean"])

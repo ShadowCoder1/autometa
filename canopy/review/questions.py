@@ -299,9 +299,24 @@ def questions_for_run(run_dir: str | Path, *,
             verdict = {**verdict, "flags": flags}
             if settled is not None:
                 verdict["higher_is_better"] = settled
-        out.append(_question(entry, verdict, candidates, study, dataset, provenance,
+        question = _question(entry, verdict, candidates, study, dataset, provenance,
                              run, already, pending, answered_value, consumed, overruled,
-                             rows.get((dataset_id, outcome_key)) or {}, settled))
+                             rows.get((dataset_id, outcome_key)) or {}, settled)
+        if question["kind"] in _ASKED_ONCE and _value_settled(already) \
+                and not _overrulable(verdict or {}, overruled) \
+                and not _holding_codes(verdict or {}):
+            # §C4's terminus, enforced: a number a person typed and then confirmed is not asked
+            # about again, and the card does not stay on the page as a settled one either.
+            # Everything else this cell may be held by is a DIFFERENT question and still asked —
+            # a confirmation names the value and never the finding beside it — which is why the
+            # suppression waits until nothing nameable is left unaddressed on the cell — neither
+            # a finding no flag code names (`_overrulable`) nor one that does (`_holding_codes`:
+            # an error, a contradiction, a cap). A confirmation names the number and never the
+            # `sign_mismatch` beside it, so a cell held by a code keeps its question. A repeated
+            # question is visible and a vanished one is not, which makes "held with nothing to
+            # answer" the worse of the two failures, not the safer one.
+            continue
+        out.append(question)
     out.extend(_excluded_questions(run, overrides, out))
     out.extend(_map_questions(run, overrides, pending, consumed))
     # ONE read of the run's rows for the whole page. Every card asks its row where it stands (the
@@ -340,6 +355,46 @@ def _answered_orientation(overrides: Sequence[Mapping[str, Any]], entry: Mapping
 
 def _same_text(left: str, right: str) -> bool:
     return " ".join(left.split()).casefold() == " ".join(right.split()).casefold()
+
+
+#: the kinds that change the NUMBER a row carries, so a confirmation made before one of them was
+#: a confirmation of a different number: this cell's own value, the analysed group sizes the row is
+#: divided by, and the direction it is signed with. Anything else — a note, a `mark_reviewed` that
+#: names a finding, a decision about a sibling — leaves the confirmed value exactly as it was.
+_CHANGES_THE_VALUE: frozenset[str] = frozenset({"value", "group_n", "orientation"})
+
+
+#: the kinds that ask "is this the number?" — the ones a confirmation has already answered. A
+#: refutation, an adjudication or an unresolved direction is not among them: those are findings a
+#: confirmation did not name, and §C4 is explicit that an answer settles only what it names.
+_ASKED_ONCE: frozenset[str] = frozenset({"confirm_value", "which_value", "needs_group_values",
+                                         "converted_statistic", "no_value"})
+
+
+def _value_settled(already: Sequence[Mapping[str, Any]]) -> bool:
+    """Has a person typed this cell's value AND confirmed it, with nothing changing it since?
+
+    §C4's terminus, enforced rather than merely offered. `confirm_value` is the last question a
+    held cell asks and its answer is a `mark_reviewed` that accepts the number — but every re-pool
+    rebuilds the row from the cells, so the same rule met the same row again and raised the same
+    card. Langan's late-adaptation cell and its aftereffect, and Heuer 2008's aftereffect pair,
+    came back as fresh "are you sure?" questions after every answer round in the same run: a
+    reviewer who answers them is answering for ever, and a page that keeps asking a settled
+    question is indistinguishable from one that lost the answer.
+
+    A LATER record that changes the number re-opens it (`_CHANGES_THE_VALUE`), because the
+    confirmation was about the value that stood when it was made and a new one has been confirmed
+    by nobody. Read from the LOG, which is the only durable record of it: the stage files a
+    re-pool reads are never rewritten and always say what the run decided.
+    """
+    typed = confirmed = False
+    for override in already:
+        kind = str(override.get("kind") or "")
+        if kind == "mark_reviewed" and override.get("confidence") == "accept_with_note":
+            confirmed = confirmed or typed
+        elif kind in _CHANGES_THE_VALUE:
+            typed, confirmed = kind == "value" or typed, False
+    return confirmed
 
 
 def _codes_answered(already: Sequence[Mapping[str, Any]]) -> set[str]:
