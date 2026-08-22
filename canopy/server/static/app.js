@@ -867,9 +867,13 @@
     }
     // DECISION C4: what answering is WORTH decides where a card sits. The tool never answers a
     // low-impact card for the reviewer — it just stops putting it at the top of their day.
-    var moving = [], low = [], answered = [];
+    var moving = [], low = [], answered = [], settled = [];
     questions.forEach(function (q) {
-      if (q.answered) { answered.push(q); }
+      // a choice the TOOL made for itself is its own bucket. It is `answered` — so it never sits
+      // above a card that still blocks — but "Answered" means a person decided, and filing it
+      // there said one had.
+      if (q.status === "settled") { settled.push(q); }
+      else if (q.answered) { answered.push(q); }
       else if (q.impact_band === "low") { low.push(q); }
       else { moving.push(q); }
     });
@@ -879,7 +883,11 @@
       "Every answer on offer here moves this row's effect size by less than 0.10 and the pooled "
       + "estimate by less than 0.05. They are still open; nothing was decided for you."],
      ["Answered", answered,
-      "Kept on the page with what was decided and when — a re-pool has already used them."]
+      "Kept on the page with what was decided and when — a re-pool has already used them."],
+     ["Decided by the tool — confirm or change", settled,
+      "Nothing here blocked the run. Where a paper reports one outcome two ways, the map picked "
+      + "one and the numbers above were read with it. Each card shows the reading it set aside "
+      + "and the words it decided on; changing one re-reads that cell on the next --resume."]
     ].forEach(function (part) {
       if (!part[1].length) { return; }
       var section = h("section", { cls: "q-section" }, [
@@ -964,6 +972,12 @@
       (q.status === "pending_rerun")
         ? h("span", { cls: "pill off", text: "answered — pending re-run",
                       attrs: { title: q.pending_why || "" } })
+        // …and a fourth: a choice the TOOL made for itself, which blocked nothing and was never
+        // asked. Not "answered" in the sense a reviewer means by it, and the pill has to say so or
+        // the card reads as one somebody already looked at.
+        : (q.status === "settled")
+        ? h("span", { cls: "pill off", text: "decided by the tool — confirm or change",
+                      attrs: { title: q.why || "" } })
         : q.answered ? h("span", { cls: "pill ok", text: "answered" })
                      : h("span", { cls: "pill", text: (q.kind === "cell" && q.slot_answers)
                          ? (q.slots || []).length + " questions, one cell"
@@ -1172,7 +1186,8 @@
     // the reason, one sentence per thing that is holding it — a card folded from two cells
     // carries both cells' reasons, and a wall of them joined by `||` reads as neither
     var why = h("details", { cls: "q-why" }, [
-      h("summary", { text: "why the tool could not decide" })
+      h("summary", { text: q.status === "settled" ? "what the tool decided, and on what"
+                                                : "why the tool could not decide" })
     ]);
     String(q.why || "").split(" || ").forEach(function (reason) {
       if (reason.trim()) { why.appendChild(h("p", { text: reason.trim() })); }
@@ -1191,7 +1206,8 @@
     }
     body.appendChild(right);
     return h("section", { cls: "card q-card"
-      + (q.answered && q.status !== "pending_rerun" ? " is-answered" : ""),
+      + (q.answered && q.status !== "pending_rerun" && q.status !== "settled"
+         ? " is-answered" : ""),
       attrs: { "data-question": q.number } }, [head, body]);
   }
 

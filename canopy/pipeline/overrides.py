@@ -313,6 +313,15 @@ def _validate(payload: Mapping[str, Any]) -> dict[str, Any]:
                                    "winning_analysis_metric or winning_location")
         record["winning_analysis_metric"] = metric
         record["winning_location"] = location
+        # …and which readings the answer is choosing AGAINST. `read_measure_answer` has always
+        # accepted these — it is how a split whose two sides share one `analysis_metric` is settled
+        # at all — and validation dropped them, so the one path that needed them most could not say
+        # them: a reviewer switching an outcome printed one panel per group could name only one
+        # panel as the winner, and every other reading, including the other group's, was set aside
+        # with the measure they rejected.
+        record["losing_locations"] = [_text(x, 300) for x in
+                                      (payload.get("losing_locations") or [])[:12]
+                                      if _text(x, 300)]
     return record
 
 
@@ -835,7 +844,12 @@ def apply_overrides_and_repool(run_dir: str | Path, *, protocol_path: str | Path
             elif override.get("seq") in consumed:
                 applied.append(override)
             else:
-                pending.append({**override, "why": MAP_PENDING})
+                # …and WHY it waits. `MAP_PENDING` says "extraction was never bought for this",
+                # which is true of an answer to a question that blocked its cell and false of one
+                # that overrules a measure the map settled for itself: that cell WAS read — against
+                # the reading the answer rejects — and what the resume owes it is a re-reading, not
+                # a first one. The audit file and the review page must not disagree about which.
+                pending.append({**override, "why": _map_pending_why(override, state)})
             continue
         if kind == "which_measure":
             (applied if override.get("seq") in consumed
@@ -980,6 +994,34 @@ def _out_of_reach(state: "_RunState", dataset_id: str, outcome_key: str, protoco
         return f"no map for {dataset_id!r} in this run, so no reader can be sent to it"
     answered = apply_map_answers(study, map_answers(state.run_dir, paper))
     return unreadable_cell(answered, dataset_id, outcome_key, {o.key for o in protocol.outcomes})
+
+
+#: what a map answer waits for when the cell it names was ALREADY read — against the very reading
+#: the answer rejects. The other half of `MAP_PENDING`, which promises a first extraction.
+MEASURE_PENDING = ("recorded; this cell was read from the measure you rejected, so the next "
+                   "--resume reads it again from the one you chose — the readings taken against "
+                   "the other do not stand as a fallback")
+
+
+def _map_pending_why(override: Mapping[str, Any], state: "_RunState") -> str:
+    """Which of the two things a map answer is waiting for. Read from the MAP, not from the kind.
+
+    A `which_measure` answer to an open question un-blocks a cell nobody read; one that overrules a
+    ruling the map made for itself lands on a cell the run already read. Telling a reviewer
+    "extraction was never bought for this" about the second is false about the thing they can check.
+    """
+    from ..agents.mapper import settled_measure
+
+    if str(override.get("kind") or "") != "which_measure":
+        return MAP_PENDING
+    paper = str(override.get("paper_id") or "")
+    dataset_id = str(override.get("dataset_id") or "")
+    study = state.studies.get(state.paper_of.get(dataset_id) or paper)
+    if study is None:
+        return MAP_PENDING
+    return (MEASURE_PENDING
+            if settled_measure(study, dataset_id, str(override.get("outcome_key") or ""))
+            else MAP_PENDING)
 
 
 def _hint_out_of_reach(out: Path, override: Mapping[str, Any], state: "_RunState",

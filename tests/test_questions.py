@@ -2149,7 +2149,8 @@ def test_a_confirmed_value_raises_no_further_card_however_often_the_run_is_repoo
     _pair(run, dataset_id, outcome_key, a=(30.57, 2.1, 12), b=(24.4, 1.9, 12))
     _repool(run)
     open_cards = [q for q in questions_for_run(run, fold=False)
-                  if q["dataset_id"] == dataset_id and q["outcome_key"] == outcome_key]
+                  if q["dataset_id"] == dataset_id and q["outcome_key"] == outcome_key
+                  and q["route"] != "map"]   # the map's own measure decision is not this cell's
     assert open_cards, "the typed value settled the cell before it was confirmed"
     assert {q["kind"] for q in open_cards} == {"confirm_value"}, [q["kind"] for q in open_cards]
 
@@ -2160,7 +2161,8 @@ def test_a_confirmed_value_raises_no_further_card_however_often_the_run_is_repoo
     for _ in range(2):
         _repool(run)
         assert not [q for q in questions_for_run(run, fold=False)
-                    if q["dataset_id"] == dataset_id and q["outcome_key"] == outcome_key], \
+                    if q["dataset_id"] == dataset_id and q["outcome_key"] == outcome_key
+                    and q["route"] != "map"], \
             "a settled cell was asked again"
 
     # …and a NEW number un-settles it: the confirmation was about the value that stood when it
@@ -2488,3 +2490,111 @@ def test_a_dataset_ruling_never_resurrects_a_paper_the_screen_excluded():
                       "outcomes": [{"outcome_key": "late_adaptation", "sources": []}]}]})
     why = unreadable_cell(study, "aaaaaaaaaaaa:d1", "late_adaptation")
     assert "screen excluded this paper" in why and "eligibility" in why
+
+
+# ------------------------- C6 on the page: a measure the tool chose for itself is a card
+def test_a_measure_the_map_settled_for_itself_reaches_the_page_as_a_card(tmp_path):
+    """D1. A `which_measure` conflict the map SETTLES closes the question and blocks nothing, so it
+    reached no page in the tool at all: the cell was read, a number came out, and nobody was ever
+    told a choice had been made between two measures. This run's own maps settled seven, six of
+    which set aside a reading somebody could switch to (the seventh set aside only pooled
+    locations, which no reader may take a cell's value from).
+    """
+    run = _nine(tmp_path)
+    cards = [q for q in questions_for_run(run, fold=False)
+             if q["kind"] == "which_measure" and q["route"] == "map"]
+    assert len(cards) == 6
+    heuer = next(c for c in cards if c["id"].startswith("3570e4ce2a9c:d1|late_adaptation"))
+
+    # the tool's own answer is on the record, with the name of what made it…
+    assert heuer["answered"] is True and heuer["status"] == "settled"
+    assert "map-adjudicator" in heuer["answers"][0]["justification"]
+    assert "map-adjudicator" in heuer["why"] and "nobody was asked" in heuer["why"]
+    # …and the reading it set aside is offered back, which is the whole point of the card
+    offered = {(o["analysis_metric"], o["keeps_the_ruling"]) for o in heuer["options"]}
+    assert ("change_from_baseline", True) in offered      # what the run actually read
+    assert ("endpoint", False) in offered                 # what a reviewer may switch to
+    assert all(o["label"].startswith(("keep it — ", "read this instead — "))
+               for o in heuer["options"])
+
+
+def test_a_settled_measure_card_is_not_counted_among_what_still_blocks(tmp_path):
+    """It is `answered` — by the tool, on the record, with its quotes — so `_rank` sorts it below
+    every open card and it is absent from the count of what a reviewer must still decide.
+
+    Neither reading is free. Counted as open, seven cards here (twenty-five on the validation run)
+    bury the handful that genuinely stop the run; counted as answered by a PERSON, the record would
+    claim a reviewer had looked. `settled` is the third state, and the run's own warning line is
+    what makes it impossible to miss.
+    """
+    run = _nine(tmp_path)
+    cards = questions_for_run(run)
+    settled = [q for q in cards if q["status"] == "settled"]
+    assert settled and all(q["kind"] == "which_measure" for q in settled)
+    assert not [q for q in cards if q["status"] == "open" and q["kind"] == "which_measure"]
+    ranks = [i for i, q in enumerate(cards) if q["status"] == "settled"]
+    opens = [i for i, q in enumerate(cards) if q["status"] == "open"]
+    assert not opens or min(ranks) > max(opens), "a settled decision sorts above an open question"
+
+
+def test_a_settled_measure_card_offers_only_answers_the_log_will_accept(tmp_path):
+    """§C4 on this card: every option becomes a record `append_override` validates and
+    `apply_map_answers` can act on. A card offering an answer the log refuses is a question nobody
+    can answer, which is the failure the whole review layer exists to remove."""
+    from canopy.pipeline.overrides import append_override
+
+    run = _nine(tmp_path)
+    for card in [q for q in questions_for_run(run, fold=False) if q["status"] == "settled"]:
+        assert card["options"], card["id"]
+        for option in card["options"]:
+            written = answers_to_overrides(card, {"option": option["key"],
+                                                  "option_fingerprint": option["fingerprint"],
+                                                  "note": "the window asks for this one"})
+            assert [r["kind"] for r in written] == ["which_measure"], card["id"]
+            assert written[0]["winning_analysis_metric"] or written[0]["winning_location"]
+            append_override(run, written[0])              # …and the log takes it
+
+
+def test_the_card_prints_the_ruling_s_own_words_beside_what_it_chose(tmp_path):
+    """On one paper of the validation corpus the recorded winner was `endpoint` while the quote
+    cited for it described an area-under-the-curve figure. Printing the two beside each other is
+    what makes a wrong ruling visible to a reviewer who never opens the map stage file."""
+    run = _nine(tmp_path)
+    card = next(q for q in questions_for_run(run, fold=False) if q["status"] == "settled")
+    assert "winner:" in card["why"] or "decided by" in card["why"]
+    assert "Set aside:" in card["why"]
+    assert "--resume" in card["why"] and "superseded_candidates" in card["why"]
+
+
+def test_confirming_the_tools_measure_is_answered_and_reversing_it_says_what_the_rerun_buys(
+        tmp_path):
+    """Every `which_measure` answer takes `MAP_PENDING` — "extraction was never bought for this" —
+    which is true of an answer to an open question and false twice over on a settled one: the cell
+    WAS read, and a confirmation names the measure it was read from. Sending a reviewer to pay for
+    a resume that would re-read nothing is a bill for agreeing with the tool.
+    """
+    from canopy.pipeline.overrides import append_override
+
+    run = _nine(tmp_path)
+    card = next(q for q in questions_for_run(run, fold=False)
+                if q["id"].startswith("3570e4ce2a9c:d1|late_adaptation")
+                and q["status"] == "settled")
+    keep = next(o for o in card["options"] if o["keeps_the_ruling"])
+    switch = next(o for o in card["options"] if not o["keeps_the_ruling"])
+
+    for record in answers_to_overrides(card, {"option": keep["key"],
+                                              "option_fingerprint": keep["fingerprint"],
+                                              "note": "I opened the figure; the tool is right"}):
+        append_override(run, record)
+    same = next(q for q in questions_for_run(run, fold=False) if q["id"] == card["id"])
+    assert same["status"] == "answered" and not same["pending_why"]
+
+    for record in answers_to_overrides(card, {"option": switch["key"],
+                                              "option_fingerprint": switch["fingerprint"],
+                                              "note": "the window is the practice phase"}):
+        append_override(run, record)
+    changed = next(q for q in questions_for_run(run, fold=False) if q["id"] == card["id"])
+    assert changed["status"] == PENDING_RERUN
+    assert "--resume" in changed["pending_why"]
+    assert "do not stand as a fallback" in changed["pending_why"]
+    assert "never bought" not in changed["pending_why"]

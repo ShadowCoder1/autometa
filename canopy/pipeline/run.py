@@ -39,8 +39,9 @@ from ..agents.extract_stats import extract_test_statistics
 from ..agents.extract_text import extract_group_stats
 from ..agents.mapper import (HUMAN_DECIDER, HUMAN_EXCLUSION_RULE, MAP_ADJUDICATOR,
                              apply_map_answers,
-                             extraction_blocks, map_study, readable_sources,
-                             source_unreadable_reason, unreadable_cell)
+                             extraction_blocks, map_answer_effects, map_answer_key,
+                             map_study, readable_sources,
+                             settled_measure, source_unreadable_reason, unreadable_cell)
 from ..agents.orientation import combine_orientation
 from ..agents.orientation import orientation as orientation_verdict
 from ..agents.orientation import TIEBREAK_MODEL, tiebreak_ballot
@@ -120,6 +121,11 @@ class RunContext:
     #: could hand two stages different answers, which is the one thing `apply_map_answers` being
     #: pure and idempotent cannot protect against.
     answers: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    #: …and which of those answers actually CHANGED the map, per paper. An answer the map refuses —
+    #: one naming a reading it does not carry, one that would leave both measures readable — is not
+    #: a decision this run has acted on, and `_consumed_seqs` may not retire it (M8). Cached beside
+    #: the answers themselves so the two are always read from the same log.
+    effects: dict[str, dict[tuple[str, str, str], str]] = field(default_factory=dict)
 
     def stop_if_cancelled(self) -> None:
         if self.cancel_event is not None and self.cancel_event.is_set():
@@ -198,7 +204,21 @@ def _answered_map(ctx: "RunContext", paper: PaperRecord, study: StudyMap) -> Stu
     unblocked the cell for the verify stage too, and `apply_map_answers` is pure and idempotent
     exactly so that asking twice is free and gives the same answer.
     """
-    return apply_map_answers(study, _map_answers(ctx, paper))
+    effects: dict[tuple[str, str, str], str] = {}
+    answered = apply_map_answers(study, _map_answers(ctx, paper), effects=effects)
+    ctx.effects[paper.sha256] = effects
+    return answered
+
+
+def _applied_answers(ctx: "RunContext", paper: PaperRecord) -> set[tuple[str, str, str]]:
+    """`(kind, dataset, outcome)` for every answer of this paper's that CHANGED its map.
+
+    Filled in by `_answered_map`, which every stage that reads the map calls first. Empty when it
+    has not run, and empty is the SAFE reading of "nobody knows": an answer nothing has recorded as
+    applied stays pending, is asked about again, and costs a reviewer a second look — where the
+    other default would retire a decision this run never took.
+    """
+    return {key for key, why in ctx.effects.get(paper.sha256, {}).items() if not why}
 
 
 def _map_answers(ctx: "RunContext", paper: PaperRecord) -> list[dict[str, Any]]:
@@ -300,6 +320,12 @@ def _ruling_text(ctx: "RunContext", paper: PaperRecord, acting_on: Sequence[int]
 #: it is idempotent: a stage that dies before writing its own key simply repairs again.
 #: (`REMAPPED_FOR` above is the same pattern for §C3's maps.)
 REREAD_CELLS = "cells_reread_for_override"
+#: what each cell's readings were taken under: `{cell: [metric, [locator, ...]]}`. The map alone
+#: cannot say it — a resumed run re-applies the whole answer log to the pristine map every time,
+#: so "what the map says now" is not "what this cell was read from", and a reviewer who changes
+#: their mind back to the tool's own choice matches the pristine map while the numbers on the page
+#: still belong to the measure they rejected.
+READ_UNDER = "cells_read_under"
 REREAD_APPLIED = "cells_reread_applied"
 
 
@@ -429,8 +455,16 @@ def _hint_text(answers: Sequence[Mapping[str, Any]]) -> str:
 
 
 def _absorb_reread(cell: tuple[str, str], candidates: list[Candidate],
-                   fresh: Sequence[Candidate], superseded: list[Candidate]) -> bool:
+                   fresh: Sequence[Candidate], superseded: list[Candidate],
+                   replace: bool = False) -> bool:
     """Merge a hinted re-read into the cell's readings, losing none of them. Did anything change?
+
+    `replace` is the one case where the earlier readings may not stand: a reviewer has changed WHICH
+    MEASURE this cell is, so every reading already on it was taken against a measure the review has
+    since rejected. Keeping those as a fallback would let a rejected measure supply the cell's
+    numbers whenever the re-read came back empty — the losing answer winning by default. They are
+    superseded, not deleted, exactly as below; the cell may legitimately end up with nothing, which
+    is the honest outcome of "the measure you want is not reported here".
 
     **A hinted re-read never removes a reading that found a value.** A hint is a request for a
     better reading, not permission to lose the one the run already paid for: the questions page
@@ -450,6 +484,8 @@ def _absorb_reread(cell: tuple[str, str], candidates: list[Candidate],
     row built from them stale. A re-read that changed nothing has nothing to rebuild.
     """
     won = {c.candidate_id for c in fresh if c.status == "found"}
+    if replace:
+        won = {c.candidate_id for c in candidates if (c.dataset_id, c.outcome_key) == cell}
     kept = [c for c in candidates if (c.dataset_id, c.outcome_key) != cell
             or c.candidate_id not in won]
     standing = {c.candidate_id for c in kept}
@@ -464,7 +500,8 @@ def _absorb_reread(cell: tuple[str, str], candidates: list[Candidate],
 def _consumed_seqs(ctx: "RunContext", paper: PaperRecord, study: StudyMap, keys: set[str],
                    extracted: Sequence[str], already: Sequence[Any] = (),
                    blocked_cells: Mapping[tuple[str, str], str] = MappingProxyType({}),
-                   re_read: Sequence[int] = ()) -> list[int]:
+                   re_read: Sequence[int] = (),
+                   awaiting: Collection[int] = ()) -> list[int]:
     """The `seq` of every answer this stage has now acted on, unioned with what is on record.
 
     An answer is acted on when every cell it asks for has been extracted — not merely when the
@@ -472,12 +509,29 @@ def _consumed_seqs(ctx: "RunContext", paper: PaperRecord, study: StudyMap, keys:
     reviewer just included has not consumed that answer, and telling the reviewer it did would
     retire a decision nothing bought. Cumulative across resumes, per the consumer's contract:
     the union is written, never this resume's seqs alone.
+
+    …and only an answer THE MAP ACCEPTED. `apply_map_answers` drops an answer naming a reading the
+    map does not carry, or one that would leave both measures readable: it changed nothing, so no
+    reading can be the reading it asked for. Retiring it anyway told a reviewer their refused answer
+    had been applied and took the card off the page with it — the record claiming a decision landed
+    at the one moment it provably had not.
+
+    `awaiting` is the answers whose cells are already in `cells_extracted` but were read
+    against the measure the answer REJECTS. "Every cell it asks for has been read" is true of
+    those the moment the resume starts, so they would be retired before the re-reading they
+    exist to buy — the same false consumption one layer down, and the one that would have made
+    a reversal a decision the record accepted and the numbers never felt. They are retired by
+    `re_read` and by nothing else.
     """
     done = set(extracted)
     seqs = {int(seq) for seq in already if isinstance(seq, int)}
+    applied = _applied_answers(ctx, paper)
+    owed = {int(seq) for seq in awaiting if isinstance(seq, int)}
     for answer in _map_answers(ctx, paper):
         seq = answer.get("seq")
         cells = _answer_cells(answer, study, keys, blocked_cells)
+        if map_answer_key(answer) not in applied or seq in owed:
+            continue
         if isinstance(seq, int) and cells and done.issuperset(cells):
             seqs.add(seq)
     # …and §C3's inclusion, whose cells are every cell of the paper: it is acted on the moment
@@ -665,6 +719,108 @@ def _cells_still_unread(study: StudyMap, keys: set[str], blocked_datasets: Mappi
             and (dataset.dataset_id, sources.outcome_key) not in have}
 
 
+def _readable_at(study: StudyMap, dataset_id: str, outcome_key: str) -> tuple[str, tuple[str, ...]]:
+    """What one cell's numbers may be read as, and where — `(metric, locators)`.
+
+    The whole of what a `which_measure` decision controls, in the form two maps can be compared on.
+    """
+    for dataset in study.datasets:
+        if dataset.dataset_id != dataset_id:
+            continue
+        for outcome in dataset.outcomes:
+            if outcome.outcome_key != outcome_key:
+                continue
+            return (str(getattr(outcome.analysis_metric, "value", outcome.analysis_metric)),
+                    tuple(sorted(s.locator for s in readable_sources(outcome.sources))))
+    return ("", ())
+
+
+def _measure_reread_hints(ctx: "RunContext", paper: PaperRecord, as_mapped: StudyMap,
+                          study: StudyMap, extracted: Sequence[str],
+                          consumed: Collection[int] = (),
+                          read_under: Mapping[str, Any] = MappingProxyType({}),
+                          ) -> dict[str, list[dict[str, Any]]]:
+    """Cells a reviewer's `which_measure` answer re-decided AFTER the run had already read them.
+
+    A measure answer to an OPEN question lands on a cell nobody read, and reading it is how the
+    answer is acted on. An answer that overrules a ruling the map made FOR ITSELF lands on a cell
+    this run has already read — and read against the measure the reviewer has just rejected.
+    Nothing in the stage file tells those readings apart from good ones, so without this the map
+    says one thing and the numbers say another, and a decision a person took is a note in a file
+    that no forest plot ever feels.
+
+    Routed through the same hints the re-extraction card uses, so nothing here is new machinery: the
+    displaced readings go to `superseded_candidates` rather than being lost, the cell is marked in
+    `REREAD_CELLS` so the stages after this one rebuild it, and the seq is retired by the READING
+    rather than by this function having run.
+
+    Only a cell the answer actually CHANGED. A reviewer who agrees with the ruling has confirmed it,
+    and buying a second reading of a cell to arrive at the same numbers spends a person's money to
+    learn nothing.
+    """
+    done = set(extracted)
+    already = {int(seq) for seq in consumed if isinstance(seq, int)}
+    applied = _applied_answers(ctx, paper)
+    out: dict[str, list[dict[str, Any]]] = {}
+    for answer in _map_answers(ctx, paper):
+        key = map_answer_key(answer)
+        kind, dataset_id, outcome_key = key
+        cell = f"{dataset_id}/{outcome_key}"
+        if kind != "which_measure" or key not in applied or cell not in done:
+            continue
+        if answer.get("seq") in already or not settled_measure(as_mapped, dataset_id, outcome_key):
+            continue                        # nothing to overrule, or the reading was already bought
+        # what the cell was last READ under, not what the map said before any answer. A reviewer
+        # who switches, waits for the resume, then changes back is asking for the ORIGINAL measure
+        # — which matches the pristine map, so comparing against that found no change, retired the
+        # answer without buying anything, and left the cell holding the numbers of the measure they
+        # had just rejected twice over. The stage file records what each cell was read under
+        # (`READ_UNDER`) exactly so this comparison has a fact to make.
+        was, now = (read_under.get(cell) or _readable_at(as_mapped, dataset_id, outcome_key),
+                    _readable_at(study, dataset_id, outcome_key))
+        if was == now:
+            continue                        # the reviewer confirmed the ruling; the reading stands
+        where = str(answer.get("winning_location") or "").strip()
+        metric = str(answer.get("winning_analysis_metric") or "").strip()
+        note = str(answer.get("note") or "").strip()
+        # Short, and the instruction FIRST. `_hint_text` clips each hint to `_HINT_CHARS`, and a
+        # long preamble spent the whole budget on the locator: every hint this function built came
+        # out over the cap, most losing the imperative and all of them losing the reviewer's own
+        # words — the run buying a reading with a sentence that stopped mid-locator. Worse, two
+        # answers that differ only in the clipped tail render the same prompt, so the cache would
+        # return the first one's reading for the second one's question.
+        out.setdefault(cell, []).append({**answer, "hint": _clipped_hint(
+            f"Read {metric or now[0] or 'the measure named here'}"
+            + (f", at {_short_locator(where)}" if where else "")
+            + f", not {was[0] or 'the other measure'}: a reviewer chose it for this review."
+            + (f" Their words: {note}" if note else ""))})
+    return out
+
+
+def _short_locator(where: str, limit: int = 70) -> str:
+    """A locator short enough to leave room for the instruction around it. Map locators run to
+    hundreds of characters (every target direction of a figure's x axis), and the hint they sit in
+    is clipped as a whole — so an un-trimmed one eats the sentence that says what to do with it."""
+    text = " ".join(str(where or "").split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _clipped_hint(text: str, limit: int = _HINT_CHARS) -> str:
+    """…and the whole hint, trimmed at a word rather than mid-word, so nothing reads as truncated
+    nonsense in a prompt the run is about to pay for."""
+    text = " ".join(str(text or "").split())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    return (cut[:cut.rfind(" ")] if " " in cut else cut).rstrip(",;: ") + "…"
+
+
+def _awaiting_reread(remeasured: Mapping[str, Sequence[Mapping[str, Any]]]) -> set[int]:
+    """The seqs of the measure answers that owe this stage a re-reading before they are acted on."""
+    return {int(record["seq"]) for records in remeasured.values() for record in records
+            if isinstance(record.get("seq"), int)}
+
+
 def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
              status: PaperStatus) -> list[Candidate]:
     keys = ctx.outcome_keys()
@@ -679,6 +835,7 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
     # only be acted on by a later run. Reading them after the short-circuit made the whole
     # mechanism inert — the tool told the reviewer to re-run with `--resume`, the reviewer did,
     # and got the identical message back, for ever (review H2).
+    as_mapped = study                       # …and what the map said before any of them was applied
     study = _answered_map(ctx, paper, study)
     blocked_datasets, blocked_cells = extraction_blocks(study)
     candidates: list[Candidate] = []
@@ -691,6 +848,12 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
     #: this stage retires by re-reading them. A hint is the one answer whose consequence is a
     #: READING, so it is acted on here or nowhere.
     hints: dict[str, list[dict[str, Any]]] = {}
+    #: …of which these are the cells a reviewer re-decided the MEASURE of. Held apart because
+    #: their earlier readings may not stand as a fallback: they were taken against a measure
+    #: this review has since rejected (`_absorb_reread(replace=True)`).
+    remeasured: dict[str, list[dict[str, Any]]] = {}
+    #: `{cell: (metric, locators)}` — what each cell's readings were taken under (`READ_UNDER`)
+    read_under: dict[str, Any] = {}
     re_read: list[int] = []
     #: the cells a hinted re-read has CHANGED, and the readings it displaced. Both go in the stage
     #: file: the first is what the stages after this one owe a rebuild for, the second is the
@@ -712,17 +875,49 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
             status.warnings.append(
                 f"{cell}: a reviewer's re-extraction hint cannot be acted on — {why}")
 
+    def say_what_changed_nothing() -> None:
+        """Warn once per map answer this map REFUSED, and why.
+
+        The other half of the same honesty: an answer that changed nothing is no longer
+        recorded as acted on (`_consumed_seqs`), so without this it would sit on the page as
+        "waiting for a re-run" through every re-run there will ever be. A reviewer is owed the
+        sentence saying their answer named something this map does not carry.
+        """
+        for (kind, dataset_id, outcome_key), why in sorted(
+                ctx.effects.get(paper.sha256, {}).items()):
+            if not why:
+                continue
+            where = f"{dataset_id}/{outcome_key}" if outcome_key else dataset_id
+            status.warnings.append(
+                f"{where}: a reviewer's {kind} answer changed nothing — {why}")
+
     if ctx.resume and stage_done(ctx.out_dir, paper.sha256, "extract"):
         payload = read_stage(ctx.out_dir, paper.sha256, "extract")
         candidates = [Candidate.model_validate(c) for c in payload["candidates"]]
         superseded = [Candidate.model_validate(c)
                       for c in payload.get("superseded_candidates") or []]
         reread = {str(cell) for cell in payload.get(REREAD_CELLS) or [] if isinstance(cell, str)}
+        read_under = {str(cell): (str(what[0]), tuple(str(x) for x in what[1]))
+                      for cell, what in (payload.get(READ_UNDER) or {}).items()
+                      if isinstance(what, (list, tuple)) and len(what) == 2}
         done = [str(cell) for cell in payload.get("cells_extracted") or []]
         consumed = list(payload.get("consumed_override_seqs") or [])
         hints = _hinted_cells(ctx, paper, study, keys, blocked_datasets, blocked_cells,
                               consumed, unreachable)
+        remeasured = _measure_reread_hints(ctx, paper, as_mapped, study, done, consumed,
+                                           read_under)
+        for cell, records in remeasured.items():
+            hints.setdefault(cell, []).extend(records)
         say_what_cannot_be_read()
+        say_what_changed_nothing()
+        if remeasured:
+            status.warnings.append(
+                f"{len(remeasured)} cell(s) are being read again because a reviewer changed "
+                f"which measure this review reads ({', '.join(sorted(remeasured))}) — the "
+                f"readings taken against the measure they rejected do not stand as a fallback; "
+                f"they are kept in this paper's extract stage file under "
+                f"`superseded_candidates`, so a cell whose new measure the paper does not report "
+                f"ends with no rows at all")
         # a cell nobody has read, or one a reviewer has asked to have read AGAIN. The second is
         # not "still unread" by any test the stage file can apply — it was read, and came back
         # with nothing usable — so it is unioned in rather than folded into that rule.
@@ -732,7 +927,8 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
             # nothing new to read. The stage file is still rewritten when an answer has finished
             # being acted on, so a decision whose cells were already extracted stops being pending
             # instead of waiting for a reading nobody owes it.
-            seqs = _consumed_seqs(ctx, paper, study, keys, done, consumed, blocked_cells)
+            seqs = _consumed_seqs(ctx, paper, study, keys, done, consumed, blocked_cells,
+                                  awaiting=_awaiting_reread(remeasured))
             if seqs != sorted(int(s) for s in consumed if isinstance(s, int)):
                 write_stage(ctx.out_dir, paper.sha256, "extract", {**payload,
                                                                    "consumed_override_seqs": seqs})
@@ -744,16 +940,21 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
                 f"{len(unread)} cell(s) this map asks for had never been extracted "
                 f"({', '.join(unread)}) — the extract stage was re-entered for those cells "
                 f"only; every other cell keeps the reading an earlier run paid for")
-        if hints:
+        hinted = sorted(set(hints) - set(remeasured))
+        if hinted:
+            # …the cells re-read for a HINT. A remeasured cell is in `hints` too (it travels the
+            # same machinery) but the opposite is true of it — its earlier readings do not stand
+            # — so listing it here as well printed two contradictory sentences about one cell.
             status.warnings.append(
-                f"{len(hints)} cell(s) are being read again with a reviewer's hint "
-                f"({', '.join(sorted(hints))}) — the WHOLE cell is re-read, both groups, "
+                f"{len(hinted)} cell(s) are being read again with a reviewer's hint "
+                f"({', '.join(hinted)}) — the WHOLE cell is re-read, both groups, "
                 f"whichever group the hint was recorded against; a reading that found a value is "
                 f"replaced only by a re-reading that finds one")
     else:
         hints = _hinted_cells(ctx, paper, study, keys, blocked_datasets, blocked_cells,
                               consumed, unreachable)
         say_what_cannot_be_read()
+        say_what_changed_nothing()
 
     def save(complete: bool) -> None:
         # written after EVERY cell, not once at the end: Buch 2003 spent $14.37 against a $14 cap
@@ -768,8 +969,9 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
                      # M8: which of the reviewer's answers a stage has acted on. Without it an
                      # answer that needs a model call is pending for ever and the review page can
                      # never say which decisions are still outstanding.
-                     "consumed_override_seqs": _consumed_seqs(ctx, paper, study, keys, done,
-                                                              consumed, blocked_cells, re_read),
+                     "consumed_override_seqs": _consumed_seqs(
+                         ctx, paper, study, keys, done, consumed, blocked_cells, re_read,
+                         awaiting=_awaiting_reread(remeasured)),
                      # the readings a hinted re-read displaced. Kept, not dropped: a reading the
                      # run bought is evidence about the paper whether or not the analysis weighs
                      # it, and a re-read that overwrote it unrecoverably would make the hint a
@@ -777,7 +979,8 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
                      "superseded_candidates": [c.model_dump(mode="json") for c in superseded],
                      # …and which cells that re-reading actually changed, for the stages after
                      # this one. Written beside the consumption, so the two can never disagree.
-                     REREAD_CELLS: sorted(reread)})
+                     REREAD_CELLS: sorted(reread),
+                     READ_UNDER: {cell: list(what) for cell, what in read_under.items()}})
 
     for dataset in study.datasets:
         if dataset.dataset_id in blocked_datasets:
@@ -813,7 +1016,12 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
                               out=fresh if hint else candidates, reviewer_hint=hint)
             except PaperBudgetExceeded as exc:
                 if hint:
-                    _absorb_reread(pair, candidates, fresh, superseded)
+                    # `replace` here too: a cap landing mid-cell must not leave the rejected
+                    # measure's readings beside whatever the new one produced — one cell holding
+                    # two measures is the `metric_mixed` state C6 exists to prevent. The seq is
+                    # not retired on this path, so the next resume reads the cell again.
+                    _absorb_reread(pair, candidates, fresh, superseded,
+                                   replace=cell in remeasured)
                 stopped = str(exc)
                 exhausted.append(cell)
                 status.warnings.append(
@@ -822,12 +1030,16 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
                 continue
             if cell not in done:
                 done.append(cell)
+            # what this reading was taken under, recorded beside the reading itself: it is the
+            # only fact that can tell a reviewer's later change of mind from their first one.
+            read_under[cell] = _readable_at(study, dataset.dataset_id, sources.outcome_key)
             if hint:
                 # …and only now: the seqs are retired by the reading, not by the stage reaching
                 # the cell. A re-read that changed the cell's readings makes the verdict and the
                 # row built from them stale, and that is recorded in the stage file beside the
                 # consumption it pairs with — never in memory alone (see `REREAD_CELLS`).
-                if _absorb_reread(pair, candidates, fresh, superseded):
+                if _absorb_reread(pair, candidates, fresh, superseded,
+                                  replace=cell in remeasured):
                     reread.add(cell)
                 re_read.extend(int(answer["seq"]) for answer in hints[cell]
                                if isinstance(answer.get("seq"), int))

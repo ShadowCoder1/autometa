@@ -30,6 +30,8 @@ from typing import Any, Collection, Iterable, Mapping, Sequence
 
 from ..pipeline.overrides import (GROUP_STATISTICS, MAP_KINDS, ORIENTATION_ANSWERED, ROW_REFUSALS,
                                   codes_cleared_by_value, consumed_seqs)
+from ..models import (HUMAN_DECIDER_NAME, MAP_ADJUDICATOR_NAME, UNREADABLE_SAMPLES,
+                      c6_demoted_note)
 from ..pipeline.rows import converted_route
 from ..pipeline.state import paper_dir, read_json, sha12
 
@@ -167,6 +169,14 @@ _MAX_OPTIONS = 6
 #: "answered" is the same overclaim C4 took out of the answers themselves — a green tick on a cell
 #: nothing has changed — so it gets its own state, and the reason travels with it.
 PENDING_RERUN = "pending_rerun"
+#: …and the fourth: a decision the TOOL took for itself and nobody has looked at. Not `open` — the
+#: run was never blocked on it and the numbers on the page were read under it — and not `answered`,
+#: because no person has confirmed it. Counting it as open would bury the cards that really do stop
+#: the run under every measure the map settled on its own; counting it as answered would say a
+#: reviewer had seen it. `_rank` sorts it below the open cards, `write_questions` counts them in
+#: their own sentence at the top of `questions.md`, and the page gives them their own section —
+#: so a card nobody scrolls to is still a number somebody read.
+TOOL_SETTLED = "settled"
 
 
 def _pending_seqs(run: Path) -> dict[int, str]:
@@ -1550,6 +1560,60 @@ def _map_questions(run: Path, overrides: Sequence[Mapping[str, Any]],
             if str(raw.get("kind") or "") in MAP_KINDS:
                 out.append(_map_question(run, paper_id, study, raw, rules, overrides, pending,
                                          consumed))
+        out.extend(_settled_measure_questions(run, paper_id, study, overrides, pending, consumed))
+    return out
+
+
+def _settled_measure_questions(run: Path, paper_id: str, study: Mapping[str, Any],
+                               overrides: Sequence[Mapping[str, Any]],
+                               pending: Mapping[int, str],
+                               consumed: Collection[int] = ()) -> list[Question]:
+    """C6's OTHER half: the measures the map chose for itself, as decisions a reviewer can change.
+
+    A `which_measure` conflict the map settles closes the question and blocks nothing — the cell is
+    read, a number comes out, and until this nobody was ever told a choice had been made. On the
+    corpus this tool was validated against, the map settled 25 of them and asked about 2; it gave
+    one paper's cell opposite answers on two runs of the same PDF; and on another it recorded
+    `endpoint` while the quote it cited for the winner described an area-under-the-curve figure.
+    Which of two measures a review reads is a decision about the review's own definition, it can
+    move an effect size by an order of magnitude, and it was the only decision in the tool that
+    nothing a reviewer could write would change.
+
+    They are `answered` — by the tool, on the record, with its reasons — so they sort below every
+    open card (`_rank`) and are absent from the count of what still blocks. That is what makes it
+    possible to surface all of them: asked as open questions they would bury the handful of cards
+    that genuinely stop the run, and asked as nothing at all they were the silence this exists to
+    end. What keeps them from being merely sorted out of sight is that `write_questions` counts
+    them in a sentence of their own at the top of the file, marks each card's heading, and the
+    page gives them a section instead of filing them under "Answered".
+    """
+    out: list[Question] = []
+    if study.get("eligible") is False:
+        return out                  # …no resume will read this paper, so no answer about it lands
+    for dataset in study.get("datasets") or []:
+        if dataset.get("included") is False:
+            continue                # …nor a dataset the map threw out on a protocol rule
+        for outcome in dataset.get("outcomes") or []:
+            ruling = str(outcome.get("measure_ruling") or "").strip()
+            set_aside = [s for s in outcome.get("sources") or []
+                         if str(s.get("role") or "") == "alternate"
+                         and c6_demoted_note(str(s.get("notes") or ""))
+                         and str(s.get("analysis_metric") or "unknown") not in ("", "unknown")
+                         # …and only a location the pipeline would actually READ. A pooled or
+                         # otherwise-not-these-two-groups location is refused by
+                         # `source_unreadable_reason` wherever it appears, so offering it is
+                         # offering a click that leaves the cell with nothing readable at all: the
+                         # re-read finds no source, and the readings taken under the old measure
+                         # are superseded anyway. An option that can only empty the cell is not an
+                         # answer to "which measure does this review read".
+                         and str(s.get("sample") or "unknown") not in UNREADABLE_SAMPLES]
+            # nothing to switch TO is not a decision a person can take again: a ruling whose losers
+            # all failed to say which measure they read leaves no readable alternative, and a card
+            # offering none is the empty question C4 exists to remove.
+            if ruling and set_aside:
+                out.append(_settled_measure_question(run, paper_id, study, dataset, outcome,
+                                                     ruling, set_aside, overrides, pending,
+                                                     consumed))
     return out
 
 
@@ -1645,6 +1709,193 @@ def _map_question(run: Path, paper_id: str, study: Mapping[str, Any], raw: Mappi
                       "mean": None, "at": o.get("at") or o.get("timestamp")}
                      for o in already]),
     ]))
+
+
+def _settled_measure_count(run: Path) -> int:
+    """How many measures this run's maps chose for themselves — CHOICES, not cards.
+
+    A ruling that set aside only readings nobody may take a cell's value from carries no card,
+    because there is nothing to switch to. It was still a choice, and reporting the card count as
+    the choice count would say the tool decided fewer things than it did.
+    """
+    return sum(1 for _, study in _studies(run)
+               for dataset in study.get("datasets") or []
+               for outcome in dataset.get("outcomes") or []
+               if str(outcome.get("measure_ruling") or "").strip())
+
+
+def _settled_measure_question(run: Path, paper_id: str, study: Mapping[str, Any],
+                              dataset: Mapping[str, Any], outcome: Mapping[str, Any],
+                              ruling: str, set_aside: Sequence[Mapping[str, Any]],
+                              overrides: Sequence[Mapping[str, Any]],
+                              pending: Mapping[int, str],
+                              consumed: Collection[int] = ()) -> Question:
+    """One measure the map chose for itself, as a card: what it chose, over what, and its reasons.
+
+    Deliberately the SAME `kind` and the same `id` an open `which_measure` card would carry, so a
+    reviewer changing it writes the record a fresh answer writes and every path that already reads
+    those — `_answer_kind`, `_single_override`, `map_answers`, the page's own `isChoiceOnly` — needs
+    no case for this. A reversal is not a new kind of decision; it is the decision, taken by the
+    person it always belonged to.
+    """
+    dataset_id = str(dataset.get("dataset_id") or "")
+    outcome_key = str(outcome.get("outcome_key") or "")
+    label = str(dataset.get("label") or dataset.get("experiment") or dataset_id)
+    citation = study.get("citation") or {}
+    paper = f"{citation.get('first_author') or citation.get('authors') or '?'} " \
+            f"{citation.get('year') or ''}".strip()
+    won = [s for s in outcome.get("sources") or [] if str(s.get("role") or "value") == "value"]
+    chosen = str(outcome.get("analysis_metric") or "")
+    already = [o for o in overrides if o.get("kind") == "which_measure"
+               and o.get("dataset_id") == dataset_id
+               and o.get("outcome_key") in ("", outcome_key)][-1:]
+    status, pending_why = _answer_status(already, pending, consumed)
+    # a person who has not objected has not answered; the TOOL has, and its answer is on the record
+    # with its quotes. Saying so is what lets the card sort below the open ones without pretending
+    # a reviewer looked at it.
+    decided_by = MAP_ADJUDICATOR_NAME if not already else HUMAN_DECIDER_NAME
+    if status == "open":
+        status = TOOL_SETTLED
+    elif status == PENDING_RERUN and _keeps_the_ruling(already[0], chosen):
+        # …and a reviewer who AGREES with the tool is owed no re-run. Every `which_measure` answer
+        # takes `MAP_PENDING` ("extraction was never bought for this"), which is true of an answer
+        # to an open question and false twice over here: this cell WAS read, and it was read from
+        # the measure the answer names. Telling a reviewer to pay for a resume that would re-read
+        # nothing is a bill for confirming what the tool already did.
+        status, pending_why = "answered", ""
+    elif status == PENDING_RERUN:
+        from ..pipeline.overrides import MEASURE_PENDING     # one sentence, one definition
+
+        pending_why = MEASURE_PENDING
+    options, dropped = _settled_measure_options(chosen, won, set_aside)
+    options = _stamped(options)
+    image = _image(run, [{"paper_id": paper_id,
+                          "pixel_provenance": {"figure_id": source.get("figure_id")}}
+                         for source in [*won, *set_aside] if source.get("figure_id")], {})
+    return Question(OrderedDict([
+        ("id", "|".join([dataset_id, outcome_key, "", "which_measure"])),
+        ("kind", "which_measure"),
+        ("prompt", f"Two measures were named for {outcome_key.replace('_', ' ')} in {label!r}. "
+                   f"Nothing was blocked: the tool chose "
+                   f"{(chosen or 'one of them').replace('_', ' ')} and every number below was read "
+                   f"from it. Is that the measure this review's definition and window ask for?"),
+        ("paper", paper),
+        ("paper_id", paper_id),
+        ("dataset_id", dataset_id),
+        ("dataset_label", label),
+        ("outcome_key", outcome_key),
+        ("measure_name", _measure(dataset, outcome_key)),
+        ("group", None),
+        ("group_label", ""),
+        ("where", _short(str((won[0].get("locator") if won else "") or ""), 70)),
+        ("unit", _unit([], dataset, outcome_key)),
+        ("image", image),
+        ("options", options),
+        ("free_text", True),
+        ("answer_writes", "which_measure"),
+        ("why", _settled_measure_why(decided_by, chosen, ruling, set_aside, outcome, dropped)),
+        ("confidence", "needs_human"),
+        ("route", "map"),
+        ("impact", None),
+        # answered BY THE TOOL until somebody says otherwise (see `_settled_measure_questions`)
+        ("answered", True),
+        ("status", status),
+        ("pending_why", pending_why),
+        ("answers", [{"kind": o.get("kind"), "justification": o.get("justification"),
+                      "mean": None, "at": o.get("at") or o.get("timestamp")}
+                     for o in already]
+                    or [{"kind": "which_measure", "mean": None, "at": None,
+                         "justification": f"{decided_by} chose "
+                                          f"{(chosen or 'this measure').replace('_', ' ')} at the "
+                                          f"map stage; nobody was asked"}]),
+    ]))
+
+
+def _keeps_the_ruling(answer: Mapping[str, Any], chosen: str) -> bool:
+    """Does this answer agree with the measure the map already reads — a confirmation, not a change?
+
+    The mirror of the "keep it" option `_settled_measure_options` builds, and deliberately the same
+    shape: agreement names the MEASURE and no location, because naming a location is authority over
+    which readings survive and agreement is authority over nothing. Anything that names a location
+    is a change, and a change is owed a reading.
+    """
+    return (not str(answer.get("winning_location") or "").strip()
+            and str(answer.get("winning_analysis_metric") or "").strip() == (chosen or "").strip()
+            and bool(chosen))
+
+
+#: how many readings a settled-measure card offers. Larger than `_MAX_OPTIONS` because every option
+#: here is a location the map itself recorded, and the alternative to showing them is a card whose
+#: own `why` names a reading it gives no way to choose.
+_MAX_SETTLED_OPTIONS = 12
+
+
+def _settled_measure_options(chosen: str, won: Sequence[Mapping[str, Any]],
+                             set_aside: Sequence[Mapping[str, Any]]
+                             ) -> tuple[list[dict[str, Any]], list[Mapping[str, Any]]]:
+    """`(options, the set-aside readings that did not fit)` — keep the ruling, or name one to read.
+
+    EXACTLY ONE "keep it", and it names no location. A location is authority over more than the
+    measure: `read_measure_answer` demotes every other reading when one is named, so an outcome
+    printed one panel per group — young in Fig. 1A, older in Fig. 1B, the ordinary layout — would
+    have had a "keep it" per panel, and clicking either would have demoted the other group's panel
+    and superseded the readings taken from it. Confirming the tool's own choice would have deleted
+    half the contrast. Agreement changes nothing, so the option that means agreement names nothing.
+    """
+    keep = {"key": "keep", "label": f"keep it — the tool read "
+                                    f"{(chosen or 'this measure').replace('_', ' ')}"
+                                    + (f", at {len(won)} location(s)" if len(won) > 1 else ""),
+            "analysis_metric": chosen, "location": "", "page": None, "figure_id": "",
+            "quote": _short(str((won[0].get("quote") if won else "") or ""), 220),
+            "keeps_the_ruling": True}
+    room = _MAX_SETTLED_OPTIONS - 1
+    others = _measure_options(list(set_aside)[:room], {})
+    # what switching chooses AGAINST: the readings the run actually used. Said outright rather than
+    # inferred from the winner, because two operationalizations can share one `analysis_metric` and
+    # "everything that is not the winner's own marks" then sets aside the other group's panel too.
+    losing = [str(s.get("locator") or s.get("figure_id") or s.get("table_id") or "").strip()
+              for s in won]
+    for i, option in enumerate(others, 1):
+        option["key"] = f"m{i}"
+        option["label"] = f"read this instead — {option['label']}"
+        option["keeps_the_ruling"] = False
+        option["losing_locations"] = [where for where in losing if where]
+    return [keep, *others], list(set_aside)[room:]
+
+
+def _settled_measure_why(decided_by: str, chosen: str, ruling: str,
+                         set_aside: Sequence[Mapping[str, Any]],
+                         outcome: Mapping[str, Any],
+                         dropped: Sequence[Mapping[str, Any]] = ()) -> str:
+    """Why this card exists, and what changing it costs — the reviewer's whole basis for the call.
+
+    The ruling's OWN words, verbatim. On one paper of the validation corpus the recorded winner was
+    `endpoint` while the quote cited for it described an area-under-the-curve figure: printing the
+    two beside each other is what makes a wrong ruling visible to somebody who never opens the map.
+    """
+    where = "; ".join(f"{str(s.get('analysis_metric') or '?').replace('_', ' ')} at "
+                      f"{_short(str(s.get('locator') or s.get('figure_id') or ''), 70)}"
+                      for s in set_aside)
+    blind = len([s for s in outcome.get("sources") or []
+                 if str(s.get("role") or "") == "alternate"
+                 and str(s.get("analysis_metric") or "unknown") in ("", "unknown")
+                 and c6_demoted_note(str(s.get("notes") or ""))])
+    return (f"Decided at the map stage by {decided_by}, and nobody was asked: this outcome's map "
+            f"named two measures, the tool chose {(chosen or 'one').replace('_', ' ')}, and this "
+            f"cell was read from it. Set aside: {where or 'nothing readable'}. Its own words — "
+            f"{_short(ruling, 600)}."
+            + (f" {blind} further location(s) that could not say which measure they read were set "
+               f"aside with the loser." if blind else "")
+            # …and never a reading this card names but offers no way to choose: an option list is
+            # capped, the list above is not, and a card that describes an answer a reviewer cannot
+            # give is the empty question C4 exists to remove.
+            + (f" {len(dropped)} more are on the record but not offered here (the list is capped); "
+               f"name one in the note to have it read." if dropped else "")
+            + " Choosing another option here puts that reading back and the next --resume reads "
+              "this cell again from it. The readings taken against the measure you reject do not "
+              "stand as a fallback — they are kept in this paper's extract stage file under "
+              "`superseded_candidates` — so a cell whose new measure this paper does not report "
+              "may end with no rows at all.")
 
 
 def _map_sources(dataset: Mapping[str, Any], outcome_key: str) -> list[dict[str, Any]]:
@@ -1811,7 +2062,13 @@ def _single_override(question: Mapping[str, Any], answer: Mapping[str, Any]) -> 
                 "dataset_id": question.get("dataset_id", ""),
                 "question_id": question.get("id", ""),
                 "outcome_key": question.get("outcome_key", ""),
-                "winning_analysis_metric": metric, "winning_location": location, "note": note,
+                "winning_analysis_metric": metric, "winning_location": location,
+                # …and, when the card knows them, the readings this answer is choosing AGAINST.
+                # Two operationalizations routinely share one `analysis_metric`, so naming the
+                # winner cannot always say who loses, and guessing costs the other group's panel.
+                "losing_locations": [str(x) for x in ((option or {}).get("losing_locations")
+                                                      or answer.get("losing_locations") or [])],
+                "note": note,
                 "justification": f"{just} — {_short(metric or location, 200)}"}
     if kind == "orientation":
         # scoped to the MEASURE, never to one group's cell: `higher_is_better` is decided once per
@@ -1970,7 +2227,14 @@ def _consolidate(out: Sequence[Question], run: Path, overrides: Sequence[Mapping
     preview = _Preview(run)
     rows = _rows_of(run) if rows is None else rows
     cards: list[Question] = []
-    rest = list(out)
+    # a MAP decision is not a held cell and never folds with one. Taken out before the folds rather
+    # than filtered inside each: every fold counts the questions standing on a cell, so a decision
+    # merely RECORDED against that cell — a measure the map settled for itself, an inclusion — made
+    # a two-group cell look like a three-question one and its pair card silently became two. The
+    # cards a reviewer must answer may not change shape because another card mentions the same cell.
+    rest = [q for q in out if str(q.get("route") or "") != "map"]
+    cards += [_as_cell_card(q, run, overrides, rows)
+              for q in out if str(q.get("route") or "") == "map"]
 
     # a paper nobody read, and a dataset's analysed size: neither is a held cell, so neither can
     # come out of the queue — they are read from the run's own exclusion table and verify stages.
@@ -3439,15 +3703,35 @@ def write_questions(run_dir: str | Path, questions: Sequence[Mapping[str, Any]] 
     json_path = run / "questions.json"
     json_path.write_text(json.dumps(qs, ensure_ascii=False, indent=1, default=str),
                          encoding="utf-8")
+    settled = [q for q in qs if q.get("status") == TOOL_SETTLED]
+    made = _settled_measure_count(run)
     md = ["# Questions for the reviewer", "",
-          f"{len(qs)} decision(s) need an answer. Each shows the picture the tool read, the "
-          f"answers it is choosing between, and why it could not decide — one card per decision, "
-          f"which may settle more than one cell. Answer in the review tab, or by appending to "
-          f"`overrides.jsonl` (`canopy validate` re-pools).", ""]
+          f"{len(qs) - len(settled)} decision(s) need an answer. Each shows the picture the tool "
+          f"read, the answers it is choosing between, and why it could not decide — one card per "
+          f"decision, which may settle more than one cell. Answer in the review tab, or by "
+          f"appending to `overrides.jsonl` (`canopy validate` re-pools).", ""]
+    if settled:
+        # …and the ones NOBODY was asked. A `which_measure` the map settles for itself blocks
+        # nothing and produces a number, so it never reached this file at all: the run picked one
+        # of two measures, read the cell with it, and the only record was a line in a stage file.
+        # Said here because a card sorted below the open ones is easy to never scroll to, and
+        # "which of these two measures is this review's" can move an effect size by an order of
+        # magnitude.
+        md += [f"**{made} measure choice(s) were made by the tool itself, and nobody was asked.** "
+               f"Where a paper reports one outcome two ways, the map picks one and reads the cell "
+               f"with it. {len(settled)} of them are below, marked `decided by the tool`, each "
+               f"with the reading it set aside and the words it decided on; changing one re-reads "
+               f"that cell on the next `--resume`."
+               + (f" The other {made - len(settled)} set aside no reading anyone could switch to, "
+                  f"so there is nothing to ask about them." if made > len(settled) else ""), ""]
     for q in qs:
         head = f"## {q['number']}. {_md(q['paper'])} — {_md(q['dataset_label'] or q['dataset_id'])}"
         if q.get("group_label"):
             head += f" — {_md(q['group_label'])}"
+        if q.get("status") == TOOL_SETTLED:
+            # said on the card itself, not only in the file's opening line: a reader scrolling to
+            # card 23 has no way back to a sentence forty cards above it.
+            head += " — decided by the tool"
         md += [head, "", f"**{_md(q['prompt'])}**", ""]
         if q.get("status_line"):
             md += [f"_{_md(q['status_line'])}_", ""]
@@ -3457,7 +3741,12 @@ def write_questions(run_dir: str | Path, questions: Sequence[Mapping[str, Any]] 
             extra = f" — backed by {_md(', '.join(o['backed_by']))}" if o.get("backed_by") else ""
             md.append(f"- **{_md(o['label'])}**{extra}")
         if q.get("free_text"):
-            md.append("- _(or type the value / where to find it)_")
+            # what the box takes depends on the question: a measure card is answered by naming a
+            # LOCATION, and inviting a value there invites a record the log turns into "a human
+            # looked and could not decide".
+            md.append("- _(or name the location to read it from)_"
+                      if q.get("kind") == "which_measure"
+                      else "- _(or type the value / where to find it)_")
         if len(q.get("cells") or []) > 1 or q.get("scope") not in ("cell", "paper"):
             named = ", ".join(dict.fromkeys(
                 f"{_md(c.get('dataset_id'))}/{_md(c.get('outcome_key'))}"
@@ -3479,7 +3768,9 @@ def write_questions(run_dir: str | Path, questions: Sequence[Mapping[str, Any]] 
             for was in slot.get("settled") or []:
                 md.append(f"  - _already recorded ({_md(was.get('at'))}): "
                           f"{_md(was.get('justification'))}_")
-        md += ["", f"<details><summary>why the tool could not decide</summary>", "",
+        md += ["", f"<details><summary>"
+               + ("what the tool decided, and on what" if q.get("status") == TOOL_SETTLED
+                  else "why the tool could not decide") + "</summary>", "",
                f"{_md(q['why'])}", "", "</details>", ""]
         if q.get("answered"):
             waiting = (f" — **not applied yet**: {_md(str(q.get('pending_why') or ''))}"

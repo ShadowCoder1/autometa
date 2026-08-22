@@ -120,7 +120,8 @@ def test_an_answer_given_through_a_card_is_seen_by_every_cell_it_names(nine_tmp)
     _append(nine_tmp, records)
 
     cells = {q["id"]: q for q in questions_for_run(nine_tmp, fold=False)
-             if q["dataset_id"] == "b7523a41b03a:d2" and q["outcome_key"] == "late_adaptation"}
+             if q["dataset_id"] == "b7523a41b03a:d2" and q["outcome_key"] == "late_adaptation"
+             and q["route"] != "map"}   # the map's own measure decision is not a read cell
     assert len(cells) == 2
     for cell in cells.values():
         assert cell["answered"] is True, cell["id"]
@@ -205,7 +206,7 @@ def test_a_mixed_kind_cell_is_one_card_of_independent_slots(nine_tmp):
     qs = questions_for_run(nine_tmp)
     assert not any(q["id"] == "3570e4ce2a9c:d2|late_adaptation||pair" for q in qs)
     mine = [q for q in qs if q["dataset_id"] == "3570e4ce2a9c:d2"
-            and q["outcome_key"] == "late_adaptation"]
+            and q["outcome_key"] == "late_adaptation" and q["route"] != "map"]
     assert [q["id"] for q in mine] == ["3570e4ce2a9c:d2|late_adaptation||cell"]
     card = mine[0]
     assert card["kind"] == "cell" and card["scope"] == "dataset" and card["slot_answers"] is True
@@ -235,7 +236,7 @@ def test_a_mixed_kind_cell_is_one_card_of_independent_slots(nine_tmp):
     assert refuted["member_id"] not in cells_after
     assert cells_after[axis["member_id"]]["status"] == "open"
     shown = [q for q in questions_for_run(nine_tmp) if q["dataset_id"] == "3570e4ce2a9c:d2"
-             and q["outcome_key"] == "late_adaptation"]
+             and q["outcome_key"] == "late_adaptation" and q["route"] != "map"]
     assert len(shown) == 1 and shown[0]["status"] == "open"
     assert any("verifier_refuted" in was["overrules"]
                for slot in shown[0]["slots"] if slot["group"] == "B" for was in slot["settled"])
@@ -332,7 +333,7 @@ def test_a_precedence_card_carries_the_refutations_on_its_row(nine_tmp):
     qs = questions_for_run(nine_tmp)
     card = next(q for q in qs if q["id"] == "3570e4ce2a9c:d1|late_adaptation||precedence_override")
     assert not any(q["dataset_id"] == "3570e4ce2a9c:d1" and q["outcome_key"] == "late_adaptation"
-                   and q["id"] != card["id"] for q in qs)
+                   and q["id"] != card["id"] and q["route"] != "map" for q in qs)
     assert card["slot_answers"] is True
     refutations = [s for s in card["slots"] if s["kind"] == "verifier_refuted"]
     assert [s["group"] for s in refutations] == ["A", "B"] and all(s["answerable"]
@@ -548,9 +549,20 @@ def test_nine_folds_within_the_measured_arithmetic(nine_tmp):
     assert kinds == {"pair": 4, "orientation": 4, "cell": 8, "verifier_refuted": 2,
                      "include_paper": 3}
     assert len(qs) == 21
-    # …out of the 34 per-cell questions the run recorded. The three paper-level cards are not a
-    # fold of anything: no cell was ever read in those papers, so the unfolded path has none.
-    assert len(questions_for_run(nine_tmp, fold=False)) == 34
+    # …out of the 34 per-cell questions the run recorded, plus the seven measures this run's maps
+    # chose for themselves. Those are decisions already taken, shown so a reviewer can take them
+    # again (`_settled_measure_questions`): they are `answered`, so none of them is in the 21 above,
+    # and none of them folds with the cell it names — a card a reviewer must answer may not change
+    # shape because another card mentions the same cell. The three paper-level cards are not a fold
+    # of anything: no cell was ever read in those papers, so the unfolded path has none.
+    unfolded = questions_for_run(nine_tmp, fold=False)
+    assert len(unfolded) == 40
+    settled = [q for q in unfolded if q["route"] == "map"]
+    # six of this run's seven rulings, not seven: the Cressman aftereffect ruling set aside only
+    # POOLED locations, which no reader may take a cell's value from, so it carries no alternative
+    # a person could switch to. A card whose every option empties the cell is not a question.
+    assert len(settled) == 6 and {q["kind"] for q in settled} == {"which_measure"}
+    assert all(q["answered"] and q["status"] == "settled" for q in settled)
 
 
 def test_every_answer_to_every_card_is_one_the_log_accepts(nine_tmp):
@@ -792,7 +804,7 @@ def test_a_typed_value_settles_the_no_value_question_for_the_cell_it_names(nine_
     this one kind it is: the question asks for a number and the record carries the whole of one."""
     cell = _blanked_cell(nine_tmp)
     asked = {q["group"]: q for q in questions_for_run(nine_tmp, fold=False)
-             if (q["dataset_id"], q["outcome_key"]) == cell}
+             if (q["dataset_id"], q["outcome_key"]) == cell and q["route"] != "map"}
     assert {g: q["kind"] for g, q in asked.items()} == {"A": "no_value", "B": "no_value"}
 
     _append(nine_tmp, [{"kind": "value", "dataset_id": cell[0], "outcome_key": cell[1],

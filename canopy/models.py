@@ -229,6 +229,43 @@ class Citation(CanopyModel):
 SourceSample = Literal["both_groups", "one_group", "pooled", "other", "unknown"]
 
 
+#: What a `Source.notes` says when a `which_measure` decision (C6) set that location aside, and
+#: when it was set aside for naming no measure at all. Here rather than beside the code that writes
+#: them because they are the RECORD of who demoted a location, and both the agent that writes the
+#: record and the review page that has to offer that location back read them. Deliberately notes
+#: rather than a field on `Source`: the whole study map is dumped verbatim into the map-adjudicator's
+#: prompt, so a field added here changes that prompt and re-buys the call for every paper of every
+#: run already on disk — the same rule `run` cites for the exclusions table's decider.
+C6_DEMOTION_NOTE = "demoted to alternate"
+C6_WITHHELD_NOTE = ("set aside by the which_measure decision: this location cannot say which "
+                    "measure it reads, so it cannot be read as the winner's number")
+
+
+#: `Source.sample` answers that are NOT the two groups a contrast compares, so a location carrying
+#: one may never be read for the cell's value. Here beside `SourceSample` itself because the review
+#: page has to refuse to OFFER such a location and may not import the agent package: a card that
+#: offers a reading the pipeline will not read is a click that empties the cell.
+UNREADABLE_SAMPLES: frozenset[str] = frozenset({"pooled", "other"})
+
+#: how the record names who took a map-stage decision. Here, beside the notes those decisions
+#: write, because the review page has to print the name and may not import the agent package.
+HUMAN_DECIDER_NAME = "a human reviewer"
+MAP_ADJUDICATOR_NAME = "map-adjudicator"
+
+
+def c6_demoted_note(notes: str) -> bool:
+    """Do these notes say a `which_measure` decision is what set this location aside?
+
+    The test on the note alone; a caller that has the location itself must also check that its role
+    is still `alternate`. An `alternate` the MAPPER wrote (a paper's own "DE (primary); IEE
+    (alternative)") carries neither note, is nobody's decision about this review, and is never
+    reopened by an answer to a C6 question.
+    """
+    text = notes or ""
+    return (text.startswith(C6_DEMOTION_NOTE) or f"; {C6_DEMOTION_NOTE}" in text
+            or C6_WITHHELD_NOTE in text)
+
+
 class Source(CanopyModel):
     """Where a number lives in the paper (the mapper finds these; extractors read them)."""
 

@@ -926,3 +926,150 @@ def test_a_row_that_shares_no_control_simply_takes_the_answered_sizes():
     row = _shared_row(flags=[])
     _apply_group_n(row, _answered(), 1)
     assert (row.values.group_a.n, row.values.group_b.n) == (18, 16)
+
+
+# ---------------- C6's reversal must reach the NUMBERS, not only the map
+def _cand(cid: str, mean: float | None, status: str = "found"):
+    from canopy.models import Candidate
+
+    return Candidate(candidate_id=cid, dataset_id="p:d1", outcome_key="late_adaptation",
+                     kind="group_stats", group="A", status=status, mean=mean)
+
+
+def test_a_measure_a_reviewer_rejected_may_not_survive_as_a_fallback_reading():
+    """`_absorb_reread` deliberately keeps an earlier reading when the re-read finds nothing: a
+    hint is a request for a better reading, not permission to lose the one the run paid for.
+
+    A MEASURE change is the one case where that rule is wrong. Every reading already on the cell
+    was taken against a measure the review has since rejected, so keeping them as a fallback lets
+    the losing answer supply the cell's numbers whenever the new measure is not reported — the
+    reviewer's decision recorded, and quietly undone by the arithmetic.
+    """
+    from canopy.pipeline.run import _absorb_reread
+
+    # ids are deterministic (`dataset:outcome:group:extractor#index`), so a reader's two readings
+    # of one cell collide by construction and exactly one of each pair may stand
+    cell = ("p:d1", "late_adaptation")
+    paid_for = _cand("p:d1:late_adaptation:A:text#0", 42.3)
+    empty = _cand("p:d1:late_adaptation:A:text#0", None, status="not_on_these_pages")
+
+    # a hint whose re-read found nothing leaves the paid-for reading standing…
+    kept, superseded = [paid_for], []
+    _absorb_reread(cell, kept, [empty], superseded)
+    assert [c.mean for c in kept] == [42.3]
+    assert [c.status for c in superseded] == ["not_on_these_pages"]
+
+    # …and a measure change does not, however empty the re-read comes back
+    kept, superseded = [paid_for], []
+    changed = _absorb_reread(cell, kept, [empty], superseded, replace=True)
+    assert changed and [c.mean for c in kept] == [None]
+    assert [c.mean for c in superseded] == [42.3]      # kept as evidence, not deleted
+
+
+def test_a_reversal_is_owed_a_reading_before_it_counts_as_acted_on():
+    """The false consumption one layer down. "Every cell this answer asks for has been extracted"
+    is TRUE the moment a resume starts, because the cell was read under the ruling the answer
+    rejects — so the seq would be retired before the re-reading it exists to buy, and the map would
+    say one measure while the numbers said another, for ever. Only the reading retires it.
+    """
+    from canopy.pipeline.run import _awaiting_reread
+
+    assert _awaiting_reread({"p:d1/late_adaptation": [{"seq": 7, "hint": "read the endpoint"}]}) \
+        == {7}
+    assert _awaiting_reread({}) == set()
+    assert _awaiting_reread({"p:d1/x": [{"hint": "no seq on this record"}]}) == set()
+
+
+def test_reversing_a_measure_buys_the_reading_it_needs_and_a_confirmation_buys_nothing():
+    """D4, on the recorded map of a cell the tool chose a measure for.
+
+    A measure answer to an OPEN question lands on a cell nobody read, and reading it IS how the
+    answer is acted on. An answer that overrules a ruling the map made FOR ITSELF lands on a cell
+    already read — against the very measure the reviewer just rejected. Without a re-read the map
+    says one thing and the numbers say another, and the decision is a note in a file no forest plot
+    ever feels.
+
+    And it must be bought exactly once, and only when the answer CHANGED something: a reviewer who
+    agrees with the ruling has confirmed it, and buying a second reading to arrive at the same
+    numbers spends their money to learn nothing.
+    """
+    import json
+    from types import SimpleNamespace
+
+    from canopy.agents.mapper import apply_map_answers
+    from canopy.models import StudyMap
+    from canopy.pipeline.run import _awaiting_reread, _measure_reread_hints
+
+    path = Path(__file__).parent / "fixtures" / "runs" / "nine" / "papers" / "3570e4ce2a9c" \
+        / "map.json"
+    as_mapped = StudyMap.model_validate(json.loads(path.read_text())["study"])
+    cell, key = "3570e4ce2a9c:d1", "late_adaptation"
+    assert not as_mapped.open_questions          # the tool settled it; nothing was ever blocked
+
+    def hints_for(metric: str, where: str, consumed=()):
+        answer = {"kind": "which_measure", "seq": 41, "paper_id": as_mapped.paper_id,
+                  "dataset_id": cell, "outcome_key": key, "winning_analysis_metric": metric,
+                  "winning_location": where, "note": "the window is the practice phase"}
+        effects: dict = {}
+        answered = apply_map_answers(as_mapped, [answer], effects=effects)
+        ctx = SimpleNamespace(effects={as_mapped.paper_id: effects},
+                              answers={as_mapped.paper_id: [answer]}, out_dir=path.parent)
+        paper = SimpleNamespace(sha256=as_mapped.paper_id)
+        return _measure_reread_hints(ctx, paper, as_mapped, answered, [f"{cell}/{key}"], consumed)
+
+    reversed_ = hints_for("endpoint", "Results, 'Practice' paragraph, first two sentences")
+    assert set(reversed_) == {f"{cell}/{key}"}
+    assert "endpoint" in reversed_[f"{cell}/{key}"][0]["hint"]
+    assert _awaiting_reread(reversed_) == {41}   # …and the seq is retired by the READING, not now
+
+    # the same answer once its reading has been bought: a hint buys one reading, not one per resume
+    assert hints_for("endpoint", "Results, 'Practice' paragraph, first two sentences",
+                     consumed=(41,)) == {}
+    # …and agreeing with the tool costs nothing at all
+    assert hints_for("change_from_baseline", "Figure 2, panel a") == {}
+
+
+def test_changing_your_mind_back_to_the_tools_choice_still_re_reads_the_cell():
+    """The comparison is against what the cell was READ under, never against the pristine map.
+
+    A resumed run re-applies the whole answer log to the map stage file every time, so "what the map
+    says now" is not "what these numbers came from". A reviewer who switches measure, lets the
+    resume buy the reading, then changes their mind back to the tool's own choice matches the
+    pristine map exactly — so comparing against that found no change, retired the answer without
+    buying anything, and left the cell holding the numbers of the measure they had by then rejected
+    twice. `READ_UNDER` is the fact that comparison needs.
+    """
+    import json
+    from types import SimpleNamespace
+
+    from canopy.agents.mapper import apply_map_answers
+    from canopy.models import StudyMap
+    from canopy.pipeline.run import _measure_reread_hints, _readable_at
+
+    run = Path(__file__).parent / "fixtures" / "runs" / "nine"
+    study = StudyMap.model_validate(
+        json.loads((run / "papers" / "3570e4ce2a9c" / "map.json").read_text())["study"])
+    cell, key = "3570e4ce2a9c:d1", "late_adaptation"
+    full = f"{cell}/{key}"
+
+    def hints(metric, where, read_under):
+        answer = {"kind": "which_measure", "seq": 3, "paper_id": study.paper_id,
+                  "dataset_id": cell, "outcome_key": key, "winning_analysis_metric": metric,
+                  "winning_location": where}
+        effects: dict = {}
+        answered = apply_map_answers(study, [answer], effects=effects)
+        ctx = SimpleNamespace(effects={study.paper_id: effects},
+                              answers={study.paper_id: [answer]}, out_dir=run)
+        return _measure_reread_hints(ctx, SimpleNamespace(sha256=study.paper_id), study, answered,
+                                     [full], (), read_under)
+
+    pristine = _readable_at(study, cell, key)
+    switched = ("endpoint", ("Results, 'Practice' paragraph, first two sentences",))
+
+    # the first switch, from a cell read under the map's own ruling
+    assert hints("endpoint", switched[1][0], {full: pristine})
+    # …and the change of mind back, from a cell now read under the measure being abandoned
+    back = hints(pristine[0], "", {full: switched})
+    assert back and pristine[0] in back[full][0]["hint"]
+    # …while agreeing with what the cell was ACTUALLY read under still buys nothing
+    assert not hints(pristine[0], "", {full: pristine})

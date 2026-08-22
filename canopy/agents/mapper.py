@@ -34,17 +34,20 @@ import json
 import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import Any, Callable, Collection, Mapping, Sequence, get_args
+from typing import (Any, Callable, Collection, Mapping, MutableMapping, Sequence,
+                    get_args)
 
 from ..config import MODELS
 from ..ingest.pdf import PaperRecord
 from ..llm.client import LLMClient
 from ..llm.errors import LLMError
 from ..llm.context import FILES_API_BETA, figure_blocks, text_block
-from ..models import (AnalysisMetric, Citation, DatasetSpec, DispersionType, ErrorBarScope,
-                      ExposureOrder, GroupSpec, MapQuestion, OutcomeSources, Protocol,
-                      RosterDecision, Source, SourceKind, SourceRole, SourceSample, StudyMap,
-                      XAxisKind)
+from ..models import (C6_DEMOTION_NOTE, C6_WITHHELD_NOTE, HUMAN_DECIDER_NAME,
+                      UNREADABLE_SAMPLES,
+                      MAP_ADJUDICATOR_NAME, AnalysisMetric, Citation, DatasetSpec,
+                      DispersionType, ErrorBarScope, ExposureOrder, GroupSpec, MapQuestion,
+                      OutcomeSources, Protocol, RosterDecision, Source, SourceKind, SourceRole,
+                      SourceSample, StudyMap, XAxisKind, c6_demoted_note)
 from . import load_prompt, render_prompt
 
 __all__ = ["apply_map_answers", "extraction_blocks", "unreadable_cell", "map_study", "measure_of",
@@ -1208,9 +1211,9 @@ def _diff_measures(study: StudyMap, conflicts: _Conflicts, disagreements: list[s
 
 
 #: what the record says about a `value` location that never said which measure it reads, once the
-#: outcome's measure has been settled by someone
-WITHHELD_NOTE = ("set aside by the which_measure decision: this location cannot say which measure "
-                 "it reads, so it cannot be read as the winner's number")
+#: outcome's measure has been settled by someone. Defined in `models` beside the note the
+#: demotion writes, because the review page has to read both to offer a set-aside location back.
+WITHHELD_NOTE = C6_WITHHELD_NOTE
 
 
 @dataclass
@@ -1234,7 +1237,8 @@ class _Settlement:
 
 def read_measure_answer(outcome: OutcomeSources, *, winning_metric: str = "",
                         winning_location: str = "",
-                        losing_locations: Sequence[str] = ()) -> _Settlement:
+                        losing_locations: Sequence[str] = (),
+                        keep_group_siblings: bool = False) -> _Settlement:
     """Read a `which_measure` answer against one outcome. Pure: nothing is changed here.
 
     A LOCATION decides whenever one is named, and only then the metric. Two operationalizations
@@ -1270,10 +1274,28 @@ def read_measure_answer(outcome: OutcomeSources, *, winning_metric: str = "",
     elements = {_element_key(source) for source in winners if _element_key(source) is not None}
     named_losers = [name for name in losing_locations if str(name).strip()]
     losers: list[tuple[Source, str]] = []
+    #: the winners' own sample answers: a location naming ONE group is half of a two-arm cell, and
+    #: the other half is the same measure read for the other group. Two panels of one figure — young
+    #: in A, older in B — are the ordinary layout, and "read this one" said of one panel is not a
+    #: refusal of the other: it is a choice of MEASURE, and the group it happens to be printed for
+    #: is not part of that choice. Demoting the sibling narrows the cell to one arm, and a two-arm
+    #: contrast that has lost an arm produces no effect size at all.
+    #:
+    #: It protects only what the answer did not name: an answer that says outright which readings
+    #: lose is authority over exactly those, which is how a split whose two sides share one metric
+    #: is settled at all (Langan prints DE in Fig. 1A/1B and IEE in Fig. 1C/1D — four one_group
+    #: panels, one metric, two measures). Off unless the caller asks, so the adjudicator's rulings
+    #: settle exactly what they settled before: a ruling that stops settling re-blocks its cell, and
+    #: a cell nobody may read is not an improvement on a cell read the wrong way.
+    keep_siblings = (keep_group_siblings
+                     and any(str(getattr(s, "sample", "")) == "one_group" for s in winners))
     for source, metric, measure in readings:
         if winning_location:
             wins = id(source) in won or (measure == settlement.measure
-                                         and _element_key(source) in elements)
+                                         and _element_key(source) in elements) \
+                or (keep_siblings and measure == settlement.measure
+                    and str(getattr(source, "sample", "")) == "one_group"
+                    and not any(_names_location(source, name) for name in named_losers))
         else:
             wins = measure == settlement.measure
         if wins and named_losers and not (winning_location and id(source) in won):
@@ -1344,6 +1366,44 @@ def _winner_sources(readings: list[tuple[Source, str, str]], settlement: _Settle
     return [source for source, metric, _ in readings if metric == settlement.metric]
 
 
+#: what the record says when a person takes a settled `which_measure` decision again. Appended, never substituted:
+#: the reason a location was set aside is evidence about the paper whether or not this review ends
+#: up reading it, so a reopened location carries both notes and a reader can see the whole history.
+REOPENED_NOTE = ("put back as a candidate: the which_measure decision that demoted it is being "
+                 "taken again")
+
+
+def c6_demoted(source: Source) -> bool:
+    """Was this location set aside by a `which_measure` decision — and so by a reversible one?
+
+    An `alternate` the MAPPER itself wrote (a paper's own "DE (primary); IEE (alternative)") is the
+    map's reading of the paper, not a decision anybody took about this review. C6 never made it, and
+    an answer to a C6 question does not undo it.
+    """
+    return (str(getattr(source, "role", "")) == "alternate"
+            and c6_demoted_note(source.notes or ""))
+
+
+def reopened_outcome(outcome: OutcomeSources) -> OutcomeSources:
+    """A COPY of this outcome with its `which_measure` demotions undone.
+
+    The candidates as they stood before anyone chose between them. Without this a settled ruling is
+    a decision nobody can take again: `_value_metrics` reads `value` locations only, so the reading
+    C6 demoted is invisible to `read_measure_answer`, and an answer naming it comes back "which none
+    of the value locations carries" — which is what a reviewer disagreeing with the tool's own
+    choice was told on every one of the 25 measures it settled for itself on this corpus.
+
+    A copy, because an answer that settles nothing must leave the map exactly as it was rather than
+    half-reopened with two readings readable again.
+    """
+    copy = outcome.model_copy(deep=True)
+    for source in copy.sources:
+        if c6_demoted(source):
+            source.role = "value"
+            source.notes = _note(source.notes, REOPENED_NOTE)
+    return copy
+
+
 def apply_measure_settlement(outcome: OutcomeSources, settlement: _Settlement,
                              why: Callable[[str], str]) -> None:
     """Demote what the settlement demotes and record the winner. `why(metric)` writes the note.
@@ -1353,7 +1413,7 @@ def apply_measure_settlement(outcome: OutcomeSources, settlement: _Settlement,
     """
     for source, metric in settlement.losers:
         source.role = "alternate"
-        source.notes = _note(source.notes, f"demoted to alternate: {why(metric)}")
+        source.notes = _note(source.notes, f"{C6_DEMOTION_NOTE}: {why(metric)}")
     for source in settlement.withheld:
         source.role = "alternate"
         source.notes = _note(source.notes, WITHHELD_NOTE)
@@ -1856,7 +1916,8 @@ def open_map_questions(study: StudyMap) -> list[MapQuestion]:
 #: (Fig. 1A young / Fig. 1B old) is the ordinary layout, and the reader is asked for each group
 #: separately; the run's first nine-paper pass read `one_group` as unreadable and extracted
 #: NOTHING from such a paper, with zero calls and no question, so the rule is written here.
-UNREADABLE_SAMPLES: frozenset[str] = frozenset({"pooled", "other"})
+#: (defined in `models` beside `SourceSample`, because the review page must refuse to offer such a
+#: location and may not import this package)
 #: the roles a number may be read at: `value` is the outcome's own number, `unknown` is a role the
 #: mapper did not fill in. `baseline`, `context` and `alternate` are on the record for a reader.
 READABLE_ROLES: frozenset[str] = frozenset({"value", "unknown"})
@@ -1887,12 +1948,14 @@ def readable_sources(sources: Sequence[Source]) -> list[Source]:
     return [source for source in sources if not source_unreadable_reason(source)]
 
 
-#: how the record names a person who answered a map question (never a model name)
-HUMAN_DECIDER = "a human reviewer"
+#: how the record names a person who answered a map question (never a model name). Defined in
+#: `models` beside the other names a map decision writes, because the review page prints them
+#: and may not import this package.
+HUMAN_DECIDER = HUMAN_DECIDER_NAME
 #: …and how it names the model that rules when nobody has answered. The exclusions table needs
 #: both names, and the two are told apart by the review LOG — the record of who decided — never
 #: by the shape of the rule that was cited (re-review N2).
-MAP_ADJUDICATOR = "map-adjudicator"
+MAP_ADJUDICATOR = MAP_ADJUDICATOR_NAME
 #: the rule an exclusion cites when the person who made it cited none. A person may exclude a
 #: dataset without quoting the protocol at an adjudicator's standard, but the record must not
 #: claim a rule nobody named (C7 holds the ADJUDICATOR to a named rule; this is not that path).
@@ -1912,6 +1975,19 @@ def _question_flag(kind: str, dataset_id: str, outcome_key: str) -> str:
                 f"extracted until then")
     return (f"dataset {dataset_id} {outcome_key}: two candidate measures and no ruling "
             f"that quotes both — which_measure needs human, nothing extracted until then")
+
+
+def map_answer_key(answer: Mapping[str, Any]) -> tuple[str, str, str]:
+    """The question one map answer addresses: `(kind, dataset_id, outcome_key)`.
+
+    One rule, so `apply_map_answers` and everything that asks it what it applied name the same
+    question. Only `which_measure` is per-outcome — an inclusion is a decision about the whole
+    dataset, and keying it by an outcome would make two answers to one question look like two
+    questions.
+    """
+    kind = str(answer.get("kind") or "").strip()
+    return (kind, str(answer.get("dataset_id") or "").strip(),
+            str(answer.get("outcome_key") or "").strip() if kind == "which_measure" else "")
 
 
 def _answers_this_study(study: StudyMap, answer: Mapping[str, Any]) -> bool:
@@ -1952,15 +2028,44 @@ def _overrules_an_exclusion(study: StudyMap, kind: str, answer: Mapping[str, Any
     return any(d.dataset_id == dataset_id and d.included is False for d in study.datasets)
 
 
-def _answer_inclusion(dataset: DatasetSpec, answer: Mapping[str, Any]) -> bool:
+def settled_measure(study: StudyMap, dataset_id: str, outcome_key: str) -> str:
+    """The `which_measure` ruling this map settled for one cell on its own — `""` if it settled
+    none. The one record that says a choice between two measures was MADE here."""
+    return next((o.measure_ruling.strip()
+                 for d in study.datasets if d.dataset_id == dataset_id
+                 for o in d.outcomes
+                 if o.outcome_key == outcome_key and (o.measure_ruling or "").strip()), "")
+
+
+def _overrules_a_measure_ruling(study: StudyMap, kind: str, answer: Mapping[str, Any]) -> bool:
+    """Is this a `which_measure` answer for an outcome the map already settled by itself?
+
+    §C6's half of `_overrules_an_exclusion`, and the same hole. A settled ruling CLOSES the
+    question, so the answer named no open question and `apply_map_answers` ignored it; and because
+    settling had already demoted the rival reading out of `_value_metrics`, there was no record a
+    reviewer could write that would ever put the other measure back. On the corpus this tool was
+    validated against the map settled 25 measures for itself, asked about none of them, and gave
+    the same cell opposite answers on two runs of the same paper — a choice that moves an effect
+    size by an order of magnitude, taken silently and unappealably.
+
+    Only a cell the map itself ruled on: an answer about an outcome nobody chose between answers
+    nothing, and `_answer_measure` still refuses anything that names a reading the map never made.
+    """
+    return kind == "which_measure" and bool(settled_measure(
+        study, str(answer.get("dataset_id") or "").strip(),
+        str(answer.get("outcome_key") or "").strip()))
+
+
+def _answer_inclusion(dataset: DatasetSpec, answer: Mapping[str, Any]) -> tuple[bool, str]:
     """C7 answered by a person: include it, or exclude it and say on what.
 
-    `False` means the record was not an answer, and nothing about the dataset changed.
+    `(False, why)` means the record was not an answer, and nothing about the dataset changed. The
+    reason travels because a reviewer whose answer changed nothing is owed the sentence saying so.
     """
     decision = str(answer.get("decision") or "").strip().lower()
     note = str(answer.get("note") or "").strip()
     if decision not in ("include", "exclude"):
-        return False
+        return False, "the record names neither include nor exclude"
     if decision == "include":
         dataset.included = True
         # …and the exclusion it overrules goes with it: a dataset the review includes may not keep
@@ -1970,17 +2075,43 @@ def _answer_inclusion(dataset: DatasetSpec, answer: Mapping[str, Any]) -> bool:
         dataset.exclusion_quote = ""
         dataset.notes = _note(dataset.notes, f"included by {HUMAN_DECIDER}"
                                              + (f": {note}" if note else ""))
-        return True
+        return True, ""
     dataset.included = False
     dataset.exclusion_rule = str(answer.get("rule") or "").strip() or HUMAN_EXCLUSION_RULE
     dataset.exclusion_quote = str(answer.get("quote") or "").strip()
     dataset.notes = _note(dataset.notes, f"excluded by {HUMAN_DECIDER} under "
                                          f"{dataset.exclusion_rule}"
                                          + (f": {note}" if note else ""))
-    return True
+    return True, ""
 
 
-def _answer_measure(dataset: DatasetSpec, outcome_key: str, answer: Mapping[str, Any]) -> bool:
+def confirms_the_measure(outcome: OutcomeSources, answer: Mapping[str, Any]) -> bool:
+    """Does this answer AGREE with the measure this outcome already reads?
+
+    Agreement names the measure and no location. A location is authority over which readings
+    survive — naming one demotes every other — so an answer that means "yes, that one" must not
+    carry one, and the option a review page offers for agreement must not either.
+
+    Read against the outcome as it stands, so the same test serves both directions: before a resume
+    a reversal disagrees with the map and is owed a reading; once the resume has applied it the map
+    reads what the answer named and the same answer is agreement. Nothing has to remember which it
+    was, which is what makes re-applying the whole log idempotent.
+    """
+    metric = str(answer.get("winning_analysis_metric") or "").strip()
+    chosen = str(getattr(outcome.analysis_metric, "value", outcome.analysis_metric) or "").strip()
+    # …and only where a decision has actually been TAKEN. On an outcome nobody has settled there is
+    # nothing to agree with: `analysis_metric` is then the mapper's own guess beside two readable
+    # measures, and treating "that one" as agreement would close the open question while leaving
+    # both of them readable — the `metric_mixed` state, reached by answering the question that
+    # exists to prevent it.
+    return (bool((outcome.measure_ruling or "").strip())
+            and bool(metric) and metric == chosen
+            and not str(answer.get("winning_location") or "").strip()
+            and not [str(x) for x in (answer.get("losing_locations") or []) if str(x).strip()])
+
+
+def _answer_measure(dataset: DatasetSpec, outcome_key: str,
+                    answer: Mapping[str, Any]) -> tuple[bool, str]:
     """C6 answered by a person: the losing `value` locations become `alternate`, as a ruling does.
 
     One rule, read once (`read_measure_answer`), so the two paths cannot drift apart. The answer
@@ -1990,29 +2121,56 @@ def _answer_measure(dataset: DatasetSpec, outcome_key: str, answer: Mapping[str,
     that would demote nothing while two readings stay readable, changes nothing and leaves the
     question open — a person's answer is authority over which measure the review wants, not a
     licence to write into the record a measure nobody read.
+
+    A ruling the map already settled is REOPENED first (`reopened_outcome`), so the answer is read
+    against every candidate the outcome ever carried rather than against the one the tool left
+    standing. The tool's own choice between two measures is exactly the kind of decision a person
+    is entitled to take again, and until this it was the one decision on the whole record that
+    nothing a reviewer could write would change.
     """
-    outcome = next((o for o in dataset.outcomes if o.outcome_key == outcome_key), None)
+    index, outcome = next(((i, o) for i, o in enumerate(dataset.outcomes)
+                           if o.outcome_key == outcome_key), (-1, None))
     if outcome is None:
-        return False
+        return False, "this map has no such outcome"
+    if confirms_the_measure(outcome, answer):
+        # AGREEMENT CHANGES NOTHING. `read_measure_answer` cannot express "confirm": a metric-only
+        # answer re-wins every location that reads that metric, so once the demotions are reopened
+        # it puts back the very readings the ruling set aside (one Vachon cell went from one
+        # readable location to three), and a location-named one demotes everything else. Both are
+        # re-settlements, and a reviewer saying "yes, that one" is not asking for either. The
+        # record gains a line saying a person looked; the map is not touched.
+        outcome.measure_ruling = _note(outcome.measure_ruling,
+                                       f"confirmed by {HUMAN_DECIDER}"
+                                       + (f": {_clip(str(answer.get('note') or ''), 400)}"
+                                          if str(answer.get("note") or "").strip() else ""))
+        return True, ""
+    candidate = reopened_outcome(outcome)
     settlement = read_measure_answer(
-        outcome,
+        candidate,
         winning_metric=str(answer.get("winning_analysis_metric") or "").strip(),
         winning_location=str(answer.get("winning_location") or "").strip(),
-        losing_locations=[str(x) for x in (answer.get("losing_locations") or [])])
+        losing_locations=[str(x) for x in (answer.get("losing_locations") or [])],
+        # a person's answer may not cost the other arm of the contrast (see `keep_group_siblings`)
+        keep_group_siblings=True)
     if not (settlement.ok and settlement.settles):
-        return False
+        # …and `candidate` is discarded: the map is untouched
+        return False, settlement.reason or ("it demotes no location, so both readings are "
+                                            "still read and nothing is settled")
     note = str(answer.get("note") or "").strip()
     apply_measure_settlement(
-        outcome, settlement,
+        candidate, settlement,
         lambda metric, winner=settlement.metric: (
             f"{HUMAN_DECIDER} chose {winner} as this outcome's measure; this location measures "
             f"{metric}" + (f" ({_clip(note, 120)})" if note else "")))
-    outcome.measure_ruling = (f"measure: {settlement.metric}. decided by {HUMAN_DECIDER}"
-                              + (f": {_clip(note, 400)}" if note else ""))
-    return True
+    candidate.measure_ruling = (f"measure: {settlement.metric}. decided by {HUMAN_DECIDER}"
+                                + (f": {_clip(note, 400)}" if note else ""))
+    dataset.outcomes[index] = candidate
+    return True, ""
 
 
-def apply_map_answers(study: StudyMap, answers: Sequence[Mapping[str, Any]]) -> StudyMap:
+def apply_map_answers(study: StudyMap, answers: Sequence[Mapping[str, Any]],
+                      effects: MutableMapping[tuple[str, str, str], str] | None = None
+                      ) -> StudyMap:
     """A NEW `StudyMap` with the human answers to this map's open questions applied.
 
     Pure: no I/O, no model call, and the study handed in is never mutated — the review log is
@@ -2026,6 +2184,14 @@ def apply_map_answers(study: StudyMap, answers: Sequence[Mapping[str, Any]]) -> 
     question are a reviewer changing their mind: the last one stands, and it is applied to the
     map as it arrived rather than on top of the first, so the order in the log decides the answer
     and nothing accumulates.
+
+    `effects`, when given, collects `{question: why it changed nothing}` for every answer addressed
+    to this study — `""` meaning it was applied. An answer this function drops (one naming a reading
+    the map does not carry, one that would leave both measures readable, one addressed to a question
+    nobody asked) changed nothing, and the run may not go on to record it as a decision it has acted
+    on (M8). Without somewhere to say so, "I applied it" and "I was handed it" were the same fact to
+    every caller: a reviewer whose answer was refused was told it had landed, and the card came off
+    the page with the refusal on it.
     """
     answered = study.model_copy(deep=True)
     asked = {(q.kind, q.dataset_id, q.outcome_key) for q in answered.open_questions}
@@ -2034,18 +2200,25 @@ def apply_map_answers(study: StudyMap, answers: Sequence[Mapping[str, Any]]) -> 
         kind = str(answer.get("kind") or "").strip()
         if kind not in _ANSWER_KINDS or not _answers_this_study(answered, answer):
             continue
-        key = (kind, str(answer.get("dataset_id") or "").strip(),
-               str(answer.get("outcome_key") or "").strip() if kind == "which_measure" else "")
-        if key in asked or _overrules_an_exclusion(answered, kind, answer):
+        key = map_answer_key(answer)
+        if key in asked or _overrules_an_exclusion(answered, kind, answer) \
+                or _overrules_a_measure_ruling(answered, kind, answer):
             latest[key] = answer
+        elif effects is not None:
+            effects[key] = ("no open question of this map asks it, and it overrules no ruling the "
+                            "map made for itself")
 
     for (kind, dataset_id, outcome_key), answer in latest.items():
         dataset = next((d for d in answered.datasets if d.dataset_id == dataset_id), None)
         if dataset is None:
+            if effects is not None:
+                effects[(kind, dataset_id, outcome_key)] = "this map has no such dataset"
             continue
-        applied = (_answer_inclusion(dataset, answer) if kind == "include_dataset"
-                   else _answer_measure(dataset, outcome_key, answer))
-        if not applied:
+        did, why = (_answer_inclusion(dataset, answer) if kind == "include_dataset"
+                    else _answer_measure(dataset, outcome_key, answer))
+        if effects is not None:
+            effects[(kind, dataset_id, outcome_key)] = why
+        if not did:
             continue
         answered.open_questions = [q for q in answered.open_questions
                                    if (q.kind, q.dataset_id, q.outcome_key)
@@ -2059,6 +2232,21 @@ def apply_map_answers(study: StudyMap, answers: Sequence[Mapping[str, Any]]) -> 
             stale.add(_unmatched_dataset_flag(dataset_id))
         answered.needs_human = [f for f in answered.needs_human if f not in stale]
     return answered
+
+
+def map_answer_effects(study: StudyMap, answers: Sequence[Mapping[str, Any]]
+                       ) -> dict[tuple[str, str, str], str]:
+    """What each of these answers DID to this map: `{question: why it changed nothing}`, `""` when
+    it was applied.
+
+    The same loop as `apply_map_answers`, so the two can never disagree about what landed. This is
+    the fact `_consumed_seqs` needs and had no way to ask for: an answer that changed nothing was
+    retired the moment the cells it named had been read by anything, which told a reviewer their
+    refused answer was applied and took the card off the page with it.
+    """
+    out: dict[tuple[str, str, str], str] = {}
+    apply_map_answers(study, answers, effects=out)
+    return out
 
 
 def _has_sources(parsed: dict[str, Any]) -> bool:

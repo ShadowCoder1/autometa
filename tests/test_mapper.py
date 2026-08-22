@@ -14,9 +14,11 @@ from typing import get_args
 
 from canopy.agents.mapper import (MAPPER_CROSSCHECK_SCHEMA, MAPPER_SCHEMA,
                                   MAPPER_SOURCES_SCHEMA, PROMPT_VERSION,
-                                  _Conflicts, _diff_measures, apply_map_answers, extraction_blocks,
+                                  _Conflicts, _diff_measures, apply_map_answers, c6_demoted,
+                                  extraction_blocks, map_answer_effects,
                                   map_study, measure_of, named_alternatives,
-                                  open_map_questions, protocol_text, readable_sources, roster_text,
+                                  open_map_questions, protocol_text, readable_sources,
+                                  reopened_outcome, roster_text, settled_measure,
                                   source_unreadable_reason, split_metrics)
 from canopy.config import MODELS
 from canopy.llm.client import LLMClient
@@ -2114,3 +2116,175 @@ def test_one_measure_left_standing_settles_however_many_locations_read_it():
     # rule); naming the location does
     assert read_measure_answer(still_two, winning_metric="endpoint").settles is False
     assert read_measure_answer(still_two, winning_location="Fig. 1A").settles is True
+
+
+# ------------------------------- C6 REVERSAL: a measure the tool chose is a decision, not a fact
+def _settled_map(paper, protocol):
+    """The Heuer d1 record, settled by the adjudicator exactly as the real runs settled it."""
+    study, _ = _mapped(paper, protocol,
+                       [_primary(), _sources(outcomes=[_two_measure_outcome()]), _check(),
+                        _adjudication(measure_rulings=_measure_ruling())])
+    return study
+
+
+def test_a_settled_ruling_records_what_it_set_aside_and_which_side_may_be_put_back(paper,
+                                                                                   protocol):
+    """The record C6 leaves is what makes its decision reversible, and it must say who made it.
+
+    `c6_demoted` is the whole test of "may an answer put this back": a location the MAPPER marked
+    `alternate` is the map's reading of the paper and nobody's decision about this review, while one
+    a `which_measure` settlement demoted is a choice somebody took and somebody else may take again.
+    """
+    outcome = _settled_map(paper, protocol).datasets[0].outcomes[0]
+    loser = next(s for s in outcome.sources if s.role == "alternate")
+    assert c6_demoted(loser) and loser.analysis_metric == "endpoint"
+    assert not any(c6_demoted(s) for s in outcome.sources if s.role == "value")
+
+
+def test_the_note_that_says_a_measure_decision_demoted_this_is_the_note_the_decision_writes():
+    """The record and the reader of it, pinned together. `c6_demoted` decides what a reviewer may
+    put back by reading a sentence `apply_measure_settlement` writes, and the two living in
+    different modules is exactly how such a pair drifts into always saying no."""
+    from canopy.agents.mapper import C6_DEMOTION_NOTE, WITHHELD_NOTE, _note
+    from canopy.models import c6_demoted_note
+
+    assert c6_demoted_note(f"{C6_DEMOTION_NOTE}: this outcome's measure is endpoint")
+    assert c6_demoted_note(_note("added by cross-check", f"{C6_DEMOTION_NOTE}: because"))
+    assert c6_demoted_note(WITHHELD_NOTE)
+    assert not c6_demoted_note("the paper calls this the alternative operationalization")
+    assert not c6_demoted_note("")
+
+
+def test_a_measure_the_map_settled_for_itself_can_be_taken_again(paper, protocol):
+    """THE BUG. A settled ruling closes the question, so the answer named nothing open; and the
+    settlement had already demoted the rival out of `_value_metrics`, so an answer naming it came
+    back "which none of the value locations carries". There was no record a reviewer could write
+    that would ever put the other measure back.
+
+    On the corpus this tool was validated against, the map settled 25 measures for itself and asked
+    about 2 — and gave one paper's cell `change_from_baseline` on one run and `endpoint` on the
+    next, a difference of an order of magnitude in the effect size, with no way to say which the
+    review wanted.
+    """
+    study = _settled_map(paper, protocol)
+    assert not study.open_questions                     # nothing blocked; the tool simply chose
+    assert settled_measure(study, study.datasets[0].dataset_id, "late_adaptation")
+
+    answered = apply_map_answers(study, [_measure_answer(study, winning_analysis_metric="endpoint",
+                                                         note="the window is the practice phase")])
+    outcome = answered.datasets[0].outcomes[0]
+    assert outcome.analysis_metric == "endpoint"
+    roles = {s.analysis_metric: s.role for s in outcome.sources if s.analysis_metric != "unknown"}
+    assert roles == {"endpoint": "value", "change_from_baseline": "alternate"}
+    assert "human" in outcome.measure_ruling
+    # …and the reversal is itself reversible: the decision belongs to whoever takes it last
+    back = apply_map_answers(answered, [_measure_answer(answered)])
+    assert back.datasets[0].outcomes[0].analysis_metric == "change_from_baseline"
+
+
+def test_reversing_a_measure_never_leaves_two_readings_readable(paper, protocol):
+    """C6's invariant survives the reversal: putting a demoted location back is a RE-settlement,
+    never an un-settlement. A state with both measures readable is the `metric_mixed` failure C6
+    exists to prevent, and the mechanism that corrects C6 must not reintroduce it."""
+    study = _settled_map(paper, protocol)
+    for metric in ("endpoint", "change_from_baseline"):
+        answered = apply_map_answers(study, [_measure_answer(study,
+                                                             winning_analysis_metric=metric)])
+        outcome = answered.datasets[0].outcomes[0]
+        readable = {s.analysis_metric for s in outcome.sources
+                    if s.role == "value" and s.analysis_metric != "unknown"}
+        assert readable == {metric}, metric
+        assert extraction_blocks(answered) == ({}, {})   # …and it still blocks nothing
+
+
+def test_a_measure_answer_that_settles_nothing_leaves_the_ruling_exactly_as_it_was(paper,
+                                                                                   protocol):
+    """An answer is read against the reopened outcome on a COPY. One that names a reading the map
+    does not carry must leave the map settled as the tool settled it — not half-reopened with both
+    measures readable, which would be worse than the ruling it failed to overturn."""
+    study = _settled_map(paper, protocol)
+    before = study.model_dump(mode="json")
+    answered = apply_map_answers(study, [_measure_answer(study,
+                                                         winning_analysis_metric="not_a_metric")])
+    assert answered.model_dump(mode="json") == before
+
+
+def test_the_map_says_why_it_refused_an_answer_rather_than_only_that_it_did(paper, protocol):
+    """D3's other half. `_consumed_seqs` may only retire an answer the map ACCEPTED, and a refused
+    answer that is merely "not consumed" sits on the page as "waiting for a re-run" through every
+    re-run there will ever be. The reason travels so the run can say what was wrong with it."""
+    study = _settled_map(paper, protocol)
+    key = ("which_measure", study.datasets[0].dataset_id, "late_adaptation")
+
+    good = map_answer_effects(study, [_measure_answer(study,
+                                                      winning_analysis_metric="endpoint")])
+    assert good[key] == ""
+    bad = map_answer_effects(study, [_measure_answer(study,
+                                                     winning_analysis_metric="not_a_metric")])
+    assert "not_a_metric" in bad[key] and bad[key] != ""
+    elsewhere = map_answer_effects(study, [_measure_answer(study, dataset_id="nobody:d9")])
+    assert elsewhere[("which_measure", "nobody:d9", "late_adaptation")]
+
+
+def test_an_alternate_the_mapper_wrote_is_never_put_back_by_a_measure_answer():
+    """A paper's own "DE (primary); IEE (alternative)" is the map's reading of the paper, not a
+    decision anyone took about this review. Restoring it would make `words_open` true with three
+    readings standing, the answer would settle nothing, and had it been persisted the run would
+    read both operationalizations into one cell — C6's failure, reintroduced by C6's cure."""
+    outcome = OutcomeSources(
+        outcome_key="late_adaptation",
+        measure_name="DE (primary); IEE (alternative operationalisation)",
+        sources=[
+            Source(kind=SourceKind.figure_bar, page=1, locator="Fig. 1A", figure_id="fig01",
+                   analysis_metric="endpoint", role="value"),
+            Source(kind=SourceKind.text_mean_sd, page=2, locator="Results, IEE paragraph",
+                   analysis_metric="endpoint", role="alternate",
+                   notes="the paper's own alternative operationalisation"),
+        ])
+    reopened = reopened_outcome(outcome)
+    assert [s.role for s in reopened.sources] == ["value", "alternate"]
+
+
+def test_agreeing_with_a_measure_the_tool_chose_changes_nothing_at_all(paper, protocol):
+    """A confirmation is not a re-settlement, and `read_measure_answer` cannot express one.
+
+    Its two shapes are both wrong for "yes, that one": a metric-only answer re-wins every location
+    that reads that metric, so once the ruling's demotions are reopened it puts back the very
+    readings the ruling set aside (one Vachon cell went from one readable location to three); and a
+    location-named answer demotes every other reading, which on an outcome printed one panel per
+    group sets aside the other group's panel and leaves a two-arm contrast with one arm. Agreement
+    is authority over nothing, so it touches nothing.
+    """
+    study = _settled_map(paper, protocol)
+    outcome = study.datasets[0].outcomes[0]
+    before = study.model_dump(mode="json")
+
+    effects: dict = {}
+    answered = apply_map_answers(
+        study, [_measure_answer(study, winning_analysis_metric=outcome.analysis_metric,
+                                note="I opened the figure; the tool is right")],
+        effects=effects)
+    now = answered.datasets[0].outcomes[0]
+    assert effects[("which_measure", study.datasets[0].dataset_id, "late_adaptation")] == ""
+    assert {s.role for s in now.sources} == {s.role for s in outcome.sources}
+    assert now.analysis_metric == outcome.analysis_metric
+    assert study.model_dump(mode="json") == before          # …and the map handed in is untouched
+    # the only thing that changed is the record of who has looked at it
+    assert "a human reviewer" in now.measure_ruling and "confirmed" in now.measure_ruling
+
+
+def test_a_metric_only_answer_still_settles_an_outcome_nobody_has_ruled_on(paper, protocol):
+    """…and the confirmation short-circuit may not swallow the ORIGINAL question. On an outcome with
+    no ruling there is nothing to agree with: `analysis_metric` is the mapper's own guess beside two
+    readable measures, and treating "that one" as agreement would close the question while leaving
+    both readable — the state C6 exists to prevent, reached by answering the question that prevents
+    it."""
+    study = _open_measure(paper, protocol)
+    outcome = study.datasets[0].outcomes[0]
+    assert not (outcome.measure_ruling or "").strip()
+    answered = apply_map_answers(study, [_measure_answer(study)])
+    settled = answered.datasets[0].outcomes[0]
+    assert {s.analysis_metric: s.role for s in settled.sources
+            if s.analysis_metric != "unknown"} == {"change_from_baseline": "value",
+                                                   "endpoint": "alternate"}
+    assert not answered.open_questions
