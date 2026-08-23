@@ -378,6 +378,34 @@ def _group_ready(group: GroupValues | None) -> bool:
     return centre is not None and (group.n or 0) >= 2 and _has_spread(group)
 
 
+def _group_gap(group: GroupValues | None) -> str:
+    """What actually stops this group from being ready — named, never templated.
+
+    The refusal used to be one fixed sentence, "no mean, group size and dispersion", whatever was
+    missing. On the run that surfaced this, a cell carried mean, n AND a numeric spread and was
+    refused only because the spread's TYPE was unknown — and the reviewer reading the fixed
+    sentence had no way to know that the one answer that would convert the row was "the bars are
+    SE". A diagnosis computed from the group is right for every future shape of the same failure.
+    """
+    if group is None:
+        return "was never read"
+    gaps: list[str] = []
+    centre = group.mean if group.mean is not None else group.median
+    if centre is None:
+        gaps.append("no mean")
+    if (group.n or 0) < 2:
+        gaps.append("no group size")
+    if not _has_spread(group):
+        if (group.dispersion_value is not None and group.dispersion_value > 0) \
+                or (group.ci_low is not None and group.ci_high is not None):
+            # the one shape whose cure is a TYPE, not a number: say so, or the cure stays hidden
+            gaps.append("a numeric spread is present but its type is unknown — nothing says "
+                        "whether the bars are SD, SE or a confidence interval")
+        else:
+            gaps.append("no dispersion")
+    return "; ".join(gaps) or "was never read"
+
+
 def _group_route_name(values: ResolvedValues) -> str:
     a, b = values.group_a, values.group_b
     modalities = {_modality(a.route), _modality(b.route)}
@@ -401,9 +429,9 @@ def available_routes(values: ResolvedValues) -> tuple[list[str], dict[str, str]]
     if _group_ready(values.group_a) and _group_ready(values.group_b):
         routes.append(_group_route_name(values))
     else:
-        missing = [key for key in ("A", "B") if not _group_ready(values.group(key))]
-        reasons["group_statistics"] = (f"group(s) {', '.join(missing)} have no mean, group size "
-                                       f"and dispersion")
+        gaps = [f"{key}: {_group_gap(values.group(key))}"
+                for key in ("A", "B") if not _group_ready(values.group(key))]
+        reasons["group_statistics"] = f"group(s) not ready — {'; '.join(gaps)}"
 
     stat = values.test_statistic
     if stat is not None and stat.stat_type in ("t", "F") and stat.value is not None:

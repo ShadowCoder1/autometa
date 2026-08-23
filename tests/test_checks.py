@@ -446,7 +446,10 @@ def test_checks_never_change_a_candidate():
 
 
 # --------------------------------------------------------------------------- task 16: P3 as split
-def _figure_cand(group="A", cal_status="confirmed", ticks=((0.0, 45.0), (100.0, 15.0)),
+def _figure_cand(group="A", cal_status="confirmed",
+                 # three rungs: these tests are about WITNESSES, and a two-rung default
+                 # would drag `calibration_two_point` into every one of them
+                 ticks=((0.0, 45.0), (50.0, 30.0), (100.0, 15.0)),
                  mean=31.3, agree=True, **kwargs) -> Candidate:
     provenance = {"figure_id": "fig03", "cal_status": cal_status, "mean_agreement": agree,
                   "cal_note": "an axis note",
@@ -1201,3 +1204,35 @@ def test_a_size_the_paper_calls_final_is_not_a_recruited_count():
     pages = ["Twenty Parkinson patients were recruited (20 patients). 4 Parkinson patients did "
              "not complete."]
     assert n_before_exclusions(pages, _sized(20), ["Parkinson patients"]) is not None
+
+
+def test_a_two_tick_calibration_is_flagged_whatever_its_witness_count():
+    """Two ticks are `fit_axis`'s own precondition — they define the affine map exactly — so the
+    fit's residual is zero by construction and verifies nothing. The third tick is the only thing
+    that ever checks linearity, and a two-tick fit of a log axis reads out linear silently. The
+    system reads figures with ZERO ladder (under `calibration_missing`), so a two-rung read is
+    legitimate too; what it may not be is silently trusted, whoever corroborated the two rungs.
+    """
+    from canopy.verify.checks import _check_calibration
+
+    def flags_for(ticks, status="confirmed"):
+        cand = Candidate(candidate_id="c", dataset_id="d", outcome_key="o", kind="group_stats",
+                         group="A", status="found", mean=1.0,
+                         pixel_provenance={"cal_status": status,
+                                           "cal": {"ticks": ticks, "scale": "linear"}})
+        out = []
+        _check_calibration(cand, out)
+        return {f.code for f in out}
+
+    two = [(10.0, 0.0), (110.0, 50.0)]
+    three = [(10.0, 0.0), (60.0, 25.0), (110.0, 50.0)]
+    assert "calibration_two_point" in flags_for(two)
+    assert "calibration_two_point" in flags_for(two, status="single_witness")
+    assert "calibration_two_point" not in flags_for(three)
+
+    # and the queue can act on it: the code is a capping flag with a question a person can answer
+    from canopy.review.questions import _FLAG_TO_KIND
+    from canopy.verify.confidence import CAPPING_FLAGS
+
+    assert "calibration_two_point" in CAPPING_FLAGS
+    assert ("calibration_two_point", "which_axis") in _FLAG_TO_KIND

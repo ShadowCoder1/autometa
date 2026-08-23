@@ -130,6 +130,9 @@ CHECK_SEVERITY: dict[str, str] = {
     "calibration_refuted": "error",
     "calibration_disputed": "error",
     "calibration_missing": "warn",
+    #: the winning calibration kept exactly two ticks: they define the affine map, and nothing
+    #: verifies its linearity — the reading is usable but rests on an unchecked assumption
+    "calibration_two_point": "warn",
     "mean_missing": "warn",
     "dispersion_unknown": "warn",
     "dispersion_missing": "warn",
@@ -478,6 +481,21 @@ def _check_calibration(cand: Candidate, out: list[CheckFlag]) -> None:
               f"no calibration of the value axis of {where} could be built at all, so nothing "
               f"independent checked that this number lies on the axis it was read from, and the "
               f"scale rests entirely on the readers ({note})", cid)
+    # …and INDEPENDENTLY of who corroborated it: a calibration that kept exactly two ticks is an
+    # exact line through two points, so its residual is zero BY CONSTRUCTION and says nothing.
+    # Two ticks are `fit_axis`'s own precondition — the reading is legitimate — but the third
+    # tick is the only thing that ever VERIFIES linearity, and a two-tick fit of a log axis
+    # reads out linear without a murmur. Flagged whatever the witness count, because a second
+    # witness agreeing on the same two rungs corroborates the rungs, not the shape of the axis
+    # between them.
+    # …but never on a record from before `cal_status` existed: those were scored under the old
+    # rules, and a new flag on an old stage file re-scores a run nobody re-ran (status "unknown"
+    # is exactly the old-record case; every current digitize write records a status).
+    cal = (cand.pixel_provenance or {}).get("cal")
+    if status != "unknown" and isinstance(cal, dict) and len(cal.get("ticks") or []) == 2:
+        _flag(out, "calibration_two_point",
+              f"the calibration of {where} kept exactly two ticks: they define the scale "
+              f"exactly, and nothing checks that the axis is linear between them", cid)
 
 
 def _descriptor(value: Any) -> tuple[str, str]:

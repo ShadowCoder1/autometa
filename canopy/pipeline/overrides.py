@@ -1346,6 +1346,7 @@ HUMAN_OVERRIDE = "human_override"
 
 VALUE_CLEARS_MEAN: frozenset[str] = frozenset({
     "axis_conflict", "calibration_disputed", "calibration_refuted", "calibration_single_witness",
+    "calibration_two_point",
     "calibration_missing", "value_outside_axis"})
 VALUE_CLEARS_SPREAD_TYPE: frozenset[str] = frozenset({
     "dispersion_type_from_legend", "figure_error_bar_unknown", "dispersion_type_conflict"})

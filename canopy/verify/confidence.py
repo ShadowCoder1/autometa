@@ -139,6 +139,7 @@ CAPPING_FLAGS: frozenset[str] = frozenset({
     #: no ladder for the value axis could be built at all: the numbers rest on the readers' own
     #: sense of the scale, and nothing contradicts them either
     "calibration_missing",
+    "calibration_two_point",
     #: the error-bar type came from the figure's legend because the map never determined one
     "dispersion_type_from_legend",
     #: the reader's words about this series and the markers the pixel pass found do not line up.
@@ -251,6 +252,7 @@ CALIBRATION_PENALTY: dict[str, float] = {
     #: the read-outs alone. "We could not establish the scale" must never cost less than "we
     #: established it with one witness".
     "calibration_missing": 0.16,
+    "calibration_two_point": 0.16,
 }
 
 #: `error`-severity codes that do NOT force a human on their own. `calibration_refuted` is an
@@ -276,6 +278,9 @@ CAP_REASONS: dict[str, str] = {
     "calibration_missing": ("no calibration of this figure's value axis could be built at all, "
                             "so the scale these numbers were read against rests entirely on the "
                             "readers and nothing checked it"),
+    "calibration_two_point": ("the axis calibration kept exactly two ticks — they define the "
+                              "scale exactly, and nothing checks that the axis is linear between "
+                              "them"),
     "collapsed_across_x": ("this is an average across a categorical axis and its dispersion is an "
                            "approximation, not the paper's own"),
     "categorical_point_read": ("this is the single plotted point at the x category the locator "

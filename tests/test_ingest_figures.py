@@ -848,3 +848,68 @@ def test_a_raster_figure_whose_native_density_wins_the_dpi_choice_still_renders(
     fig_dpi, nat_w, width = 300, 1000, 500.0
     raw = max(72, min(fig_dpi, 72 * nat_w / max(width, 1) * ingest_pdf_module.RASTER_UPSCALE))
     assert isinstance(int(round(raw)), int)
+
+
+def _page_with(draw_box=None, caption_rect=None, caption_text="", far_text=None):
+    """A one-page PDF: an optional cluster of vector strokes and an optional caption block."""
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    if draw_box is not None:
+        x0, y0, x1, y1 = draw_box
+        for i in range(24):                       # >= 15 overlapping drawings = one cluster
+            frac = i / 23.0
+            page.draw_line((x0, y0 + frac * (y1 - y0)), (x1, y0 + frac * (y1 - y0)))
+        page.draw_rect((x0, y0, x1, y1))
+    if caption_rect is not None:
+        page.insert_textbox(pymupdf.Rect(*caption_rect), caption_text, fontsize=9)
+    if far_text is not None:
+        page.insert_textbox(pymupdf.Rect(*far_text[0]), far_text[1], fontsize=9)
+    return doc, page
+
+
+def test_a_side_caption_taller_than_its_panel_still_attaches():
+    """The side band is measured against the SMALLER of caption and graphic: the two share rows,
+    so the smaller box must spend half its height beside the other. Measured against the caption
+    alone, a margin caption taller than the panel it names could never attach — the panels became
+    loose, the area gate dropped them (a panel is a few percent of the page), and the paid readers
+    were handed the empty column above the caption instead of the figure."""
+    from canopy.ingest.pdf import _figure_regions
+
+    # panel 100x60 in the left column; caption in the adjacent column, 12pt gap, 150pt tall —
+    # vertical overlap is the panel's full 60pt: under 0.5*caption (75) yet over 0.5*panel (30)
+    caption = ("Fig. 3. Learning time course in the horizontal and sagittal conditions during "
+               "the rotation phase, with average reach direction for the right and the left limb "
+               "shown separately across the baseline and rotation blocks of the experiment, "
+               "together with the average amount of explicit learning measured from the "
+               "verbally reported aiming direction and the average implicit learning computed "
+               "from the difference between the actual reach direction and the reported aiming "
+               "location for every participant of both groups.")
+    doc, page = _page_with(draw_box=(70, 200, 170, 260),
+                           caption_rect=(182, 180, 320, 420), caption_text=caption)
+    regions = _figure_regions(page, 2)
+    attached = [r for r in regions if r["kind"] != "caption_only" and r["caption"]]
+    assert attached, [r["kind"] for r in regions]
+    assert "Learning time course" in attached[0]["caption"]
+    doc.close()
+
+
+def test_a_caption_only_region_counts_the_primitives_under_it():
+    """`caption_only` used to hardcode `n_images=0, n_drawings=0` — a claim, not a measurement.
+    Those two numbers are the record's only statement of whether anything readable is under the
+    rect, and the digitizer now refuses to pay for a region that measures zero of both; so a
+    hardcoded zero over real ink would turn a readable region into a refused one, and a real zero
+    must stay zero so the refusal fires."""
+    from canopy.ingest.pdf import _figure_regions
+
+    caption = ("Fig. 7. Overview of the experimental apparatus and the sequence of trial phases "
+               "used in every condition of the study, including all timing parameters.")
+    # a caption with its figure genuinely elsewhere: body text above, no graphics near
+    doc, page = _page_with(caption_rect=(70, 500, 320, 560), caption_text=caption,
+                           far_text=((70, 300, 320, 480),
+                                     "Participants completed the task described previously. " * 8))
+    regions = _figure_regions(page, 3)
+    only = [r for r in regions if r["kind"] == "caption_only"]
+    assert only and only[0]["n_images"] == 0 and only[0]["n_drawings"] == 0
+    doc.close()

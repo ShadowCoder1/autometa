@@ -128,6 +128,7 @@ _FLAG_TO_KIND: tuple[tuple[str, str], ...] = (
     ("axis_conflict", "which_axis"),
     ("calibration_disputed", "which_axis"),
     ("calibration_refuted", "which_axis"),
+    ("calibration_two_point", "which_axis"),
     ("value_outside_axis", "which_value"),
     ("sign_mismatch", "which_value"),
     #: D2: two places in one figure were read and they gave two numbers, so the vote refused to
@@ -155,6 +156,14 @@ _FLAG_TO_KIND: tuple[tuple[str, str], ...] = (
     ("orientation_direction_conflict", "orientation"),
     ("orientation_unknown", "orientation"),
 )
+
+#: the kinds whose answer writes a group's own statistics — the only answers `resolve` can use to
+#: build a row where it refused to. On a `not_convertible` row these outrank the withholding
+#: preference in `_kind`: a capping code ranks doubts about a NUMBER, and a refused row has no
+#: number for a doubt to be about, so asking the capping question first retires a card while the
+#: row stays in neither analysis line.
+_SUPPLIES_THE_RESOLVER: frozenset[str] = frozenset({
+    "error_bar_type", "needs_group_values", "number_unusable", "dispersion_doubt"})
 
 #: the findings that make `needs_group_values` a question about a printed statistic's degrees of
 #: freedom rather than about a row that could not be built at all. The two share a kind and need
@@ -813,6 +822,19 @@ def _kind(verdict: Mapping[str, Any], flags: Sequence[str],
         return "orientation"
     matched = [(code, kind) for code, kind in _FLAG_TO_KIND if code in flags]
     withholding = [pair for pair in matched if pair[0] in (holding or set())]
+    if _built_nothing(row) and not converted:
+        # The rule in this docstring, applied to a row that BUILT NOTHING: the hold is the
+        # resolver's refusal, so the question must be one whose answer the resolver can use. The
+        # withholding-first preference below ranks doubts about a number — and this row has no
+        # number for a doubt to be about. On the run that surfaced this, a cell carrying a full
+        # reading (mean, spread, n) was refused only for its unknown error-bar type; the capping
+        # `series_marker_mismatch` outranked the warn-level `figure_error_bar_unknown`, so the
+        # reviewer was asked which series the number belongs to — an answer that converts nothing
+        # — while the one question that un-refuses the row was never asked. Identity doubts are
+        # still real; they are simply the NEXT question, once a row exists to have an identity.
+        for _, kind in matched:
+            if kind in _SUPPLIES_THE_RESOLVER:
+                return kind
     if withholding or matched:
         return (withholding or matched)[0][1]
     if not valued:

@@ -823,8 +823,28 @@ def _parse_readout(result: ToolLoopResult, model: str, variant: str,
     ticks = [float(t) for t in (data.get("tick_labels") or []) if _number(t) is not None]
     groups, seen, twice = _one_row_per_group(groups)
 
+    status = str(data.get("status") or "found")
+    malformed = ""
+    # …and a submit whose rows exist but carry no numbers is the same silent zero wearing rows:
+    # nothing downstream can read a value out of it, and "found" would count it as an answered
+    # reader all the same.
+    valueless = groups and all(g.mean is None and not g.points for g in groups)
+    if valueless and status == "found":
+        status = "ambiguous"
+        malformed = ("every group row of this submit is empty of values, so it is a failed "
+                     "read-out, not an empty success")
+    if not groups and status == "found":
+        # The schema REQUIRES `groups`, so a "found" that carries none is a malformed submit, not
+        # a reading — and defaulting it to "found" made it count downstream as an answered reader
+        # that answered nothing. That is the shape of a paid reading silently becoming zero
+        # candidates. Demoted on the payload's shape alone, never on any paper: a reader that
+        # found the target reports the groups it found.
+        status = "ambiguous"
+        malformed = ("this submit carried no group readings at all, so it is a failed read-out, "
+                     "not an empty success")
+
     return ReadOut(
-        status=str(data.get("status") or "found"), groups=groups,
+        status=status, groups=groups,
         legend_says=str(data.get("legend_says") or ""), tick_labels=ticks,
         pixel_resolution_estimate=_number(data.get("pixel_resolution_estimate")),
         unit=str(data.get("unit") or ""), panel=str(data.get("panel") or ""),
@@ -839,6 +859,7 @@ def _parse_readout(result: ToolLoopResult, model: str, variant: str,
         confidence=float(_number(data.get("confidence")) or 0.0),
         notes="; ".join(x for x in (
             str(data.get("notes") or ""),
+            malformed,
             (f"this reader answered more than once about group(s) {', '.join(twice)}; the first "
              f"answer carrying a value was kept — one reader is one witness" if twice else "")
         ) if x),
@@ -889,11 +910,21 @@ def _parse_coords(result: ToolLoopResult, view: FigureView, model: str) -> Coord
             cap_top_px=view.crop_px(_number(row.get("cap_top_px"))),
             cap_bottom_px=view.crop_px(_number(row.get("cap_bottom_px"))),
             notes=str(row.get("notes") or "")))
+    status = str(data.get("status") or "found")
+    malformed = ""
+    if not groups and status == "found":
+        # the same rule as `_parse_readout`: a "found" that reports no group is a malformed
+        # submit, not a reading, and defaulting it to "found" counts a failed paid read-out as an
+        # answered one
+        status = "ambiguous"
+        malformed = ("this submit carried no group coordinates at all, so it is a failed "
+                     "read-out, not an empty success")
     return CoordReadout(
-        status=str(data.get("status") or "found"), ticks=ticks, groups=groups,
+        status=status, ticks=ticks, groups=groups,
         unit=str(data.get("unit") or ""), panel=str(data.get("panel") or ""),
         confidence=float(_number(data.get("confidence")) or 0.0),
-        notes=str(data.get("notes") or ""), model=model, scale=view.scale,
+        notes="; ".join(x for x in (str(data.get("notes") or ""), malformed) if x),
+        model=model, scale=view.scale,
         call_ids=list(result.call_ids), tool_calls=list(result.tool_calls),
         cost_usd=result.cost_usd, turns=result.turns)
 

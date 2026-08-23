@@ -501,7 +501,9 @@ def test_routes_passed_over_are_listed_with_their_reason():
     assert record.route == "test_statistic"
     for skipped in ("text_mean_sd", "table", "text_mean_se_ci", "figure"):
         assert skipped in record.routes_rejected, record.routes_rejected
-        assert "dispersion" in record.routes_rejected[skipped]
+        # the diagnosis is computed per group, and these groups were never read at all — the
+        # reason must say that, not claim a specific missing statistic
+        assert "was never read" in record.routes_rejected[skipped]
 
 
 def test_available_routes_reports_why_a_route_is_missing():
@@ -1204,3 +1206,29 @@ def test_a_group_size_never_rescues_a_missing_mean():
     values.group_a.mean = None
     assert _fill_group_n(values, spec) == ["B"]
     assert values.group_a.n is None
+
+
+def test_an_unknown_typed_spread_names_the_type_gap_not_a_missing_dispersion():
+    """A cell can carry a full reading — mean, n, a numeric spread — and still be refused, because
+    nothing says whether the spread is an SD, an SE or a confidence interval. The refusal used to
+    print one fixed sentence, "no mean, group size and dispersion", which was false three times
+    over for that shape and hid the one answer that converts the row ("the bars are SE").
+
+    The refusal itself is correct and must stay: reading an unknown-typed spread as SD when it is
+    SE moves d by roughly the square root of n, silently — the exact error class the tool exists
+    to prevent.
+    """
+    values = ResolvedValues(
+        higher_is_better=True,
+        group_a=GroupValues(mean=0.0469, dispersion_value=0.0114,
+                            dispersion_type=DispersionType.UNKNOWN, n=6),
+        group_b=GroupValues(mean=0.0354, dispersion_value=0.0049,
+                            dispersion_type=DispersionType.UNKNOWN, n=6))
+    routes, reasons = available_routes(values)
+    assert routes == []                                   # still refused — that part is right
+    why = reasons["group_statistics"]
+    assert "its type is unknown" in why and "SD, SE or a confidence interval" in why
+    assert "no mean" not in why and "no group size" not in why
+    # …and a genuinely empty group is still described as what it is
+    _, empty = available_routes(ResolvedValues(higher_is_better=True))
+    assert "was never read" in empty["group_statistics"]

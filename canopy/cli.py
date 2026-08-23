@@ -134,6 +134,10 @@ def run(
         help="Buy one extra orientation ballot per measure the two readers could not settle "
              "(default). --no-tiebreak leaves the direction a question instead."),
     profile: Optional[str] = typer.Option(None, "--profile",
+                                          # NOTE: replaces the protocol's whole stats block —
+                                          # typed stats in the YAML are discarded. The web UI's
+                                          # picker MERGES instead (typed stats win). Align when
+                                          # the CLI grows a raw-YAML parse of the stats block.
                                           help=f"Statistics profile: {available_profiles()}"),
     quiet: bool = typer.Option(False, "--quiet", help="Only print the summary."),
 ) -> None:

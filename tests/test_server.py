@@ -1602,3 +1602,41 @@ def test_a_hidden_protocol_pane_stops_demanding_its_fields():
     body = js.split("function demandFields(")[1].split("\n  }")[0]
     assert "field.required = false" in body and "data-was-required" in body
     assert "field.required = true" in body          # …and gives it back on the way in
+
+
+def test_a_named_profile_in_uploaded_yaml_survives_the_run_dir_roundtrip(tmp_path):
+    """The web UI's YAML path used to re-dump the parsed protocol into the run directory. A full
+    `model_dump` writes every field, a later `load_protocol` counts every field in the YAML as
+    explicitly chosen, and `apply_profile` becomes a no-op — so `profile: metafor` (Hedges' g,
+    z prediction interval) was recorded and executed as the class defaults (Cohen's d, V), and a
+    surviving row would have been Cohen's d labelled Hedges' g.
+
+    The run directory now keeps the uploaded document verbatim (the CLI's copyfile rule), so the
+    reload resolves the profile with true explicitness; and `dump_protocol` itself resolves before
+    writing, so no writer can freeze unresolved defaults again.
+    """
+    from canopy.protocol import dump_protocol, load_protocol
+    from canopy.models import Protocol
+
+    text = (
+        "title: Roundtrip\n"
+        "group_a: {key: A, label: Old, definition: older}\n"
+        "group_b: {key: B, label: Young, definition: younger}\n"
+        "outcomes:\n"
+        "  - {key: o1, label: O, definition: outcome}\n"
+        "stats:\n"
+        "  profile: metafor\n"
+        "  hakn: true\n"                                   # a typed setting beside the profile
+    )
+    src = tmp_path / "protocol.yaml"
+    src.write_text(text)
+    loaded = load_protocol(src)
+    assert loaded.stats.estimator == "hedges" and loaded.stats.pi_method == "z"
+    assert loaded.stats.hakn is True                       # the typed value beat the profile
+
+    # …and a dump/load cycle is a fixed point that keeps the resolution
+    dumped = dump_protocol(Protocol.model_validate(
+        __import__("yaml").safe_load(text)), tmp_path / "resolved.yaml")
+    again = load_protocol(dumped)
+    assert again.stats.estimator == "hedges" and again.stats.pi_method == "z"
+    assert again.stats.hakn is True

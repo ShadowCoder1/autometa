@@ -101,6 +101,12 @@ def _parse_protocol(text: str) -> Protocol:
     except ValidationError as exc:
         raise HTTPException(status_code=422,
                             detail=f"the protocol is incomplete — {_validation_message(exc)}")
+    if protocol.stats.profile not in available_profiles():
+        # caught at upload, where the person who named it is still looking: left for the run to
+        # discover, the same typo is a paid job that dies on its first protocol load
+        raise HTTPException(status_code=422,
+                            detail=f"unknown stats profile {protocol.stats.profile!r} "
+                                   f"(available: {available_profiles()})")
     return protocol
 
 
@@ -481,14 +487,29 @@ def create_app(runs_dir: str | Path = "runs", *,
 
         parsed = _parse_protocol(text)
         if chosen.profile:
-            # the same rule as `canopy run --profile`: an explicit choice replaces the
-            # protocol's own statistics block, and the run directory keeps what it used
-            parsed.stats = apply_profile(StatsSettings(profile=chosen.profile))
+            # the picker's choice wins where it speaks and the protocol's own typed stats win
+            # where they do: rebuild from the fields the YAML actually set, under the picked
+            # profile, and resolve. (The guided form sends only `profile` in its stats block, so
+            # for it this is the old wholesale replacement; a pasted protocol that also picked a
+            # profile keeps its typed settings, which replacement silently discarded.)
+            typed = {k: getattr(parsed.stats, k)
+                     for k in parsed.stats.model_fields_set if k != "profile"}
+            parsed.stats = apply_profile(StatsSettings(profile=chosen.profile, **typed))
 
         job = manager.create(title=parsed.title or chosen.name or "review",
                              options=chosen.model_dump())
         try:
-            dump_protocol(parsed, job.run_dir / "protocol.yaml")
+            if chosen.profile:
+                dump_protocol(parsed, job.run_dir / "protocol.yaml")
+            else:
+                # the same rule as the CLI's copyfile branch: the run keeps the document the
+                # person uploaded, verbatim. A re-dump manufactures explicitness — every field of
+                # a full `model_dump` reads back as explicitly chosen, so `apply_profile` becomes
+                # a no-op and the class defaults are frozen in as if somebody picked them; this
+                # run-creation path is how a protocol asking for Hedges' g via `profile: metafor`
+                # produced runs recorded as `estimator: cohen`. The verbatim file also preserves
+                # the uploader's comments, which are the protocol's own audit trail.
+                (job.run_dir / "protocol.yaml").write_text(text, encoding="utf-8")
             saved: dict[str, str] = {}
             remaining = float(app.state.max_total_bytes)
             for upload in files:

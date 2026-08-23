@@ -102,9 +102,21 @@ def load_protocol(path: str | Path) -> Protocol:
 
 
 def dump_protocol(protocol: Protocol, path: str | Path) -> Path:
-    """Write a protocol back to YAML (used by the CLI/UI protocol editor)."""
+    """Write a protocol back to YAML (used by the CLI/UI protocol editor).
+
+    A dumped protocol is a RESOLVED protocol. `model_dump` writes every field, so a later
+    `load_protocol` finds them all in the YAML, counts them all as explicit, and `apply_profile`
+    becomes a no-op — the dump manufactures explicitness. A dump taken before the profile was
+    applied therefore freezes the class defaults as if somebody chose them: the web UI's YAML
+    path did exactly that, and a run whose protocol asked for Hedges' g via `profile: metafor`
+    would have computed Cohen's d and labelled it Hedges' g. Resolving here makes the only full
+    dump anyone can write one on which `apply_profile` is already a fixed point; callers that
+    resolved already (the CLI, `load_protocol` round-trips) are unchanged.
+    """
+    resolved = protocol.model_copy(deep=True)
+    resolved.stats = apply_profile(resolved.stats)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(protocol.model_dump(mode="json"), sort_keys=False,
+    path.write_text(yaml.safe_dump(resolved.model_dump(mode="json"), sort_keys=False,
                                    allow_unicode=True, width=100))
     return path

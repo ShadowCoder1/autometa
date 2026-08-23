@@ -2598,3 +2598,34 @@ def test_confirming_the_tools_measure_is_answered_and_reversing_it_says_what_the
     assert "--resume" in changed["pending_why"]
     assert "do not stand as a fallback" in changed["pending_why"]
     assert "never bought" not in changed["pending_why"]
+
+
+def test_a_refused_row_is_asked_the_question_that_can_unblock_it():
+    """`_kind`'s own rule, applied to a row that BUILT NOTHING: the hold is the resolver's
+    refusal, so the question must be one whose answer the resolver can use.
+
+    On the run that surfaced this, a cell carried a full reading (mean, spread, n) and was refused
+    only for its unknown error-bar type. `series_marker_mismatch` is a capping code, so the
+    withholding preference asked "which series is this number?" — an answer that converts nothing
+    — while `error_bar_type`, whose answer un-refuses the row, was never asked.
+    """
+    from canopy.review.questions import _holding_codes, _kind
+
+    verdict = {"higher_is_better": False, "flags": [
+        {"code": "series_marker_mismatch", "severity": "warn"},   # capping: doubts the identity
+        {"code": "figure_error_bar_unknown", "severity": "warn"}]}
+    flags = [f["code"] for f in verdict["flags"]]
+    valued = [{"mean": 0.0469, "candidate_id": "c1"}]
+    refused = {"route": "not_convertible", "in_best_guess": False}
+
+    # the row built nothing: ask for what the resolver lacks, not about the number's identity
+    assert _kind(verdict, flags, valued, _holding_codes(verdict), row=refused) == "error_bar_type"
+    # the same cell with a CONVERTED row is held by the identity doubt again — the row has a
+    # number now, and whose number it is becomes the question
+    built = {"route": "figure", "d": -0.4}
+    assert _kind(verdict, flags, valued, _holding_codes(verdict), row=built) == "which_series"
+    # …and a refused row whose flags name nothing the resolver can use keeps the old behaviour
+    identity_only = {"higher_is_better": False, "flags": [
+        {"code": "series_marker_mismatch", "severity": "warn"}]}
+    assert _kind(identity_only, ["series_marker_mismatch"], valued,
+                 _holding_codes(identity_only), row=refused) == "which_series"

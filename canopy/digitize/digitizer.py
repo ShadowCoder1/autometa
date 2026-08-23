@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-from ..ingest.pdf import (FigureRegion, MIN_PANEL_NUMERIC, PanelRegion, PaperRecord,
+from ..ingest.pdf import (FigureRegion, MIN_PANEL_CALIBRATED, PanelRegion, PaperRecord,
                           caption_panels)
 from ..llm.client import LLMClient
 from ..models import (Candidate, DatasetSpec, DigitizeSettings, DispersionType, Source,
@@ -2294,6 +2294,24 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     crop = _asset(paper, fig.crop_png)
     work = Path(out_dir) if out_dir is not None else crop.parent
     work.mkdir(parents=True, exist_ok=True)
+    # Decided BEFORE any model call: money is only spent where marks exist to read. A region whose
+    # own record measures zero image placements AND zero drawing primitives is provably text — an
+    # ingest fallback proposed from a caption alone — and on one real run every reader sent to
+    # such a crop paid to report, correctly, that there was no plot in it ($2.59 across 22 blind
+    # reads, two readers each time). The record stays as map evidence; only pixel reads are
+    # refused, and the reason names the re-acquisition as the cure rather than a re-read.
+    if fig.primitives_measured and fig.n_images == 0 and fig.n_drawings == 0:
+        reason = (f"{fig.id} contains no graphic primitives at all — no image placements and no "
+                  f"vector drawings — so there is no plot in it for a reader to read: the region "
+                  f"was proposed from its caption alone, and the figure it names is elsewhere on "
+                  f"the page (unattached or split at ingest). Re-acquire the crop (the whole "
+                  f"page is the fallback) rather than paying a reader for a picture that is "
+                  f"provably text")
+        provenance = {"figure_id": fig.id, "figure_kind": fig.kind, "crop_dpi": fig.crop_dpi,
+                      "region_without_graphics": True, "needs_review": True,
+                      "needs_review_reason": reason, "prompt_version": PROMPT_VERSION,
+                      "readouts_bought": 0}
+        return _no_value(fig, target, paper, source, dataset, crop, reason, provenance, result)
     # P6's OFF path, decided BEFORE any model call. A figure whose x axis is a set of conditions
     # carries the outcome as the average across that axis; reading one point of it is a different
     # number, not a less precise one, so the cell says it cannot be converted rather than
@@ -2947,7 +2965,7 @@ def _panel_uncalibrated(fig: FigureRegion, target: TargetSpec, paper: PaperRecor
 
     `n_ladder` counts the rungs of the longest printed LADDER inside THIS panel's rect — a
     roughly collinear, value-monotone column, not three bare numbers anywhere in the rect. Fewer
-    than `MIN_PANEL_NUMERIC` and there is no axis to calibrate against: whatever a reader returned
+    than `MIN_PANEL_CALIBRATED` and there is no axis to calibrate against: whatever a reader returned
     would be scaled from a neighbouring panel's ladder, which is a different quantity in the same
     units. A figure that carries no ladder ANYWHERE (a scanned raster, a setup schematic) never
     reaches here: the assertion has no premise there and is skipped rather than failed.
@@ -2955,7 +2973,7 @@ def _panel_uncalibrated(fig: FigureRegion, target: TargetSpec, paper: PaperRecor
     named = panel_info.get("panel_used") or fig.id
     reason = (f"{named} carries a printed ladder of "
               f"{panel_info.get('panel_ladder_labels', 0)} label(s) inside its own rect, fewer "
-              f"than the {MIN_PANEL_NUMERIC} an axis needs to be calibrated from the figure's "
+              f"than the {MIN_PANEL_CALIBRATED} an axis needs to be calibrated from the figure's "
               f"own text. A value read here would be scaled with a ladder that belongs "
               f"to another panel. Re-acquire the crop (the whole page is the fallback) rather "
               f"than paying a reader for a number the picture cannot support")

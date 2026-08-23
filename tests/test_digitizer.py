@@ -3553,3 +3553,81 @@ def test_a_single_point_is_not_whatever_category_the_source_asked_for():
     unlabelled = row(("", 7.0))
     assert _locatable_point(unlabelled, "without strategy")
     assert _row_at_locator_category(unlabelled, "without strategy").mean == 7.0
+
+
+def test_a_submit_without_groups_is_a_failed_read_not_an_empty_found():
+    """The schema requires `groups`, so a "found" carrying none is a malformed submit. Defaulting
+    it to "found" made it count downstream as an answered reader that answered nothing — the shape
+    of a paid reading silently becoming zero candidates, which is how one cell of a real run lost
+    its extraction with no warning and no record of the spend."""
+    from types import SimpleNamespace
+
+    from canopy.digitize.vlm import _parse_readout
+
+    def _loop(parsed):
+        return SimpleNamespace(parsed=parsed, call_ids=[], tool_calls=[],
+                               cost_usd=0.0, turns=1)
+
+    empty = _loop({"status": "found", "groups": []})
+    out = _parse_readout(empty, model="m", variant="v")
+    assert out.status == "ambiguous"
+    assert "failed read-out" in out.notes
+
+    # a submit that DID report readings keeps its own status, and an explicit non-found
+    # empty submit ("the target is not here") is not rewritten either
+    real = _loop({"status": "found", "groups": [
+        {"group": "A", "mean": 1.5, "confidence": 0.9}]})
+    assert _parse_readout(real, model="m", variant="v").status == "found"
+    honest = _loop({"status": "not_on_these_pages", "groups": []})
+    assert _parse_readout(honest, model="m", variant="v").status == "not_on_these_pages"
+
+
+def test_a_region_with_no_graphic_primitives_buys_no_readouts(tmp_path):
+    """Money is only spent where marks exist to read. An ingest fallback proposed from a caption
+    alone measures zero image placements and zero drawing primitives — it is provably text — and
+    on a real run every reader sent to such a crop paid to report, correctly, that there was no
+    plot in it. The refusal happens before the first model call, keeps the region as map
+    evidence, and names re-acquisition (the whole page) as the cure."""
+    png = tmp_path / "figures" / "fig01.png"
+    png.parent.mkdir(parents=True)
+    import numpy as np
+    from PIL import Image
+    Image.fromarray(np.full((80, 200, 3), 255, dtype=np.uint8)).save(png)
+
+    fig = FigureRegion(
+        id="fig01", page=1, bbox=Bbox(0.0, 0.0, 360.0, 288.0),
+        caption="Fig. 1. Learning time course.", label="Fig. 1", kind="caption_only",
+        n_images=0, n_drawings=0, native_px=None,
+        crop_png="figures/fig01.png", claude_png="figures/fig01.png",
+        crop_dpi=150.0, claude_scale=1.0, confidence=0.3,
+        # measured, not hardcoded: the refusal fires only on a measurement, so an old record's
+        # hardcoded 0/0 (which may sit over a readable figure) is never refused on resume
+        primitives_measured=True)
+    paper = PaperRecord(
+        sha256="0" * 64, source_path="synthetic.pdf", filename="synthetic.pdf", n_pages=1,
+        title="synthetic", doi="", first_page_text="", pages=[], figures=[fig], tables=[],
+        has_text_layer=False, out_dir=str(tmp_path))
+
+    class _NeverCalled:
+        def __getattr__(self, name):
+            raise AssertionError("a region with no graphics must buy no model call")
+
+    out = digitize(_NeverCalled(), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, caption=fig.caption)
+    cands = out.candidates if hasattr(out, "candidates") else out
+    assert cands and all(c.mean is None and c.status == "ambiguous" for c in cands)
+    assert all("no graphic primitives" in (c.notes or "") for c in cands)
+    prov = cands[0].pixel_provenance or {}
+    assert prov.get("region_without_graphics") is True and prov.get("readouts_bought") == 0
+
+    # …and an OLD record — 0/0 hardcoded before the counts were measured — is never refused on
+    # its numbers alone: three such records on disk sit over readable figures
+    legacy = FigureRegion(**{**{f: getattr(fig, f) for f in fig.__dataclass_fields__},
+                             "primitives_measured": False})
+    try:
+        digitize(_NeverCalled(), paper, legacy, TARGET, source=SOURCE, dataset=DATASET,
+                 out_dir=tmp_path, caption=fig.caption)
+    except AssertionError as exc:
+        assert "must buy no model call" in str(exc)     # it went on to try a real read
+    else:
+        raise AssertionError("a hardcoded 0/0 record must not trigger the refusal")

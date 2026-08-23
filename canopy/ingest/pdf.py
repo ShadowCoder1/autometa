@@ -57,6 +57,14 @@ NUMERIC_WORD_RE = re.compile(r"^[+\-−–]?\d+(?:[.,]\d+)?\s*[%°]?$")
 #: named panel was not even in the crop). The count is per panel and never global — a global count
 #: is satisfied by the x-axis labels alone, which calibrate nothing on the value axis.
 MIN_PANEL_NUMERIC = 3
+#: …and how many rungs let a PANEL be read against its own ladder. Two, because two ticks are
+#: `calibrate.fit_axis`'s own precondition — they define the affine map exactly; the third rung
+#: only VERIFIES linearity, and the system already reads figures with ZERO ladder (under
+#: `calibration_missing`), so refusing at two while reading at zero defended nothing. What the
+#: original guard exists for — a crop scaled with a NEIGHBOURING panel's ladder — needs its own
+#: rungs to be IN the panel's rect, which both thresholds require equally. A two-rung read is
+#: capped and flagged (`calibration_two_point`), never silently trusted.
+MIN_PANEL_CALIBRATED = 2
 #: pad on the edges that are not grown to a landmark
 PANEL_PAD = 6.0
 #: how far a panel's LOWER edge may reach past its drawing cluster, when a caption block does not
@@ -146,7 +154,7 @@ class PanelRegion:
     letter: str                     # "a" — ordinal position in reading order, or the caption's own
     bbox: Bbox                      # PDF points, page coords (grown like the region)
     n_numeric: int                  # numeric words whose centres fall inside THIS panel's rect
-    calibrated: bool                # n_ladder >= MIN_PANEL_NUMERIC, or the region carries no ladder
+    calibrated: bool                # n_ladder >= MIN_PANEL_CALIBRATED, or the region carries no ladder
     #: the longest LADDER among those words — a roughly collinear, value-monotone column. Three
     #: bare numbers anywhere in the rect are not an axis: Cressman 2010's Fig. 1 is an
     #: experimental-setup schematic with no value axis at all and its annotations
@@ -195,6 +203,11 @@ class FigureRegion:
     #: against `panels`, it is the page's own answer to "did ingestion find every panel?"
     caption_panels: list[str] = field(default_factory=list)
 
+    #: True iff `n_images`/`n_drawings` were MEASURED against the page. Records written before
+    #: this field hardcoded 0/0 on every caption_only region — a claim, not a measurement — and at
+    #: least three such regions on disk sit over readable figures. The digitizer's no-graphics
+    #: refusal requires this, so an old run's resume can never refuse a figure on a hardcoded zero.
+    primitives_measured: bool = False
 
 @dataclass
 class PageRecord:
@@ -799,7 +812,7 @@ def _panels_of(rects: list[pymupdf.Rect], cap: pymupdf.Rect | None, words: list,
                 sub, ladder = wide, [m[0] for m in found]
         out.append(dict(rect=sub, n_numeric=len(_numeric_words(words, sub)),
                         n_ladder=len(ladder),
-                        calibrated=len(ladder) >= MIN_PANEL_NUMERIC))
+                        calibrated=len(ladder) >= MIN_PANEL_CALIBRATED))
     return out
 
 
@@ -830,7 +843,7 @@ def _whole_region_panel(rect: pymupdf.Rect, words: list) -> list[dict]:
     numeric = _numeric_words(words, rect)
     return [dict(rect=pymupdf.Rect(rect), letter="a", n_numeric=len(numeric),
                  n_ladder=len(ladder),
-                 calibrated=len(ladder) >= MIN_PANEL_NUMERIC or not numeric)]
+                 calibrated=len(ladder) >= MIN_PANEL_CALIBRATED or not numeric)]
 
 
 def _enforce_contiguity(candidates: list[dict], choice: dict, ranked: dict) -> None:
@@ -881,8 +894,16 @@ def _figure_regions(page: pymupdf.Page, page_no: int) -> list[dict]:
     W, H = page.rect.width, page.rect.height
     img_rects: list[pymupdf.Rect] = []
     native: dict[tuple[int, int], tuple[int, int]] = {}
+    #: every image placement, unfiltered — what the caption_only MEASUREMENT counts. The detector
+    #: below excludes full-page placements (a scanned page is not a figure candidate), but a
+    #: caption sitting on a full-page scan still has readable ink above it, and measuring with the
+    #: filtered list would refuse every figure of a scanned journal as "provably text".
+    #: Hairline exclusions live at the measurement site: a running-head rule (page-wide, flat) is
+    #: page furniture, and one of them under a caption_only rect must not dodge the refusal.
+    raw_img_rects: list[pymupdf.Rect] = []
     for im in page.get_images(full=True):
         for r in page.get_image_rects(im[0]):
+            raw_img_rects.append(pymupdf.Rect(r))
             if r.width >= 40 and r.height >= 40 and r.width < W * 0.98:
                 img_rects.append(pymupdf.Rect(r))
                 native[(round(r.x0), round(r.y0))] = (im[2], im[3])
@@ -931,9 +952,16 @@ def _figure_regions(page: pymupdf.Page, page_no: int) -> list[dict]:
                     dist, rel = max(above, 0) + 30, "above"
                 elif vert > 0 and cap_rect.y0 > r.y0 + 0.4 * r.height:
                     dist, rel = 20, "inside"        # caption inside the lower part of a wide figure's span
-            elif vert > 0.5 * cap_rect.height:
+            elif vert > 0.5 * min(cap_rect.height, r.height):
+                # side (margin) caption: the caption and its graphic share rows, so the SMALLER
+                # box must spend at least half its height beside the other. Measured against the
+                # caption alone this assumed captions are shorter than panels; a margin caption is
+                # routinely taller than the panel it names, and one real page's panels overlapped
+                # their caption by 62pt against the 76 the caption's own height demanded — so the
+                # caption matched nothing, the panels became loose, the area gate dropped them,
+                # and the paid readers were handed the empty column above the caption.
                 gap = max(r.x0 - cap_rect.x1, cap_rect.x0 - r.x1)
-                if 0 <= gap <= 45:                  # side (margin) caption, vertically aligned
+                if 0 <= gap <= 45:                  # vertically aligned, nearly touching columns
                     dist, rel = 50 + gap, "side"
             if dist is None:
                 continue
@@ -1065,8 +1093,17 @@ def _figure_regions(page: pymupdf.Page, page_no: int) -> list[dict]:
                 top = b[3]
         r = pymupdf.Rect(cap_rect.x0, max(top, cap_rect.y0 - 320), cap_rect.x1, cap_rect.y0)
         if r.height > 40:
-            regions.append(dict(bbox=r, caption=cap_txt, label=label, kind="caption_only", n_images=0,
-                                n_drawings=0, native_px=None, confidence=0.3,
+            # counted, never hardcoded: these two numbers are the record's only statement of
+            # whether anything readable is under this rect, and writing zeros unconditionally was
+            # a claim, not a measurement. Downstream, a region that MEASURES zero of both is
+            # refused a paid read (it is provably text); one that carries primitives the caption
+            # matching missed is still readable.
+            n_img = sum(1 for ir in raw_img_rects if _overlaps(r, ir))
+            n_draw = sum(1 for dr in draw_rects if _overlaps(r, dr)
+                         and not (dr.height < 3 and dr.width > 0.5 * W))
+            regions.append(dict(bbox=r, caption=cap_txt, label=label, kind="caption_only",
+                                n_images=n_img, primitives_measured=True,
+                                n_drawings=n_draw, native_px=None, confidence=0.3,
                                 panels=_whole_region_panel(r, words), caption_growth_pt=0.0,
                                 n_region_ladder=len(_tick_ladder(words, r)),
                                 n_region_numeric=len(_numeric_words(words, r)),

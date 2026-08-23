@@ -75,9 +75,12 @@ assert severity_of(SIGN_DISPUTED) == "error"
 PROVENANCE_PREFIX = "orientation_"
 
 #: `resolve.available_routes` writes this sentence into `routes_rejected`/`not_convertible_reason`
-#: when a group has no mean, size and dispersion; from D1 onward the same fact is also a flag
+#: when a group is not ready; from D1 onward the same fact is also a flag
 #: (`GROUP_STATISTICS_MISSING`), but records resolved before it carry only the sentence.
-_NO_GROUP_STATS = re.compile(r"group\(s\)[^;]*\bhave no mean\b")
+#: An alternation, because the sentence changed once: records written before the per-group
+#: diagnosis said "have no mean, group size and dispersion" whatever was actually missing, and
+#: both spellings must keep matching or old runs' held rows change meaning on reload.
+_NO_GROUP_STATS = re.compile(r"group\(s\)[^;]*\bhave no mean\b|group\(s\) not ready —")
 
 
 @dataclass(frozen=True)
