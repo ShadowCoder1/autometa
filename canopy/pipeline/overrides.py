@@ -56,7 +56,7 @@ from ..stats.conversions import split_control
 from ..report import (dump_json, exclusions_table, extraction_table, pool_rows, prisma_flow,
                       write_html_report, write_outcome_outputs, write_rows)
 from .resolve import SHARED_CONTROL_ARM, ResolvedValues, resolve_effect_with_fallback
-from .rows import (PreparedRow, converted_route, prepare_rows,
+from .rows import (PreparedRow, converted_route, house_spread_type, prepare_rows,
                    shared_control_siblings)
 from .state import (load_manifest, read_stage, review_entry, save_manifest, sha12,
                     sort_review_queue, stage_done)
@@ -1599,12 +1599,21 @@ def _prepare(dataset: DatasetSpec, outcome_key: str, verdict_a: Verdict, verdict
     candidates = list(state.candidates) if state is not None else []
     directions = ({(dataset.dataset_id, outcome_key): higher_is_better}
                   if higher_is_better is not None else None)
+    # Rule A's premise, from THIS PAPER's map — `state.datasets` is run-wide, and a house style
+    # computed across papers would let one paper's captions type another paper's bars. Scoped via
+    # the same `paper_of`/`studies` the rest of the re-pool uses; absent a study (never, in a run
+    # this tool wrote), no inference. BOTH calls below carry it: the sibling-cluster build and the
+    # lone-row fallback must agree or an answered row would rebuild differently from an untouched
+    # one (byte-identity with the run, which computes the same premise from the same map).
+    _study = (state.studies.get(state.paper_of.get(dataset.dataset_id, ""))
+              if state is not None else None)
+    house = house_spread_type(_study.datasets) if _study is not None else None
     prepared = prepare_rows(cells, candidates, protocol.stats, cluster_of=cluster_of,
-                            directions=directions)
+                            directions=directions, house_spread=house)
     mine = [row for row in prepared if row.key == (dataset.dataset_id, outcome_key)]
     row = mine[0] if mine else prepare_rows(
         [(dataset, outcome_key, verdict_a, verdict_b)], candidates, protocol.stats,
-        cluster_of=cluster_of, directions=directions)[0]
+        cluster_of=cluster_of, directions=directions, house_spread=house)[0]
     _apply_group_n(row, state, len(cells))
     if state is not None and (dataset.dataset_id, outcome_key) in state.keep_printed:
         # D1's fallback is offered alternatives or it is not; there is no third state. A reviewer

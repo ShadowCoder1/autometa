@@ -265,6 +265,15 @@ NON_FORCING_ERRORS: frozenset[str] = frozenset({"calibration_refuted"})
 #: why each flag above holds a cell back — a reviewer reads these lines, so each one names the
 #: actual doubt, and names the comparison that was really made rather than the one it would be
 #: nice to have made
+#: row-policy flags for a value built on a premise THE TOOL INFERRED from the paper (never a
+#: field prior): the paper supplied the evidence, a person has not confirmed the reading of it.
+#: These are ROW flags like `N_FROM_MAP` — absent from `CHECK_SEVERITY` (no verdict writes them),
+#: absent from `CAPPING_FLAGS` (whose floor is accept_with_note, the wrong semantics: an inferred
+#: row must be needs_human unconditionally, which `resolve._finish` enforces), and their rows are
+#: admitted to the BEST-GUESS line under their own named rule, with the question still open.
+SPREAD_TYPE_HOUSE_STYLE = "spread_type_inferred_house_style"
+INFERRED_PREMISE_FLAGS: frozenset[str] = frozenset({SPREAD_TYPE_HOUSE_STYLE})
+
 CAP_REASONS: dict[str, str] = {
     "panel_not_isolated": ("the named panel could not be isolated from its neighbours; the "
                            "reading was made on the whole figure and is capped below automatic "

@@ -75,7 +75,8 @@ from .aggregate import AGGREGATED_FLAG, Aggregation, aggregate_one_row_per_paper
 from .overrides import (HUMAN_OVERRIDE, OVERRIDES_FILE, apply_overrides_and_repool,
                         eligibility_answers, map_answers, read_overrides, re_extract_answers)
 from .resolve import resolve_effect_with_fallback
-from .rows import (DISPERSION_APPROXIMATED, approximation_flags, cell_candidates, prepare_rows,
+from .rows import (DISPERSION_APPROXIMATED, approximation_flags, cell_candidates,
+                   house_spread_type, prepare_rows,
                    reported_values, statistic_values, vote_candidates)
 from .state import (PaperBudgetExceeded, PaperClient, emit, load_manifest, paper_dir,
                     read_stage, review_entry, save_manifest, sha12, sort_review_queue,
@@ -1888,7 +1889,10 @@ def _resolve(ctx: RunContext, paper: PaperRecord, study: StudyMap,
     # shared-control adjustment (Cochrane 16.5.4) — in `pipeline.rows`, because the review layer
     # rebuilds the same row after every human answer and must build the SAME row (whole-diff H1).
     prepared = prepare_rows(cells, candidates, ctx.settings,
-                            cluster_of=lambda d: d.cluster_id or paper.sha256)
+                            cluster_of=lambda d: d.cluster_id or paper.sha256,
+                            # Rule A's premise, computed once per paper from the whole map so the
+                            # run, the re-pool and the preview infer identically or not at all
+                            house_spread=house_spread_type(study.datasets))
 
     records: list[EffectSizeRecord] = []
     for row in prepared:

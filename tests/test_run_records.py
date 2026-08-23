@@ -1073,3 +1073,30 @@ def test_changing_your_mind_back_to_the_tools_choice_still_re_reads_the_cell():
     assert back and pristine[0] in back[full][0]["hint"]
     # …while agreeing with what the cell was ACTUALLY read under still buys nothing
     assert not hints(pristine[0], "", {full: pristine})
+
+
+def test_the_funnel_stamps_the_house_style_flag_the_resolver_holds_on():
+    """The fill, the flag and the fence are three places; this pins them to one another through
+    the REAL funnel: `prepare_rows` with a house premise produces values whose flags carry
+    `spread_type_inferred_house_style` on the filled arms — the flag `resolve._finish` holds on
+    and `bestguess._rule` admits under its own name."""
+    from canopy.models import (DatasetSpec, DispersionType, GroupSpec, StatsSettings, Verdict)
+    from canopy.pipeline.rows import prepare_rows
+    from canopy.verify.confidence import SPREAD_TYPE_HOUSE_STYLE
+
+    dataset = DatasetSpec(dataset_id="p:d1", cluster_id="p",
+                          group_a=GroupSpec(label="dom", n=6, n_evidence="n=6"),
+                          group_b=GroupSpec(label="nondom", n=6, n_evidence="n=6"))
+    def _v(group, mean):
+        return Verdict(dataset_id="p:d1", outcome_key="late_adaptation", group=group,
+                       mean=mean, dispersion_value=0.01, dispersion_type=DispersionType.UNKNOWN,
+                       n=6, unit="m", route="figure", confidence="needs_human")
+    cells = [(dataset, "late_adaptation", _v("A", 0.0469), _v("B", 0.0354))]
+    house = (DispersionType.SE, "every captioned figure names standard error")
+
+    with_premise = prepare_rows(cells, [], StatsSettings(), house_spread=house)[0].values
+    without = prepare_rows(cells, [], StatsSettings())[0].values
+    assert SPREAD_TYPE_HOUSE_STYLE in with_premise.flags
+    assert with_premise.group_a.dispersion_type is DispersionType.SE
+    assert SPREAD_TYPE_HOUSE_STYLE not in without.flags
+    assert without.group_a.dispersion_type is DispersionType.UNKNOWN

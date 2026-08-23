@@ -44,7 +44,9 @@ from typing import Any, Mapping, Sequence
 from ..models import EffectSizeRecord, OutcomeDef, StatsSettings
 from ..stats.meta import MetaResult, prediction_interval
 from ..verify.checks import severity_of
-from ..verify.confidence import CONTRADICTING_FLAGS, ROW_REFUSAL_CODES, WITHHOLDING_FLAGS
+from .resolve import GROUP_ROUTES
+from ..verify.confidence import (CONTRADICTING_FLAGS, INFERRED_PREMISE_FLAGS,
+                                 ROW_REFUSAL_CODES, WITHHOLDING_FLAGS)
 from .resolve import GROUP_STATISTICS_MISSING, PRECEDENCE_OVERRIDE
 
 __all__ = ["BEST_GUESS_FLAG", "RULES", "VETOES", "VETO_ROW_FLAGS", "CONTRADICTED",
@@ -54,7 +56,7 @@ __all__ = ["BEST_GUESS_FLAG", "RULES", "VETOES", "VETO_ROW_FLAGS", "CONTRADICTED
 #: on every row the best-guess line added, and on any composite one of them went into
 BEST_GUESS_FLAG = "best_guess"
 #: the closed set of grounds on which a held row may enter the line, in match order
-RULES: tuple[str, ...] = ("low_confidence_value", "precedence_override")
+RULES: tuple[str, ...] = ("inferred_premise", "low_confidence_value", "precedence_override")
 #: the closed set of reasons a held row may not, in match order (first wins)
 VETOES: tuple[str, ...] = ("row_refusal", "contradicted_value", "orientation_unresolvable",
                            "one_group_only", "no_variance")
@@ -241,6 +243,22 @@ def _rule(record: EffectSizeRecord) -> tuple[str, str, dict[str, Any]] | None:
              f"se {'—' if record.se is None else format(float(record.se), '.4g')})")
     disputed = _disputes(record)
     mark = f"disputed ({', '.join(disputed)}) — " if disputed else ""
+
+    inferred = sorted(set(record.flags) & INFERRED_PREMISE_FLAGS)
+    if inferred and record.route not in GROUP_ROUTES:
+        inferred = []                     # this conversion consumed no inferred value (see resolve)
+    if inferred:
+        # FIRST, deliberately: an inferred-premise row also satisfies `low_confidence_value`
+        # (the resolver did build a value), and admitting it under that rule would hide WHY it is
+        # held — the premise is the tool's inference from the paper's other captions, not the
+        # paper's label for this number, and the reviewer deciding whether to trust the line is
+        # owed that sentence. The vetoes have already run: an inferred row that is also refuted,
+        # refused or unsigned never reaches any rule.
+        return ("inferred_premise",
+                f"{mark}built on a premise the tool inferred from the paper "
+                f"({', '.join(inferred)}): {value}. The paper supplied the evidence; no person "
+                f"has confirmed the reading of it, and the question is still open.",
+                _evidence(record, disputed=disputed, inferred=inferred))
 
     if _held_only_by_bucket(record):
         return ("low_confidence_value",

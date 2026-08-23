@@ -34,7 +34,8 @@ from ..stats import effect_sizes as es
 from ..stats.conversions import (mean_sd_from_five_number, mean_sd_from_median_iqr,
                                  combine_groups, partial_variance, split_control)
 from ..stats.effect_sizes import NotConvertible, SMDResult
-from ..verify.confidence import (DF_SHORTFALL_PREFIX, IMPLAUSIBLE_DISPERSION, ROW_REFUSAL_CODES,
+from ..verify.confidence import (DF_SHORTFALL_PREFIX, IMPLAUSIBLE_DISPERSION,
+                                 INFERRED_PREMISE_FLAGS, ROW_REFUSAL_CODES,
                                  conversion_gate_bucket, dispersion_plausibility_bucket,
                                  unverified_variance_bucket)
 from ..verify.vote import modality as reading_modality
@@ -90,6 +91,9 @@ class GroupValues(CanopyModel):
     dispersion_sigma: float | None = None         # digitisation uncertainty on the spread
     unit: str = ""
     route: str = ""                               # text | table | figure | adjudicated | ...
+    #: non-empty iff `dispersion_type` was INFERRED from the paper's other captions (Rule A):
+    #: the evidence sentence, for the conversion chain. Mirrors `n_from_map`.
+    spread_type_from_style: str = ""
     label: str = ""
     #: WHERE this group's numbers were read, in the reader's own words. Two panels of one figure
     #: are two quantities (`verify.vote.locator_key`), so D1's fallback pair may only be built
@@ -496,6 +500,11 @@ def _mean_sd(group: GroupValues, side: str, settings: StatsSettings, steps: list
     if kind is DispersionType.SE:
         sd = es.sd_from_se(group.dispersion_value, n)
         sigma = _scaled_sigma(group.dispersion_sigma, group.dispersion_value, sd)
+        if group.spread_type_from_style:
+            # the premise is the tool's inference, and the arithmetic that used it says so in
+            # the same sentence a reviewer reads the numbers in (the `said_n` discipline)
+            steps.append(f"group {side}: the spread's type is INFERRED — "
+                         f"{group.spread_type_from_style}")
         steps.append(f"SD_{side} = SE {_fmt(group.dispersion_value)} × √{n} = {_fmt(sd)}")
         if sigma is not None and group.dispersion_sigma:
             steps.append(f"digitisation uncertainty on the SE bar, {_fmt(group.dispersion_sigma)}, "
@@ -503,6 +512,9 @@ def _mean_sd(group: GroupValues, side: str, settings: StatsSettings, steps: list
         return centre, sd, n, sigma
 
     if kind in _CI_LEVELS or _stated_level(group) is not None:
+        if group.spread_type_from_style:
+            steps.append(f"group {side}: the spread's type is INFERRED — "
+                         f"{group.spread_type_from_style}")
         level = group.ci_level or _CI_LEVELS.get(kind) or 0.95
         dist = _ci_dist(n, settings)
         label = f"t({n - 1})" if dist == "t" else "z"
@@ -1082,6 +1094,25 @@ def _finish(record: EffectSizeRecord, name: str, result: SMDResult, inputs: dict
     record.confidence = capped
     if why:                              # said even when the row was already held, so the reason
         steps.extend(why)                # a reviewer reads names the conversion, not just the cell
+        record.conversion_steps = steps
+        record.conversion_chain = "; ".join(steps)
+
+    # A row built on an INFERRED premise is held unconditionally: the strict line admits only what
+    # the paper labelled, and a spread type the tool inferred from the paper's other captions is
+    # the paper's evidence read by the tool, not the paper's label for THIS number. Best guess
+    # admits it under its own named rule; a human confirming the type clears the flag on rebuild
+    # (the hole is then filled by the answer, not by the inference) and the row may reach strict.
+    inferred = sorted(set(record.flags) & INFERRED_PREMISE_FLAGS)
+    if inferred and name not in GROUP_ROUTES:
+        # the flag rides the row (an arm was filled), but THIS conversion never consumed the
+        # inferred value — a printed t or a reported d uses no group spread — so holding it under
+        # "built on an inferred premise" would be a false sentence about true arithmetic
+        inferred = []
+    if inferred:
+        record.confidence = "needs_human"
+        steps.append(f"held: built on an inferred premise ({', '.join(inferred)}) — the "
+                     f"best-guess line may take it, the strict line never does, and the question "
+                     f"stays open until a person confirms or corrects the premise")
         record.conversion_steps = steps
         record.conversion_chain = "; ".join(steps)
 

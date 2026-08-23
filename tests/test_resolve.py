@@ -1232,3 +1232,181 @@ def test_an_unknown_typed_spread_names_the_type_gap_not_a_missing_dispersion():
     # …and a genuinely empty group is still described as what it is
     _, empty = available_routes(ResolvedValues(higher_is_better=True))
     assert "was never read" in empty["group_statistics"]
+
+
+# --------------------------------------------- Rule A: house-style spread type (best guess only)
+def _styled_study(types=("SE", "SE"), silent_kind="figure_line", evidence=True):
+    """A paper whose captioned figures name `types` and whose target figure names nothing."""
+    from canopy.models import Source, SourceKind, StudyMap, OutcomeSources
+
+    sources = [Source(kind=SourceKind.figure_bar, page=2 + i, locator=f"Fig. {4 + i}",
+                      figure_id=f"fig{4 + i:02d}",
+                      error_bar_type=DispersionType[t],
+                      error_bar_evidence=("asterisks on top of standard error bars" if evidence
+                                          else ""))
+               for i, t in enumerate(types)]
+    silent = Source(kind=SourceKind[silent_kind], page=6, locator="Fig. 3", figure_id="fig03",
+                    error_bar_type=DispersionType.UNKNOWN)
+    dataset = DatasetSpec(dataset_id="p:d1", cluster_id="p",
+                          group_a=GroupSpec(label="dominant", n=6, n_evidence="n = 6"),
+                          group_b=GroupSpec(label="non-dominant", n=6, n_evidence="n = 6"),
+                          outcomes=[OutcomeSources(outcome_key="late_adaptation",
+                                                   sources=[*sources, silent])])
+    return StudyMap(paper_id="p" * 64, eligible=True, datasets=[dataset])
+
+
+def _yadav_shape():
+    """Mean, numeric spread, n — everything read off the figure except what the bars ARE."""
+    return ResolvedValues(
+        higher_is_better=False,
+        group_a=GroupValues(mean=0.0469, dispersion_value=0.0114,
+                            dispersion_type=DispersionType.UNKNOWN, n=6, unit="m",
+                            route="figure"),
+        group_b=GroupValues(mean=0.0354, dispersion_value=0.0049,
+                            dispersion_type=DispersionType.UNKNOWN, n=6, unit="m",
+                            route="figure"))
+
+
+def test_a_house_style_the_papers_captions_agree_on_types_a_silent_figures_bars():
+    """Rule A end to end: the premise is the paper's own captions (quoted), the row builds, the
+    strict line never takes it, the best-guess line takes it under its own named rule, and the
+    conversion chain says the type was inferred and from what."""
+    from canopy.pipeline.bestguess import best_guess_rows
+    from canopy.pipeline.rows import house_spread_type, prepare_row_values
+    from canopy.models import OutcomeDef, Verdict
+
+    study = _styled_study()
+    house = house_spread_type(study.datasets)
+    assert house is not None and house[0] is DispersionType.SE
+    assert "every captioned figure" in house[1]
+
+    values = _yadav_shape()
+    from canopy.pipeline.rows import _fill_spread_type
+    from canopy.verify.confidence import SPREAD_TYPE_HOUSE_STYLE
+    assert _fill_spread_type(values, house) == ["A", "B"]
+    values.flags = sorted({*values.flags, SPREAD_TYPE_HOUSE_STYLE})   # as the funnel stamps it
+    record = resolve_effect(study.datasets[0], LATE, values, StatsSettings())
+    assert record.es is not None, record.not_convertible_reason
+    assert record.confidence == "needs_human"          # the strict line never admits it
+    assert "built on an inferred premise" in record.conversion_chain   # the CAP fired, and said so
+    assert "spread_type_inferred_house_style" in record.flags
+    assert "INFERRED" in record.conversion_chain and "every captioned figure" in \
+        record.conversion_chain
+
+    rows, decisions = best_guess_rows(
+        [], [record], outcome=LATE, settings=StatsSettings())
+    assert len(rows) == 1 and decisions[0].admitted
+    assert decisions[0].rule == "inferred_premise"
+    assert "no person has confirmed" in decisions[0].reason
+
+
+def test_no_house_style_no_inference():
+    """Any second type anywhere, a lone naming caption, or missing evidence: no premise, no fill —
+    the general refusal that keeps this a reading of the paper rather than a prior about papers."""
+    from canopy.pipeline.rows import _fill_spread_type, house_spread_type
+
+    mixed = house_spread_type(_styled_study(types=("SE", "SD")).datasets)
+    lone = house_spread_type(_styled_study(types=("SE",)).datasets)
+    unquoted = house_spread_type(_styled_study(evidence=False).datasets)
+    assert mixed is None and lone is None and unquoted is None
+
+    values = _yadav_shape()
+    assert _fill_spread_type(values, None) == []
+    assert values.group_a.dispersion_type is DispersionType.UNKNOWN
+
+    # …and a fill never lands where anything else is missing, or off a non-figure route
+    text = _yadav_shape()
+    text.group_a.route = text.group_b.route = "text"
+    assert _fill_spread_type(text, (DispersionType.SE, "style")) == []
+    incomplete = _yadav_shape()
+    incomplete.group_a.mean = None
+    assert _fill_spread_type(incomplete, (DispersionType.SE, "style")) == ["B"]
+
+
+def test_a_typed_answer_beats_the_house_style():
+    """The human path: once the verdict carries a type, there is no hole and no inference — the
+    flag disappears on rebuild, which is what promotes a confirmed row toward strict."""
+    from canopy.pipeline.rows import _fill_spread_type
+
+    answered = _yadav_shape()
+    answered.group_a.dispersion_type = DispersionType.SD       # a person said SD
+    assert _fill_spread_type(answered, (DispersionType.SE, "style")) == ["B"]
+    assert answered.group_a.dispersion_type is DispersionType.SD
+    assert answered.group_a.spread_type_from_style == ""
+
+
+def test_the_fill_never_types_a_ci_pair_only_group():
+    """Typing a CI-pair-only group as SE sends it down the SE branch with no value to multiply —
+    `sd_from_se(None, n)` — a crash found adversarially before it shipped. A numeric half-length
+    is the only shape every type's arithmetic accepts, so it is the only shape the fill touches."""
+    from canopy.pipeline.rows import _fill_spread_type
+
+    values = ResolvedValues(
+        higher_is_better=True,
+        group_a=GroupValues(mean=1.0, ci_low=0.5, ci_high=1.5,
+                            dispersion_type=DispersionType.UNKNOWN, n=6, route="figure"),
+        group_b=GroupValues(mean=2.0, dispersion_value=0.2,
+                            dispersion_type=DispersionType.UNKNOWN, n=6, route="figure"))
+    assert _fill_spread_type(values, (DispersionType.SE, "style")) == ["B"]
+    assert values.group_a.dispersion_type is DispersionType.UNKNOWN
+
+
+def test_everything_that_is_not_exactly_a_house_style_vetoes_the_premise():
+    """The four shapes an adversarial review fired at the first cut, pinned: a same-figure
+    SD-then-SE overwrite, an unquoted contrary caption, a cross-check conflict recorded on the
+    SILENT figure itself, and two panels of one figure posing as two figures. Every one is a veto
+    of the whole premise, never a skip — and a house style whose arithmetic cannot take a bare
+    half-length (IQR, RANGE) refuses the fill outright."""
+    from canopy.models import OutcomeSources, Source, SourceKind
+    from canopy.pipeline.rows import house_spread_type
+
+    def study(sources):
+        return [DatasetSpec(dataset_id="p:d1", group_a=GroupSpec(label="a"),
+                            group_b=GroupSpec(label="b"),
+                            outcomes=[OutcomeSources(outcome_key="o", sources=sources)])]
+
+    def src(loc, typ, ev="quoted words", agree="unconfirmed", fid=None):
+        return Source(kind=SourceKind.figure_bar, page=1, locator=loc, figure_id=fid,
+                      error_bar_type=typ, error_bar_evidence=ev, error_bar_agreement=agree)
+
+    SE, SD, UNK = DispersionType.SE, DispersionType.SD, DispersionType.UNKNOWN
+    assert house_spread_type(study([src("Fig. 2A", SD, fid="fig02"),
+                                    src("Fig. 2B", SE, fid="fig02"),
+                                    src("Fig. 4", SE, fid="fig04")])) is None
+    assert house_spread_type(study([src("Fig. 1", SD, ev=""), src("Fig. 4", SE),
+                                    src("Fig. 5", SE)])) is None
+    assert house_spread_type(study([src("Fig. 4", SE), src("Fig. 5", SE),
+                                    src("Fig. 3", UNK, ev="", agree="conflict")])) is None
+    assert house_spread_type(study([src("Fig. 2A", SE), src("Fig. 2B", SE)])) is None
+    assert house_spread_type(study([src("Fig. 4", DispersionType.IQR),
+                                    src("Fig. 5", DispersionType.IQR)])) is None
+    good = house_spread_type(study([src("Fig. 4", SE, fid="fig04"),
+                                    src("Fig. 5", SE, fid="fig05")]))
+    assert good is not None and good[0] is DispersionType.SE
+
+
+def test_a_human_touched_cell_is_never_filled():
+    """The log records a reviewer's unlabeled spread as UNKNOWN precisely so no label nobody
+    stated reaches the arithmetic; re-typing that hole from the house style would overrule the
+    human on every rebuild, forever. A cell either verdict of which a person has overridden takes
+    no inference at all."""
+    from canopy.models import Verdict
+    from canopy.pipeline.rows import prepare_rows
+    from canopy.verify.confidence import SPREAD_TYPE_HOUSE_STYLE
+
+    dataset = DatasetSpec(dataset_id="p:d1", cluster_id="p",
+                          group_a=GroupSpec(label="a", n=6, n_evidence="n=6"),
+                          group_b=GroupSpec(label="b", n=6, n_evidence="n=6"))
+
+    def _v(group, overridden):
+        return Verdict(dataset_id="p:d1", outcome_key="late_adaptation", group=group,
+                       mean=1.0, dispersion_value=0.1, dispersion_type=DispersionType.UNKNOWN,
+                       n=6, unit="m", route="figure", confidence="needs_human",
+                       overridden_by_human=overridden)
+
+    house = (DispersionType.SE, "style")
+    touched = prepare_rows([(dataset, "late_adaptation", _v("A", True), _v("B", False))],
+                           [], StatsSettings(), house_spread=house)[0].values
+    assert SPREAD_TYPE_HOUSE_STYLE not in touched.flags
+    assert touched.group_a.dispersion_type is DispersionType.UNKNOWN
+    assert touched.group_b.dispersion_type is DispersionType.UNKNOWN

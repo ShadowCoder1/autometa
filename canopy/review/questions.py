@@ -142,6 +142,10 @@ _FLAG_TO_KIND: tuple[tuple[str, str], ...] = (
     ("df_missing", "needs_group_values"),
     ("df_shortfall_unexplained", "needs_group_values"),
     ("test_stat_missing_df", "needs_group_values"),
+    #: `n_missing` is DELIBERATELY absent: a refused row whose only gap is the size already
+    #: reaches `needs_group_values` through the `_built_nothing` terminus, and a table entry
+    #: here made every refused cell that merely CARRIED the warn ask for group values ahead
+    #: of the identity doubt actually holding it (seven pinned behaviours broke at once).
     ("n_not_integer", "number_unusable"),
     ("n_too_small", "number_unusable"),
     ("sd_nonpositive", "number_unusable"),

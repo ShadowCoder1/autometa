@@ -24,11 +24,14 @@ Nothing here calls a model, and nothing here decides a bucket: it assembles inpu
 """
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
-from typing import Callable, Collection, Mapping, Sequence
+from typing import Callable, Collection, Iterable, Mapping, Sequence
 
 from ..models import Candidate, DatasetSpec, DispersionType, StatsSettings, Verdict
 from ..verify.checks import MIN_N, best_statistic
+from ..verify.confidence import SPREAD_TYPE_HOUSE_STYLE
 from ..verify.panels import set_aside_ids
 from ..verify.units import same_unit
 from ..verify.vote import LOCATOR_DROPPED, locator_key, modality
@@ -192,10 +195,98 @@ def reported_values(candidates: Sequence[Candidate]) -> ReportedValues | None:
                           contrast_kind=cand.contrast_kind or "unknown")
 
 
+def house_spread_type(datasets: Iterable[DatasetSpec]) -> tuple[DispersionType, str] | None:
+    """The paper's HOUSE STYLE for figure error bars, or None — a premise, never a prior.
+
+    The map records every figure source's `error_bar_type` with the caption words that prove it
+    (`error_bar_evidence`). When every figure in the paper that names a type names the SAME type,
+    across at least two distinct figures, then a figure whose caption is silent is written in
+    that house style — the inference a human coder makes in one second, made checkable: the
+    premise is the paper's own captions, quoted.
+
+    Everything that is not that exact shape VETOES the whole premise rather than being skipped:
+    a second named type ANYWHERE (quoted or not — an unquoted contrary caption is still a
+    contrary caption); a cross-check conflict on ANY figure source, including the silent one
+    (the premise must not fire on the very figure two readers disputed); a type named without
+    its words; a lone naming figure. Panels of one figure are ONE figure — "Fig. 2A" and
+    "Fig. 2B" corroborate nothing about a house style between figures.
+
+    Pure and computed from the MAP alone, so the run, the re-pool and the preview — which see
+    the same map — infer identically or not at all.
+    """
+    named: dict[str, DispersionType] = {}
+    quoted: dict[str, str] = {}
+    for dataset in datasets:
+        for outcome in dataset.outcomes:
+            for source in outcome.sources:
+                if not str(getattr(source.kind, "value", source.kind) or "").startswith("figure"):
+                    continue
+                if str(getattr(source, "error_bar_agreement", "")) == "conflict":
+                    return None            # a disputed reading anywhere is not a style
+                kind = source.error_bar_type
+                if kind in (DispersionType.UNKNOWN, DispersionType.NONE):
+                    continue
+                if not (source.error_bar_evidence or "").strip():
+                    return None            # a named type without its words proves nothing — veto
+                where = str(source.figure_id or source.locator or "")
+                match = re.search(r"fig(?:ure)?\.?\s*s?\s*0*(\d+)", where, re.I)
+                key = f"fig{match.group(1)}" if match else where
+                if key in named and named[key] is not kind:
+                    return None            # one figure, two types — no style
+                named[key] = kind
+                quoted.setdefault(key, f"{where}: "
+                                        f"\u201c{(source.error_bar_evidence or '').strip()[:110]}\u201d")
+    kinds = set(named.values())
+    if len(kinds) != 1 or len(named) < 2:
+        return None
+    kind = kinds.pop()
+    # 4) only the types whose arithmetic accepts a bare half-length may be filled: an IQR house
+    # style would divide a digitised half-bar as a full interquartile width, and a RANGE one has
+    # no half-length arithmetic at all. The premise is real either way; the FILL is only safe here.
+    if kind not in (DispersionType.SD, DispersionType.SE, DispersionType.CI95,
+                    DispersionType.CI90):
+        return None
+    return kind, (f"every captioned figure of this paper that names its error bars names "
+                  f"{kind.value} ({len(named)} figure(s); e.g. "
+                  f"{'; '.join(list(quoted.values())[:2])}); this figure's caption names none")
+
+
+def _fill_spread_type(values: ResolvedValues,
+                      house: tuple[DispersionType, str] | None) -> list[str]:
+    """Fill a FIGURE reading's unknown spread type from the paper's house style — a hole-fill,
+    never an overrule, and only where everything else of the reading is present (the one shape
+    whose sole gap is the type). The strict line never sees the result (`resolve._finish` holds
+    any row carrying the flag); the question stays open because the VERDICT is untouched and its
+    `figure_error_bar_unknown` finding still asks."""
+    if house is None:
+        return []
+    kind, evidence = house
+    filled: list[str] = []
+    for arm in ("A", "B"):
+        group = values.group(arm)
+        if group is None or group.dispersion_type is not DispersionType.UNKNOWN:
+            continue
+        if "figure" not in str(group.route or ""):
+            continue                     # captions govern figures; a text ± sits under no caption
+        if not (group.dispersion_value is not None and group.dispersion_value > 0):
+            # a NUMERIC half-length is the only shape every DispersionType's arithmetic accepts:
+            # typing a CI-pair-only group as SE would send it down the SE branch with no value to
+            # multiply (`sd_from_se(None, n)`) — and a group read as a pair of interval bounds is
+            # not the bar-with-whiskers shape a caption's "error bars" sentence describes anyway
+            continue
+        if group.mean is None or not group.n:
+            continue                     # any other gap keeps its own question; nothing to save
+        group.dispersion_type = kind
+        group.spread_type_from_style = evidence
+        filled.append(arm)
+    return filled
+
+
 def prepare_row_values(dataset: DatasetSpec, outcome_key: str, verdict_a: Verdict,
                        verdict_b: Verdict, candidates: Sequence[Candidate],
                        settings: StatsSettings, *,
-                       higher_is_better: bool | None = None) -> ResolvedValues:
+                       higher_is_better: bool | None = None,
+                       house_spread: tuple[DispersionType, str] | None = None) -> ResolvedValues:
     """One row's inputs: the two cells, what the paper printed, and the row's own policy flags.
 
     The shared-control adjustment is NOT here — it needs every row of the cluster at once, so it
@@ -206,13 +297,25 @@ def prepare_row_values(dataset: DatasetSpec, outcome_key: str, verdict_a: Verdic
         verdict_a, verdict_b, test_statistic=statistic_values(cell),
         reported=reported_values(cell), higher_is_better=higher_is_better,
         candidates=cell)
+    if getattr(verdict_a, "overridden_by_human", False) \
+            or getattr(verdict_b, "overridden_by_human", False):
+        # a human has spoken about this cell — including, possibly, "the spread's type is
+        # unknown", which the log records as UNKNOWN precisely so no label anybody did not state
+        # reaches the arithmetic. Re-typing that hole from the house style would overrule the
+        # human on every rebuild, forever. No inference on a cell a person has touched.
+        house_spread = None
+    inferred = _fill_spread_type(values, house_spread)
+    for arm in inferred:
+        values.group_flags[arm] = sorted({*values.group_flags.get(arm, []),
+                                          SPREAD_TYPE_HOUSE_STYLE})
     filled = _fill_group_n(values, dataset)
     for arm in filled:
         values.group_flags[arm] = sorted({*values.group_flags.get(arm, []), N_FROM_MAP})
     values.flags = sorted(set(values.flags)
                           | set(multi_group_flags(dataset, settings.multi_group_policy))
                           | set(approximation_flags(cell))
-                          | ({N_FROM_MAP} if filled else set()))
+                          | ({N_FROM_MAP} if filled else set())
+                          | ({SPREAD_TYPE_HOUSE_STYLE} if inferred else set()))
     return values
 
 
@@ -392,6 +495,7 @@ def prepare_rows(cells: Sequence[tuple[DatasetSpec, str, Verdict, Verdict]],
                  candidates: Sequence[Candidate], settings: StatsSettings, *,
                  cluster_of: Callable[[DatasetSpec], str] = _default_cluster,
                  directions: Mapping[tuple[str, str], bool] | None = None,
+                 house_spread: tuple[DispersionType, str] | None = None,
                  ) -> list[PreparedRow]:
     """Every row of one paper (or one shared-control cluster), ready for `resolve_effect`.
 
@@ -406,7 +510,8 @@ def prepare_rows(cells: Sequence[tuple[DatasetSpec, str, Verdict, Verdict]],
     prepared = [PreparedRow(
         dataset=dataset, outcome_key=key,
         values=prepare_row_values(dataset, key, verdict_a, verdict_b, candidates, settings,
-                                  higher_is_better=forced.get((dataset.dataset_id, key))),
+                                  higher_is_better=forced.get((dataset.dataset_id, key)),
+                                  house_spread=house_spread),
         # either cell's, because both were signed by the one verdict for the measure; A's first
         # only so that the answer is deterministic when one cell was never verified
         orientation_source=(verdict_a.orientation_source or verdict_b.orientation_source))

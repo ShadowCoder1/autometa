@@ -2629,3 +2629,15 @@ def test_a_refused_row_is_asked_the_question_that_can_unblock_it():
         {"code": "series_marker_mismatch", "severity": "warn"}]}
     assert _kind(identity_only, ["series_marker_mismatch"], valued,
                  _holding_codes(identity_only), row=refused) == "which_series"
+
+
+def test_a_cell_missing_its_analysed_size_is_asked_for_group_values():
+    """`n_missing` mapped to no kind, so a cell whose only gap was the analysed size fell through
+    to a confirmation whose note cannot supply one — the queue gap that left a real paper's cells
+    unaskable. The answer that unblocks such a cell is both groups' own statistics."""
+    from canopy.review.questions import _holding_codes, _kind
+
+    verdict = {"higher_is_better": False, "flags": [{"code": "n_missing", "severity": "warn"}]}
+    refused = {"route": "not_convertible", "in_best_guess": False}
+    assert _kind(verdict, ["n_missing"], [{"mean": 11.0, "candidate_id": "c"}],
+                 _holding_codes(verdict), row=refused) == "needs_group_values"
