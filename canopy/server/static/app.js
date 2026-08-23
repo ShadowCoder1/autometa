@@ -37,6 +37,31 @@
   function clear(node) { while (node && node.firstChild) { node.removeChild(node.firstChild); } }
   function show(node, on) { if (node) { node.hidden = !on; } }
 
+  // …and a hidden pane must stop demanding its fields. A `required` control inside a pane the
+  // reviewer has switched away from still fails the form's own validation, and the browser then
+  // refuses to submit and tries to focus a control it cannot see ("An invalid form control with
+  // name='' is not focusable"). The Run button is the form's submit, so YAML mode could not start
+  // a run at all — silently, with the reason only in the console — while Dry run, a plain button,
+  // worked. Written against the pane rather than against `p-title` so a `required` added to either
+  // pane later cannot bring the failure back.
+  function demandFields(pane, on) {
+    if (!pane) { return; }
+    var fields = pane.querySelectorAll("[required], [data-was-required]");
+    Array.prototype.forEach.call(fields, function (field) {
+      if (on) {
+        if (field.hasAttribute("data-was-required")) {
+          field.required = true;
+          field.removeAttribute("data-was-required");
+        }
+      } else if (field.required) {
+        field.required = false;
+        field.setAttribute("data-was-required", "1");
+      }
+    });
+  }
+
+  function showPane(pane, on) { show(pane, on); demandFields(pane, on); }
+
   function num(value, digits) {
     if (value === null || value === undefined || value === "" || isNaN(Number(value))) { return "—"; }
     return Number(value).toFixed(digits === undefined ? 3 : digits);
@@ -319,8 +344,8 @@
         other.classList.toggle("is-on", on);
         other.setAttribute("aria-selected", on ? "true" : "false");
       });
-      show($("guided"), state.mode === "guided");
-      show($("yaml-mode"), state.mode === "yaml");
+      showPane($("guided"), state.mode === "guided");
+      showPane($("yaml-mode"), state.mode === "yaml");
     });
   });
 

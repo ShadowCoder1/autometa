@@ -1,0 +1,142 @@
+# Canopy protocol — hand dominance and upper-limb sensorimotor adaptation.
+#
+# Written before any study was read: the question, the two limbs being compared, what counts as
+# an eligible study, how each outcome is defined and where in a study it is to be read, the
+# moderators to record, and the statistical conventions the synthesis will follow. It contains no
+# knowledge of any individual study, no results and no extracted numbers.
+#
+# SCOPE. This protocol covers the ADAPTATION comparison only: whether learning differs between
+# the dominant and the non-dominant limb. Interlimb transfer — how much of what was learned with
+# the trained limb appears in the untrained limb — is a second question with a different target
+# effect size (a ratio of untrained to trained performance rather than a standardized mean
+# difference), and belongs to its own protocol and its own run.
+
+title: Hand dominance and upper-limb sensorimotor adaptation
+
+research_question: >-
+  Do neurologically healthy adults adapt differently with the dominant than with the
+  non-dominant upper limb, in late adaptation to a visual or force perturbation and in the
+  aftereffect once the perturbation is removed?
+
+group_a:
+  key: A
+  label: Dominant limb
+  definition: >-
+    The dominant (preferred) upper limb of the participants, as the study itself determines and
+    labels it — by handedness inventory, by self-report, or by the study's own description of
+    which hand it treats as dominant.
+  synonyms: [dominant, dominant hand, dominant limb, dominant arm, preferred hand, preferred limb,
+             right hand of right-handers, trained dominant hand]
+
+group_b:
+  key: B
+  label: Non-dominant limb
+  definition: >-
+    The non-dominant (non-preferred) upper limb of the participants, as the study itself
+    determines and labels it.
+  synonyms: [non-dominant, nondominant, non-dominant hand, nondominant hand, non-dominant limb,
+             non-preferred hand, non-preferred limb, left hand of right-handers]
+
+outcomes:
+  - key: late_adaptation
+    label: Late adaptation
+    definition: >-
+      The adaptive change in behaviour over the last few trials of the perturbation block — the
+      total amount of learning, arising from both implicit and explicit processes. When the study
+      itself defines a late-adaptation measure, use that measure.
+    measurement_window: >-
+      The end of the perturbation block, while the perturbation is still applied. Use the study's
+      own definition of late adaptation when it gives one; when it does not, use the final data
+      point (trial or cycle) available in the adaptation time series.
+    higher_is_better_hint: >-
+      Depends on the measure the study reports. Error-like measures (directional error, angular
+      deviation, hand-path deviation, absolute error, initial-direction error, perpendicular
+      displacement) are better when smaller; adaptation-like measures (percent compensation,
+      adaptation index, extent of adaptation, force compensation) are better when larger. Decide
+      per dataset from the paper's own wording and record the supporting quote.
+    positive_direction_label: Greater in dominant limb
+    negative_direction_label: Greater in non-dominant limb
+    units_hint: >-
+      degrees, cm, mm, N, N·m, or a unitless index/percentage — record exactly what the paper
+      prints.
+
+  - key: aftereffect
+    label: Aftereffect
+    definition: >-
+      Performance after the perturbation is removed, and in some studies after visual feedback is
+      also withheld — a targeted measure of implicit adaptation. When the study itself defines an
+      aftereffect measure, use that measure.
+    measurement_window: >-
+      The post-learning block that follows the perturbation block, with the perturbation removed.
+      Use the study's own definition when it gives one; when it does not, use the first data
+      point reported during the aftereffect phase.
+    higher_is_better_hint: >-
+      Aftereffect magnitude usually indexes the amount of implicit recalibration, so a larger
+      absolute value means more adaptation; a signed error measure may instead be better when
+      smaller. Decide per dataset from the paper's own wording and record the supporting quote.
+    positive_direction_label: Greater in dominant limb
+    negative_direction_label: Greater in non-dominant limb
+    units_hint: >-
+      degrees, cm, mm, N, N·m, or a unitless index/percentage — record exactly what the paper
+      prints.
+
+eligibility:
+  - The study measured upper-limb adaptation in response to a visual perturbation (for example visuomotor rotation or prism adaptation) or a force perturbation.
+  - The participants were neurologically healthy.
+  - The study compared adaptation between the dominant and the non-dominant limb.
+  - The study is written in English.
+  - The study was published between 1900 and 2025.
+
+dataset_rules:
+  - Exclude a contrast whose two arms are not the dominant and the non-dominant limb of neurologically healthy participants.
+
+moderators:
+  - task_type
+  - n_targets
+  - perturbation_size_deg
+
+stats:
+  # Hedges' g: the standardized mean difference between the two limbs, bias-corrected, because
+  # per-group samples in this literature are typically small. The `metafor` profile is exactly
+  # that — hedges, Borenstein variance, REML between-study variance.
+  profile: metafor
+
+  # Keep every dataset as its own row. A study that tests more than one perturbation, task or
+  # sample contributes more than one comparison, and those comparisons are the unit of analysis
+  # here; collapsing a paper's rows into one would discard them.
+  one_row_per_paper: false
+
+  # Apply a small-sample correction to the pooled test, since the number of datasets per outcome
+  # may be modest. See the note on dependency below for what this does and does not cover.
+  hakn: true
+
+notes: >-
+  Moderators to record for every dataset:
+  task_type — the kind of perturbation, "visuomotor" or "force_field";
+  n_targets — the number of movement targets used in the task;
+  perturbation_size_deg — the magnitude of the perturbation as printed. Perturbation size is only
+  comparable across rotation studies, so record it where the perturbation is a rotation and leave
+  it blank for force-field and prism datasets.
+  Group A is the dominant limb and group B the non-dominant limb, so a positive effect means the
+  measure is greater in the dominant limb and a negative effect means it is greater in the
+  non-dominant limb.
+
+# ---------------------------------------------------------------------------------------------
+# Two places where the tool cannot carry out the analysis plan, recorded here so the synthesis is
+# read with them in view:
+#
+# 1. DEPENDENCY. Many samples will contribute several comparisons, which violates the
+#    independence assumption of a conventional random-effects model. The plan is cluster-robust
+#    variance estimation. Canopy has no RVE: with `one_row_per_paper: false` the dependent rows
+#    are pooled as if independent, which leaves the point estimate close but the confidence
+#    interval too narrow. The alternative, `one_row_per_paper: true`, composites each paper's
+#    rows using `within_paper_r` — that models the dependency but changes the number of rows, so
+#    it answers a slightly different question. Neither setting is RVE, and the pooled CIs should
+#    be treated as optimistic until the rows are re-fitted with a cluster-robust model.
+#
+# 2. WITHIN-SUBJECT DESIGNS. Where a study tests both limbs in the same participants, the two
+#    arms are paired rather than independent. Canopy computes an independent-groups standardized
+#    mean difference from each arm's mean, SD and n, which ignores the pairing. Record for each
+#    dataset whether the design is within- or between-subjects, so the paired datasets can be
+#    identified and re-computed if the difference matters.
+# ---------------------------------------------------------------------------------------------

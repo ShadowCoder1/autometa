@@ -1576,3 +1576,29 @@ def test_app_js_card_actions_do_what_they_say():
     card = js.split("function renderConclusion(")[1].split("\n  }")[0]
     assert "conclusion.best_guess_sentences" in card and "conclusion.headline" in card
     assert "(conclusion.caveats || []).forEach" not in card
+
+
+def test_a_hidden_protocol_pane_stops_demanding_its_fields():
+    """The Run button is the form's SUBMIT, and the guided pane's `p-title` is `required`.
+
+    Switching to the YAML tab only hides that pane, so the field stayed required and stayed in the
+    form: the browser failed validation, tried to focus a control it could not see, logged "An
+    invalid form control with name='' is not focusable" to the console, and did nothing. A run
+    pasted as YAML could not be started at all — silently, with the reason nowhere on the page —
+    while "Dry run", a plain `type="button"`, worked, which is what made it look like the button
+    rather than the mode.
+
+    Pinned against the PANE rather than against `p-title`, because the failure returns the moment
+    anyone marks another field in either pane required.
+    """
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+
+    # the shape that makes this possible: one form, a submit button, a required field in a pane
+    assert 'id="run-form"' in html and 'type="submit"' in html and "required" in html
+    # …and the mode switch takes the requirement away with the pane
+    assert 'showPane($("guided"), state.mode === "guided")' in js
+    assert 'showPane($("yaml-mode"), state.mode === "yaml")' in js
+    body = js.split("function demandFields(")[1].split("\n  }")[0]
+    assert "field.required = false" in body and "data-was-required" in body
+    assert "field.required = true" in body          # …and gives it back on the way in
