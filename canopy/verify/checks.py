@@ -187,6 +187,14 @@ CHECK_SEVERITY: dict[str, str] = {
     #: number is wrong — it says the cell rests on a single plotted point rather than on a series,
     #: which is a reason for a reviewer to look at the figure. `warn`, and a cap in `confidence`.
     "categorical_point_read": "warn",
+    #: what the categorical x axis IS was resolved from the readers' own category reports, with
+    #: two or more readings supporting the ruling on their own — figure evidence, corroborated,
+    #: so it caps like `categorical_point_read` rather than withholding
+    "categorical_x_resolved_from_readings": "warn",
+    #: …and the same resolution resting on ONE reading (or one in tension with the protocol's own
+    #: measurement window): an inferred premise. The row is held for a person
+    #: (`confidence.INFERRED_PREMISE_FLAGS`) and lands in the best-guess line under its named rule.
+    "categorical_x_single_witness": "warn",
     "points_undercount": "warn",
     # --- can it be used at all
     "orientation_unknown": "warn",
@@ -619,6 +627,8 @@ def _check_panel_isolation(cand: Candidate, out: list[CheckFlag]) -> None:
 #: by `tests/test_digitizer.py::test_a_point_at_category_read_is_capped_and_says_why`, which
 #: builds the provenance from the digitiser's own constant and asserts this check fires on it.
 CATEGORICAL_POINT_AT_CATEGORY = "point_at_category"
+#: `digitizer.CATEGORICAL_UNRESOLVED`, spelled here for the same no-OpenCV-import reason.
+CATEGORICAL_UNRESOLVED = "unknown"
 
 
 def _check_categorical_x(cand: Candidate, out: list[CheckFlag]) -> None:
@@ -632,10 +642,39 @@ def _check_categorical_x(cand: Candidate, out: list[CheckFlag]) -> None:
               f"({provenance.get('categorical_x_role_why') or 'the locator named one category'})"
               f" — one point per group, so nothing on the axis corroborates it",
               cand.candidate_id)
+    if provenance.get("categorical_x_resolved_from_readings"):
+        support = int(provenance.get("categorical_x_role_support") or 0)
+        role = str(provenance.get("categorical_x_role") or "")
+        why = str(provenance.get("categorical_x_role_why") or "")
+        tension = str(provenance.get("categorical_x_hint_tension") or "")
+        if support >= 2 and not tension:
+            _flag(out, "categorical_x_resolved_from_readings",
+                  f"what this figure's categorical x axis IS ({role!r}) was resolved from the "
+                  f"readers' own category reports — {support} readings support the ruling on "
+                  f"their own ({why})",
+                  cand.candidate_id)
+        else:
+            _flag(out, "categorical_x_single_witness",
+                  (f"what this figure's categorical x axis IS ({role!r}) rests on a single "
+                   f"reading's category report ({why})"
+                   + (f"; {tension}" if tension else "")),
+                  cand.candidate_id)
     if provenance.get("categorical_x_unsupported"):
         _flag(out, "categorical_x_unsupported",
               str(provenance.get("needs_review_reason")
                   or "this figure's x axis is categorical and the collapse mode is off"),
+              cand.candidate_id)
+        return
+    if (provenance.get("collapse_across_x") and cand.mean is None
+            and str(provenance.get("categorical_x_role") or "") in ("", CATEGORICAL_UNRESOLVED)):
+        # the collapse was PERMITTED but the role never resolved and no value came out — the same
+        # open question as the refusal above, and it must raise the same card rather than a blank
+        # "type the number" one (found on a real run: a cell nulled this way carried no flag at
+        # all, so the review page could only ask "where is it?")
+        _flag(out, "categorical_x_unsupported",
+              str(provenance.get("categorical_x_role_why")
+                  or "the x axis is categorical and nothing settled whether its categories are "
+                     "conditions to average across or the groups themselves"),
               cand.candidate_id)
         return
     if provenance.get("collapsed_across_x"):

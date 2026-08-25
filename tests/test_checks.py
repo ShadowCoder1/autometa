@@ -1236,3 +1236,59 @@ def test_a_two_tick_calibration_is_flagged_whatever_its_witness_count():
 
     assert "calibration_two_point" in CAPPING_FLAGS
     assert ("calibration_two_point", "which_axis") in _FLAG_TO_KIND
+
+
+# ------------------------------------------------------- categorical resolution flags (D3 fold 2)
+def test_a_corroborated_axis_resolution_is_flagged_as_from_readings():
+    """>=2 readings independently support what the axis IS: warn + cap, never a withhold."""
+    dataset = make_dataset()
+    c = _figure_cand(mean=12.0)
+    c.pixel_provenance.update({"categorical_x_resolved_from_readings": True,
+                               "categorical_x_role_support": 2,
+                               "categorical_x_role": "groups",
+                               "categorical_x_role_why": "both categories are the group labels"})
+    flags = run_checks(dataset, "late_adaptation", [c])
+    assert "categorical_x_resolved_from_readings" in codes(flags)
+    assert "categorical_x_single_witness" not in codes(flags)
+    assert CHECK_SEVERITY["categorical_x_resolved_from_readings"] == "warn"
+
+
+def test_a_single_witness_axis_resolution_is_an_inferred_premise():
+    """ONE reading's word about the axis: the inferred-premise flag, which holds the row."""
+    from canopy.verify.confidence import INFERRED_PREMISE_FLAGS
+
+    dataset = make_dataset()
+    c = _figure_cand(mean=12.0)
+    c.pixel_provenance.update({"categorical_x_resolved_from_readings": True,
+                               "categorical_x_role_support": 1,
+                               "categorical_x_role": "groups",
+                               "categorical_x_role_why": "one reading named the categories"})
+    flags = run_checks(dataset, "late_adaptation", [c])
+    assert "categorical_x_single_witness" in codes(flags)
+    assert "categorical_x_resolved_from_readings" not in codes(flags)
+    assert "categorical_x_single_witness" in INFERRED_PREMISE_FLAGS
+
+
+def test_a_hint_tension_demotes_a_corroborated_resolution_to_single_witness():
+    """The protocol's window describes an aggregate the point read does not reconcile with —
+    two readings agreeing does not out-vote the protocol's own words."""
+    dataset = make_dataset()
+    c = _figure_cand(mean=12.0)
+    c.pixel_provenance.update({"categorical_x_resolved_from_readings": True,
+                               "categorical_x_role_support": 2,
+                               "categorical_x_role": "point_at_category",
+                               "categorical_x_role_why": "the locator names one category",
+                               "categorical_x_hint_tension": "the window is an average"})
+    flags = run_checks(dataset, "late_adaptation", [c])
+    assert "categorical_x_single_witness" in codes(flags)
+
+
+def test_a_permitted_collapse_that_never_resolved_raises_the_axis_question_flag():
+    """Found on a real run: role unknown UNDER collapse permission, value nulled, NO flag at all —
+    the page could only ask 'where is it?'. Now it carries the axis question's own flag."""
+    dataset = make_dataset()
+    c = _figure_cand(mean=None)
+    c.pixel_provenance.update({"collapse_across_x": True, "categorical_x_role": "unknown",
+                               "categorical_x_role_why": "nothing in the readings says which"})
+    flags = run_checks(dataset, "late_adaptation", [c])
+    assert "categorical_x_unsupported" in codes(flags)

@@ -134,6 +134,11 @@ CAPPING_FLAGS: frozenset[str] = frozenset({
     #: corroboration: a series with one point in the frame has no neighbouring point to agree
     #: with it. A reviewer should see the figure; the number itself is not in question.
     "categorical_point_read",
+    #: what the categorical x axis IS was resolved from the readers' own category reports, and
+    #: two or more readings support the ruling on their own — figure evidence, corroborated. Its
+    #: single-witness sibling is NOT here: one reading's word about what the axis is is an
+    #: inferred premise (`INFERRED_PREMISE_FLAGS` below) and holds the row for a person.
+    "categorical_x_resolved_from_readings",
     #: extraction was re-opened on a source the verifier named, so a model chose the location
     "reopened_on_better_source",
     #: no ladder for the value axis could be built at all: the numbers rest on the readers' own
@@ -272,7 +277,16 @@ NON_FORCING_ERRORS: frozenset[str] = frozenset({"calibration_refuted"})
 #: row must be needs_human unconditionally, which `resolve._finish` enforces), and their rows are
 #: admitted to the BEST-GUESS line under their own named rule, with the question still open.
 SPREAD_TYPE_HOUSE_STYLE = "spread_type_inferred_house_style"
-INFERRED_PREMISE_FLAGS: frozenset[str] = frozenset({SPREAD_TYPE_HOUSE_STYLE})
+#: what a categorical x axis IS, resolved from ONE reading's category report (or one in tension
+#: with the protocol's own measurement window). Unlike its `..._resolved_from_readings` sibling
+#: (two or more readings agree — a capping flag), a single witness to the axis's identity is a
+#: premise the tool inferred, so the row is held for a person and admitted to the best-guess
+#: line under the `inferred_premise` rule with its question open. This one IS check-emitted
+#: (`categorical_x_single_witness` in `checks.CHECK_SEVERITY`), unlike the house-style flag,
+#: which only the row funnel stamps — membership here is about the fence, not the origin.
+CATEGORICAL_X_SINGLE_WITNESS = "categorical_x_single_witness"
+INFERRED_PREMISE_FLAGS: frozenset[str] = frozenset({SPREAD_TYPE_HOUSE_STYLE,
+                                                    CATEGORICAL_X_SINGLE_WITNESS})
 
 CAP_REASONS: dict[str, str] = {
     "panel_not_isolated": ("the named panel could not be isolated from its neighbours; the "
@@ -295,6 +309,12 @@ CAP_REASONS: dict[str, str] = {
     "categorical_point_read": ("this is the single plotted point at the x category the locator "
                                "names rather than an average across the axis, so there is one "
                                "point per group and nothing else on the axis corroborates it"),
+    "categorical_x_resolved_from_readings": ("what this figure's categorical x axis is — "
+                                             "conditions or the groups themselves — was resolved "
+                                             "from the readers' own category reports rather than "
+                                             "stated by the protocol or the mapper; two or more "
+                                             "readings support the ruling, and a reviewer should "
+                                             "see the figure"),
     "reopened_on_better_source": ("extraction was re-opened on a source the verifier named, so "
                                   "the location itself was decided by a model"),
     "series_identity_conflict": ("both groups resolve to the same plotted marker, so this number "

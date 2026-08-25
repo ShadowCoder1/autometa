@@ -140,6 +140,12 @@ class TargetSpec:
     #: the paper says, the hint is what a reader of the review says, and a read-out that saw only
     #: the second would have lost the evidence the first rests on.
     reviewer_hint: str = ""
+    #: RESOLUTION MODE (set by the digitiser, never by a mapper): the x axis is categorical and
+    #: nothing has said what its categories are, so the reader is asked to enumerate the series'
+    #: points and NAME each category — the evidence that settles conditions-vs-groups — without
+    #: the collapse instruction's claim that the outcome is their average, which nothing here has
+    #: established. Appended at the tail so cached calls of every other cell are byte-identical.
+    resolve_categorical: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return dict(self.__dict__)
@@ -178,6 +184,15 @@ class TargetSpec:
         if self.collapse_across_x:
             return ("every point of THIS group's series along the x axis (the outcome is their "
                     "average). If the x categories turn out to be the two groups themselves, "
+                    "this series has exactly one point: report it and name its category")
+        if self.resolve_categorical:
+            # the enumerate instruction WITHOUT the average claim: nothing has established that
+            # the outcome is the average, and a prompt asserting it would be the tool telling the
+            # reader something about the paper that nobody has said
+            return ("every point of THIS group's series along the x axis, naming each point's x "
+                    "category exactly as the figure prints it — nothing has settled whether the "
+                    "categories are experimental conditions or the comparison groups themselves, "
+                    "and the printed category names are what settles it. If they are the groups, "
                     "this series has exactly one point: report it and name its category")
         return self.x_hint
 

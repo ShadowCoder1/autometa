@@ -243,6 +243,15 @@ def _validate(payload: Mapping[str, Any]) -> dict[str, Any]:
         record["hint"] = _text(payload.get("hint"), 1000)
         if not record["hint"]:
             raise OverrideRejected("a re-extraction request needs a hint saying what to read")
+        # a `categorical_axis_kind` answer travels structurally, not as prose: the re-read's
+        # TargetSpec consumes it as a caller statement (resolver rule 1), which free text in the
+        # reviewer-hint line can never do. "groups" = the x categories are the comparison arms;
+        # "conditions" = the outcome is their average, so the re-read collapses this one cell.
+        categorical = _text(payload.get("categorical_x"), 20)
+        if categorical and categorical not in ("groups", "conditions"):
+            raise OverrideRejected("categorical_x must be 'groups' or 'conditions' — what the "
+                                   "figure's x categories are")
+        record["categorical_x"] = categorical
     if kind == "orientation":
         # the direction of a measure is not a property of one group's cell, so an orientation
         # override never carries a group: it is scoped to (paper, outcome, measure) and applies

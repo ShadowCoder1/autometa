@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 import statistics
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -871,6 +871,11 @@ _WORD_RE = re.compile(r"[a-z0-9]+")
 #: blocks", "all eight targets". Whatever else such a locator brackets or quotes, it has already
 #: said the value is not at one place on the x axis (whole-branch review, BLOCKER 1).
 _ENUMERATION_CUE = re.compile(r"\b(?:each of|all|every|across|average(?:d)? (?:over|across))\b")
+#: the protocol's own `x_hint` describing an AGGREGATE ("averaged over the last four blocks",
+#: "mean across trials"). On a categorical axis a single-category point read is in tension with
+#: such a window — not refuted by it (the aggregate can live inside the plotted point), but a
+#: person has to see the two side by side, so the ruling is treated as single-witness evidence.
+_AGGREGATE_CUE = re.compile(r"\b(?:average(?:d)?|mean)\s+(?:of|over|across)\b", re.I)
 #: what separates the items of a bracketed LIST — `(0, 45, 90)`, `(block 1 and block 20)`,
 #: `(pre/post)`, `(days 1–3)`
 _LIST_SPLIT = re.compile(r",|/|;|\band\b|–|—")
@@ -1052,7 +1057,7 @@ def _series_are_the_groups(readings: Sequence[Any], vocab: dict[str, tuple[str, 
 
 
 def _categorical_role(target: TargetSpec | None, readings: Sequence[Any], *,
-                      locator: str = "") -> tuple[str, str]:
+                      locator: str = "", resolving: bool = False) -> tuple[str, str]:
     """`(role, why)` — what ARE this figure's x categories, and what does that make the read?
 
     `x_axis_kind: "categorical"` conflates three different figure shapes. On the first, each
@@ -1146,7 +1151,13 @@ def _categorical_role(target: TargetSpec | None, readings: Sequence[Any], *,
     # "reading one point" throws away the only routes that read the right point. It fires only
     # when the protocol permitted the collapse in the first place; without that permission the
     # figure is not being read across an axis at all and the ordinary path applies.
-    if getattr(target, "collapse_across_x", False) and both_labelled and group_labelled_points < 2:
+    # `resolving` widens the fence to resolution mode (the pre-flight refusal replaced by bought
+    # evidence): there the alternative to D3 is not an ordinary `x_hint` read — it is refusing the
+    # cell blind — so the hijack the permission gate guards against does not exist. Everything the
+    # rule rests on is still the figure's own evidence: a locator naming ONE category and two
+    # series that name the two groups.
+    if ((getattr(target, "collapse_across_x", False) or resolving)
+            and both_labelled and group_labelled_points < 2):
         category = _locator_category(locator, readings)
         series = _series_are_the_groups(readings, vocab, category) if category else ""
         if category and series:
@@ -1172,7 +1183,8 @@ def _same_points(row_a: Any, row_b: Any) -> bool:
     return key(row_a) == key(row_b)
 
 
-def _row_at_own_category(row: Any, names: Sequence[str]) -> Any:
+def _row_at_own_category(row: Any, names: Sequence[str],
+                         other_names: Sequence[str] = ()) -> Any:
     """The group's row with `mean`/`error_half_length` taken from its OWN x category.
 
     The point at this group's own category outranks whatever is in `mean`, and that ordering is
@@ -1188,6 +1200,11 @@ def _row_at_own_category(row: Any, names: Sequence[str]) -> Any:
         return row
     mine = [p for p in row.points if _names_group(p.x_label, names)]
     chosen = mine[0] if len(mine) == 1 else (row.points[0] if len(row.points) == 1 else None)
+    # the single-point fallback is for an UNLABELLED sole point; a sole point whose label names
+    # the OTHER group is that group's bar, and adopting it hands this arm the other arm's number
+    # (`_point_at` has the same contradiction rule, and for the same reason)
+    if chosen is not None and not mine and _names_group(chosen.x_label, other_names):
+        chosen = None
     if chosen is None or chosen.mean is None:
         return row
     return _replace(row, mean=chosen.mean,
@@ -1285,47 +1302,107 @@ def _unmeasured_cap_side(text: str) -> str | None:
 
 def _samples_from_readout(reading: ReadOut, collapse: bool = False,
                           target: TargetSpec | None = None,
-                          locator: str = "") -> list[RouteSample]:
-    role, role_why = (_categorical_role(target, [reading], locator=locator) if collapse
-                      else (CATEGORICAL_CONDITIONS, ""))
+                          locator: str = "",
+                          resolved: tuple[str, str] | None = None) -> list[RouteSample]:
+    # `resolved` is the POOLED ruling from resolution mode (see `digitize`): the role was decided
+    # once, across every voting read-out, and every reading's samples are built under that one
+    # ruling. Re-deriving it per reading here would let a reading whose solo evidence differs
+    # slip its raw series-wide mean into the ensemble — the d = 0.0 shape, silently.
+    resolving = resolved is not None
+    role, role_why = (resolved if resolved is not None
+                      else (_categorical_role(target, [reading], locator=locator) if collapse
+                            else (CATEGORICAL_CONDITIONS, "")))
     category = (_locator_category(locator, [reading])
                 if role == CATEGORICAL_POINT_AT_CATEGORY else "")
     # the guarantee that no cell can report the same mean for both arms out of the same points:
     # when both series come back with identical categories at identical heights, one series was
     # read twice, and averaging either of them is averaging the contrast away
-    twinned = collapse and _same_points(reading.group("A"), reading.group("B"))
+    twinned = (collapse or resolving) and _same_points(reading.group("A"), reading.group("B"))
     out: list[RouteSample] = []
     for group in GROUPS:
         row = reading.group(group)
         if row is None:
             continue
-        if collapse and role == CATEGORICAL_GROUPS:
+        if (collapse or resolving) and role == CATEGORICAL_GROUPS:
             # the x categories ARE the groups, so this figure is an ordinary group chart and the
             # single category belonging to this group is its value. Nothing is averaged.
             label = (target.group_a_label if group == "A" else target.group_b_label) if target else ""
             synonyms = (getattr(target, f"group_{group.lower()}_synonyms", ()) if target else ())
             names = tuple(n for n in (label, *synonyms) if str(n or "").strip())
-            resolved = _row_at_own_category(row, names)
-            if resolved.mean is None and row.points:
+            other = "B" if group == "A" else "A"
+            other_label = ((target.group_a_label if other == "A" else target.group_b_label)
+                           if target else "")
+            other_synonyms = (getattr(target, f"group_{other.lower()}_synonyms", ())
+                              if target else ())
+            other_names = tuple(n for n in (other_label, *other_synonyms)
+                                if str(n or "").strip())
+            resolved_row = _row_at_own_category(row, names, other_names)
+            if resolved_row.mean is None and row.points:
                 # the axis is the groups, but none of the categories this reader named can be
                 # matched to THIS group — so we cannot say which of them is its value, and
                 # picking one would be a guess about the contrast itself
                 from dataclasses import replace as _replace
-                resolved = _replace(row, notes=(
+                resolved_row = _replace(row, notes=(
                     f"{row.notes}; the x categories are the two groups, but none of the "
                     f"{len(row.points)} this reader named ("
                     f"{', '.join(str(p.x_label) for p in row.points[:4])}) can be matched to "
                     f"group {group} ({label!r}), so no value is taken from it").strip("; "))
-            row = resolved
+            elif resolving and resolved_row is row:
+                # RESOLUTION MODE is stricter than permissioned collapse: `_row_at_own_category`
+                # falls back to `mean` — "your reading of the series as a whole" — when no point
+                # could be matched, and under a protocol that PERMITTED averaging that fallback is
+                # a documented approximation. Here nothing was permitted: a series-wide mean on a
+                # chart whose categories are the groups spans BOTH arms, and adopting it hands the
+                # contrast the d = 0.0 shape. A value comes from a matched point or not at all.
+                from dataclasses import replace as _replace
+                resolved_row = _replace(row, mean=None, error_half_length=None,
+                                        error_upper=None, error_lower=None, notes=(
+                    f"{row.notes}; the x categories were resolved as the two groups, but this "
+                    f"reading offers only a series-wide mean and no point matched to group "
+                    f"{group} ({label!r}), so no value is taken from it").strip("; "))
+            elif (resolving and twinned and resolved_row is not row
+                  and not any(_names_group(p.x_label, names) for p in row.points)):
+                # both series came back as the SAME points and this arm's value is the unlabeled
+                # single-point fallback — one series read twice, so the number it hands this arm
+                # is the number it hands the other, and the contrast between them is zero by
+                # construction. (Identical rows whose points carry BOTH groups' labels are the
+                # lazy-but-correct shape: each arm picked its own labelled bar above, and stays.)
+                from dataclasses import replace as _replace
+                resolved_row = _replace(row, mean=None, error_half_length=None,
+                                        error_upper=None, error_lower=None, notes=(
+                    f"{row.notes}; this reader returned the SAME points for both groups and "
+                    f"none is labelled as group {group} ({label!r}), so a value taken from them "
+                    f"would be one series reported twice; no value is taken").strip("; "))
+            row = resolved_row
             collapse_here = False
-        elif collapse and role == CATEGORICAL_POINT_AT_CATEGORY:
+        elif (collapse or resolving) and role == CATEGORICAL_POINT_AT_CATEGORY:
             # the categories are conditions, the source named one of them, and this series has
             # its point there. Nothing is averaged and nothing is approximated: the spread that
             # travels with the value is the paper's own band at that category.
-            row = _row_at_locator_category(row, category)
+            row_at = _row_at_locator_category(row, category)
+            if resolving and twinned:
+                # the series ARE the groups on this shape, so two identical series is one series
+                # read twice — the point at the locator's category is the same point for both
+                # arms, and the contrast between them zero by construction
+                from dataclasses import replace as _replace
+                row_at = _replace(row, mean=None, error_half_length=None,
+                                  error_upper=None, error_lower=None, notes=(
+                    f"{row.notes}; this reader returned the SAME points for both groups, so "
+                    f"the point at {category!r} would be one series reported twice; no value "
+                    f"is taken").strip("; "))
+            elif resolving and row_at is row and row.mean is not None:
+                # same strictness as the groups branch above: without collapse permission the
+                # series-wide `mean` is not this category's value, so an unmatched point read
+                # yields nothing rather than the series mean under a point-read label
+                from dataclasses import replace as _replace
+                row_at = _replace(row, mean=None, error_half_length=None,
+                                  error_upper=None, error_lower=None, notes=(
+                    f"{row.notes}; the x category {category!r} could not be matched to a point "
+                    f"of this reading, so no value is taken from it").strip("; "))
+            row = row_at
             collapse_here = False
         else:
-            collapse_here = collapse
+            collapse_here = collapse and not resolving
         if collapse_here:
             mean, error, n_points = _collapse_points(row)
             if twinned:
@@ -1392,8 +1469,8 @@ def _samples_from_readout(reading: ReadOut, collapse: bool = False,
                    "panel": reading.panel, "same_prompt_resample": reading.sample > 0,
                    "error_sides": row.error_sides, "axis_read": reading.axis_read,
                    "unmeasured_cap": unmeasured,
-                   "categorical_x_role": role if collapse else "",
-                   "categorical_x_role_why": role_why if collapse else "",
+                   "categorical_x_role": role if (collapse or resolving) else "",
+                   "categorical_x_role_why": role_why if (collapse or resolving) else "",
                    "categorical_x_category": category,
                    "axis_direction_note": reading.axis_direction_note}))
     return out
@@ -2312,13 +2389,27 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
                       "needs_review_reason": reason, "prompt_version": PROMPT_VERSION,
                       "readouts_bought": 0}
         return _no_value(fig, target, paper, source, dataset, crop, reason, provenance, result)
-    # P6's OFF path, decided BEFORE any model call. A figure whose x axis is a set of conditions
-    # carries the outcome as the average across that axis; reading one point of it is a different
-    # number, not a less precise one, so the cell says it cannot be converted rather than
-    # returning something wrong (Heuer & Hegele Fig 2a, acceptance item 15).
+    # P6's OFF path. A figure whose x axis is a set of conditions carries the outcome as the
+    # average across that axis; reading one point of it is a different number, not a less precise
+    # one (Heuer & Hegele Fig 2a, acceptance item 15). But "categorical" names three figure
+    # shapes, and two of them — the axis IS the groups; the locator names the one category to
+    # read (D3) — have nothing to average at all. Which shape this is can only be settled by the
+    # CATEGORY NAMES, and those come from readers. So a stated `conditions` still refuses for $0;
+    # an UNKNOWN kind enters RESOLUTION MODE: the first `readouts_min` read-outs (the same reads
+    # any supported cell buys first) are bought, `_categorical_role` rules on them, and the cell
+    # proceeds or refuses ON THAT EVIDENCE — before the coords, extra-read-out and overlay spend.
+    # The refusal that used to happen here for every unknown axis threw all 8 of one real paper's
+    # cells to a human, unread, though the resolver one layer down already handled their shape.
+    resolve_mode = False
     if (source is not None and source.x_axis_kind == "categorical"
             and not target.collapse_across_x and target.categorical_x != CATEGORICAL_GROUPS):
-        return _categorical_unsupported(fig, target, paper, source, dataset, crop, result)
+        if target.categorical_x == CATEGORICAL_CONDITIONS:
+            return _categorical_unsupported(
+                fig, target, paper, source, dataset, crop, result,
+                role=CATEGORICAL_CONDITIONS,
+                role_why="the caller stated the x categories are conditions, and the protocol "
+                         "does not permit averaging across them")
+        resolve_mode = True
     # C1 rule 3-4, decided BEFORE any model call: read the panel the map names, not the union of
     # every panel; and a panel whose own axis ladder is not inside its rect buys NO read-outs.
     # Paying three models to read numbers off an image that does not contain the numbers is the
@@ -2345,21 +2436,28 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     readouts: list[ReadOut] = []
     samples: list[RouteSample] = []
     plan = _readout_plan(models, n_max)
+    # in resolution mode the READERS are prompted to enumerate the series' points and name each
+    # category — the evidence `_categorical_role` rules on — without the collapse instruction's
+    # claim that the outcome is their average, which nothing here has established
+    read_target = (replace(target, resolve_categorical=True) if resolve_mode else target)
+    resolved_role: tuple[str, str] | None = None
 
-    def read(spec: ReadoutSpec) -> None:
+    def read(spec: ReadoutSpec, build: bool = True) -> None:
         suffix = f"/{spec.sample}" if spec.resample else ""
-        reading = read_out(client, crop, text, target, spec.model, spec.variant,
+        reading = read_out(client, crop, text, read_target, spec.model, spec.variant,
                            sample=spec.sample, view=view,
                            cell_key=f"{key}/D/{spec.variant}{suffix}")
         readouts.append(reading)
+        if not build:
+            return                # resolution mode: samples are built after the pooled ruling
         fresh = _samples_from_readout(reading, collapse=target.collapse_across_x, target=target,
-                                      locator=locator)
+                                      locator=locator, resolved=resolved_role)
         _mark_illegible(reading, fresh)          # C2: legibility is reported, then acted on
         samples.extend(fresh)
 
     # --- path D: the first `readouts_min` read-outs
     for spec in plan[:n_min]:
-        read(spec)
+        read(spec, build=not resolve_mode)
     # C2: when a MAJORITY of the readers say the named target is not in this image, that is a
     # fact about the image and the route abstains — before the pixel routes are paid to measure
     # the same picture, and without ever adopting the minority reading that produced numbers.
@@ -2367,6 +2465,37 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     if seen["abstain"]:
         return _target_not_visible(fig, target, paper, source, dataset, crop, seen, readouts,
                                    panel_info, result)
+
+    # --- resolution mode: rule on the bought evidence, then build every sample under ONE ruling
+    role_support = 0
+    hint_tension = ""
+    if resolve_mode:
+        voters = voting(readouts)
+        role, role_why = _categorical_role(target, voters, locator=locator, resolving=True)
+        if role not in (CATEGORICAL_GROUPS, CATEGORICAL_POINT_AT_CATEGORY):
+            return _categorical_unsupported(fig, target, paper, source, dataset, crop, result,
+                                            role=role, role_why=role_why, readouts=readouts)
+        # how many of the voting readings support the pooled ruling ON THEIR OWN — the strict
+        # fence downstream keys on this: one witness to what the axis IS is an inferred premise,
+        # not a corroborated fact, however right it may be
+        role_support = sum(
+            1 for r in voters
+            if _categorical_role(target, [r], locator=locator, resolving=True)[0] == role)
+        if role == CATEGORICAL_POINT_AT_CATEGORY and _AGGREGATE_CUE.search(
+                str(target.x_hint or "")):
+            # the protocol's own measurement window describes an aggregate; a single-category
+            # point read may still be right (the aggregate can live inside the plotted point),
+            # but the tension is a fact a person must see, so the ruling counts as one witness
+            hint_tension = (f"the protocol's measurement window ({target.x_hint!r}) describes "
+                            f"an aggregate, and this value is the single point at one x "
+                            f"category — the two are not reconciled by anything on the record")
+            role_support = min(role_support, 1)
+        resolved_role = (role, role_why)
+        for reading in readouts:
+            fresh = _samples_from_readout(reading, collapse=False, target=target,
+                                          locator=locator, resolved=resolved_role)
+            _mark_illegible(reading, fresh)
+            samples.extend(fresh)
 
     # --- path C: VLM coordinates + CV snap
     primary = models[0] if models else "claude-opus-5"
@@ -2385,8 +2514,12 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     pixel_samples = _samples_from_coords(coord, core, pixel_cal, cal_source)
     # --- path B: raster CV, matched by the nearest VLM coordinate
     pixel_samples += _samples_from_raster(coord, core, pixel_cal, cal_source)
-    cat_role, cat_role_why = ((_categorical_role(target, voting(readouts), locator=locator))
-                              if target.collapse_across_x else (CATEGORICAL_CONDITIONS, ""))
+    if target.collapse_across_x:
+        cat_role, cat_role_why = _categorical_role(target, voting(readouts), locator=locator)
+    elif resolved_role is not None:
+        cat_role, cat_role_why = resolved_role
+    else:
+        cat_role, cat_role_why = CATEGORICAL_CONDITIONS, ""
     if (target.collapse_across_x
             and cat_role not in (CATEGORICAL_GROUPS, CATEGORICAL_POINT_AT_CATEGORY)):
         # a pixel route resolves ONE datum; when the outcome is the mean of every datum on the
@@ -2559,8 +2692,18 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     provenance["collapse_across_x"] = bool(target.collapse_across_x)
     provenance["x_axis_kind"] = source.x_axis_kind if source is not None else "unknown"
     provenance["categorical_x"] = target.categorical_x
-    provenance["categorical_x_role"] = cat_role if target.collapse_across_x else ""
+    provenance["categorical_x_role"] = (cat_role if (target.collapse_across_x
+                                                     or resolved_role is not None) else "")
     provenance["categorical_x_role_why"] = cat_role_why
+    if resolved_role is not None:
+        # the role was RESOLVED from the readers' own category reports, not stated by a caller —
+        # a fact the checks turn into a flag: corroborated (>=2 readings agree on their own) caps
+        # the cell; a single witness is an inferred premise and holds it for a person
+        provenance["categorical_x_resolved_from_readings"] = True
+        provenance["categorical_x_role_support"] = role_support
+        provenance["readouts_bought"] = len(readouts)
+        if hint_tension:
+            provenance["categorical_x_hint_tension"] = hint_tension
     if collapsed:
         provenance["collapsed_across_x"] = True
         provenance["n_points"] = min(int(s.extra.get("n_points") or 0) for s in collapsed)
@@ -3021,9 +3164,18 @@ def _target_not_visible(fig: FigureRegion, target: TargetSpec, paper: PaperRecor
 
 def _categorical_unsupported(fig: FigureRegion, target: TargetSpec, paper: PaperRecord,
                              source: Source, dataset: DatasetSpec | None, crop: Path,
-                             result: bool) -> list[Candidate] | DigitizeResult:
-    """One ensemble candidate per group saying, with no number in it, why there is no number."""
-    reason = (f"the x axis of {source.locator or fig.id} is recorded as categorical, and nothing "
+                             result: bool, *, role: str = "", role_why: str = "",
+                             readouts: Sequence[ReadOut] = ()
+                             ) -> list[Candidate] | DigitizeResult:
+    """One ensemble candidate per group saying, with no number in it, why there is no number.
+
+    When resolution mode bought read-outs before refusing, `role`/`role_why` carry the resolver's
+    ruling and its evidence, and the provenance reports what was bought and what it cost — a
+    refusal is a spend like any other, and reporting it as free was the E10 shape.
+    """
+    reason = (f"the x axis of {source.locator or fig.id} is recorded as categorical: {role_why}"
+              if role_why else
+              f"the x axis of {source.locator or fig.id} is recorded as categorical, and nothing "
               f"says which kind. If its categories are CONDITIONS the outcome is the average "
               f"across them and reading one point would be a different quantity — turn on "
               f"`collapse_across_categorical_x` to read every point. If its categories are the "
@@ -3033,7 +3185,11 @@ def _categorical_unsupported(fig: FigureRegion, target: TargetSpec, paper: Paper
     provenance = {"figure_id": fig.id, "figure_kind": fig.kind, "crop_dpi": fig.crop_dpi,
                   "x_axis_kind": source.x_axis_kind, "collapse_across_x": False,
                   CATEGORICAL_UNSUPPORTED: True, "needs_review": True,
-                  "needs_review_reason": reason, "prompt_version": PROMPT_VERSION}
+                  "needs_review_reason": reason, "prompt_version": PROMPT_VERSION,
+                  "categorical_x_role": role, "categorical_x_role_why": role_why,
+                  "readouts_bought": len(readouts),
+                  "cost_usd": sum(r.cost_usd for r in readouts),
+                  "readout_families": sorted({r.model for r in readouts})}
     out = [_candidate(None, None, group=group, sample=None, target=target, fig=fig, paper=paper,
                       dataset=dataset, source=source, kind=source.kind,
                       mapper_type=source.error_bar_type, unit=target.unit_hint,
@@ -3044,7 +3200,7 @@ def _categorical_unsupported(fig: FigureRegion, target: TargetSpec, paper: Paper
            for group in GROUPS]
     if result:
         return DigitizeResult(candidates=out, samples=[], calibration=None, overlay_path="",
-                              cost_usd=0.0, provenance=provenance)
+                              cost_usd=sum(r.cost_usd for r in readouts), provenance=provenance)
     return out
 
 

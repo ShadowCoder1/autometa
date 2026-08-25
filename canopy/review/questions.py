@@ -49,6 +49,7 @@ QUESTION_KINDS: tuple[str, ...] = (
     "group_mapping",      # which printed group is A and which is B
     "verifier_refuted",   # a verifier says the value is wrong; the tool could not settle it
     "no_value",           # nothing usable was found — where is it, if anywhere?
+    "categorical_axis_kind",  # a categorical x axis — are its categories conditions, or the groups?
     "converted_statistic",  # neither group's numbers are printed; the row converts a t/F/p/d
     "quote_not_found",    # the quote this number rests on is not printed in the paper
     "number_unusable",    # a number the conversion needs is missing or cannot be right (n, SD)
@@ -125,6 +126,12 @@ _FLAG_TO_KIND: tuple[tuple[str, str], ...] = (
     #: question. `confirm_value` would be the wrong terminus: its answer is a note, and a note
     #: does not settle whose number this is.
     ("locator_panel_mismatch", "which_series"),
+    #: the figure's x axis is categorical and nothing settled what its categories ARE — the one
+    #: question whose answer unblocks the whole cell. Its single-witness sibling is the same
+    #: question about a cell that DID resolve, on one reading's word: confirming or correcting
+    #: what the axis is is still the answer.
+    ("categorical_x_unsupported", "categorical_axis_kind"),
+    ("categorical_x_single_witness", "categorical_axis_kind"),
     ("axis_conflict", "which_axis"),
     ("calibration_disputed", "which_axis"),
     ("calibration_refuted", "which_axis"),
@@ -406,7 +413,8 @@ _CHANGES_THE_VALUE: frozenset[str] = frozenset({"value", "group_n", "orientation
 #: refutation, an adjudication or an unresolved direction is not among them: those are findings a
 #: confirmation did not name, and §C4 is explicit that an answer settles only what it names.
 _ASKED_ONCE: frozenset[str] = frozenset({"confirm_value", "which_value", "needs_group_values",
-                                         "converted_statistic", "no_value"})
+                                         "converted_statistic", "no_value",
+                                         "categorical_axis_kind"})
 
 
 def _value_settled(already: Sequence[Mapping[str, Any]]) -> bool:
@@ -556,7 +564,7 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
             return True                     # the cell has left the analysis: nothing is still open
         if override.get("kind") in MAP_KINDS:
             return override.get("decision") == "exclude"
-        if kind == "no_value" and override.get("kind") == "re_extract":
+        if kind in ("no_value", "categorical_axis_kind") and override.get("kind") == "re_extract":
             # a hint answers "where is it?" only until the reading it asks for has been bought.
             # Once the extract stage has re-read the cell with it and the cell STILL has no usable
             # value, the question is open again: the run has now paid to look where the reviewer
@@ -817,6 +825,12 @@ def _kind(verdict: Mapping[str, Any], flags: Sequence[str],
     #: (whole-diff re-review N3).
     printed = bool(statistic)
     if not valued and not converted and not printed:
+        # …unless what stopped the cell is a categorical x axis whose kind never resolved: then
+        # "where is it?" is the wrong question — the reviewer was already told where it is, and
+        # what nobody knows is what the axis's categories ARE. A blank type-the-number card on
+        # such a cell is the lazy question this kind exists to replace.
+        if "categorical_x_unsupported" in flags:
+            return "categorical_axis_kind"
         return "no_value"
     if verdict.get("verifier_verdict") == "refuted" and "verifier_refuted" not in overruled:
         # asked until an answer NAMES it. Suppressing it once any value answer existed is what let
@@ -1226,6 +1240,20 @@ def _options(kind: str, valued: Sequence[Mapping[str, Any]], verdict: Mapping[st
         # the free-text answer ("it is on p. 5, Table 2") is a re-extraction; the one thing a
         # reviewer can settle without a model call is that there is nothing to read.
         return [{"key": "not_reported", "label": "it is genuinely not reported in the paper"}]
+    if kind == "categorical_axis_kind":
+        # both decisions buy a re-read on the next --resume (the answer travels structurally on
+        # the re_extract record); "not readable" is the one thing settled without a model call
+        cleared = _present(flags, "categorical_x_unsupported", "categorical_x_single_witness")
+        return [
+            {"key": "groups", "clears": cleared,
+             "label": "the x categories are the two comparison groups themselves — read each "
+                      "group's own bar or point"},
+            {"key": "conditions", "clears": cleared,
+             "label": "the categories are conditions and the value is their average — average "
+                      "across them"},
+            {"key": "not_readable", "clears": cleared,
+             "label": "this figure cannot supply the value"},
+        ]
     return []
 
 
@@ -1427,6 +1455,17 @@ def _prompt(kind: str, label: str, outcome_key: str, where: str, unit: str, x_hi
     if kind == "no_value":
         return (f"No usable {outcome} value was found for {who}{src}. Where in the paper is it "
                 f"— page, figure or table — or is it genuinely not reported?")
+    if kind == "categorical_axis_kind":
+        said = [str(flag.get("message") or "") for flag in verdict.get("flags") or []
+                if str(flag.get("code") or "") in ("categorical_x_unsupported",
+                                                   "categorical_x_single_witness")]
+        why = _short("; ".join(dict.fromkeys(x for x in said if x)), 300)
+        return (f"The x axis of the figure this {outcome} value for {who} sits in{src} is "
+                f"categorical. If its categories are CONDITIONS, the value is the average across "
+                f"them; if they are the two comparison groups themselves, each group's own "
+                f"category is its value — two different numbers. Which are its categories — "
+                f"conditions, or the groups?"
+                + (f" Evidence so far: {why}" if why else ""))
     if kind == "quote_not_found":
         return (f"The sentence this {outcome} value for {who} rests on could not be found in the "
                 f"paper, so nothing shows where the number came from. Which of these is the "
@@ -2025,6 +2064,7 @@ def _answer_kind(kind: str) -> str:
             "converted_statistic": "mark_reviewed",
             "reader_contradicts_values": "value",
             "group_mapping": "mark_reviewed", "no_value": "re_extract",
+            "categorical_axis_kind": "re_extract",
             # §C1's cards. `pair` is decided by its slots, so what it writes is what they write
             # (`_pair_card` narrows it when they agree); the other three write one kind each.
             "pair": "value", "precedence_override": "value",
@@ -2135,6 +2175,22 @@ def _single_override(question: Mapping[str, Any], answer: Mapping[str, Any]) -> 
                 "clears": list(option.get("clears") or []),
                 "mean": None, "dispersion_value": None, "n": None,
                 "justification": f"{just} — {option['label']}"}
+    if kind == "categorical_axis_kind" and option is not None:
+        # BEFORE the generic clears branch below: these options carry `clears`, but two of them
+        # are decisions whose consequence is a RE-READ, not a note that a human looked.
+        if option.get("key") in ("groups", "conditions"):
+            # the decision travels STRUCTURALLY: `categorical_x` on the re_extract record is what
+            # the re-read's TargetSpec consumes as a caller statement (resolver rule 1) — prose in
+            # the hint line never reaches that field, and an answer that only became prose was a
+            # reviewer's decision silently discarded while marked acted-on.
+            picked = str(option["key"])
+            hint = str(answer.get("hint") or note or "").strip()
+            return {**base, "kind": "re_extract", "categorical_x": picked,
+                    "hint": hint or str(option.get("label") or picked),
+                    "justification": f"{just} — {option['label']}"}
+        return {**base, "kind": "mark_reviewed", "confidence": "needs_human",
+                "clears": list(option.get("clears") or []),
+                "justification": f"{just} — the figure cannot supply the value"}
     if option is not None and option.get("mean") is None \
             and (option.get("clears") or option.get("overrules")):
         # a decision that names what it answers and changes no number: it retires those findings
@@ -2379,7 +2435,8 @@ def _fold_cells(rest: Sequence[Question], run: Path, overrides: Sequence[Mapping
 #: kinds the cell fold leaves alone: the map's own questions; a direction (folded per measure);
 #: `no_value`, whose answer is a typed hint that buys a re-extraction, not a pick from a list
 _NOT_CELL_FOLDABLE: frozenset[str] = frozenset(MAP_KINDS) | {"include_dataset", "which_measure",
-                                                              "orientation", "no_value"}
+                                                              "orientation", "no_value",
+                                                              "categorical_axis_kind"}
 
 
 def _cell_card(dataset_id: str, outcome_key: str, members: Sequence[Question], run: Path,

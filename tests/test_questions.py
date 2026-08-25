@@ -2641,3 +2641,89 @@ def test_a_cell_missing_its_analysed_size_is_asked_for_group_values():
     refused = {"route": "not_convertible", "in_best_guess": False}
     assert _kind(verdict, ["n_missing"], [{"mean": 11.0, "candidate_id": "c"}],
                  _holding_codes(verdict), row=refused) == "needs_group_values"
+
+
+# ---------------------------------------------------- the categorical axis question (D3 fold 2)
+def test_an_unresolved_categorical_cell_asks_the_axis_question_not_where_is_it():
+    """A cell refused because nothing settled what its categorical x axis IS used to fall to the
+    blank `no_value` terminus — "where is it?" — though the reviewer had already been told where
+    it is. The one question whose answer unblocks the cell is what the axis's categories are."""
+    from canopy.review.questions import _holding_codes, _kind
+
+    verdict = {"higher_is_better": False, "flags": [
+        {"code": "categorical_x_unsupported", "severity": "warn",
+         "message": "the x axis is categorical and nothing says which kind"}]}
+    flags = [f["code"] for f in verdict["flags"]]
+    refused = {"route": "not_convertible", "in_best_guess": False}
+    assert _kind(verdict, flags, [], _holding_codes(verdict), row=refused) \
+        == "categorical_axis_kind"
+
+
+def test_the_axis_question_offers_both_shapes_and_its_answer_travels_structurally():
+    """The card's two live options each buy a re-read carrying `categorical_x` as a FIELD on the
+    re_extract record — a reviewer's decision that only became prose in the hint line would never
+    reach the TargetSpec, and the resume would refuse again while the seq was marked consumed."""
+    from canopy.review.questions import answer_to_override
+
+    question = {"id": "q1", "kind": "categorical_axis_kind", "paper_id": "p" * 64,
+                "dataset_id": "ds1", "outcome_key": "late_adaptation", "group": "A",
+                "number": 1,
+                "options": [
+                    {"key": "groups", "label": "the x categories are the two comparison groups",
+                     "clears": ["categorical_x_unsupported"]},
+                    {"key": "conditions", "label": "conditions — average across them",
+                     "clears": ["categorical_x_unsupported"]},
+                    {"key": "not_readable", "label": "this figure cannot supply the value",
+                     "clears": ["categorical_x_unsupported"]}]}
+    groups = answer_to_override(question, {"option": "groups"})
+    assert groups["kind"] == "re_extract"
+    assert groups["categorical_x"] == "groups"
+    assert groups["hint"]
+    conditions = answer_to_override(question, {"option": "conditions"})
+    assert conditions["kind"] == "re_extract"
+    assert conditions["categorical_x"] == "conditions"
+    unreadable = answer_to_override(question, {"option": "not_readable"})
+    assert unreadable["kind"] == "mark_reviewed"
+    assert unreadable["confidence"] == "needs_human"
+    assert "categorical_x_unsupported" in unreadable["clears"]
+
+
+def test_the_structural_answer_reaches_the_next_reads_target():
+    """`_categorical_answer` + `target_for_source`: "groups" becomes the caller statement resolver
+    rule 1 consumes; "conditions" grants the collapse for THIS cell that the protocol did not
+    grant globally. Latest answer wins — it is one decision, not two places a person looked."""
+    from canopy.pipeline.run import _categorical_answer, target_for_source
+    from canopy.models import (DatasetSpec, GroupSpec, OutcomeSources, Protocol, Source,
+                               SourceKind)
+
+    answers = [{"categorical_x": "conditions", "hint": "x", "seq": 1},
+               {"categorical_x": "groups", "hint": "y", "seq": 2}]
+    assert _categorical_answer(answers) == "groups"
+    assert _categorical_answer([{"hint": "no field", "seq": 3}]) == ""
+
+    protocol = Protocol.model_validate({
+        "title": "t", "research_question": "q",
+        "group_a": {"key": "A", "label": "old", "definition": "the older adults"},
+        "group_b": {"key": "B", "label": "young", "definition": "the younger adults"},
+        "outcomes": [{"key": "late_adaptation", "label": "late adaptation",
+                      "definition": "terminal adaptation"}]})
+    dataset = DatasetSpec(dataset_id="d1", group_a=GroupSpec(label="old"),
+                          group_b=GroupSpec(label="young"),
+                          outcomes=[OutcomeSources(outcome_key="late_adaptation")])
+    source = Source(kind=SourceKind.figure_bar, page=1, locator="Fig 1", figure_id="fig01",
+                    x_axis_kind="categorical")
+    sources = dataset.outcomes[0]
+
+    told_groups = target_for_source(source, dataset, sources, protocol, protocol.stats,
+                                    categorical_answer="groups")
+    assert told_groups.categorical_x == "groups"
+    assert told_groups.collapse_across_x is False
+
+    told_conditions = target_for_source(source, dataset, sources, protocol, protocol.stats,
+                                        categorical_answer="conditions")
+    assert told_conditions.categorical_x == "unknown"
+    assert told_conditions.collapse_across_x is True
+
+    untold = target_for_source(source, dataset, sources, protocol, protocol.stats)
+    assert untold.categorical_x == "unknown"
+    assert untold.collapse_across_x is False

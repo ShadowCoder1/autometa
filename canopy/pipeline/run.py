@@ -154,7 +154,7 @@ class PaperResult:
 # ----------------------------------------------------------------------------- digitiser target
 def target_for_source(source: Source, dataset: DatasetSpec, outcome_sources: OutcomeSources,
                       protocol: Protocol, settings: StatsSettings,
-                      reviewer_hint: str = "") -> TargetSpec:
+                      reviewer_hint: str = "", categorical_answer: str = "") -> TargetSpec:
     """The mapper's figure `Source` as the digitiser's `TargetSpec`.
 
     Every hint is copied from the protocol or from what the mapper read in the paper; the x hint is
@@ -178,8 +178,14 @@ def target_for_source(source: Source, dataset: DatasetSpec, outcome_sources: Out
         error_bar_type_hint=getattr(source.error_bar_type, "value", str(source.error_bar_type)),
         unit_hint=outcome_sources.units or outcome.units_hint,
         late_window_sd=settings.late_window_sd,
+        # `categorical_answer` is a reviewer's `categorical_axis_kind` decision for this cell:
+        # "groups" becomes the caller statement resolver rule 1 consumes; "conditions" means the
+        # outcome is the average across the axis, so the collapse the protocol did not switch on
+        # globally is granted for this one cell — by a person, on the record.
+        categorical_x=("groups" if categorical_answer == "groups" else "unknown"),
         collapse_across_x=(source.x_axis_kind == "categorical"
-                           and protocol.digitize.collapse_across_categorical_x),
+                           and (protocol.digitize.collapse_across_categorical_x
+                                or categorical_answer == "conditions")),
         notes="; ".join(part for part in (source.quote, source.values_in_text, source.notes)
                         if part)[:400],
         reviewer_hint=reviewer_hint)
@@ -453,6 +459,22 @@ def _hint_text(answers: Sequence[Mapping[str, Any]]) -> str:
     """
     hints = [" ".join(str(answer.get("hint") or "").split())[:_HINT_CHARS] for answer in answers]
     return "; ".join(list(dict.fromkeys(hint for hint in hints if hint))[-_HINTS_SHOWN:])
+
+
+def _categorical_answer(answers: Sequence[Mapping[str, Any]]) -> str:
+    """The latest structural `categorical_x` a reviewer gave this cell, or "".
+
+    The sibling of `_hint_text` for the `categorical_axis_kind` card's answer. Latest-wins, not
+    joined: "groups" and "conditions" are one decision that may change its mind, like a map
+    answer — not two places a person looked. Free text cannot carry it: the re-read's TargetSpec
+    consumes this as a caller statement (`_categorical_role` rule 1), and a prose hint never
+    reaches that field.
+    """
+    for answer in reversed(list(answers)):
+        value = str(answer.get("categorical_x") or "")
+        if value:
+            return value
+    return ""
 
 
 def _absorb_reread(cell: tuple[str, str], candidates: list[Candidate],
@@ -1006,6 +1028,7 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
                 exhausted.append(cell)
                 continue
             hint = _hint_text(hints.get(cell, ()))
+            categorical = _categorical_answer(hints.get(cell, ()))
             pair = (dataset.dataset_id, sources.outcome_key)
             # a hinted re-read is read into a scratch list and merged afterwards, never over the
             # cell's own readings: nothing may be removed before the reading meant to replace it
@@ -1014,7 +1037,8 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
             fresh: list[Candidate] = []
             try:
                 _extract_cell(ctx, paper, dataset, sources, figures_dir, status,
-                              out=fresh if hint else candidates, reviewer_hint=hint)
+                              out=fresh if hint else candidates, reviewer_hint=hint,
+                              categorical_answer=categorical)
             except PaperBudgetExceeded as exc:
                 if hint:
                     # `replace` here too: a cap landing mid-cell must not leave the rejected
@@ -1058,7 +1082,7 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
 def _extract_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                   sources: OutcomeSources, figures_dir: Path,
                   status: PaperStatus, out: list[Candidate] | None = None,
-                  reviewer_hint: str = "") -> list[Candidate]:
+                  reviewer_hint: str = "", categorical_answer: str = "") -> list[Candidate]:
     """Both text variants, the statistic reader, and the digitiser once per figure source.
 
     `out` is filled as each reader answers rather than returned at the end, so a budget death half
@@ -1116,7 +1140,7 @@ def _extract_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                 f"{source.figure_id or source.locator!r}, which ingestion did not find")
             continue
         target = target_for_source(source, dataset, sources, ctx.protocol, ctx.settings,
-                                   reviewer_hint)
+                                   reviewer_hint, categorical_answer=categorical_answer)
         try:
             digitised = digitize(ctx.client, paper, figure, target, source=source,
                                  dataset=dataset,

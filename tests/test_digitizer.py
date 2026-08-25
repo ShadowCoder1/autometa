@@ -2046,13 +2046,14 @@ CATEGORICAL_SOURCE = SOURCE.model_copy(update={"x_axis_kind": "categorical",
                                                "error_bar_type": DispersionType.SE})
 
 
-def test_a_categorical_x_axis_with_the_mode_OFF_is_never_a_wrong_number(bar_figure, tmp_path):
-    """Acceptance item 15: `not_convertible`, with the reason, and without spending a penny."""
+def test_a_stated_conditions_axis_without_permission_still_refuses_for_free(bar_figure, tmp_path):
+    """Acceptance item 15's caller-stated case: `conditions` + no collapse = $0 refusal."""
     from canopy.digitize.digitizer import CATEGORICAL_UNSUPPORTED
 
     paper, fig = _paper_for(bar_figure)
     provider = FakeProvider([])                       # any model call at all would raise
-    out = digitize(_client(provider), paper, fig, TARGET, source=CATEGORICAL_SOURCE,
+    target = replace(TARGET, categorical_x="conditions")
+    out = digitize(_client(provider), paper, fig, target, source=CATEGORICAL_SOURCE,
                    dataset=DATASET, out_dir=tmp_path, result=True)
     assert out.cost_usd == 0.0 and out.samples == []
     assert {c.group for c in out.candidates} == {"A", "B"}
@@ -2060,11 +2061,102 @@ def test_a_categorical_x_axis_with_the_mode_OFF_is_never_a_wrong_number(bar_figu
         assert cand.mean is None and cand.dispersion_value is None
         assert cand.status == "ambiguous"
         assert cand.pixel_provenance[CATEGORICAL_UNSUPPORTED] is True
-        # the refusal now names BOTH shapes a "categorical" x axis can be, because the remedy for
-        # one of them (turn the collapse on) destroys the other (F1): on a group chart averaging
-        # across the axis gives both arms the same mean
-        assert "average across them" in cand.notes
-        assert "GROUPS THEMSELVES" in cand.notes
+        assert "does not permit averaging" in cand.notes
+
+
+def test_an_unknown_categorical_axis_resolves_conditions_and_refuses_with_the_evidence(
+        bar_figure, tmp_path):
+    """Acceptance item 15, resolution mode: the minimum read-outs are bought, the category names
+    show a conditions axis (none of them is a group label), and the refusal NAMES that evidence —
+    still never a wrong number, and nothing past the resolving reads is spent."""
+    from canopy.digitize.digitizer import CATEGORICAL_UNSUPPORTED
+
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    a = [(12.0, 2.0), (14.0, 2.4), (11.0, 1.8), (13.0, 2.2)]
+    b = [(20.0, 3.0), (22.0, 3.4), (19.0, 2.8), (21.0, 3.2)]
+    provider = _scripted(_categorical_payload(a, b), _coord_payload(bar_figure, view.scale))
+    out = digitize(_client(provider), paper, fig, TARGET, source=CATEGORICAL_SOURCE,
+                   dataset=DATASET, out_dir=tmp_path, result=True)
+    # exactly the two resolving read-outs — no coords, no extra read-outs, no overlay
+    assert len(provider.requests) == 2
+    assert out.samples == []
+    assert {c.group for c in out.candidates} == {"A", "B"}
+    for cand in out.candidates:
+        assert cand.mean is None and cand.dispersion_value is None
+        assert cand.status == "ambiguous"
+        assert cand.pixel_provenance[CATEGORICAL_UNSUPPORTED] is True
+        assert cand.pixel_provenance["readouts_bought"] == 2
+        # the refusal carries rule 6's evidence, not a shrug
+        assert "none of them a group label" in cand.notes
+
+
+def _two_bar_payload(a_label: str, a_mean: float, b_label: str, b_mean: float) -> dict:
+    """A read-out of an ordinary group chart: each series is one bar, at its own x category."""
+    def series(group, label, mean):
+        return {"group": group, "label_read": label, "mean": mean,
+                "error_half_length": 2.0, "error_upper": None, "error_lower": None,
+                "error_sides": "both", "x_read": label,
+                "points": [{"x_label": label, "mean": mean, "error_half_length": 2.0}],
+                "confidence": 0.8, "notes": ""}
+
+    return {"status": "found", "panel": "Fig 1", "unit": "deg",
+            "axis_read": "left y-axis, adaptation (deg)", "axis_direction_note": "",
+            "legend_says": "error bars are SD", "tick_labels": [0, 10, 20, 30, 40],
+            "pixel_resolution_estimate": 0.1, "confidence": 0.8, "notes": "",
+            "groups": [series("A", a_label, a_mean), series("B", b_label, b_mean)]}
+
+
+def test_an_unknown_categorical_axis_resolves_groups_from_the_category_labels(bar_figure,
+                                                                              tmp_path):
+    """Resolution mode, the ordinary two-bar group chart: the categories ARE the protocol's own
+    group labels, so the cell proceeds — each arm read at its own category, the ruling and its
+    support on the record, and no series-wide mean anywhere near the ensemble."""
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    provider = _scripted(_two_bar_payload("old", 31.5, "young", 12.25),
+                         _coord_payload(bar_figure, view.scale))
+    out = digitize(_client(provider), paper, fig, TARGET, source=CATEGORICAL_SOURCE,
+                   dataset=DATASET, out_dir=tmp_path, result=True)
+    ensembles = {c.group: c for c in out.candidates if c.extractor_id == "digitize:ensemble"}
+    assert ensembles["A"].mean == pytest.approx(31.5, abs=1.0)
+    assert ensembles["B"].mean == pytest.approx(12.25, abs=1.0)
+    provenance = ensembles["A"].pixel_provenance
+    assert provenance["categorical_x_role"] == "groups"
+    assert provenance["categorical_x_resolved_from_readings"] is True
+    assert provenance["categorical_x_role_support"] >= 2
+    assert not provenance.get("categorical_x_unsupported")
+
+
+def test_a_single_witness_resolution_is_marked_as_one(bar_figure, tmp_path):
+    """One reading names the categories, the other names none: the cell proceeds on the pooled
+    ruling, and the record says a single reading carries what the axis IS — the fence the strict
+    line keys on (`categorical_x_single_witness` via the checks)."""
+    blind = {"status": "found", "panel": "Fig 1", "unit": "deg",
+             "axis_read": "left y-axis, adaptation (deg)", "axis_direction_note": "",
+             "legend_says": "", "tick_labels": [0, 10, 20, 30, 40],
+             "pixel_resolution_estimate": 0.1, "confidence": 0.5, "notes": "",
+             "groups": [{"group": "A", "label_read": "dark bar", "mean": None,
+                         "error_half_length": None, "error_upper": None, "error_lower": None,
+                         "error_sides": "unknown", "x_read": "", "points": [],
+                         "confidence": 0.4, "notes": ""},
+                        {"group": "B", "label_read": "light bar", "mean": None,
+                         "error_half_length": None, "error_upper": None, "error_lower": None,
+                         "error_sides": "unknown", "x_read": "", "points": [],
+                         "confidence": 0.4, "notes": ""}]}
+    paper, fig = _paper_for(bar_figure)
+    view = FigureView(bar_figure["path"])
+    provider = _scripted(_two_bar_payload("old", 31.5, "young", 12.25),
+                         _coord_payload(bar_figure, view.scale),
+                         readout_by_call=[_two_bar_payload("old", 31.5, "young", 12.25),
+                                          blind])
+    out = digitize(_client(provider), paper, fig, TARGET, source=CATEGORICAL_SOURCE,
+                   dataset=DATASET, out_dir=tmp_path, result=True)
+    ensembles = {c.group: c for c in out.candidates if c.extractor_id == "digitize:ensemble"}
+    assert ensembles["A"].mean == pytest.approx(31.5, abs=1.0)
+    provenance = ensembles["A"].pixel_provenance
+    assert provenance["categorical_x_resolved_from_readings"] is True
+    assert provenance["categorical_x_role_support"] == 1
 
 
 def test_a_categorical_x_axis_with_the_mode_ON_reads_every_point_and_averages_them(bar_figure,
@@ -3631,3 +3723,26 @@ def test_a_region_with_no_graphic_primitives_buys_no_readouts(tmp_path):
         assert "must buy no model call" in str(exc)     # it went on to try a real read
     else:
         raise AssertionError("a hardcoded 0/0 record must not trigger the refusal")
+
+
+def test_a_twinned_single_point_resolution_takes_no_value_for_either_arm(bar_figure, tmp_path):
+    """Post-implementation review finding 1: a reader returning the SAME unlabeled single point
+    for both series hands both arms one number in resolve mode — the contrast would be zero by
+    construction. No value may come from it (the d=0.0 net, at the source)."""
+    from canopy.digitize.digitizer import _samples_from_readout
+    from canopy.digitize.vlm import GroupReadOut, PointRead, ReadOut
+
+    reading = ReadOut(groups=[
+        GroupReadOut(group=g, label_read="the bar", mean=31.5, error_half_length=2.0,
+                     error_sides="both", x_read="the bar",
+                     points=[PointRead(x_label="old", mean=31.5, error_half_length=2.0)],
+                     confidence=0.8)
+        for g in ("A", "B")], model="m", variant="v")
+    samples = _samples_from_readout(reading, collapse=False, target=TARGET, locator="Fig 1",
+                                    resolved=("groups", "both categories are the group labels"))
+    by_group = {s.group: s for s in samples}
+    # arm A owns the "old" label, so its own bar stands; arm B must take nothing — the sole
+    # point names the OTHER group, and the rows are identical
+    assert by_group["A"].mean == pytest.approx(31.5)
+    assert by_group["B"].mean is None
+    assert "no value is taken" in by_group["B"].notes
