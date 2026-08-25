@@ -2270,6 +2270,26 @@ def model_families(samples: Sequence[RouteSample]) -> list[str]:
     return sorted({model_family(s.model) for s in samples if s.model})
 
 
+#: prefix on the buy-reason when the read is a SPREAD RESCUE (fix A) — the caller one-shots the
+#: rescue by detecting it, so a spread that never appears cannot spend the whole plan on itself
+SPREAD_RESCUE = "spread rescue: "
+
+
+def _spreadless_group(samples: Sequence[RouteSample]) -> str | None:
+    """The first group whose value stands with NO dispersion from any route — the spread-rescue
+    condition (fix A). Distinct from a route-D partial read (mean present, error absent on ONE
+    reading), which `_rebuy_partial` owns: this fires when the mean's only carriers are routes
+    that never measure a spread (vector, pixel snap), so no re-ask of a D reader can fill it and
+    one fresh read-out is the only remaining buyer."""
+    for group in GROUPS:
+        mine = [s for s in samples if s.group == group and s.usable]
+        if (mine and any(s.mean is not None for s in mine)
+                and not any(s.error is not None for s in mine)
+                and not any(s.route == "D" and s.mean is not None for s in mine)):
+            return group
+    return None
+
+
 def _needs_another_readout(samples: Sequence[RouteSample], *, axis_range: float,
                            tick_spacing: float, px_units: float) -> tuple[bool, str]:
     """Is one more vision read-out worth its price? (task 15 §A3, amended by task 16 §R1c)
@@ -2550,6 +2570,15 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     bought = 0
     bought_because: list[str] = []
     stop_reason = f"the plan holds no read-out past the first {n_min}"
+    # fix A's evidence: the MAP's own statement that this figure's bars exist. Never a caption
+    # keyword scan; NONE means the map says there are no bars, and a conflicted agreement means
+    # the paper's own statements disagree — neither buys a rescue.
+    bar_type = (getattr(source.error_bar_type, "value", str(source.error_bar_type))
+                if source is not None else "UNKNOWN")
+    spread_rescue = ""
+    if (bar_type not in ("UNKNOWN", "NONE")
+            and getattr(source, "error_bar_agreement", "") != "conflict"):
+        spread_rescue = f"the map records the figure's bars as {bar_type}"
     for spec in plan[n_min:]:
         needed, reason = _needs_another_readout(samples, axis_range=axis_range,
                                                 tick_spacing=tick_spacing, px_units=px_units)
@@ -2589,6 +2618,21 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     # --- path A: vector-exact (after every read-out, so it sees every tick ladder)
     samples.extend(_samples_from_vector(scene, vec_info, coord, core, voting(readouts)))
     _corroborate_vector_whiskers(samples, px_units)
+
+    # --- fix A, the spread rescue: a value whose only carriers are spread-less routes (vector,
+    # pixel snap), on a figure whose MAP records the error-bar type, buys exactly one more
+    # read-out — the one buyer left, since no D reader produced a mean to re-ask about. It can
+    # only run here, after path A, because the vector mean does not exist before it. One-shot,
+    # inside the plan's own headroom, priced like any read; and if the spread still does not
+    # appear the cell holds as before and the dispersion question asks a person.
+    rescue_group = _spreadless_group(samples) if spread_rescue else None
+    if rescue_group is not None and plan[n_min + bought:]:
+        reason = (f"{SPREAD_RESCUE}group {rescue_group}'s value stands with no spread from any "
+                  f"route, and {spread_rescue}")
+        bought_because.append(reason)
+        buy_reason = "; ".join(bought_because) or stop_reason
+        read(plan[n_min + bought])
+        bought += 1
 
     # --- two readers off two different value axes are not two reads of one number
     axis_info = _reconcile_axes(samples, target)

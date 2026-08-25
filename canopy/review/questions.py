@@ -642,7 +642,7 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
     if kind == "reader_contradicts_values":
         prompt = _contradiction_prompt(prompt, run, entry, dataset, outcome_key, measure)
     why = _why(entry, verdict)
-    if kind == "no_value" and bought:
+    if kind in ("no_value", "categorical_axis_kind") and bought:
         why = _reread_why(bought, why)
     if kind == "orientation":
         why = _with_ballots(why, run, str(entry.get("paper_id") or ""), outcome_key, measure)

@@ -38,7 +38,7 @@ from ..agents.adjudicator import adjudicate
 from ..agents.extract_stats import extract_test_statistics
 from ..agents.extract_text import extract_group_stats
 from ..agents.mapper import (HUMAN_DECIDER, HUMAN_EXCLUSION_RULE, MAP_ADJUDICATOR,
-                             apply_map_answers,
+                             apply_map_answers, c6_demoted,
                              extraction_blocks, map_answer_effects, map_answer_key,
                              map_study, readable_sources,
                              settled_measure, source_unreadable_reason, unreadable_cell)
@@ -59,7 +59,8 @@ from ..llm.costs import cache_stats, cache_summary_line, cost_by_stage
 from ..llm.errors import BudgetExceeded, LLMError, TruncatedOutput
 from ..models import (Adjudication, Candidate, CheckFlag, DatasetSpec, EffectSizeRecord,
                       OrientationVerdict, OutcomeSources, PaperStatus, Protocol, RunManifest,
-                      SourceKind, Source, StatsSettings, StudyMap, Verdict, VerifierVerdict)
+                      SourceKind, Source, StatsSettings, StudyMap, UNREADABLE_SAMPLES,
+                      Verdict, VerifierVerdict)
 from ..protocol import load_protocol
 from ..report import (exclusions_table, extraction_table, methods_figure, pool_rows,
                       prisma_flow, provenance_bundle, route_examples, write_html_report,
@@ -1059,6 +1060,33 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
             # only fact that can tell a reviewer's later change of mind from their first one.
             read_under[cell] = _readable_at(study, dataset.dataset_id, sources.outcome_key)
             if hint:
+                # fix D': a re-read that found nothing says WHY, per group, before the merge
+                # routes its candidates away — three cells on one real run failed a paid re-read
+                # in total silence, and no one (human or tool) could tell what the blocker was.
+                for g in ("A", "B"):
+                    fresh_mine = [c for c in fresh if c.group == g]
+                    if not fresh_mine:
+                        status.warnings.append(
+                            f"{cell}: the hinted re-read returned no candidates at all for "
+                            f"group {g}")
+                    elif not any(c.mean is not None for c in fresh_mine):
+                        said = next((str(c.notes
+                                         or (c.pixel_provenance or {}).get("needs_review_reason")
+                                         or "") for c in fresh_mine
+                                     if (c.notes or (c.pixel_provenance or {}
+                                                     ).get("needs_review_reason"))), "")
+                        status.warnings.append(
+                            f"{cell}: the hinted re-read bought a fresh look for group {g} and "
+                            f"found no value — {said[:200] or 'the readers gave no reason'}")
+                        # …and the reason travels to the re-opened card: the cell's surviving
+                        # ensemble records carry it in provenance, which the review layer reads
+                        for old in candidates:
+                            if (old.dataset_id == pair[0] and old.outcome_key == pair[1]
+                                    and old.group == g and said
+                                    and old.extractor_id == "digitize:ensemble"
+                                    and old.pixel_provenance is not None):
+                                old.pixel_provenance.setdefault(
+                                    "reread_found_nothing", said[:300])
                 # …and only now: the seqs are retired by the reading, not by the stage reaching
                 # the cell. A re-read that changed the cell's readings makes the verdict and the
                 # row built from them stale, and that is recorded in the stage file beside the
@@ -1165,6 +1193,44 @@ def _extract_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                 f"keeps its other candidates and the figure is unread, not misread")
             continue
         out.extend(digitised if isinstance(digitised, list) else digitised.candidates)
+    # fix C, the last resort: a group every readable source left without a value promotes ONE of
+    # the map's own recorded alternates — the record the cell would otherwise die ignoring. Gated
+    # entirely on record enums: never a C6-demoted loser (that is the which_measure decision's
+    # territory and a pinned behaviour), never a sample that cannot carry the contrast. The
+    # promotion is a recursive read of a one-source copy with the role flipped, so text and
+    # figure alternates take their ordinary reader paths and no second promotion can fire (the
+    # copy's source list holds no alternate). Bounded: one per cell per pass, priced under the
+    # paper's own cap like any read.
+    mine = [c for c in out if c.dataset_id == dataset.dataset_id and c.outcome_key == key]
+    have = {c.group for c in mine if c.mean is not None}
+    missing = [g for g in ("A", "B") if g not in have]
+    if missing:
+        read_markers = {_source_marker(s) for s in readable}
+        # a mapper-native alternate can carry a DIFFERENT measure ("DE (primary); IEE
+        # (alternative)") — promoting that reads a different quantity into the vote, the
+        # metric_mixed failure C6 exists to prevent. So the alternate's metric must match a
+        # readable value source's (or be unstated, which is the map saying nothing).
+        value_metrics = {str(getattr(v, "analysis_metric", "") or "")
+                         for v in readable} - {"", "unknown"}
+        promoted = next(
+            (s for s in sources.sources
+             if s.role == "alternate" and not c6_demoted(s)
+             and s.sample not in UNREADABLE_SAMPLES
+             and _source_marker(s) not in read_markers
+             and (str(getattr(s, "analysis_metric", "") or "") in ("", "unknown")
+                  or not value_metrics
+                  or str(getattr(s, "analysis_metric", "")) in value_metrics)), None)
+        if promoted is not None:
+            status.warnings.append(
+                f"{dataset.dataset_id}/{key}: group(s) {', '.join(missing)} got no value from "
+                f"any readable source, so the map's own alternate {promoted.locator[:80]!r} is "
+                f"read as a last resort")
+            out.extend(_extract_cell(
+                ctx, paper, dataset,
+                sources.model_copy(update={"sources":
+                                           [promoted.model_copy(update={"role": "value"})]}),
+                figures_dir, status, reviewer_hint=reviewer_hint,
+                categorical_answer=categorical_answer))
     return out
 
 
@@ -1250,12 +1316,33 @@ def _reopen_on_better_source(ctx: RunContext, paper: PaperRecord, dataset: Datas
                 f"better source — not re-opened, because {why}")
             continue
         if _source_marker(source) in already:
-            continue                     # the cell already read it; re-reading buys nothing
+            # "already read" only counts when the reading it bought actually SERVED the refuted
+            # group (fix B). Kumar's insets were mapped, read, and refused by a gate that has
+            # since been fixed; the verifier then named them and this skip threw its knowledge
+            # away. A refutation is the statement that the standing reading did not serve the
+            # group, so a named source is re-opened UNLESS it already gave that group a value —
+            # then re-reading truly buys nothing and value-level refutations stay a question.
+            group = next((c.group for c in cell
+                          if c.candidate_id == verdict.candidate_id), None)
+            if verdict.verdict != "refuted" or group is None:
+                continue
+            served = any(c.group == group and c.mean is not None
+                         and source_of(c, readable) is source
+                         and not str(c.candidate_id).endswith(":reopen") for c in cell)
+            reopened_before = any(str(c.candidate_id).endswith(":reopen")
+                                  and source_of(c, readable) is source for c in cell)
+            if served or reopened_before:
+                continue
         # the re-extraction's own warnings belong to the paper, not to a throwaway status object
         extra = _extract_cell(ctx, paper, dataset,
                               sources.model_copy(update={"sources": [source]}),
                               paper_dir(ctx.out_dir, paper.sha256) / "figures", status)
         if extra:
+            # a distinct id: the reopened read must never share a candidate_id with the reading
+            # it answers (ensemble ids omit the figure, so a same-source re-read would collide
+            # and conflate flag/verdict lookups), and the suffix is the recurrence marker above
+            for c in extra:
+                c.candidate_id = f"{c.candidate_id}:reopen"
             return named, list(extra)
         status.warnings.append(
             f"{dataset.dataset_id}/{sources.outcome_key}: re-opened on {named!r} at the verifier's "

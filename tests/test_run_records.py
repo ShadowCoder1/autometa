@@ -1100,3 +1100,204 @@ def test_the_funnel_stamps_the_house_style_flag_the_resolver_holds_on():
     assert with_premise.group_a.dispersion_type is DispersionType.SE
     assert SPREAD_TYPE_HOUSE_STYLE not in without.flags
     assert without.group_a.dispersion_type is DispersionType.UNKNOWN
+
+
+# ------------------------------------------------- fix B: reopen on refutation (already-read)
+def _reopen_fixture():
+    from canopy.models import (Candidate, DatasetSpec, GroupSpec, OutcomeSources, Source,
+                               SourceKind, VerifierVerdict)
+
+    inset = Source(kind=SourceKind.figure_bar, page=5, locator="Fig. 4C, inset bar plot",
+                   figure_id="fig04c", role="value", sample="one_group")
+    main = Source(kind=SourceKind.figure_points, page=5, locator="Fig. 4C, main plot",
+                  figure_id="fig04main", role="value", sample="one_group")
+    dataset = DatasetSpec(dataset_id="p:d2", group_a=GroupSpec(label="Left Sham"),
+                          group_b=GroupSpec(label="Right Sham"),
+                          outcomes=[OutcomeSources(outcome_key="late_adaptation",
+                                                   sources=[inset, main])])
+    sources = dataset.outcomes[0]
+    # the standing cell: group B's value came from the MAIN plot; the inset was read and REFUSED
+    # (no mean) — the exact record shape of the motivating run
+    cell = [Candidate(candidate_id="p:d2:late_adaptation:B:main", group="B", mean=9.1,
+                      dataset_id="p:d2", outcome_key="late_adaptation",
+                      kind="group_stats", status="found", page=5,
+                      locator="Fig. 4C, main plot", extractor_id="digitize:ensemble",
+                      pixel_provenance={"figure_id": "fig04main"}),
+            Candidate(candidate_id="p:d2:late_adaptation:B:inset", group="B", mean=None,
+                      dataset_id="p:d2", outcome_key="late_adaptation",
+                      kind="group_stats", status="ambiguous", page=5,
+                      locator="Fig. 4C, inset bar plot", extractor_id="digitize:ensemble",
+                      pixel_provenance={"figure_id": "fig04c"})]
+    verdict = VerifierVerdict(candidate_id="p:d2:late_adaptation:B:main", verdict="refuted",
+                              better_source="Fig. 4C, inset bar plot")
+    return dataset, sources, cell, verdict, inset
+
+
+def test_a_refutation_reopens_a_named_source_the_cell_read_but_got_nothing_from(monkeypatch):
+    """Fix B: 'already read' only counts when the reading served the group. The verifier names a
+    source whose earlier read produced NO mean for the refuted group — reopened; the fresh
+    candidates carry a distinct :reopen id so they never collide with the old records."""
+    from canopy.models import Candidate, PaperStatus
+    from canopy.pipeline import run as run_mod
+
+    dataset, sources, cell, verdict, inset = _reopen_fixture()
+
+    fresh = [Candidate(candidate_id="p:d2:late_adaptation:B:inset", group="B", mean=10.6,
+                       dataset_id="p:d2", outcome_key="late_adaptation",
+                       kind="group_stats", status="found", page=5,
+                       locator="Fig. 4C, inset bar plot", extractor_id="digitize:ensemble")]
+    monkeypatch.setattr(run_mod, "_extract_cell",
+                        lambda *a, **k: list(fresh))
+    from pathlib import Path
+    from types import SimpleNamespace
+    ctx = SimpleNamespace(out_dir=Path("/nonexistent"))
+    paper = SimpleNamespace(sha256="p" * 64)
+    out = run_mod._reopen_on_better_source(ctx, paper, dataset, sources, [verdict], cell,
+                                           PaperStatus(paper_id="p"))
+    assert out is not None
+    named, extra = out
+    assert named == "Fig. 4C, inset bar plot"
+    assert all(c.candidate_id.endswith(":reopen") for c in extra)
+
+
+def test_a_refutation_does_not_reopen_a_source_that_already_served_the_group(monkeypatch):
+    """The guard's other half: when the named source already gave the refuted group a value,
+    re-reading buys nothing and value-level refutations stay a human question."""
+    from canopy.models import PaperStatus
+    from canopy.pipeline import run as run_mod
+
+    dataset, sources, cell, verdict, inset = _reopen_fixture()
+    # flip the record: the INSET reading has the mean, and it is not the refuted winner
+    cell[1].mean = 10.6
+    verdict.candidate_id = cell[0].candidate_id      # main-plot winner refuted, inset served B
+    called = {"n": 0}
+
+    def no_call(*a, **k):
+        called["n"] += 1
+        return []
+
+    monkeypatch.setattr(run_mod, "_extract_cell", no_call)
+    out = run_mod._reopen_on_better_source(None, None, dataset, sources, [verdict], cell,
+                                           PaperStatus(paper_id="p"))
+    assert out is None and called["n"] == 0
+
+
+def test_a_reopened_source_is_never_reopened_twice(monkeypatch):
+    """The :reopen suffix is the recurrence marker: a second verify pass over the same records
+    finds the reopened read and buys nothing."""
+    from canopy.models import Candidate, PaperStatus
+    from canopy.pipeline import run as run_mod
+
+    dataset, sources, cell, verdict, inset = _reopen_fixture()
+    cell.append(Candidate(candidate_id="p:d2:late_adaptation:B:inset:reopen", group="B",
+                          mean=None, dataset_id="p:d2", outcome_key="late_adaptation",
+                          kind="group_stats", status="ambiguous", page=5,
+                          locator="Fig. 4C, inset bar plot", extractor_id="digitize:ensemble",
+                          pixel_provenance={"figure_id": "fig04c"}))
+    called = {"n": 0}
+
+    def no_call(*a, **k):
+        called["n"] += 1
+        return []
+
+    monkeypatch.setattr(run_mod, "_extract_cell", no_call)
+    out = run_mod._reopen_on_better_source(None, None, dataset, sources, [verdict], cell,
+                                           PaperStatus(paper_id="p"))
+    assert out is None and called["n"] == 0
+
+
+# ------------------------------------------------- fix C: the last-resort alternate promotion
+def test_a_group_no_readable_source_served_promotes_one_recorded_alternate(monkeypatch):
+    """Fix C: when every readable source leaves a group without a value, the map's own recorded
+    alternate is read — once — instead of the cell dying while the record names an unread
+    location. C6-demoted losers are never promoted (the which_measure decision's territory)."""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from canopy.models import (C6_DEMOTION_NOTE, Candidate, DatasetSpec, GroupSpec,
+                               OutcomeSources, PaperStatus, Source, SourceKind)
+    from canopy.pipeline import run as run_mod
+
+    value_src = Source(kind=SourceKind.table, page=3, locator="Table 2", role="value",
+                       sample="both_groups")
+    demoted = Source(kind=SourceKind.text_mean_sd, page=4, locator="Results, the losing measure",
+                     role="alternate", sample="both_groups",
+                     notes=f"{C6_DEMOTION_NOTE}: the other operationalization")
+    alternate = Source(kind=SourceKind.text_mean_sd, page=5, locator="Results, sentence with the values",
+                       role="alternate", sample="both_groups")
+    dataset = DatasetSpec(dataset_id="p:d1", group_a=GroupSpec(label="old"),
+                          group_b=GroupSpec(label="young"),
+                          outcomes=[OutcomeSources(outcome_key="late_adaptation",
+                                                   sources=[value_src, demoted, alternate])])
+    sources = dataset.outcomes[0]
+    calls: list[str] = []
+
+    def fake_stats(client, paper, protocol, ds, key, readable, **kw):
+        locs = [s.locator for s in readable]
+        calls.append(";".join(locs))
+        if "Results, sentence with the values" in locs:
+            return [Candidate(candidate_id=f"p:d1:late_adaptation:A:{len(calls)}", group="A",
+                              mean=12.0, dataset_id="p:d1", outcome_key="late_adaptation",
+                              kind="group_stats", status="found", page=5,
+                              locator="Results, sentence with the values",
+                              extractor_id="extract:text")]
+        return []
+
+    monkeypatch.setattr(run_mod, "extract_group_stats", fake_stats)
+    monkeypatch.setattr(run_mod, "extract_test_statistics", lambda *a, **k: [])
+    ctx = SimpleNamespace(client=None, protocol=None, settings=None,
+                          models={"primary": "m", "secondary": "m"},
+                          out_dir=Path("/nonexistent"))
+    paper = SimpleNamespace(sha256="p" * 64)
+    status = PaperStatus(paper_id="p")
+    out = run_mod._extract_cell(ctx, paper, dataset, sources, Path("/nonexistent"), status)
+    assert any(c.mean == 12.0 for c in out), "the alternate's reading reached the cell"
+    # the demoted loser was never offered to a reader; the mapper-native alternate was
+    assert not any("losing measure" in c for c in calls)
+    assert any("last resort" in w for w in status.warnings)
+    # …and a cell whose readable source already served both groups promotes nothing
+    calls.clear()
+    status2 = PaperStatus(paper_id="p")
+
+    def serves_both(client, paper, protocol, ds, key, readable, **kw):
+        calls.append("x")
+        return [Candidate(candidate_id=f"p:d1:late_adaptation:{g}:{len(calls)}", group=g,
+                          mean=1.0, dataset_id="p:d1", outcome_key="late_adaptation",
+                          kind="group_stats", status="found", page=3, locator="Table 2",
+                          extractor_id="extract:text") for g in ("A", "B")]
+
+    monkeypatch.setattr(run_mod, "extract_group_stats", serves_both)
+    run_mod._extract_cell(ctx, paper, dataset, sources, Path("/nonexistent"), status2)
+    assert not any("last resort" in w for w in status2.warnings)
+
+
+def test_a_mapper_native_alternate_of_a_different_measure_is_never_promoted(monkeypatch):
+    """Fix C's metric gate: an alternate the MAPPER wrote for a different operationalization
+    passes the C6 test (C6 never demoted it) but reads a different quantity — promoting it is
+    the metric_mixed failure. It stays on the record, unread."""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from canopy.models import (DatasetSpec, GroupSpec, OutcomeSources, PaperStatus, Source,
+                               SourceKind)
+    from canopy.pipeline import run as run_mod
+
+    value_src = Source(kind=SourceKind.table, page=3, locator="Table 2", role="value",
+                       sample="both_groups", analysis_metric="endpoint")
+    other_measure = Source(kind=SourceKind.text_mean_sd, page=5,
+                           locator="Results, the other operationalization", role="alternate",
+                           sample="both_groups", analysis_metric="change_from_baseline")
+    dataset = DatasetSpec(dataset_id="p:d1", group_a=GroupSpec(label="old"),
+                          group_b=GroupSpec(label="young"),
+                          outcomes=[OutcomeSources(outcome_key="late_adaptation",
+                                                   sources=[value_src, other_measure])])
+    monkeypatch.setattr(run_mod, "extract_group_stats", lambda *a, **k: [])
+    monkeypatch.setattr(run_mod, "extract_test_statistics", lambda *a, **k: [])
+    ctx = SimpleNamespace(client=None, protocol=None, settings=None,
+                          models={"primary": "m", "secondary": "m"},
+                          out_dir=Path("/nonexistent"))
+    status = PaperStatus(paper_id="p")
+    out = run_mod._extract_cell(ctx, SimpleNamespace(sha256="p" * 64), dataset,
+                                dataset.outcomes[0], Path("/nonexistent"), status)
+    assert out == []
+    assert not any("last resort" in w for w in status.warnings)

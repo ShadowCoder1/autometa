@@ -3746,3 +3746,23 @@ def test_a_twinned_single_point_resolution_takes_no_value_for_either_arm(bar_fig
     assert by_group["A"].mean == pytest.approx(31.5)
     assert by_group["B"].mean is None
     assert "no value is taken" in by_group["B"].notes
+
+
+# ---------------------------------------------------------------- fix A: the spread rescue
+def test_the_spread_rescue_names_a_group_only_no_route_can_fill():
+    """Fix A fires when a value's ONLY carriers are spread-less routes (vector/pixel) — a route-D
+    mean without an error is `_rebuy_partial`'s case, and a value with any spread is nobody's."""
+    from canopy.digitize.digitizer import _spreadless_group
+
+    vector_only = [RouteSample(route="A", group="A", model="", variant="", mean=21.4, error=None,
+                               snap_conf=1.0)]
+    assert _spreadless_group(vector_only) == "A"
+    d_partial = [RouteSample(route="D", group="A", model="claude-opus-5", variant="direct",
+                             mean=21.4, error=None)]
+    assert _spreadless_group(d_partial) is None, "route D half-answers belong to _rebuy_partial"
+    with_spread = [RouteSample(route="A", group="A", model="", variant="", mean=21.4, error=2.0,
+                               snap_conf=1.0)]
+    assert _spreadless_group(with_spread) is None
+    no_mean = [RouteSample(route="A", group="A", model="", variant="", mean=None, error=None,
+                           snap_conf=1.0)]
+    assert _spreadless_group(no_mean) is None
