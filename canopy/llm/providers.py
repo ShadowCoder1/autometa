@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -189,6 +190,19 @@ class AnthropicProvider:
         if req.fallbacks:
             kwargs["fallbacks"] = req.fallbacks
         # NOTE: never pass `temperature` or `thinking` — these models think adaptively.
+        # Proxy plumbing, not model behaviour: a gateway in front of the API (OpenRouter et al.)
+        # may need routing fields the Anthropic SDK does not model — e.g. pinning the serving
+        # provider so Files-API references resolve ({"provider": {"order": ["Anthropic"],
+        # "allow_fallbacks": false}}; a request routed to an Azure deployment answered "File
+        # data is missing" for a file that lives on Anthropic's store). The JSON is merged into
+        # the request body verbatim and never enters the cache key, so cached answers are
+        # unaffected by where the live call was served.
+        extra = os.environ.get("CANOPY_LLM_EXTRA_BODY", "").strip()
+        if extra:
+            try:
+                kwargs["extra_body"] = json.loads(extra)
+            except ValueError as exc:
+                raise ValueError(f"CANOPY_LLM_EXTRA_BODY is not valid JSON: {exc}") from exc
         return kwargs
 
     def _endpoint(self, req: LLMRequest) -> Any:

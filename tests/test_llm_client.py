@@ -736,3 +736,26 @@ def test_the_stutter_signature_needs_three_runs_of_it():
     assert degenerate_reply(
         "the measure is defined in the methods).ular error).al deviation).ular error, so the "
         "direction on this raw measure is not stated anywhere in the paper") == ["stuttered_tail"]
+
+
+def test_env_extra_body_is_merged_verbatim_and_bad_json_is_refused(monkeypatch):
+    """Proxy plumbing: CANOPY_LLM_EXTRA_BODY reaches the request body verbatim (a gateway's
+    routing fields, e.g. pinning the serving provider so Files-API references resolve) and a
+    typo'd value fails loudly rather than silently unpinning every call."""
+    import pytest
+
+    from canopy.llm.providers import AnthropicProvider, LLMRequest
+
+    provider = AnthropicProvider(client=object())
+    req = LLMRequest(model="claude-sonnet-5", max_tokens=64,
+                     messages=[{"role": "user", "content": "hi"}])
+    monkeypatch.setenv("CANOPY_LLM_EXTRA_BODY",
+                       '{"provider": {"order": ["Anthropic"], "allow_fallbacks": false}}')
+    kwargs = provider._kwargs(req)
+    assert kwargs["extra_body"] == {"provider": {"order": ["Anthropic"],
+                                                 "allow_fallbacks": False}}
+    monkeypatch.setenv("CANOPY_LLM_EXTRA_BODY", "")
+    assert "extra_body" not in provider._kwargs(req)
+    monkeypatch.setenv("CANOPY_LLM_EXTRA_BODY", "{not json")
+    with pytest.raises(ValueError, match="CANOPY_LLM_EXTRA_BODY"):
+        provider._kwargs(req)
