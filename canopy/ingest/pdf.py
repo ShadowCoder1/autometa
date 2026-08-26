@@ -202,6 +202,17 @@ class FigureRegion:
     #: the panels the CAPTION enumerates ("a: ... b: ... c: ..."), when it enumerates any. Read
     #: against `panels`, it is the page's own answer to "did ingestion find every panel?"
     caption_panels: list[str] = field(default_factory=list)
+    #: fix F. `_panel_letters` assigns letters by ORDINAL reading order and, on its own, nothing
+    #: checks them against what the panels actually print — one real figure's D-rect was lettered
+    #: E, and every downstream reader faithfully read the wrong panel. `_verify_panel_letters`
+    #: compares each panel's own words against the caption's per-letter descriptions: an
+    #: unambiguous permutation re-binds the letters silently (the record is then RIGHT and no
+    #: doubt survives); anything short of that sets this bit, and a letter-addressed read of a
+    #: disputed figure prefers the full page render over a crop whose letter cannot be trusted.
+    panel_labels_disputed: bool = False
+    #: what the verification saw, for the human and the provenance note — which panel's text
+    #: matched which letter's description on which tokens ("" when nothing was found).
+    panel_label_note: str = ""
 
     #: True iff `n_images`/`n_drawings` were MEASURED against the page. Records written before
     #: this field hardcoded 0/0 on every caption_only region — a claim, not a measurement — and at
@@ -676,6 +687,113 @@ def _panel_letters(enumerated: list[str], n: int) -> list[str]:
     return alphabet
 
 
+def _content_tokens(texts) -> set[str]:
+    """Lowercased word tokens with no numbers and no one-letter words — what a title is made of.
+
+    De-hyphenated first: line-broken words survive `_norm_ws` as "par- ticipants", and a token
+    ending in "-" matches nothing it should.
+    """
+    out: set[str] = set()
+    for text in texts:
+        for raw in re.split(r"[\s/]+", str(text).replace("- ", "").replace("-", " ")):
+            token = raw.strip(".,;:()[]{}\"'!?%°").lower()
+            if len(token) >= 2 and numeric_value(token) is None:
+                out.add(token)
+    return out
+
+
+def _caption_panel_texts(caption: str, letters: list[str]) -> dict[str, str]:
+    """The caption segmented into per-letter descriptions, or {} — never a guess.
+
+    Two scans over the SAME normalized text, mirroring `caption_panels`' two kinds of evidence:
+    marks first (an enumeration is punctuated and prose is not), then bare letters only when the
+    punctuated scan cannot place the whole run (bold enumerations print no punctuation at all).
+    Both are greedy on the NEXT EXPECTED letter, so an English article "a" sitting after the real
+    "(a)" mark can never re-segment the caption. Every description ends at its first sentence
+    boundary: the trailing prose of a caption ("Error bars are standard errors…") describes the
+    figure, not the last panel, and measured on a real corpus it is exactly what filled the last
+    letter's description with vocabulary every panel matches. All letters placed in order, or {}:
+    a segmentation that cannot account for the whole run must not manufacture evidence.
+    """
+    text = _norm_ws(caption)
+    # a LOCAL case-insensitive scan: `CAPTION_PANEL_RE` is lowercase-only and its acceptance
+    # behaviour is pinned, but "(A) … (B)" is the commonest enumeration in print, and this
+    # function only ever looks for the letters `caption_panels` (or the ordinal fallback)
+    # already committed to — the next-expected discipline keeps stray capitals inert
+    pattern = re.compile(CAPTION_PANEL_RE.pattern, re.IGNORECASE)
+    for punctuated_only in (True, False):
+        spans: dict[str, str] = {}
+        expected = list(letters)
+        marks: list[tuple[str, int, int]] = []
+        for m in pattern.finditer(text):
+            if not expected:
+                break
+            if punctuated_only and m.group(0).rstrip()[-1:] not in ")]:.,;":
+                continue
+            if m.group(1).lower() == expected[0]:
+                marks.append((expected.pop(0), m.start(), m.end()))
+        if expected or not marks:
+            continue
+        for i, (letter, _, begin) in enumerate(marks):
+            end = marks[i + 1][1] if i + 1 < len(marks) else len(text)
+            body = text[begin:end]
+            stop = re.search(r"\.\s", body)
+            spans[letter] = body[:stop.end()] if stop else body
+        return spans
+    return {}
+
+
+def _verify_panel_letters(panels: list[dict], caption: str, letters: list[str],
+                          words: list) -> tuple[list[str] | None, str]:
+    """`(rebound_letters, "")`, `(None, dispute_note)` or `(None, "")` — fix F's whole ruling.
+
+    Each panel's own printed words are matched against the caption's per-letter descriptions on
+    DOUBLY discriminative tokens: a token votes only when it belongs to exactly one panel AND
+    exactly one description. One-sided discriminativeness is not enough — measured on a real
+    corpus, a shared axis title ("target direction … deg") is unique to the LAST description
+    (which inherits the caption's trailing prose) and voted every panel of three correct figures
+    toward the same letter. A panel votes for the letter it beats every other letter on; votes
+    that agree with the standing letters are silence; a full bijection of disagreeing votes is a
+    re-bind (a true swap produces exactly that 2-cycle); anything less is a dispute — EXCEPT the
+    uniform previous-letter chain, which is what "Movement time (a) and endpoint error (b)"
+    trailing-letter captions produce from segmentation alone and is silenced as an artifact.
+    """
+    if len(panels) < 2 or len(letters) != len(panels):
+        return None, ""
+    descriptions = _caption_panel_texts(caption, letters)
+    if set(descriptions) != set(letters):
+        return None, ""
+    panel_tokens = [_content_tokens(_words_in(words, p["rect"])) for p in panels]
+    description_tokens = {letter: _content_tokens([descriptions[letter]]) for letter in letters}
+    votes: dict[int, tuple[str, list[str]]] = {}
+    for i, own in enumerate(panel_tokens):
+        mine = {t for t in own if sum(t in other for other in panel_tokens) == 1}
+        scores = {
+            letter: sorted(t for t in mine & description_tokens[letter]
+                           if sum(t in description_tokens[o] for o in letters) == 1)
+            for letter in letters}
+        best = max(scores, key=lambda letter: len(scores[letter]))
+        if scores[best] and all(len(scores[o]) < len(scores[best])
+                                for o in letters if o != best):
+            votes[i] = (best, scores[best])
+    if not votes or all(best == letters[i] for i, (best, _) in votes.items()):
+        return None, ""
+    proposed = [votes[i][0] if i in votes else letters[i] for i in range(len(panels))]
+    evidence = "; ".join(
+        f"the rect lettered {letters[i]!r} prints {', '.join(repr(t) for t in toks[:4])}, "
+        f"which the caption describes under {best!r}"
+        for i, (best, toks) in sorted(votes.items()) if best != letters[i])
+    if sorted(proposed) == sorted(letters):
+        return proposed, evidence
+    shift = {(i, best) for i, (best, _) in votes.items() if best != letters[i]}
+    if all(i > 0 and best == letters[i - 1] for i, best in shift):
+        # every disagreeing vote points one letter BACK — the shape trailing-letter captions
+        # ("Movement time (a) and endpoint error (b)") give the segmentation on a CORRECT
+        # figure, because each description's words sit before its mark, not after
+        return None, ""
+    return None, evidence
+
+
 def _panel_left(rect: pymupdf.Rect, siblings: list[pymupdf.Rect],
                 cap_x0: float | None) -> float:
     """How far left this panel may reach — to a landmark, and never over its neighbour.
@@ -1071,9 +1189,24 @@ def _figure_regions(page: pymupdf.Page, page_no: int) -> list[dict]:
             for panel in panels:
                 panel["calibrated"] = True
         enumerated = caption_panels(cap_txt, bold=_bold_letters(page, cap_rect))
-        for panel, letter in zip(panels, _panel_letters(enumerated, len(panels))):
+        assigned = _panel_letters(enumerated, len(panels))
+        for panel, letter in zip(panels, assigned):
             panel["letter"] = letter
-        regions.append(dict(bbox=grown, caption=cap_txt, label=label, kind=kind, n_images=g["n_img"],
+        # fix F: the ordinal assignment above is a guess about reading order, checked here
+        # against the only two witnesses the page itself offers — each panel's own printed words
+        # and the caption's per-letter descriptions. An unambiguous permutation is re-bound
+        # BEFORE `_render_panels` mints ids and crops, so `fig02d` is born meaning the d panel;
+        # anything short of a bijection is recorded as a dispute for the read side to honour.
+        labels_disputed, label_note = False, ""
+        rebound, note = _verify_panel_letters(panels, cap_txt, assigned, words)
+        if rebound is not None:
+            for panel, letter in zip(panels, rebound):
+                panel["letter"] = letter
+            label_note = f"re-bound: {note}"
+        elif note:
+            labels_disputed, label_note = True, note
+        regions.append(dict(panel_labels_disputed=labels_disputed, panel_label_note=label_note,
+                            bbox=grown, caption=cap_txt, label=label, kind=kind, n_images=g["n_img"],
                             n_drawings=g["n_draw"], native_px=npx, panels=panels,
                             text_layer=TEXT_LAYER_PRESENT if has_text else TEXT_LAYER_NONE,
                             n_region_ladder=n_region_ladder,
@@ -1261,7 +1394,16 @@ def ingest_pdf(path: str | Path, out_dir: str | Path, page_dpi: int = PAGE_DPI, 
                                         n_region_ladder=int(reg.get("n_region_ladder", 0)),
                                         n_region_numeric=int(reg.get("n_region_numeric", 0)),
                                         caption_panels=list(reg.get("caption_panels") or []),
-                                        caption_growth_pt=float(reg.get("caption_growth_pt", 0.0))))
+                                        caption_growth_pt=float(reg.get("caption_growth_pt", 0.0)),
+                                        # every key set on a region dict must be threaded HERE or
+                                        # it silently vanishes: `primitives_measured=True` was
+                                        # set on caption_only dicts and dropped at this seam, so
+                                        # the digitiser's $0 no-graphics refusal never fired on a
+                                        # fresh ingest — a claim its own pinned test could not
+                                        # see, because that test builds the record directly
+                                        primitives_measured=bool(reg.get("primitives_measured", False)),
+                                        panel_labels_disputed=bool(reg.get("panel_labels_disputed", False)),
+                                        panel_label_note=str(reg.get("panel_label_note", ""))))
     first_text = doc[0].get_text() if len(doc) else ""
     has_text = total_chars > 200 * max(1, len(doc)) * 0.2
     if not has_text:

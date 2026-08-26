@@ -1301,3 +1301,119 @@ def test_a_mapper_native_alternate_of_a_different_measure_is_never_promoted(monk
                                 dataset.outcomes[0], Path("/nonexistent"), status)
     assert out == []
     assert not any("last resort" in w for w in status.warnings)
+
+
+# --------------------------------------- fix G: text-contradicted figure reads re-acquire
+def _reacquire_fixture():
+    """A figure-routed ensemble winner refuted against printed values — the wire's exact shape.
+    The winner's provenance carries the PANEL id (fig04a) while the source names the figure
+    (fig04): ensemble ids omit the figure and are shared across sources, so the pairing is by
+    object, and the source match is by prefix."""
+    from types import SimpleNamespace
+
+    from canopy.models import (Candidate, DatasetSpec, GroupSpec, OutcomeSources, Source,
+                               SourceKind, VerifierVerdict)
+
+    src = Source(kind=SourceKind.figure_bar, page=5, locator="Fig. 4a, transfer bars",
+                 figure_id="fig04", role="value", sample="one_group")
+    dataset = DatasetSpec(dataset_id="p:d2", group_a=GroupSpec(label="Left"),
+                          group_b=GroupSpec(label="Right"),
+                          outcomes=[OutcomeSources(outcome_key="late_adaptation",
+                                                   sources=[src])])
+    winner = Candidate(candidate_id="p:d2:late_adaptation:B:digitize:ensemble", group="B",
+                       mean=21.0, dataset_id="p:d2", outcome_key="late_adaptation",
+                       kind="group_stats", status="found", page=5,
+                       locator="Fig. 4a", extractor_id="digitize:ensemble",
+                       pixel_provenance={"figure_id": "fig04a"})
+    verdict = VerifierVerdict(candidate_id=winner.candidate_id, verdict="refuted",
+                              reason="the printed text contradicts this reading",
+                              alt_mean=84.0, alt_quote="performance was 84 ± 6% at transfer")
+    paper = SimpleNamespace(sha256="p" * 64,
+                            figures=[SimpleNamespace(id="fig04", page=5)],
+                            pages=[SimpleNamespace(number=5, png="pages/p005.png")])
+    return dataset, dataset.outcomes[0], winner, verdict, paper
+
+
+def test_g_a_print_cited_refutation_of_a_figure_read_buys_one_page_reacquire(monkeypatch,
+                                                                             tmp_path):
+    from types import SimpleNamespace
+
+    from canopy.models import Candidate, PaperStatus
+    from canopy.pipeline import run as run_mod
+
+    dataset, sources, winner, verdict, paper = _reacquire_fixture()
+    seen_kwargs = {}
+
+    def fake_extract(ctx, p, ds, srcs, figures_dir, status, **kwargs):
+        seen_kwargs.update(kwargs)
+        return [Candidate(candidate_id="p:d2:late_adaptation:B:digitize:ensemble", group="B",
+                          mean=79.0, dataset_id="p:d2", outcome_key="late_adaptation",
+                          kind="group_stats", status="found", page=5, locator="Fig. 4a",
+                          extractor_id="digitize:ensemble",
+                          pixel_provenance={"figure_id": "fig04!page",
+                                            "crop_reacquired": True})]
+
+    monkeypatch.setattr(run_mod, "_extract_cell", fake_extract)
+    ctx = SimpleNamespace(out_dir=tmp_path)
+    out = run_mod._reacquire_on_refutation(ctx, paper, dataset, sources, [(verdict, winner)],
+                                           [winner], PaperStatus(paper_id="p"))
+    assert out is not None
+    quote, extra = out
+    assert "84 ± 6%" in quote
+    assert extra and all(c.candidate_id.endswith(":reacquire") for c in extra)
+    assert "84 ± 6%" in seen_kwargs.get("force_reacquire", "")
+
+
+def test_g_the_wire_refuses_every_shape_that_is_not_its_own(monkeypatch, tmp_path):
+    """Each guard, negatively: no digits in the quote; a printed value that AGREES; a winner
+    already read from the page; a second bite at the same cell; a human mid-decision; and a
+    fall-through result that never actually re-acquired (a cached replay must not become
+    corroboration)."""
+    import json
+    from types import SimpleNamespace
+
+    from canopy.models import Candidate, PaperStatus
+    from canopy.pipeline import run as run_mod
+    from canopy.pipeline.overrides import OVERRIDES_FILE
+
+    calls = {"n": 0}
+
+    def counting_extract(*a, **k):
+        calls["n"] += 1
+        return [Candidate(candidate_id="x", group="B", mean=79.0, dataset_id="p:d2",
+                          outcome_key="late_adaptation", kind="group_stats", status="found",
+                          pixel_provenance={"figure_id": "fig04a"})]   # NOT crop_reacquired
+
+    monkeypatch.setattr(run_mod, "_extract_cell", counting_extract)
+    ctx = SimpleNamespace(out_dir=tmp_path)
+    status = PaperStatus(paper_id="p")
+
+    def go(verdict, winner, cell, c=ctx):
+        dataset, sources, _, _, paper = _reacquire_fixture()
+        return run_mod._reacquire_on_refutation(c, paper, dataset, sources,
+                                                [(verdict, winner)], cell, status)
+
+    dataset, sources, winner, verdict, paper = _reacquire_fixture()
+    # no digits in the quote: not printed numeric evidence
+    v = verdict.model_copy(update={"alt_quote": "the text disagrees"})
+    assert go(v, winner, [winner]) is None and calls["n"] == 0
+    # the printed value AGREES with the reading — a wider image settles nothing
+    v = verdict.model_copy(update={"alt_mean": 21.0})
+    assert go(v, winner, [winner]) is None and calls["n"] == 0
+    # the winner is already a page-level read: an identical retry replays cache byte for byte
+    w = winner.model_copy(update={"pixel_provenance": {"figure_id": "fig04a",
+                                                       "crop_reacquired": True}})
+    assert go(verdict, w, [w]) is None and calls["n"] == 0
+    # once per cell, ever
+    marked = winner.model_copy(update={"candidate_id": winner.candidate_id + ":reacquire"})
+    assert go(verdict, winner, [winner, marked]) is None and calls["n"] == 0
+    # a human is mid-decision on this cell: theirs wins, no money moves
+    (tmp_path / OVERRIDES_FILE).write_text(json.dumps(
+        {"kind": "value", "dataset_id": "p:d2", "outcome_key": "late_adaptation",
+         "group": "B", "mean": 84.0, "seq": 1}) + "\n")
+    assert go(verdict, winner, [winner]) is None and calls["n"] == 0
+    (tmp_path / OVERRIDES_FILE).unlink()
+    # the trigger fires — but the result never re-acquired (no page render at digitize level):
+    # the candidates are DISCARDED, not voted, and the refutation stands for adjudication
+    assert go(verdict, winner, [winner]) is None and calls["n"] == 1
+    assert any("produced no page-level reading" in w for w in status.warnings)

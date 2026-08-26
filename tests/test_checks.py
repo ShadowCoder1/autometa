@@ -1292,3 +1292,31 @@ def test_a_permitted_collapse_that_never_resolved_raises_the_axis_question_flag(
                                "categorical_x_role_why": "nothing in the readings says which"})
     flags = run_checks(dataset, "late_adaptation", [c])
     assert "categorical_x_unsupported" in codes(flags)
+
+
+# ---------------------------------------------------- fix F/G: the re-acquire flag family
+def test_f_a_disputed_letter_crop_read_is_flagged_and_capped():
+    """The digitiser read a letter-addressed crop although ingest disputed the figure's letter
+    bindings (no page render existed to prefer) — the row must say so, and the doubt caps."""
+    from canopy.verify.confidence import CAP_REASONS, CAPPING_FLAGS
+
+    dataset = make_dataset()
+    disputed = _figure_cand()
+    disputed.pixel_provenance["panel_labels_disputed"] = \
+        "the rect lettered 'b' prints a sibling's title"
+    flags = run_checks(dataset, "late_adaptation", [disputed])
+    assert "panel_labels_disputed" in codes(flags)
+    flagged = next(f for f in flags if f.code == "panel_labels_disputed")
+    assert flagged.severity == "warn" and "lettered 'b'" in flagged.message
+    assert "panel_labels_disputed" in CAPPING_FLAGS
+    assert "panel_labels_disputed" in CAP_REASONS
+    # the page path never stamps the dispute (the page shows every printed letter), so the
+    # family is priced once — `reacquired_on_refutation` is likewise a record, not a second cap
+    assert "reacquired_on_refutation" not in CAPPING_FLAGS
+    assert CHECK_SEVERITY["reacquired_on_refutation"] == "warn"
+
+
+def test_f_an_undisputed_figure_raises_no_dispute_flag():
+    dataset = make_dataset()
+    flags = run_checks(dataset, "late_adaptation", [_figure_cand()])
+    assert "panel_labels_disputed" not in codes(flags)

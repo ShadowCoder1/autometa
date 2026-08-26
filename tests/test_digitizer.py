@@ -3837,3 +3837,115 @@ def test_the_page_pseudo_region_carries_the_right_pixel_math():
     assert page_fig.panels == [] and page_fig.primitives_measured is False
     assert _page_reacquire_fig(paper, page_fig) is None, "a page region never re-acquires"
     assert _page_reacquire_fig(SimpleNamespace(pages=[]), fig) is None, "no render, no retry"
+
+
+# ------------------------------------------- fix F (read side) + fix G: forced page re-acquire
+def test_f_a_letter_read_of_a_disputed_figure_goes_to_the_page(bar_figure, tmp_path):
+    """Fix F: ingest could not verify this figure's letter bindings, so a letter-addressed read
+    prefers the page render — the crop's letter cannot be trusted, the page shows every panel
+    with its printed letter. The re-read carries `crop_reacquired` and NOT the dispute (one
+    doubt, one price)."""
+    paper, fig = _paper_with_page(bar_figure)
+    fig = replace(fig, panel_labels_disputed=True,
+                  panel_label_note="the rect lettered 'a' prints 'last', described under 'b'")
+    provider = _scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                         _coord_payload(bar_figure, 1.0))
+    out = digitize(_client(provider), paper, fig, replace(TARGET, panel_hint="Fig 1b"),
+                   source=SOURCE.model_copy(update={"locator": "Fig. 1b"}), dataset=DATASET,
+                   out_dir=tmp_path, result=True)
+    ends = _ensemble(out)
+    assert ends["A"].mean is not None and ends["B"].mean is not None
+    for cand in ends.values():
+        assert cand.pixel_provenance["crop_reacquired"] is True
+        assert "disputed at ingest" in cand.pixel_provenance["reacquire_reason"]
+        assert not cand.pixel_provenance.get("panel_labels_disputed"), \
+            "the page read must not stack the dispute on top of crop_reacquired"
+
+
+def test_f_a_read_that_names_no_letter_ignores_the_dispute(bar_figure, tmp_path):
+    """The dispute is about LETTER bindings; a whole-region read never trusted them."""
+    paper, fig = _paper_with_page(bar_figure)
+    fig = replace(fig, panel_labels_disputed=True, panel_label_note="letters in doubt")
+    provider = _scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                         _coord_payload(bar_figure, 1.0))
+    out = digitize(_client(provider), paper, fig, replace(TARGET, panel_hint="Fig 1"),
+                   source=SOURCE.model_copy(update={"locator": "Fig. 1, the plotted bars"}),
+                   dataset=DATASET, out_dir=tmp_path, result=True)
+    ends = _ensemble(out)
+    assert ends["A"].mean is not None
+    for cand in ends.values():
+        assert not cand.pixel_provenance.get("crop_reacquired")
+        assert not cand.pixel_provenance.get("panel_labels_disputed")
+
+
+def test_f_a_disputed_letter_read_with_no_page_render_reads_the_crop_and_says_so(bar_figure,
+                                                                                 tmp_path):
+    """No page raster exists to prefer, so the letter-addressed crop is read under the recorded
+    doubt — lifted to top-level provenance, where the checks actually look."""
+    paper, fig = _panelled(bar_figure)
+    fig = replace(fig, panel_labels_disputed=True,
+                  panel_label_note="the rect lettered 'b' prints a sibling's title")
+    paper.figures = [fig]
+    provider = _scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                         _coord_payload(bar_figure, 1.0))
+    out = digitize(_client(provider), paper, fig, replace(TARGET, panel_hint="Fig 1b"),
+                   source=SOURCE.model_copy(update={"locator": "Fig. 1b"}), dataset=DATASET,
+                   out_dir=tmp_path, result=True)
+    ends = _ensemble(out)
+    assert ends["A"].mean is not None
+    for cand in ends.values():
+        assert "sibling" in str(cand.pixel_provenance.get("panel_labels_disputed", ""))
+        assert cand.pixel_provenance["needs_review"] is True
+        assert not cand.pixel_provenance.get("crop_reacquired")
+
+
+def test_g_force_reacquire_reads_the_page_with_the_callers_reason(bar_figure, tmp_path):
+    """Fix G: the caller (a verifier refutation against printed values) commands the page read
+    and its reason lands verbatim in the provenance note."""
+    paper, fig = _paper_with_page(bar_figure)
+    why = "a verifier refuted this figure read against printed values ('84 ± 6%')"
+    provider = _scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                         _coord_payload(bar_figure, 1.0))
+    out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, result=True, force_reacquire=why)
+    ends = _ensemble(out)
+    assert ends["A"].mean is not None
+    for cand in ends.values():
+        assert cand.pixel_provenance["crop_reacquired"] is True
+        assert cand.pixel_provenance["reacquire_reason"] == why
+        assert cand.pixel_provenance["reacquired_from"] == "fig01"
+
+
+def test_g_force_reacquire_without_a_page_render_reads_normally(bar_figure, tmp_path):
+    """Nothing wider exists: the forced re-acquire falls through to the ordinary read, and the
+    result does NOT claim to be a page-level reading — the caller checks exactly that."""
+    paper, fig = _paper_for(bar_figure)
+    provider = _scripted(_readout_payload(31.5, 11.0, 12.25, 11.75),
+                         _coord_payload(bar_figure, 1.0))
+    out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, result=True, force_reacquire="the verifier said so")
+    ends = _ensemble(out)
+    assert ends["A"].mean is not None
+    for cand in ends.values():
+        assert not cand.pixel_provenance.get("crop_reacquired")
+
+
+def test_f_the_page_copy_clears_the_dispute():
+    """Load-bearing: the page render shows every printed letter, so the dispute must not ride
+    along — it would double-price one doubt and re-enter the disputed branch on the recursion."""
+    from types import SimpleNamespace
+
+    from canopy.digitize.digitizer import _page_reacquire_fig
+    from canopy.ingest.pdf import PageRecord
+
+    fig = FigureRegion(id="fig03", page=2, bbox=Bbox(0.0, 0.0, 100.0, 100.0), caption="c",
+                       label="Fig. 3", kind="raster", n_images=1, n_drawings=0, native_px=None,
+                       crop_png="figures/fig03.png", claude_png="figures/fig03.png",
+                       crop_dpi=150.0, claude_scale=2.0, confidence=0.9,
+                       panel_labels_disputed=True, panel_label_note="letters in doubt")
+    rec = PageRecord(number=2, width_pt=612.0, height_pt=792.0, n_chars=10, n_images=1,
+                     n_drawings=3, png="pages/p002.png", png_scale=2.5,
+                     text_file="", words_file="")
+    page_fig = _page_reacquire_fig(SimpleNamespace(pages=[rec]), fig)
+    assert page_fig is not None
+    assert page_fig.panel_labels_disputed is False and page_fig.panel_label_note == ""

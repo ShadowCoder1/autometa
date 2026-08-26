@@ -913,3 +913,72 @@ def test_a_caption_only_region_counts_the_primitives_under_it():
     only = [r for r in regions if r["kind"] == "caption_only"]
     assert only and only[0]["n_images"] == 0 and only[0]["n_drawings"] == 0
     doc.close()
+
+
+# --------------------------------------------------- fix F: panel letters verify themselves
+def test_f_the_fixture_corpus_is_silent_and_keeps_its_letters(heuer, cressman):
+    """The measured NO-GO of the first design draft, pinned: with one-sided discriminative
+    tokens, Heuer fig02/04/06 all falsely DISPUTED (shared axis vocabulary voted every panel at
+    the last letter's description, which had swallowed the caption's trailing prose). Verified
+    correct figures must come back silent — no dispute, no letter moved."""
+    from canopy.ingest.pdf import PaperRecord
+    for rec in (heuer, cressman):
+        for f in rec.figures:
+            assert not f.panel_labels_disputed, (f.id, f.panel_label_note)
+            assert not f.panel_label_note, (f.id, f.panel_label_note)
+            assert [p.letter for p in f.panels] == \
+                [chr(ord("a") + i) for i in range(len(f.panels))], f.id
+    # …and the new fields plus `primitives_measured` survive the disk round-trip: region dicts
+    # are rebuilt field-by-field into FigureRegion, where an unthreaded key silently vanishes
+    # (`primitives_measured` was set on caption_only dicts and dropped at exactly that seam)
+    loaded = PaperRecord.load(heuer.out_dir)
+    for f in loaded.figures:
+        assert f.panel_labels_disputed is False
+        if f.kind == "caption_only":
+            assert f.primitives_measured is True, \
+                "the $0 no-graphics refusal needs the measurement to survive ingest"
+
+
+def test_f_caption_segmentation_is_all_letters_or_nothing():
+    from canopy.ingest.pdf import _caption_panel_texts
+    cap = ("Figure 3. (A) Setup of the task. (B) Learning curves for both groups. "
+           "(D) Adaptation in the first block. (E) Adaptation in the last block. "
+           "Error bars are 95% CIs.")
+    spans = _caption_panel_texts(cap, ["a", "b", "d", "e"])
+    assert set(spans) == {"a", "b", "d", "e"}
+    assert "first block" in spans["d"] and "last block" in spans["e"]
+    # the trailing prose belongs to the FIGURE, not the last panel: descriptions stop at their
+    # first sentence boundary, so "Error bars…" never fills a description with shared vocabulary
+    assert "Error bars" not in spans["e"]
+    # a run the caption cannot place in order refuses wholesale rather than guessing
+    assert _caption_panel_texts(cap, ["a", "b", "c"]) == {}
+    assert _caption_panel_texts("Fig. 2. Reaching in a rotated field.", ["a", "b"]) == {}
+
+
+def test_f_a_clean_swap_rebinds_and_anything_less_disputes_or_stays_silent():
+    import pymupdf
+    from canopy.ingest.pdf import _verify_panel_letters
+
+    def word(x0, text):
+        return (x0, 0.0, x0 + 40.0, 10.0, text, 0, 0, 0)
+
+    panels = [dict(rect=pymupdf.Rect(0, 0, 90, 50)), dict(rect=pymupdf.Rect(95, 0, 190, 50))]
+    cap = "Fig. 3. (D) Error in the first block. (E) Error in the last block."
+    crossed = [word(0, "Last"), word(42, "block"), word(100, "First"), word(142, "block")]
+    rebound, note = _verify_panel_letters(panels, cap, ["d", "e"], crossed)
+    assert rebound == ["e", "d"] and "first" in note.lower()
+    # one panel votes a sibling, the sibling is silent: never a re-bind — a dispute
+    rebound, note = _verify_panel_letters(panels, cap, ["d", "e"], crossed[:2])
+    assert rebound is None and note
+    # correct labels: silence
+    straight = [word(0, "First"), word(42, "block"), word(100, "Last"), word(142, "block")]
+    assert _verify_panel_letters(panels, cap, ["d", "e"], straight) == (None, "")
+    # trailing-letter captions ("Movement time (a) and endpoint error (b)") shift every
+    # description one panel back — a segmentation artifact, silenced, never disputed
+    trailing_cap = "Fig. 2. Movement time (a) and endpoint error (b) across blocks."
+    trailing = [word(0, "Movement"), word(42, "time"), word(100, "endpoint"), word(142, "error")]
+    assert _verify_panel_letters(panels, trailing_cap, ["a", "b"], trailing) == (None, "")
+    # captions whose descriptions share all their words with both panels: nothing discriminative
+    generic_cap = "Fig. 4. (A) Error across blocks. (B) Error across blocks."
+    generic = [word(0, "Error"), word(100, "Error")]
+    assert _verify_panel_letters(panels, generic_cap, ["a", "b"], generic) == (None, "")

@@ -2376,7 +2376,8 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
              caption: str | None = None, cell_key: str = "",
              verify: bool = True, result: bool = False,
              settings: DigitizeSettings | None = None,
-             reacquired: bool = False) -> list[Candidate] | DigitizeResult:
+             reacquired: bool = False,
+             force_reacquire: str = "") -> list[Candidate] | DigitizeResult:
     """Read `fig` for `target` with every available route and return the `Candidate`s.
 
     Returns one `Candidate` per (group, route sample) plus one ensemble `Candidate` per group.
@@ -2392,6 +2393,36 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     crop = _asset(paper, fig.crop_png)
     work = Path(out_dir) if out_dir is not None else crop.parent
     work.mkdir(parents=True, exist_ok=True)
+    # fix G, then fix F's read side — both go to the page render through fix E's machinery (one
+    # recursion, the `crop_reacquired` cap, the `/reacquire` cell key), and neither re-enters
+    # once the read IS the page. `force_reacquire` is an explicit caller command (a verifier
+    # refuted this figure's read against printed values) and carries its reason verbatim; the
+    # dispute branch is ingest's own inference, honoured only when a LETTER is actually named —
+    # a whole-region read never trusted the letter binding, so it carries no such doubt.
+    if not reacquired:
+        why = str(force_reacquire or "")
+        if not why and getattr(fig, "panel_labels_disputed", False) and panel_named(
+                target.panel_hint, source.locator if source is not None else "",
+                target.series_hint):
+            note = (getattr(fig, "panel_label_note", "")
+                    or "its panels' own text does not match the caption's enumeration")
+            why = (f"the panel lettering of {fig.id} is disputed at ingest ({note}); a "
+                   f"letter-addressed read cannot trust the crop, so this reading was taken "
+                   f"from the full page render")
+        if why:
+            page_fig = _page_reacquire_fig(paper, fig)
+            if page_fig is not None:
+                raw_key = cell_key or f"{paper.sha256[:12]}/{fig.id}/{target.outcome_key}"
+                retried = digitize(client, paper, page_fig, target, models=models,
+                                   n_readouts=n_readouts, want_uncertainty=want_uncertainty,
+                                   source=source, dataset=dataset, out_dir=work,
+                                   caption=caption, cell_key=f"{raw_key}/reacquire",
+                                   verify=verify, result=result, settings=settings,
+                                   reacquired=True)
+                return _stamp_reacquired(retried, fig.id, {}, 0.0, note=why)
+            # nothing wider exists: a forced re-acquire falls through to the ordinary read (the
+            # caller checks the result actually re-acquired before treating it as new evidence);
+            # a disputed figure is read off its crop and `resolve_panel` records the doubt
     # Decided BEFORE any model call: money is only spent where marks exist to read. A region whose
     # own record measures zero image placements AND zero drawing primitives is provably text — an
     # ingest fallback proposed from a caption alone — and on one real run every reader sent to
@@ -3137,6 +3168,18 @@ def resolve_panel(fig: FigureRegion, target: TargetSpec,
     info["panel_numeric_labels"] = match.n_numeric
     info["panel_ladder_labels"] = match.n_ladder
     info["panel_why"] = f"the locator names panel {letter!r}, which is its own rect in the figure"
+    if getattr(fig, "panel_labels_disputed", False):
+        # fix F's no-page fallback: `digitize` prefers the page render for a letter-addressed
+        # read of a disputed figure, but when no page raster exists the crop is read and the
+        # doubt is recorded on the row — the letter this crop answers to may belong to a sibling
+        info["panel_labels_disputed"] = (
+            getattr(fig, "panel_label_note", "")
+            or "the panel lettering of this figure is disputed at ingest")
+        info["needs_review"] = True
+        info["needs_review_reason"] = (
+            f"the locator names panel {letter!r} of {fig.id}, whose letter bindings ingestion "
+            f"could not verify ({info['panel_labels_disputed']}); the crop read here may be a "
+            f"sibling panel")
     if not match.calibrated:
         info["uncalibrated"] = True
     return panel_view(fig, match), info
@@ -3295,21 +3338,29 @@ def _page_reacquire_fig(paper: PaperRecord, fig: FigureRegion) -> FigureRegion |
                    crop_png=rec.png, claude_png=rec.png,
                    crop_dpi=float(rec.png_scale) * 72.0, claude_scale=1.0,
                    bbox=(0.0, 0.0, float(rec.width_pt), float(rec.height_pt)),
-                   panels=[], native_px=None, primitives_measured=False)
+                   panels=[], native_px=None, primitives_measured=False,
+                   # the dispute is about the CROP's letter bindings; the page render shows
+                   # every panel with its printed letter, so carrying the bit over would price
+                   # one doubt twice (`crop_reacquired` + `panel_labels_disputed`) and, worse,
+                   # re-enter the disputed branch on the recursion
+                   panel_labels_disputed=False, panel_label_note="")
 
 
 def _stamp_reacquired(out: "list[Candidate] | DigitizeResult", source_fig_id: str,
-                      seen: Mapping[str, Any], first_cost: float
+                      seen: Mapping[str, Any], first_cost: float, note: str = ""
                       ) -> "list[Candidate] | DigitizeResult":
     """The retry's result, carrying the first attempt's evidence and its money.
 
     The refusal candidates share ONE provenance dict, so the stamp dedupes by identity and SETS
-    rather than adds — a per-candidate `+=` would multiply the first attempt's cost.
+    rather than adds — a per-candidate `+=` would multiply the first attempt's cost. A caller
+    with its own reason (a refutation, a lettering dispute) passes it as `note`; the default is
+    fix E's majority-abstention sentence.
     """
-    who = ", ".join(seen.get("target_not_visible") or ())
-    note = (f"a majority of readers refused the panel crop of {source_fig_id} ({who}: the named "
-            f"target was not in that image), so this reading was re-acquired from the full page "
-            f"render")
+    if not note:
+        who = ", ".join(seen.get("target_not_visible") or ())
+        note = (f"a majority of readers refused the panel crop of {source_fig_id} ({who}: the "
+                f"named target was not in that image), so this reading was re-acquired from the "
+                f"full page render")
     cands = out.candidates if isinstance(out, DigitizeResult) else out
     stamped: set[int] = set()
     for cand in cands:
@@ -3644,6 +3695,13 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
         if not_isolated:
             reasons.append((base.get("panel") or {}).get("needs_review_reason")
                            or f"panel {not_isolated!r} could not be isolated from this figure")
+        # fix F: the crop was read although its letter binding is in doubt (no page render
+        # existed to prefer). Lifted to the top level like PANEL_NOT_ISOLATED below, because the
+        # checks read only top-level provenance keys — nested-only stamps are invisible to them.
+        labels_disputed = str((base.get("panel") or {}).get("panel_labels_disputed") or "")
+        if labels_disputed:
+            reasons.append((base.get("panel") or {}).get("needs_review_reason")
+                           or f"the figure's panel lettering is disputed ({labels_disputed})")
         sides = sorted({s.one_sided for s in with_error if s.one_sided})
         if dispersion_only:
             reasons.append(
@@ -3688,11 +3746,14 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             "tool_calls": _aggregate_tool_calls(mine),
             "cal_missing": no_calibration,
             PANEL_NOT_ISOLATED: bool(not_isolated),
+            "panel_labels_disputed": labels_disputed,
             "needs_review": (status == "ambiguous" or dispersion_only or no_calibration
-                             or bool(topology_note) or bool(not_isolated)),
+                             or bool(topology_note) or bool(not_isolated)
+                             or bool(labels_disputed)),
             "needs_review_kind": ("mean" if status == "ambiguous"
                                   else ("dispersion" if dispersion_only or topology_note
                                         else ("calibration" if no_calibration or not_isolated
+                                              or labels_disputed
                                               else None))),
             "needs_review_reason": "; ".join(reasons),
             "dropped_samples": [s.to_dict() for s in mine if s.dropped],

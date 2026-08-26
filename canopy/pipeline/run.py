@@ -1110,7 +1110,8 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
 def _extract_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                   sources: OutcomeSources, figures_dir: Path,
                   status: PaperStatus, out: list[Candidate] | None = None,
-                  reviewer_hint: str = "", categorical_answer: str = "") -> list[Candidate]:
+                  reviewer_hint: str = "", categorical_answer: str = "",
+                  force_reacquire: str = "") -> list[Candidate]:
     """Both text variants, the statistic reader, and the digitiser once per figure source.
 
     `out` is filled as each reader answers rather than returned at the end, so a budget death half
@@ -1176,6 +1177,9 @@ def _extract_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                                  models=(ctx.models["primary"],),
                                  settings=ctx.protocol.digitize,
                                  n_readouts=ctx.protocol.digitize.readouts_max,
+                                 # fix G: a caller with a refutation in hand sends the figure
+                                 # read straight to the page render; text readers never see it
+                                 force_reacquire=force_reacquire,
                                  cell_key=f"{paper.sha256[:12]}/{dataset.dataset_id}/{key}/"
                                           f"{figure.id}")
         except (BudgetExceeded, PaperBudgetExceeded):
@@ -1347,6 +1351,87 @@ def _reopen_on_better_source(ctx: RunContext, paper: PaperRecord, dataset: Datas
         status.warnings.append(
             f"{dataset.dataset_id}/{sources.outcome_key}: re-opened on {named!r} at the verifier's "
             f"suggestion and it produced no candidate")
+    return None
+
+
+def _reacquire_on_refutation(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
+                             sources: OutcomeSources,
+                             refuted: Sequence[tuple[VerifierVerdict, Candidate]],
+                             cell: Sequence[Candidate], status: PaperStatus
+                             ) -> tuple[str, list[Candidate]] | None:
+    """Fix G: a figure read the verifier refuted AGAINST PRINTED VALUES is re-read from the page.
+
+    The verifier already catches "the figure read contradicts what the paper prints" and files a
+    `refuted` verdict with the printed evidence in its structured fields; fix E already knows how
+    to re-acquire a read from the full page render. This is the wire between them — one bounded
+    retry, the `crop_reacquired` cap on the re-read, and the knowledge stops dead-ending in a
+    card. The trigger is the verdict's STRUCTURED shape only (`alt_quote` citing a number and an
+    `alt_mean` that actually disagrees with the reading) — never a parse of its prose.
+
+    `refuted` pairs each verdict with the exact Candidate it judged: ensemble candidate ids omit
+    the figure, so a cell with two figure sources holds two candidates with identical ids and a
+    lookup by id could re-acquire the wrong figure.
+    """
+    if any(str(c.candidate_id).endswith(":reacquire") for c in cell):
+        return None                       # once per cell, ever — the marker survives resume
+    if any(str(rec.get("kind")) in ("value", "re_extract")
+           and rec.get("dataset_id") == dataset.dataset_id
+           and rec.get("outcome_key") == sources.outcome_key
+           for rec in read_overrides(ctx.out_dir)):
+        return None                       # a human is mid-decision on this cell; theirs wins
+    readable = readable_sources(sources.sources)
+    for verdict, winner in refuted:
+        if verdict.verdict != "refuted":
+            continue
+        quote = str(verdict.alt_quote or "")
+        if not any(ch.isdigit() for ch in quote) or verdict.alt_mean is None:
+            continue
+        prov = winner.pixel_provenance if isinstance(winner.pixel_provenance, dict) else {}
+        prov_fid = str(prov.get("figure_id") or "")
+        if not prov_fid or prov.get("crop_reacquired"):
+            # not a figure read, or already a page-level read — re-buying the identical page
+            # render replays the cache byte for byte and buys nothing
+            continue
+        if winner.mean is not None and \
+                abs(float(verdict.alt_mean) - float(winner.mean)) \
+                <= 1e-9 + 1e-6 * abs(float(winner.mean)):
+            continue                      # the printed value AGREES with the reading; the
+        # refutation is about something a wider image cannot settle
+        # panel reads carry the PANEL id ("fig02a"); sources name the figure ("fig02") — match
+        # by prefix with an alphabetic remainder, never by equality alone
+        source = next((s for s in readable if s.figure_id
+                       and (prov_fid == s.figure_id
+                            or (prov_fid.startswith(s.figure_id)
+                                and prov_fid[len(s.figure_id):].isalpha()))), None)
+        if source is None:
+            continue
+        figure = _figure(paper, source.figure_id)
+        page = next((p for p in (paper.pages or [])
+                     if figure is not None and p.number == figure.page), None)
+        if figure is None or page is None or not page.png:
+            continue                      # nothing wider exists; the refutation stays for
+        # adjudication exactly as before this fix
+        note = (f"a verifier refuted this figure read against printed values "
+                f"({quote[:160]!r}), so the reading was re-acquired from the full page render")
+        extra = _extract_cell(ctx, paper, dataset,
+                              sources.model_copy(update={"sources": [source]}),
+                              paper_dir(ctx.out_dir, paper.sha256) / "figures", status,
+                              force_reacquire=note)
+        reacquired = [c for c in extra
+                      if isinstance(c.pixel_provenance, dict)
+                      and c.pixel_provenance.get("crop_reacquired")]
+        if not reacquired:
+            # the digitiser fell back to the ordinary read (or produced nothing) — a cached
+            # replay of the refuted reading must never re-enter the vote as fresh corroboration
+            status.warnings.append(
+                f"{dataset.dataset_id}/{sources.outcome_key}: a verifier refuted the figure "
+                f"read against printed values but the re-acquire produced no page-level "
+                f"reading; the refutation stands for adjudication")
+            return None
+        for c in extra:
+            # a distinct id: same collision guard as `:reopen` above, and the once-ever marker
+            c.candidate_id = f"{c.candidate_id}:reacquire"
+        return quote, list(extra)
     return None
 
 
@@ -1568,6 +1653,9 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
             votes = vote_groups(cell, unit_hint=sources.units or outcome_def.units_hint)
 
     verifier_verdicts = []
+    #: (verdict, the exact Candidate it judged) — fix G needs the object, not the id: ensemble
+    #: candidate ids omit the figure, so two figure sources produce identical ids in one cell
+    judged_pairs: list[tuple[VerifierVerdict, Candidate]] = []
     refuted = False
     for group in ("A", "B"):
         winner = _winner(cell, votes.get(group), group)
@@ -1614,6 +1702,7 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                     f"({type(exc).__name__}) — no verdict was produced, so it is recorded as "
                     f"not_run and the cell is unverified rather than doubted")
             verifier_verdicts.append(verdict)
+            judged_pairs.append((verdict, winner))
             if verdict.verdict != "refuted":
                 break
             refuted = True
@@ -1640,6 +1729,26 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
         flags = [*run_checks(dataset, key, cell, other_candidates=others,
                              orientation=orientation), *extra_flags]
         votes = vote_groups(cell, unit_hint=sources.units or outcome_def.units_hint)
+    else:
+        # fix G, only when fix B did not act (one repair per cell per pass; a verifier that both
+        # named a better source and cited print got the more specific cure above): a figure read
+        # refuted against printed values is re-read from the full page render.
+        reacq = _reacquire_on_refutation(ctx, paper, dataset, sources, judged_pairs, cell,
+                                         status)
+        if reacq is not None:
+            quote, extra = reacq
+            out.extra_candidates.extend(extra)
+            cell = [*cell, *vote_candidates(extra)]
+            extra_flags.append(CheckFlag(
+                code="reacquired_on_refutation",
+                severity=CHECK_SEVERITY["reacquired_on_refutation"],
+                message=(f"a verifier refuted the figure read against printed values "
+                         f"({quote[:160]!r}) and the reading was re-acquired from the full "
+                         f"page render (one retry, once per cell)"),
+                candidate_ids=sorted(c.candidate_id for c in vote_candidates(extra))))
+            flags = [*run_checks(dataset, key, cell, other_candidates=others,
+                                 orientation=orientation), *extra_flags]
+            votes = vote_groups(cell, unit_hint=sources.units or outcome_def.units_hint)
 
     # C3 row 1: the vote and the checks are final, so the resolved means the discard filter needs
     # finally exist. Free (no model call), and it can only take a witness away.

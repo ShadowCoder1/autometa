@@ -175,6 +175,13 @@ CAPPING_FLAGS: frozenset[str] = frozenset({
     #: fix E's sibling of the line above: the reading was re-acquired from the full page after
     #: the panel crop was refused — wider than any panel, a reason to look, never to withhold
     "crop_reacquired",
+    #: fix F's third of the family: the figure's letter bindings failed verification against its
+    #: own caption and no page render existed to prefer, so the letter-addressed crop was read
+    #: under the doubt that it answers to a sibling's letter. A reason to look at the figure.
+    #: NOTE `reacquired_on_refutation` (fix G) is deliberately NOT here: the re-read it records
+    #: already carries `crop_reacquired` on its own provenance, and pricing the same repair
+    #: twice is exactly what the fix-E precedent forbids.
+    "panel_labels_disputed",
     #: a reading taken off another group's panel was set aside, and this group's OWN panel still
     #: has one. The number that survives came from where the caption says it should have — the
     #: doubt left is that a reader went to the wrong panel at all, which is a reason to look at
@@ -299,6 +306,10 @@ CAP_REASONS: dict[str, str] = {
     "panel_not_isolated": ("the named panel could not be isolated from its neighbours; the "
                            "reading was made on the whole figure and is capped below automatic "
                            "acceptance"),
+    "panel_labels_disputed": ("the figure's panel letters could not be verified against its own "
+                              "caption and no page render existed to prefer, so the "
+                              "letter-addressed crop was read under the doubt that it answers "
+                              "to a sibling's letter; a reviewer should see the figure"),
     "quote_row_only": ("the numbers are somewhere in the named table row but not in the column "
                        "this reading claims, so they may be the other group's"),
     "calibration_single_witness": ("only one witness calibrated this figure's axis, so the scale "

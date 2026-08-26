@@ -175,6 +175,15 @@ CHECK_SEVERITY: dict[str, str] = {
     #: re-acquired from the full page render. Same doubt family as `panel_not_isolated`,
     #: never stacked with it (the digitiser suppresses that flag on a re-acquire).
     "crop_reacquired": "warn",
+    #: fix F: the figure's panel letters could not be verified against its caption at ingest and
+    #: no page render existed to prefer, so a letter-addressed crop was read under the doubt
+    #: that its letter belongs to a sibling. Same family; the page path carries `crop_reacquired`
+    #: instead (one doubt, one price).
+    "panel_labels_disputed": "warn",
+    #: fix G: a verifier refuted a figure read against printed values and the reading was
+    #: re-acquired from the full page render. The re-read's own `crop_reacquired` is the cap;
+    #: this code is the cell-level record that the repair happened, priced as information only.
+    "reacquired_on_refutation": "warn",
     #: WHERE in a figure a reading was taken, and whether the caption agrees it is this group's
     #: panel (D2). All three are `warn`: a reading off the wrong panel is a claim about the
     #: LOCATION, and the location is decided by the caption and the vote, not by an error budget
@@ -625,6 +634,15 @@ def _check_panel_isolation(cand: Candidate, out: list[CheckFlag]) -> None:
         _flag(out, "crop_reacquired",
               str(provenance.get("reacquire_reason")
                   or "the panel crop was refused and the reading re-acquired from the page"),
+              cand.candidate_id)
+    if provenance.get("panel_labels_disputed"):
+        # fix F's no-page fallback: the letters of this figure could not be verified against
+        # its caption and there was no page render to prefer, so the letter-addressed crop was
+        # read under the doubt that it answers to a sibling's letter
+        _flag(out, "panel_labels_disputed",
+              f"the figure's panel lettering is disputed at ingest "
+              f"({str(provenance.get('panel_labels_disputed'))[:200]}) and the reading was "
+              f"taken from the letter-addressed crop anyway (no page render existed to prefer)",
               cand.candidate_id)
     if not provenance.get("panel_not_isolated"):
         return
