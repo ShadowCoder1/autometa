@@ -3766,3 +3766,74 @@ def test_the_spread_rescue_names_a_group_only_no_route_can_fill():
     no_mean = [RouteSample(route="A", group="A", model="", variant="", mean=None, error=None,
                            snap_conf=1.0)]
     assert _spreadless_group(no_mean) is None
+
+
+# ---------------------------------------------------------------- fix E: crop re-acquire
+def _paper_with_page(truth: dict) -> tuple[PaperRecord, FigureRegion]:
+    """The synthetic paper, with its one page's render on record — pointing at the same image,
+    so the retry's pixel math must come out identical (png_scale*72 == the figure's crop_dpi)."""
+    from canopy.ingest.pdf import PageRecord
+
+    paper, fig = _paper_for(truth)
+    paper.pages = [PageRecord(number=1, width_pt=360.0, height_pt=288.0, n_chars=0, n_images=1,
+                              n_drawings=0, png="figures/fig01.png", png_scale=150.0 / 72.0,
+                              text_file="", words_file="")]
+    return paper, fig
+
+
+def test_a_refused_crop_is_reacquired_from_the_page_render(bar_figure, tmp_path):
+    """Fix E: a majority saying 'the target is not in this picture' buys ONE retry on the page
+    render — the readers' own diagnosis applied, with the crop_reacquired cap on the result."""
+    paper, fig = _paper_with_page(bar_figure)
+    blind = _readout_payload(None, None, None, None, target_visible="no",
+                             visible_reason="this crop holds panel b only")
+    seeing = _readout_payload(31.5, 11.0, 12.25, 11.75)
+    provider = _scripted(seeing, _coord_payload(bar_figure, 1.0),
+                         readout_by_call=[blind, blind, seeing, seeing])
+    out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, result=True)
+    ends = _ensemble(out)
+    assert ends["A"].mean is not None and ends["B"].mean is not None
+    for cand in ends.values():
+        assert cand.pixel_provenance["crop_reacquired"] is True
+        assert cand.pixel_provenance["reacquired_from"] == "fig01"
+    assert out.provenance["crop_reacquired"] is True
+
+
+def test_a_page_reacquire_never_recurses(bar_figure, tmp_path):
+    """The guard: a retry whose readers ALSO abstain refuses — no third attempt, ever."""
+    paper, fig = _paper_with_page(bar_figure)
+    blind = _readout_payload(None, None, None, None, target_visible="no",
+                             visible_reason="not in this picture either")
+    provider = _scripted(blind, _coord_payload(bar_figure, 1.0))
+    out = digitize(_client(provider), paper, fig, TARGET, source=SOURCE, dataset=DATASET,
+                   out_dir=tmp_path, result=True)
+    ends = _ensemble(out)
+    assert all(c.mean is None for c in ends.values())
+    assert all(c.pixel_provenance[PANEL_NOT_IN_CROP] is True for c in ends.values())
+
+
+def test_the_page_pseudo_region_carries_the_right_pixel_math():
+    """Finding-1 pin: crop_dpi = png_scale*72, claude_scale = 1.0, panels emptied, and None when
+    there is no page render (or the region already IS one)."""
+    from types import SimpleNamespace
+
+    from canopy.digitize.digitizer import PAGE_REACQUIRE, _page_reacquire_fig
+    from canopy.ingest.pdf import PageRecord
+
+    fig = FigureRegion(id="fig03", page=2, bbox=Bbox(0.0, 0.0, 100.0, 100.0), caption="c",
+                       label="Fig. 3", kind="raster", n_images=1, n_drawings=0, native_px=None,
+                       crop_png="figures/fig03.png", claude_png="figures/fig03.png",
+                       crop_dpi=150.0, claude_scale=2.0, confidence=0.9)
+    rec = PageRecord(number=2, width_pt=612.0, height_pt=792.0, n_chars=10, n_images=1,
+                     n_drawings=3, png="pages/p002.png", png_scale=2.5,
+                     text_file="", words_file="")
+    paper = SimpleNamespace(pages=[rec])
+    page_fig = _page_reacquire_fig(paper, fig)
+    assert page_fig is not None
+    assert page_fig.kind == PAGE_REACQUIRE and page_fig.id == "fig03!page"
+    assert page_fig.crop_dpi == 2.5 * 72.0 and page_fig.claude_scale == 1.0
+    assert page_fig.crop_png == "pages/p002.png" and page_fig.claude_png == "pages/p002.png"
+    assert page_fig.panels == [] and page_fig.primitives_measured is False
+    assert _page_reacquire_fig(paper, page_fig) is None, "a page region never re-acquires"
+    assert _page_reacquire_fig(SimpleNamespace(pages=[]), fig) is None, "no render, no retry"

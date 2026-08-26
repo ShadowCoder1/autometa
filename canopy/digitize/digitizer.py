@@ -20,7 +20,7 @@ import re
 import statistics
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from ..ingest.pdf import (FigureRegion, MIN_PANEL_CALIBRATED, PanelRegion, PaperRecord,
                           caption_panels)
@@ -2375,7 +2375,8 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
              dataset: DatasetSpec | None = None, out_dir: str | Path | None = None,
              caption: str | None = None, cell_key: str = "",
              verify: bool = True, result: bool = False,
-             settings: DigitizeSettings | None = None) -> list[Candidate] | DigitizeResult:
+             settings: DigitizeSettings | None = None,
+             reacquired: bool = False) -> list[Candidate] | DigitizeResult:
     """Read `fig` for `target` with every available route and return the `Candidate`s.
 
     Returns one `Candidate` per (group, route sample) plus one ensemble `Candidate` per group.
@@ -2483,6 +2484,29 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     # the same picture, and without ever adopting the minority reading that produced numbers.
     seen = legibility(readouts)
     if seen["abstain"]:
+        # fix E: the majority says the target is not in this picture — the one failure no
+        # re-read of the same image can cure, and the one the readers' own words diagnose. One
+        # retry on the full page render, which always contains the truth when it exists; the
+        # result carries the `crop_reacquired` cap and BOTH attempts' spend.
+        page_fig = None if reacquired else _page_reacquire_fig(paper, fig)
+        if page_fig is not None:
+            first_cost = sum(r.cost_usd for r in readouts)
+            raw_key = cell_key or f"{paper.sha256[:12]}/{fig.id}/{target.outcome_key}"
+            try:
+                retried = digitize(client, paper, page_fig, target, models=models,
+                                   n_readouts=n_readouts, want_uncertainty=want_uncertainty,
+                                   source=source, dataset=dataset, out_dir=work, caption=text,
+                                   cell_key=f"{raw_key}/reacquire", verify=verify,
+                                   result=result, settings=settings, reacquired=True)
+            except Exception as exc:
+                # a budget death mid-retry keeps the first attempt's record; the ledger state
+                # persists, so the very next call re-raises and the run/paper still stops.
+                # (Name-based: `PaperBudgetExceeded` lives in the pipeline layer above this one.)
+                if not _is_budget_death(exc):
+                    raise
+                return _target_not_visible(fig, target, paper, source, dataset, crop, seen,
+                                           readouts, panel_info, result)
+            return _stamp_reacquired(retried, fig.id, seen, first_cost)
         return _target_not_visible(fig, target, paper, source, dataset, crop, seen, readouts,
                                    panel_info, result)
 
@@ -2523,6 +2547,13 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     # route A's scene is built HERE, before anything converts a pixel, so the PDF's own tick
     # ladder is one of the witnesses the calibration vote sees
     scene, vec_info = _vector_scene(paper, fig)
+    if fig.kind == PAGE_REACQUIRE:
+        # deliberate, and said out loud rather than silently: a page-wide vector scene would
+        # harvest every panel's text spans as tick labels and hand the calibration vote a bogus
+        # witness. The re-acquire reads by the raster routes alone.
+        vec_info = dict(vec_info or {})
+        vec_info["disabled"] = "route A is off on a page re-acquire"
+        scene = None
     cal_vec = calibrate_from_scene(scene, axis="y") if scene is not None else None
     # C2, filtered ONCE at the point of disqualification: a reading that could not see the target
     # or built its own ladder is not a witness to anything — not to the value, not to the axis
@@ -2612,6 +2643,22 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     # the target is the same fact whether it arrives on the second reader or the fourth.
     seen = legibility(readouts)
     if seen["abstain"]:
+        page_fig = None if reacquired else _page_reacquire_fig(paper, fig)
+        if page_fig is not None:
+            first_cost = sum(r.cost_usd for r in readouts) + coord.cost_usd
+            raw_key = cell_key or f"{paper.sha256[:12]}/{fig.id}/{target.outcome_key}"
+            try:
+                retried = digitize(client, paper, page_fig, target, models=models,
+                                   n_readouts=n_readouts, want_uncertainty=want_uncertainty,
+                                   source=source, dataset=dataset, out_dir=work, caption=text,
+                                   cell_key=f"{raw_key}/reacquire", verify=verify,
+                                   result=result, settings=settings, reacquired=True)
+            except Exception as exc:
+                if not _is_budget_death(exc):
+                    raise
+                return _target_not_visible(fig, target, paper, source, dataset, crop, seen,
+                                           readouts, panel_info, result, coord=coord)
+            return _stamp_reacquired(retried, fig.id, seen, first_cost)
         return _target_not_visible(fig, target, paper, source, dataset, crop, seen, readouts,
                                    panel_info, result, coord=coord)
 
@@ -3060,7 +3107,14 @@ def resolve_panel(fig: FigureRegion, target: TargetSpec,
     if len(fig.panels) <= 1:
         panel = fig.panels[0] if fig.panels else None
         if letter:
-            _record_not_isolated(info, fig, letter, enumerated)
+            if fig.kind == PAGE_REACQUIRE:
+                # fix E: a page re-acquire has no panel rects BY DESIGN (carrying the refused
+                # ones over would re-select the same wrong crop). `crop_reacquired` is the cap
+                # carrier; stacking `panel_not_isolated` on top would double-price one doubt.
+                info["panel_why"] = (f"panel {letter} is read from the full page render after a "
+                                     f"majority of readers refused the panel crop")
+            else:
+                _record_not_isolated(info, fig, letter, enumerated)
         else:
             info["panel_why"] = ("nothing names a panel and ingestion found one rect; the region "
                                  "and the panel are the same rect")
@@ -3204,6 +3258,75 @@ def _target_not_visible(fig: FigureRegion, target: TargetSpec, paper: PaperRecor
                                + sum(float(e.get("cost_usd", 0.0)) for e in verify_log)),
                   "readout_families": sorted({r.model for r in readouts})}
     return _no_value(fig, target, paper, source, dataset, crop, reason, provenance, result)
+
+
+#: the region kind of a full-page re-acquire (fix E). Route A is off for it (a page-wide vector
+#: scene would harvest every panel's text as tick labels) and `resolve_panel` records the named
+#: panel without the `panel_not_isolated` flag — `crop_reacquired` is the cap carrier.
+PAGE_REACQUIRE = "page_reacquire"
+
+
+def _is_budget_death(exc: BaseException) -> bool:
+    """`PaperBudgetExceeded`/`BudgetExceeded` by name: the first lives in the pipeline layer
+    above this module (importing it here would be circular), and both mean the same thing to a
+    re-acquire — stop retrying, keep the first attempt's record, let the next call re-raise."""
+    return any(type(e).__name__ in ("PaperBudgetExceeded", "BudgetExceeded")
+               for e in (exc, getattr(exc, "__cause__", None)) if e is not None)
+
+
+def _page_reacquire_fig(paper: PaperRecord, fig: FigureRegion) -> FigureRegion | None:
+    """The full PAGE render as a region to retry on, or None when there is nothing wider.
+
+    Built when a majority of readers report the named target is not in the crop — the one thing
+    no amount of re-reading the same image can recover. The page raster always contains the
+    truth when it exists; it is the Claude-ready render, so `crop_dpi` is its own px-per-point
+    scale times 72 and `claude_scale` is exactly 1.0 (getting either wrong silently corrupts
+    every pixel-to-data conversion downstream). `panels=[]` is load-bearing: carrying the old
+    panel rects over would let `resolve_panel` re-select the SAME wrong crop and replay the
+    refusal from cache, byte for byte.
+    """
+    if fig.kind == PAGE_REACQUIRE:
+        return None
+    rec = next((p for p in (getattr(paper, "pages", None) or [])
+                if getattr(p, "number", None) == fig.page), None)
+    if rec is None or not getattr(rec, "png", ""):
+        return None
+    return replace(fig, id=f"{fig.id}!page", kind=PAGE_REACQUIRE,
+                   crop_png=rec.png, claude_png=rec.png,
+                   crop_dpi=float(rec.png_scale) * 72.0, claude_scale=1.0,
+                   bbox=(0.0, 0.0, float(rec.width_pt), float(rec.height_pt)),
+                   panels=[], native_px=None, primitives_measured=False)
+
+
+def _stamp_reacquired(out: "list[Candidate] | DigitizeResult", source_fig_id: str,
+                      seen: Mapping[str, Any], first_cost: float
+                      ) -> "list[Candidate] | DigitizeResult":
+    """The retry's result, carrying the first attempt's evidence and its money.
+
+    The refusal candidates share ONE provenance dict, so the stamp dedupes by identity and SETS
+    rather than adds — a per-candidate `+=` would multiply the first attempt's cost.
+    """
+    who = ", ".join(seen.get("target_not_visible") or ())
+    note = (f"a majority of readers refused the panel crop of {source_fig_id} ({who}: the named "
+            f"target was not in that image), so this reading was re-acquired from the full page "
+            f"render")
+    cands = out.candidates if isinstance(out, DigitizeResult) else out
+    stamped: set[int] = set()
+    for cand in cands:
+        prov = cand.pixel_provenance
+        if isinstance(prov, dict) and id(prov) not in stamped:
+            stamped.add(id(prov))
+            prov["crop_reacquired"] = True
+            prov["reacquired_from"] = source_fig_id
+            prov["reacquire_reason"] = note
+            if "cost_usd" in prov:
+                prov["cost_usd"] = float(prov.get("cost_usd") or 0.0) + first_cost
+    if isinstance(out, DigitizeResult):
+        out.cost_usd += first_cost
+        out.provenance["crop_reacquired"] = True
+        out.provenance["reacquired_from"] = source_fig_id
+        out.provenance["reacquire_reason"] = note
+    return out
 
 
 def _categorical_unsupported(fig: FigureRegion, target: TargetSpec, paper: PaperRecord,

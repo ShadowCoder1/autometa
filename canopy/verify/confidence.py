@@ -172,6 +172,9 @@ CAPPING_FLAGS: frozenset[str] = frozenset({
     #: evidence that this number came from somewhere else — the axis-identity, overlay and
     #: verifier nets all still apply — so it caps like its neighbours here rather than withholding.
     "panel_not_isolated",
+    #: fix E's sibling of the line above: the reading was re-acquired from the full page after
+    #: the panel crop was refused — wider than any panel, a reason to look, never to withhold
+    "crop_reacquired",
     #: a reading taken off another group's panel was set aside, and this group's OWN panel still
     #: has one. The number that survives came from where the caption says it should have — the
     #: doubt left is that a reader went to the wrong panel at all, which is a reason to look at
@@ -289,6 +292,10 @@ INFERRED_PREMISE_FLAGS: frozenset[str] = frozenset({SPREAD_TYPE_HOUSE_STYLE,
                                                     CATEGORICAL_X_SINGLE_WITNESS})
 
 CAP_REASONS: dict[str, str] = {
+    "crop_reacquired": ("a majority of readers refused the panel crop — the named target was "
+                        "not in that image — so the reading was re-acquired from the full page "
+                        "render, which is wider than any panel; a reviewer should see the "
+                        "figure"),
     "panel_not_isolated": ("the named panel could not be isolated from its neighbours; the "
                            "reading was made on the whole figure and is capped below automatic "
                            "acceptance"),

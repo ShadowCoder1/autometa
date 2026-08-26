@@ -171,6 +171,10 @@ CHECK_SEVERITY: dict[str, str] = {
     #: axis-identity, overlay and verifier nets still apply to it. Doubt caps; contradiction
     #: withholds — so this is a `warn` in `CAPPING_FLAGS`, never a hold.
     "panel_not_isolated": "warn",
+    #: fix E: the panel crop was refused by a majority of readers and the reading was
+    #: re-acquired from the full page render. Same doubt family as `panel_not_isolated`,
+    #: never stacked with it (the digitiser suppresses that flag on a re-acquire).
+    "crop_reacquired": "warn",
     #: WHERE in a figure a reading was taken, and whether the caption agrees it is this group's
     #: panel (D2). All three are `warn`: a reading off the wrong panel is a claim about the
     #: LOCATION, and the location is decided by the caption and the vote, not by an error budget
@@ -613,6 +617,15 @@ def _check_panel_isolation(cand: Candidate, out: list[CheckFlag]) -> None:
     automatic acceptance and floors it at `ACCEPT_WITH_NOTE`.
     """
     provenance = cand.pixel_provenance or {}
+    if provenance.get("crop_reacquired"):
+        # fix E: the panel crop was refused by a majority of readers and the reading was
+        # re-acquired from the full page render — wider than any panel, so a reviewer should
+        # see the figure. The same doubt family as `panel_not_isolated`, priced once (the
+        # digitiser suppresses that flag on a re-acquire so the two never stack).
+        _flag(out, "crop_reacquired",
+              str(provenance.get("reacquire_reason")
+                  or "the panel crop was refused and the reading re-acquired from the page"),
+              cand.candidate_id)
     if not provenance.get("panel_not_isolated"):
         return
     _flag(out, "panel_not_isolated",
