@@ -581,3 +581,60 @@ def test_two_figures_that_agree_are_corroboration_not_a_conflict():
     res = vote(cands)
     assert res.agreement == "agree" and res.method != "locator_conflict"
     assert res.mean == pytest.approx(-3.15, abs=0.01)
+
+
+# ------------------------------------------------- fix H: negligible splits settle themselves
+def test_h_a_negligible_split_settles_to_the_most_backed_reading():
+    """Disagreeing figure routes on the same side of zero, same place, spread under a tenth of
+    the cell's own SD: the vote settles rather than sending a coin flip to a human. The
+    representative is a reading somebody made (most-backed), never an average."""
+    from canopy.verify.vote import NEGLIGIBLE_SPLIT
+    # three routes that miss each other's (tight) tolerances but span only 0.125 with SD 11
+    tight = {"y_min": 0.0, "y_max": 1.0, "y_tick": 0.1}
+    rows = [figure_cand("c1", 3.06, route="pathC", cal=tight,
+                        pixel_provenance={"figure_id": "fig01"}),
+            figure_cand("c2", 3.13, model=SONNET, route="pathD", cal=tight,
+                        pixel_provenance={"figure_id": "fig01"}),
+            figure_cand("c3", 3.185, route="pathA", cal=tight,
+                        pixel_provenance={"figure_id": "fig01"})]
+    for c in rows:
+        c.locator = "Fig 1"
+    result = vote(rows)
+    assert result.method == NEGLIGIBLE_SPLIT, (result.method, result.agreement, result.notes)
+    assert result.agreement == "agree"
+    assert result.mean in (3.06, 3.13, 3.185)     # a reading somebody made
+    assert any("visibly move the effect" in n for n in result.notes)
+
+
+TIGHT = {"y_min": 0.0, "y_max": 1.0, "y_tick": 0.1}   # tolerance far below the splits below
+
+
+def test_h_a_sign_flip_is_never_negligible():
+    rows = [figure_cand("c1", -0.5, route="pathC", cal=TIGHT),
+            figure_cand("c2", 0.5, model=SONNET, route="pathD", cal=TIGHT)]
+    result = vote(rows)
+    assert result.agreement == "disagree", result.notes
+
+
+def test_h_no_verified_sd_means_nothing_is_negligible():
+    rows = [figure_cand("c1", 3.06, route="pathC", dispersion_value=None, cal=TIGHT),
+            figure_cand("c2", 3.185, model=SONNET, route="pathD", dispersion_value=None,
+                        cal=TIGHT)]
+    for c in rows:
+        c.dispersion_type = DispersionType.UNKNOWN
+    result = vote(rows)
+    assert result.agreement == "disagree", result.notes
+
+
+def test_h_a_wide_split_still_disagrees():
+    rows = [figure_cand("c1", 3.0, route="pathC", dispersion_value=1.0, cal=TIGHT),
+            figure_cand("c2", 6.0, model=SONNET, route="pathD", dispersion_value=1.0,
+                        cal=TIGHT)]
+    result = vote(rows)
+    assert result.agreement == "disagree", result.notes
+
+
+def test_h_the_gate_is_the_same_line_confidence_draws():
+    from canopy.verify.confidence import DELTA_D_LIMIT
+    from canopy.verify.vote import NEGLIGIBLE_D
+    assert NEGLIGIBLE_D == DELTA_D_LIMIT

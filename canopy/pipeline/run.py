@@ -70,7 +70,7 @@ from ..verify.checks import (CHECK_SEVERITY, DF_PROVENANCE_FLAGS, ORIENTATION_FL
                             n_before_exclusions, run_checks)
 from ..verify.confidence import ROW_REFUSAL_CODES, resolve_cell
 from ..verify.panels import apply_panel_check
-from ..verify.vote import (LOCATOR_CONFLICT, LOCATOR_CONFLICT_NOTE, VoteResult,
+from ..verify.vote import (LOCATOR_CONFLICT, LOCATOR_CONFLICT_NOTE, NEGLIGIBLE_SPLIT, VoteResult,
                            model_family, vote_groups)
 from .aggregate import AGGREGATED_FLAG, Aggregation, aggregate_one_row_per_paper
 from .overrides import (HUMAN_OVERRIDE, OVERRIDES_FILE, apply_overrides_and_repool,
@@ -1784,6 +1784,22 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
             message=next((note for note in result.notes
                           if note.startswith(LOCATOR_CONFLICT_NOTE)), LOCATOR_CONFLICT_NOTE),
             candidate_ids=sorted(set(result.disagreeing_ids)))]
+
+    # fix H's record: disagreeing routes were settled as a negligible split (same side of zero,
+    # same place, whole spread under NEGLIGIBLE_D of the cell's own SD). The cell pools under a
+    # cap rather than holding for a human coin flip; the flag is what the cap and the reviewer
+    # see.
+    for group in ("A", "B"):
+        result = votes.get(group)
+        if result is None or result.method != NEGLIGIBLE_SPLIT:
+            continue
+        flags = [*flags, CheckFlag(
+            code="negligible_split_resolved",
+            severity=CHECK_SEVERITY["negligible_split_resolved"],
+            message=next((note for note in result.notes if "negligible" in note
+                          or "cannot visibly move" in note),
+                         "disagreeing readings were settled as measurement noise"),
+            candidate_ids=sorted(set(result.agreeing_ids)))]
 
     disagreed = any(v.agreement == "disagree" for v in votes.values())
     if disagreed or refuted or buys_adjudication(flags):

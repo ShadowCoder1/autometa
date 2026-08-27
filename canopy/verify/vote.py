@@ -60,6 +60,7 @@ from .units import unit_key
 __all__ = ["vote", "vote_groups", "VoteResult", "RouteValue", "route_key", "locator_key",
            "figure_reference", "figure_of",
            "modality", "digitizer_path", "LOCATOR_CONFLICT", "LOCATOR_CONFLICT_NOTE",
+           "NEGLIGIBLE_SPLIT", "NEGLIGIBLE_D",
            "LOCATOR_DROPPED",
            "model_family", "precision_tolerance", "figure_tolerance", "candidate_tolerance",
            "AXIS_FRACTION", "TICK_FRACTION"]
@@ -110,6 +111,17 @@ LOCATOR_DROPPED = "locator_dropped"
 
 #: the vote's answer when the readings that agreed came from different places in one figure
 LOCATOR_CONFLICT = "locator_conflict"
+
+#: `VoteResult.method` when disagreeing routes were settled as a negligible split (fix H).
+NEGLIGIBLE_SPLIT = "negligible_split"
+
+#: fix H: the widest spread among disagreeing readings that is still measurement noise, in units
+#: of the cell's OWN standard deviation. A per-group shift this size moves a Hedges g by well
+#: under what a 2-decimal forest plot can show, and it is the same line `confidence.DELTA_D_LIMIT`
+#: already draws for the digitizer's own routes (a pinned test asserts the two stay equal). The
+#: gate is deliberately SD-scaled and nothing else: a mean-relative arm is unbounded in d units
+#: (2% of a mean of 100 with SD 2 is a full SD), and with no verified SD nothing is negligible.
+NEGLIGIBLE_D = 0.1
 LOCATOR_CONFLICT_NOTE = ("the readings that agreed were taken at different places in the same "
                          "figure and were not averaged")
 #: how much of a locator a note prints — enough to name the panel, not the whole sentence
@@ -747,6 +759,30 @@ def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
         _decide(result, rows, cluster, _median([r.value for r in cluster]), row_index, notes)
         return result
 
+    # fix H: before this terminus sends the cell to a human, ask whether the disagreement could
+    # ever matter. Routes that missed each other's tolerances but sit on the same side of zero,
+    # in the same place, with a whole spread under NEGLIGIBLE_D of the cell's own verified SD,
+    # are readings of one number taken with a coarse instrument — no choice among them can
+    # visibly move the effect, and a reviewer asked to pick "3.06 or 3.13 or 3.185" is being
+    # asked to flip a coin. The most-backed reading stands (never an average — an effect built
+    # on a number no paper contains cannot be checked against the paper), the scatter is carried
+    # in `mad` as uncertainty, and the cell is capped, not silently accepted
+    # (`negligible_split_resolved` in `confidence.CAPPING_FLAGS`).
+    sd = _verified_sd(rows)
+    spread = max(r.value for r in routes) - min(r.value for r in routes)
+    if sd is not None and spread <= NEGLIGIBLE_D * sd \
+            and len({1 if r.value > 0 else (-1 if r.value < 0 else 0) for r in routes}) == 1 \
+            and not _locator_conflict(routes, rows):
+        value = _reported_value(routes)
+        notes.append(
+            f"no two routes agreed within tolerance, but every reading is on the same side of "
+            f"zero and the whole spread ({spread:.4g}) is under {NEGLIGIBLE_D:g} of the cell's "
+            f"own SD ({sd:.4g}) — no choice between them can visibly move the effect. The "
+            f"most-backed reading {value:.4g} stands and the scatter is carried as uncertainty")
+        _decide(result, rows, list(routes), value, row_index, notes)
+        result.method = NEGLIGIBLE_SPLIT
+        return result
+
     result.agreement = "disagree"
     result.tolerance = max(r.tolerance for r in routes)
     result.disagreeing_ids = [c.candidate_id for c in rows]
@@ -755,6 +791,26 @@ def vote(candidates: Sequence[Candidate], axis_range: float | None = None, *,
                  + f" (tolerances {[round(r.tolerance, 4) for r in routes]})")
     result.notes = notes
     return result
+
+
+def _verified_sd(rows: Sequence[Candidate]) -> float | None:
+    """The cell's own SD from the candidates' recorded spreads, or None — never a guess.
+
+    Only spreads whose TYPE is verified convert: an SD as printed, an SE scaled by its own n.
+    UNKNOWN types and SEs without a sample size say nothing — an SE mistaken for an SD would
+    inflate every threshold built on it by root n, which is exactly the silent widening the
+    None return exists to prevent. The median survives one misread among several."""
+    sds: list[float] = []
+    for c in rows:
+        value = c.dispersion_value
+        if value in (None, 0):
+            continue
+        kind = getattr(c.dispersion_type, "value", c.dispersion_type)
+        if kind == DispersionType.SD.value or kind is DispersionType.SD:
+            sds.append(abs(float(value)))
+        elif (kind == DispersionType.SE.value or kind is DispersionType.SE) and c.n:
+            sds.append(abs(float(value)) * float(c.n) ** 0.5)
+    return _median(sds) if sds else None
 
 
 def _decide(result: VoteResult, rows: Sequence[Candidate], winners: Sequence[RouteValue],

@@ -2727,3 +2727,64 @@ def test_the_structural_answer_reaches_the_next_reads_target():
     untold = target_for_source(source, dataset, sources, protocol, protocol.stats)
     assert untold.categorical_x == "unknown"
     assert untold.collapse_across_x is False
+
+
+# ------------------------------------------------- fix H: negligible splits in option lists
+def test_h_distinct_values_folds_within_a_tenth_of_the_cells_own_sd():
+    """'-19.14 / -19 / -18.5' as three answers is a coin flip: with a verified SD on record,
+    values on the same side of zero within NEGLIGIBLE_D * SD fold into the most-backed one.
+    No SD -> only the long-standing 0.5% fold; a sign flip never folds."""
+    from canopy.review.questions import _distinct_values
+
+    def entry(cid, mean, sd=3.7, kind="SD", n=None, extractor="digitize:ensemble"):
+        return {"candidate_id": cid, "mean": mean, "dispersion_value": sd,
+                "dispersion_type": kind, "n": n, "extractor_id": extractor}
+
+    folded = _distinct_values([entry("a", -19.0), entry("b", -19.14, extractor="x"),
+                               entry("c", -18.8, extractor="y")])
+    assert list(folded) == [-19.0]
+    assert len(folded[-19.0]) == 3
+    # beyond the gate (0.37 with SD 3.7): stays its own option
+    apart = _distinct_values([entry("a", -19.0), entry("b", -18.5, extractor="x")])
+    assert sorted(apart) == [-19.0, -18.5][::-1] or sorted(apart) == [-19.0, -18.5]
+    assert len(apart) == 2
+    # no verified SD: only the 0.5% fold survives
+    bare = _distinct_values([{"candidate_id": "a", "mean": 3.06, "extractor_id": "e",
+                              "dispersion_value": None, "dispersion_type": None, "n": None},
+                             {"candidate_id": "b", "mean": 3.185, "extractor_id": "x",
+                              "dispersion_value": None, "dispersion_type": None, "n": None}])
+    assert len(bare) == 2
+    # a sign flip never folds, however tiny against the SD
+    flip = _distinct_values([entry("a", -0.5, sd=30.0), entry("b", 0.5, sd=30.0,
+                                                              extractor="x")])
+    assert len(flip) == 2
+    # SE converts through its own n; SE without n says nothing
+    se = _distinct_values([entry("a", -19.0, sd=1.2, kind="SE", n=10),
+                           entry("b", -18.8, sd=1.2, kind="SE", n=10, extractor="x")])
+    assert len(se) == 1
+
+
+def test_h_picking_the_verifiers_own_value_settles_the_refutation():
+    """Fix H3, the 21-duplicate loop: a value option matching the refuting verifier's own
+    alt_mean carries the same overrules as 'stands' — adopting the objection settles it. A
+    value the verifier never cited still leaves the refutation standing."""
+    from canopy.review.questions import _options
+
+    verdict = {"verifier_verdict": "refuted", "adjudicated": False,
+               "confidence_score": 0.2, "mean": 3.89,
+               "verifiers": [{"verdict": "refuted", "alt_mean": 3.94,
+                              "alt_quote": "late trials RL=3.94"}]}
+    valued = [{"candidate_id": "c1", "mean": 3.89, "extractor_id": "digitize:ensemble",
+               "dispersion_value": 0.4, "dispersion_type": "SD", "n": None},
+              {"candidate_id": "c2", "mean": 3.94, "extractor_id": "text:x",
+               "dispersion_value": 0.4, "dispersion_type": "SD", "n": None}]
+    options = _options("verifier_refuted", valued, verdict, unit="cm", flags=[],
+                       overruled=set())
+    stands = next(o for o in options if o.get("key") == "stands")
+    assert "verifier_refuted" in (stands.get("overrules") or [])
+    adopted = next(o for o in options if o.get("mean") == 3.94)
+    assert "verifier_refuted" in (adopted.get("overrules") or []), \
+        "adopting the verifier's own cited value must settle its objection"
+    other = next(o for o in options if o.get("mean") == 3.89)
+    assert "verifier_refuted" not in (other.get("overrules") or []), \
+        "a value the verifier never cited does not answer the objection"

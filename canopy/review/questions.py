@@ -1222,12 +1222,27 @@ def _options(kind: str, valued: Sequence[Mapping[str, Any]], verdict: Mapping[st
         # cell a verifier refused stays refused until a person says, on the record, that they have
         # read the objection and disagree. Without this option the question is unanswerable — the
         # numbers below change the value and leave the refutation exactly where it was.
+        # ONE exception (fix H3): the number the objection ITSELF cites. A reviewer who picks the
+        # verifier's own alternative has adopted the refutation, not dodged it — that settles the
+        # objection as surely as overruling it. Before this, picking the verifier's printed value
+        # changed the cell and left the card re-asking after every repool, for ever (one real
+        # cell collected 21 identical value records this way).
+        holds = _present_holds(verdict, "verifier_refuted", overruled=overruled)
+        cited = [float(v.get("alt_mean")) for v in (verdict.get("verifiers") or [])
+                 if str(v.get("verdict")) == "refuted" and v.get("alt_mean") is not None]
+
+        def _adopts(option: Mapping[str, Any]) -> bool:
+            mean = option.get("mean")
+            return mean is not None and any(
+                abs(float(mean) - alt) <= 1e-9 + 1e-6 * abs(alt) for alt in cited)
+
         return [{"key": "stands",
-                 "overrules": _present_holds(verdict, "verifier_refuted", overruled=overruled),
+                 "overrules": holds,
                  "label": "the value is right anyway — I have read the verifier's objection and "
                           "disagree with it"},
                 *({**option, "clears": _present(flags, "value_outside_axis", "sign_mismatch",
-                                                 "locator_reads_conflict")}
+                                                 "locator_reads_conflict"),
+                   **({"overrules": holds} if holds and _adopts(option) else {})}
                   for option in _value_options(valued, verdict, unit))]
     if kind == "which_value":
         # naming the right number is the answer to "that number is off the ladder", to "the paper
@@ -1358,14 +1373,47 @@ def _short(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit - 1].rsplit(" ", 1)[0] + "…"
 
 
+def _cell_sd(valued: Sequence[Mapping[str, Any]]) -> float | None:
+    """The cell's own SD from the candidates' recorded spreads, or None — never a guess.
+
+    Only verified types convert (an SD as printed; an SE scaled by its own n) — an SE mistaken
+    for an SD would inflate every threshold built on it by root n. The median survives one
+    misread among several. Mirrors `vote._verified_sd`, on the mapping shapes this layer holds."""
+    sds: list[float] = []
+    for c in valued:
+        value, n = c.get("dispersion_value"), c.get("n")
+        if value in (None, "", 0):
+            continue
+        kind = str(_enum(c.get("dispersion_type")) or "").upper()
+        if kind == "SD":
+            sds.append(abs(float(value)))
+        elif kind == "SE" and n:
+            sds.append(abs(float(value)) * float(n) ** 0.5)
+    return sorted(sds)[len(sds) // 2] if sds else None
+
+
 def _distinct_values(valued: Sequence[Mapping[str, Any]]) -> "OrderedDict[float, list]":
-    """Candidate values grouped by rounded mean, ensembles first, most-backed first."""
+    """Candidate values grouped by rounded mean, ensembles first, most-backed first.
+
+    Two merges, both into the FIRST-seen (most-backed) value — never an average of anything:
+    the long-standing 0.5%-of-value fold for duplicate transcriptions, and fix H's
+    dispersion-scaled fold: values on the same side of zero within `NEGLIGIBLE_D` of the
+    cell's own verified SD are readings of one number taken with a coarse instrument, and a
+    reviewer shown "-19.14 / -19 / -18.5" as three answers is being asked to flip a coin.
+    With no verified SD, nothing extra folds; a sign flip never folds at any distance."""
+    from ..verify.vote import NEGLIGIBLE_D
+
     order = sorted(valued, key=lambda c: (not str(c.get("extractor_id") or "").endswith("ensemble"),
                                           str(c.get("candidate_id") or "")))
+    sd = _cell_sd(valued)
     groups: "OrderedDict[float, list]" = OrderedDict()
     for c in order:
         value = float(c["mean"])
-        key = next((k for k in groups if abs(k - value) <= max(abs(k) * 0.005, 1e-9)), None)
+        key = next(
+            (k for k in groups
+             if abs(k - value) <= max(abs(k) * 0.005, 1e-9)
+             or (sd is not None and abs(k - value) <= NEGLIGIBLE_D * sd
+                 and (k >= 0) == (value >= 0) and (k <= 0) == (value <= 0))), None)
         groups.setdefault(value if key is None else key, []).append(c)
     return groups
 

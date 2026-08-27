@@ -190,6 +190,11 @@ CHECK_SEVERITY: dict[str, str] = {
     #: — `confidence` weighs the first two as contradictions and the third as a cap.
     "locator_reads_conflict": "warn",
     "locator_panel_mismatch": "warn",
+    #: fix H: disagreeing routes were settled by the vote as a negligible split — same side of
+    #: zero, same place, whole spread under a tenth of the cell's own SD. Nothing says the
+    #: number is wrong; the cell rests on scattered readings of one number, which is the
+    #: definition of the CAPPING family: it pools, capped, and never silently auto-accepts.
+    "negligible_split_resolved": "warn",
     "locator_reads_set_aside": "warn",
     "duplicate_across_outcomes": "warn",
     "figure_n_mismatch": "warn",

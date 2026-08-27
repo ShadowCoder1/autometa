@@ -175,6 +175,11 @@ CAPPING_FLAGS: frozenset[str] = frozenset({
     #: fix E's sibling of the line above: the reading was re-acquired from the full page after
     #: the panel crop was refused — wider than any panel, a reason to look, never to withhold
     "crop_reacquired",
+    #: fix H: the vote settled disagreeing routes as a negligible split (same sign, same place,
+    #: spread under NEGLIGIBLE_D of the cell's own verified SD). The number is a reading somebody
+    #: made and the scatter rides in the uncertainty — but a cell resolved from scattered
+    #: readings is under-corroborated by definition, so it caps rather than auto-accepts.
+    "negligible_split_resolved",
     #: fix F's third of the family: the figure's letter bindings failed verification against its
     #: own caption and no page render existed to prefer, so the letter-addressed crop was read
     #: under the doubt that it answers to a sibling's letter. A reason to look at the figure.
@@ -310,6 +315,11 @@ CAP_REASONS: dict[str, str] = {
                               "caption and no page render existed to prefer, so the "
                               "letter-addressed crop was read under the doubt that it answers "
                               "to a sibling's letter; a reviewer should see the figure"),
+    "negligible_split_resolved": ("the routes disagreed by less than a tenth of the cell's own "
+                                  "SD, on the same side of zero and in the same place — the "
+                                  "most-backed reading stands with the scatter carried as "
+                                  "uncertainty, and no choice among the readings could visibly "
+                                  "move the effect"),
     "quote_row_only": ("the numbers are somewhere in the named table row but not in the column "
                        "this reading claims, so they may be the other group's"),
     "calibration_single_witness": ("only one witness calibrated this figure's axis, so the scale "
