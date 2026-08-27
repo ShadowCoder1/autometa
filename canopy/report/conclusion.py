@@ -249,7 +249,12 @@ def outcome_conclusion(outcome: OutcomeDef, settings: StatsSettings, *,
             pi_df = 0
         method = _register(facts, "pi_label", pi_label(settings, pooled))
         if _finite(pi_low) and _finite(pi_high):
-            facts["pi_df"] = int(pi_df)
+            # the z convention returns df = inf BY DESIGN (`prediction_interval`'s own contract):
+            # finite bounds whose reference distribution has no df. int(inf) raised OverflowError
+            # here and one unguarded conversion at the very end killed a whole 22-paper run after
+            # every paper had resolved. An infinite df is recorded by its absence.
+            if _finite(pi_df):
+                facts["pi_df"] = int(pi_df)
             sentences.append(
                 f"A dataset drawn from the same population would be expected to fall between "
                 f"{_fact(facts, 'pi_low', pi_low)} and {_fact(facts, 'pi_high', pi_high)} "

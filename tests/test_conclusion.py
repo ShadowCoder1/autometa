@@ -352,3 +352,21 @@ def test_the_payload_tells_the_two_lines_sentences_apart():
     # …and each caveat is in the paragraph exactly once: the card used to print them again
     for caveat in payload["caveats"]:
         assert payload["sentences"].count(caveat) == 1
+
+
+def test_a_z_prediction_interval_with_infinite_df_writes_the_sentence_and_no_crash():
+    """The z convention (metafor default) returns df = inf BY DESIGN: finite bounds whose
+    reference distribution has no df. int(inf) raised OverflowError here and one unguarded
+    conversion at the very end killed a whole 22-paper run after every paper had resolved."""
+    protocol = nine.protocol()
+    stats = protocol.stats.model_copy(update={"pi_method": "z"})
+    rows = _rows([-0.9, -0.5, -0.1, 0.2, 0.4])
+    pooled = random_effects([r.es for r in rows], [r.var for r in rows],
+                            method=stats.tau2_method, hakn=stats.hakn, level=stats.ci_level)
+    conclusion = outcome_conclusion(protocol.outcome("late_adaptation"), stats, pooled=pooled,
+                                    rows=rows, held=[], best_guess=None, loo=[],
+                                    group_a=protocol.group_a, group_b=protocol.group_b)
+    text = " ".join(conclusion.sentences)
+    assert "expected to fall between" in text
+    assert "inf" not in text.lower()
+    assert "pi_df" not in conclusion.facts or conclusion.facts["pi_df"] != float("inf")
