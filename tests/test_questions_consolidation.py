@@ -78,16 +78,19 @@ def test_the_measure_card_shows_the_outcome_definition_and_every_cell_s_raw_mean
 def test_pair_card_id_is_kind_free_and_stable_across_a_slot_answer(nine_tmp):
     """The pair's id names the DATASET's decision, never one slot's kind — a slot whose kind
     changes when its own answer lands must not change the id of the card it sits in."""
+    # b7523:d2 is the pair whose slots still differ in kind since the SD-scaled fold: 5039:d1's
+    # readings collapsed into two bare confirms (a split under 0.1·SD cannot move the effect),
+    # so that pair no longer has a slot whose kind an answer can change.
     card = next(q for q in questions_for_run(nine_tmp)
-                if q["id"] == "5039533c85ef:d1|late_adaptation||pair")
-    assert {s["kind"] for s in card["slots"]} == {"which_value", "confirm_value"}
+                if q["id"] == "b7523a41b03a:d2|late_adaptation||pair")
+    assert {s["kind"] for s in card["slots"]} == {"confirm_value", "which_series"}
     recs = answers_to_overrides(card, {"option": card["options"][0]["key"],
                                        "option_fingerprint": card["options"][0]["fingerprint"]})
-    _append(nine_tmp, recs[:1])                       # answer group A's slot only
+    series = next(r for r in recs if r["kind"] == "value")
+    _append(nine_tmp, [series])                       # answer the kind-changing slot only
     _repool(nine_tmp)
     after = questions_for_run(nine_tmp)
-    assert any(q["id"] == "5039533c85ef:d1|late_adaptation||pair" for q in after) \
-        or not any(q["id"].startswith("5039533c85ef:d1|late_adaptation|") for q in after)
+    assert any(q["id"] == "b7523a41b03a:d2|late_adaptation||pair" for q in after)
 
 
 def test_pair_card_writes_one_override_per_group(nine_tmp):
@@ -261,7 +264,10 @@ def test_a_pair_with_more_than_nine_combinations_is_one_cell_card_of_two_slots(n
     mine = [q for q in qs if q["dataset_id"] == "592b3b55a318:d2"
             and q["outcome_key"] == "aftereffect"]
     assert len(mine) == 1 and mine[0]["kind"] == "cell"
-    assert [len(s["options"]) for s in mine[0]["slots"]] == [6, 6]
+    # 4×5, not the raw 6×6: readings whose spread cannot move the effect fold into one option
+    # (`_distinct_values`' SD-scaled fold) — still more combinations than one screen can carry
+    counts = [len(s["options"]) for s in mine[0]["slots"]]
+    assert counts == [4, 5] and counts[0] * counts[1] > 9
     assert all(s["answerable"] for s in mine[0]["slots"])
 
 

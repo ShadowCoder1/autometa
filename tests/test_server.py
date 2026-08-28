@@ -517,7 +517,7 @@ def test_the_monitor_says_when_the_run_has_already_finished():
     page = (STATIC / "index.html").read_text(encoding="utf-8")
     assert 'id="monitor-banner"' in page
     assert "stop.disabled = finished" in app_js
-    assert "Open Results" in app_js
+    assert "Open results" in app_js
 
 
 def test_a_flag_can_be_accepted_in_one_click(cloned):
@@ -1550,7 +1550,7 @@ def test_app_js_has_the_hooks():
                    "q.slot_answers", 'name: "slot_" + i', "payload.slots = slotPicks",
                    # the free-text trigger on a slot card is a checkbox (a lone radio can never
                    # be unchecked), and a typed value beside slot picks is refused, not dropped
-                   'name: "free_toggle"', "not both in one submit"):
+                   'name: "free_toggle"', "Not both in one submit"):
         assert needle in js, needle
     # the results page lands on the best-guess line when the run has one; a tab that switched
     # to strict stays there, and a run with no guess falls back to strict in `drawLineToggle`
