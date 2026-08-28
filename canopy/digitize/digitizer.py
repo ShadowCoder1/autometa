@@ -22,10 +22,12 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from ..ingest.pdf import (FigureRegion, MIN_PANEL_CALIBRATED, PanelRegion, PaperRecord,
-                          caption_panels)
+from ..ingest.pdf import (FigureRegion, MARKER_FILL_WORDS, MARKER_LINE_WORDS,
+                          MARKER_SHAPE_WORDS,
+                          MIN_PANEL_CALIBRATED, PanelRegion, PaperRecord, caption_panels)
 from ..llm.client import LLMClient
-from ..models import (Candidate, DatasetSpec, DigitizeSettings, DispersionType, Source,
+from ..models import (Candidate, DatasetSpec, DigitizeSettings, DispersionType,
+                      EBT_FROM_CAPTION, Source,
                       SourceKind)
 from ..verify.panels import _label_key, _labels_are_the_same, _MIN_LABEL_CHARS, _names_group
 from .calibrate import AxisCalibration, fit_axis, pair_ticks, pixel_resolution, \
@@ -1000,6 +1002,33 @@ def _series_names_its_group(label_read: Any, own: Sequence[str], other: Sequence
     words = set(_WORD_RE.findall(str(label_read or "").lower()))
     mine, theirs = _vocab_words(own), _vocab_words(other)
     return bool(words & (mine - theirs)) and not (words & (theirs - mine))
+
+
+def _bind_caption_keys(fig: FigureRegion, target: "TargetSpec"
+                       ) -> tuple[tuple[str, str], ...]:
+    """The caption's stated series keys as prompt rows, each bound to the group its series text
+    names — or unbound.
+
+    The stated FACT always travels (the reader deserves the publisher's own key whether or not
+    this code can tell whose it is); the BINDING is inferred only by the rule the identity check
+    already uses (`_series_names_its_group`): the key's series text names one arm's vocabulary
+    and not the other's. Anything less rides unbound. Empty for a figure whose caption keys
+    nothing, so its prompts stay byte-identical with every cached call.
+    """
+    keys = getattr(fig, "caption_series_keys", None) or []
+    if not keys:
+        return ()
+    vocab = {"A": tuple(x for x in (target.group_a_label, *target.group_a_synonyms) if x),
+             "B": tuple(x for x in (target.group_b_label, *target.group_b_synonyms) if x)}
+    out: list[tuple[str, str]] = []
+    for key in keys:
+        line = f"{str(key.get('descriptor') or '').strip()} = " \
+               f"{str(key.get('series_text') or '').strip()!r}"
+        bound = next((g for g, other in (("A", "B"), ("B", "A"))
+                      if _series_names_its_group(key.get("series_text"),
+                                                 vocab[g], vocab[other])), "")
+        out.append((line, bound))
+    return tuple(out)
 
 
 def _point_at(row: Any, category: str) -> Any | None:
@@ -2021,11 +2050,10 @@ def _reconcile_axes(samples: list[RouteSample], target: TargetSpec) -> dict[str,
 
 
 # ----------------------------------------------------------------------------- which series?
-_FILL_WORDS = {"open": "open", "unfilled": "open", "hollow": "open", "white": "open",
-               "empty": "open", "outline": "open",
-               "filled": "filled", "solid": "filled", "black": "filled", "closed": "filled",
-               "dark": "filled"}
-_SHAPE_WORDS = ("square", "circle", "triangle", "diamond", "star", "cross", "bar")
+#: aliases of the canonical vocabulary in `ingest.pdf` (ticket 2b moved it there so the caption
+#: parser and this module can never drift apart about what counts as a marker word)
+_FILL_WORDS = MARKER_FILL_WORDS
+_SHAPE_WORDS = MARKER_SHAPE_WORDS
 
 
 def _marker_words(text: str) -> tuple[str, str]:
@@ -2084,7 +2112,8 @@ def _nearest_marker(core: _Core, x: float | None, y: float | None
     return marker, ((marker.x - x) ** 2 + (marker.y - y) ** 2) ** 0.5
 
 
-def _series_identity(samples: Sequence[RouteSample], core: _Core) -> dict[str, Any]:
+def _series_identity(samples: Sequence[RouteSample], core: _Core,
+                     caption_keys: tuple[tuple[str, str], ...] = ()) -> dict[str, Any]:
     """Does each group's described marker exist, is it that group's, and is it the OTHER group's?
 
     Group assignment rested on one free-text `label_read` from one model ("Elderly: Misaligned
@@ -2102,16 +2131,50 @@ def _series_identity(samples: Sequence[RouteSample], core: _Core) -> dict[str, A
       These used to be recorded as prose and nothing read them.
     """
     described: dict[str, tuple[str, str]] = {}
+    described_from: dict[str, str] = {}
     for group in GROUPS:
         texts = [s.label_read for s in samples if s.group == group and s.label_read]
         for text in texts:
             fill, shape = _marker_words(text)
             if fill or shape:
                 described[group] = (fill, shape)
+                described_from[group] = "reader"
                 break
+    # ticket 2b: the caption's own key is a THIRD witness, in strict precedence — it fills a
+    # group's silence (which is what lets conflict/transposition/mismatch see Balitsky-type
+    # errors at all: both readers said "circles" while the caption says circles/squares), it
+    # never overrides a reader's stated descriptor, and a line-style key ("black lines") never
+    # feeds marker matching at all — a line has no fill to mismatch. When the caption and a
+    # reader BOTH state a descriptor and they disagree, that is a recorded dispute, not a
+    # re-bind (`caption_mismatch` below; fix F's rule — silence never votes, and nothing short
+    # of full corroboration re-attributes a value).
+    caption_said: dict[str, tuple[str, str]] = {}
+    for line, bound in caption_keys or ():
+        if bound not in GROUPS:
+            continue
+        descriptor = line.split("=", 1)[0]
+        fill, shape = _marker_words(descriptor)
+        if not (fill or shape) or any(w in MARKER_LINE_WORDS
+                                      for w in descriptor.lower().split()):
+            continue
+        caption_said[bound] = (fill, shape)
     info: dict[str, Any] = {"described": {g: list(v) for g, v in described.items()},
                             "conflict": False, "transposed": False, "marker_mismatch": False,
                             "notes": []}
+    for group, descriptor in caption_said.items():
+        if group not in described:
+            described[group] = descriptor
+            described_from[group] = "caption"
+        elif not _descriptors_match(described[group], descriptor):
+            info["caption_mismatch"] = True
+            info["notes"].append(
+                f"group {group}'s readers describe {' '.join(w for w in described[group] if w)!r} "
+                f"but the figure's own caption keys it as "
+                f"{' '.join(w for w in descriptor if w)!r} — which series this number was "
+                f"measured on is disputed between the two")
+    info["described"] = {g: list(v) for g, v in described.items()}
+    if described_from:
+        info["described_from"] = dict(described_from)
     if len(described) == 2 and described["A"] == described["B"] and any(described["A"]):
         info["conflict"] = True
         info["notes"].append(
@@ -2247,6 +2310,28 @@ def _legend_dispersion(text: str) -> DispersionType | None:
         if any(n in padded for n in needles):
             return kind
     return None
+
+
+def _caption_dispersion_for(fig: FigureRegion, base: Mapping[str, Any]
+                            ) -> tuple[DispersionType | None, str]:
+    """The caption's own error-bar statement for the panel being read — `(None, "")` otherwise.
+
+    Panel-aware: a letter-scoped statement ("error bars in A show SD") answers only its own
+    letter, and the figure-level statement answers a panel no letter-scoped one claims (the
+    scoping was decided at ingest, `pdf._caption_semantics`). Old records lack the fields and
+    return nothing — the chain then behaves exactly as before the caption existed to it.
+    """
+    letter = str((base.get("panel") or {}).get("panel_named") or "").lower()
+    entry = (getattr(fig, "caption_dispersion_panels", None) or {}).get(letter) or {}
+    named = str(entry.get("type") or "") or str(getattr(fig, "caption_dispersion", "") or "")
+    quote = (str(entry.get("quote") or "") if entry.get("type")
+             else str(getattr(fig, "caption_dispersion_quote", "") or ""))
+    if not named:
+        return None, ""
+    try:
+        return DispersionType(named), quote
+    except ValueError:                                     # pragma: no cover - defensive
+        return None, ""
 
 
 # ----------------------------------------------------------------------------- buying calls
@@ -2491,7 +2576,13 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
     # in resolution mode the READERS are prompted to enumerate the series' points and name each
     # category — the evidence `_categorical_role` rules on — without the collapse instruction's
     # claim that the outcome is their average, which nothing here has established
-    read_target = (replace(target, resolve_categorical=True) if resolve_mode else target)
+    # ticket 2b: the caption's own marker→series key rides in the TARGET, instruction-grade —
+    # the caption prose alone was in every Balitsky prompt while the readers hunted circles for
+    # both groups. `keyed_target` is what every PROMPT-building path reads (read-outs here,
+    # path C's `coords` below), so the locator sees the same stated facts the readers do.
+    keyed_target = replace(target, caption_series_keys=_bind_caption_keys(fig, target))
+    read_target = (replace(keyed_target, resolve_categorical=True) if resolve_mode
+                   else keyed_target)
     resolved_role: tuple[str, str] | None = None
 
     def read(spec: ReadoutSpec, build: bool = True) -> None:
@@ -2574,7 +2665,7 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
 
     # --- path C: VLM coordinates + CV snap
     primary = models[0] if models else "claude-opus-5"
-    coord = coords(client, crop, text, target, primary, view=view, cell_key=f"{key}/C")
+    coord = coords(client, crop, text, keyed_target, primary, view=view, cell_key=f"{key}/C")
     # route A's scene is built HERE, before anything converts a pixel, so the PDF's own tick
     # ladder is one of the witnesses the calibration vote sees
     scene, vec_info = _vector_scene(paper, fig)
@@ -2714,7 +2805,8 @@ def digitize(client: LLMClient, paper: PaperRecord, fig: FigureRegion, target: T
 
     # --- two readers off two different value axes are not two reads of one number
     axis_info = _reconcile_axes(samples, target)
-    series_info = _series_identity(samples, core)
+    series_info = _series_identity(samples, core,
+                                   caption_keys=keyed_target.caption_series_keys)
 
     # --- overlay verify: drop what the model says is misplaced, then recompute
     labels = {"A": target.group_a_label or "group A", "B": target.group_b_label or "group B"}
@@ -3585,12 +3677,23 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
     mapper_type = source.error_bar_type if source is not None else DispersionType.UNKNOWN
     legend_text = " ".join(r.legend_says for r in readouts if r.legend_says)
     legend_type = _legend_dispersion(legend_text)
+    caption_type, caption_quote = _caption_dispersion_for(fig, base)
     # miss 10: `UNKNOWN` dispersion is a needs_human factory — `confidence._sd_of` returns None for
     # it, no route reaches the figure gate, and the cell fails on a spread the FIGURE stated
     # plainly. When the mapper could not say and the legend says outright, the legend is the
-    # evidence; where it came from travels in provenance.
+    # evidence; where it came from travels in provenance. Ticket 2a puts the CAPTION between the
+    # two: the publisher's own sentence, deterministically parsed and quoted, outranks a model's
+    # paraphrase of a legend — and like the legend it only ever FILLS an UNKNOWN (one witness is
+    # one witness; the fill caps in `checks`), never overrides what the map determined.
     dispersion_from = "mapper"
-    if mapper_type is DispersionType.UNKNOWN and legend_type is not None:
+    if source is not None and mapper_type is not DispersionType.UNKNOWN \
+            and EBT_FROM_CAPTION in (source.notes or ""):
+        # the map's own UNKNOWN was filled from the caption at map time (Site A) — the
+        # provenance must say so or the cap pricing one-witness fills never fires
+        dispersion_from = "caption"
+    if mapper_type is DispersionType.UNKNOWN and caption_type is not None:
+        mapper_type, dispersion_from = caption_type, "caption"
+    elif mapper_type is DispersionType.UNKNOWN and legend_type is not None:
         mapper_type, dispersion_from = legend_type, "legend"
     unit = _unit(target, readouts)
     page = source.page if source is not None and source.page else fig.page
@@ -3668,12 +3771,26 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             spread = (max(all_errors) - min(all_errors)) if len(all_errors) > 1 else 0.0
             widen = 0.5 * spread if not agreement["error_agrees"] else 0.0
             dispersion_sigma = max(error_mad, widen, floor)
-        conflict = (dispersion_from == "mapper" and legend_type is not None
-                    and mapper_type != DispersionType.UNKNOWN and legend_type != mapper_type)
+        # a live dispute between any two of the three witnesses whose type actually stands:
+        # legend vs the chain's choice (the original term, now also guarding a caption fill), and
+        # caption vs a mapper-stated type (the SEM-vs-SD case — no preference is taken, the type
+        # stays what the chain chose, and the flag holds the cell for the error_bar_type card)
+        legend_conflict = (dispersion_from in ("mapper", "caption") and legend_type is not None
+                           and mapper_type != DispersionType.UNKNOWN
+                           and legend_type != mapper_type)
+        caption_conflict = (caption_type is not None and dispersion_from == "mapper"
+                            and mapper_type != DispersionType.UNKNOWN
+                            and caption_type != mapper_type)
+        conflict = legend_conflict or caption_conflict
         reasons = list(agreement["reasons"])
         reasons += [n for n in zero_notes if "excluded" not in n]
-        if conflict:
-            reasons.append(f"the figure's legend reads {legend_type.value} but the mapper recorded "
+        if legend_conflict:
+            reasons.append(f"the figure's legend reads {legend_type.value} but the "
+                           f"{'caption states' if dispersion_from == 'caption' else 'mapper recorded'} "
+                           f"{mapper_type.value}")
+        if caption_conflict:
+            reasons.append(f"the figure's own caption states {caption_type.value} "
+                           f"(“{caption_quote[:120]}”) but the mapper recorded "
                            f"{mapper_type.value}")
         status = _ensemble_status(agreement["mean_agrees"], conflict, zero_notes)
         dispersion_only = (status == "found" and not agreement["error_agrees"])
@@ -3725,6 +3842,8 @@ def _build_candidates(samples: list[RouteSample], *, target: TargetSpec, fig: Fi
             "legend_says": legend_text,
             "legend_dispersion": legend_type.value if legend_type else None,
             "mapper_dispersion": mapper_type.value if mapper_type else None,
+            "caption_dispersion": caption_type.value if caption_type else None,
+            "caption_dispersion_quote": caption_quote,
             "dispersion_type_from": dispersion_from,
             "per_route": [s.to_dict() for s in mine],
             "route_values": {s.extractor_id: {"mean": s.mean, "error": s.error} for s in live},

@@ -1417,3 +1417,157 @@ def test_g_the_wire_refuses_every_shape_that_is_not_its_own(monkeypatch, tmp_pat
     # the candidates are DISCARDED, not voted, and the refutation stands for adjudication
     assert go(verdict, winner, [winner]) is None and calls["n"] == 1
     assert any("produced no page-level reading" in w for w in status.warnings)
+
+
+# ---------------------------------------- ticket 1: a human's number survives every re-read
+def test_a_reread_never_displaces_a_human_valued_group_through_either_door():
+    """Both doors shut: a COLLIDING fresh reading may not win, and a NON-colliding one (a route
+    the first round never ran — the side door the observed clobber recurred through) may not
+    slip into the live pool either. The unprotected group merges exactly as before, and a batch
+    that was entirely set aside reports `False` — nothing changed, nothing goes stale."""
+    from canopy.pipeline.run import _absorb_reread
+
+    cell = ("p:d1", "late_adaptation")
+    standing = _cand("p:d1:late_adaptation:A:text#0", 86.0)
+    colliding = _cand("p:d1:late_adaptation:A:text#0", 21.05)
+    new_route = _cand("p:d1:late_adaptation:A:raster#0", 47.6)
+
+    kept, superseded = [standing], []
+    changed = _absorb_reread(cell, kept, [colliding, new_route], superseded,
+                             protected=frozenset({"A"}), protected_note="set aside: seq 20")
+    assert not changed, "an all-set-aside batch has nothing to rebuild"
+    assert [c.mean for c in kept] == [86.0]
+    assert sorted(c.mean for c in superseded) == [21.05, 47.6]
+    assert all(c.pixel_provenance.get("set_aside_for_human_value") == "set aside: seq 20"
+               for c in superseded)
+
+
+def test_protection_is_group_scoped_and_replace_bypasses_it():
+    from canopy.models import Candidate
+    from canopy.pipeline.run import _absorb_reread
+
+    cell = ("p:d1", "late_adaptation")
+
+    def b_cand(cid, mean, status="found"):
+        return Candidate(candidate_id=cid, dataset_id="p:d1", outcome_key="late_adaptation",
+                         kind="group_stats", group="B", status=status, mean=mean)
+
+    kept = [_cand("p:d1:late_adaptation:A:text#0", 86.0),
+            b_cand("p:d1:late_adaptation:B:text#0", 78.5)]
+    fresh = [_cand("p:d1:late_adaptation:A:text#0", 21.05),
+             b_cand("p:d1:late_adaptation:B:text#0", 24.6)]
+    superseded: list = []
+    changed = _absorb_reread(cell, kept, fresh, superseded, protected=frozenset({"A"}))
+    assert changed, "B's merge is a real change"
+    assert {c.group: c.mean for c in kept} == {"A": 86.0, "B": 24.6}
+    # …and a measure switch displaces everything: the switch is itself a later human decision
+    # about the same cell, and a value typed against the rejected measure describes a number
+    # the review no longer wants
+    kept, superseded = [_cand("p:d1:late_adaptation:A:text#0", 86.0)], []
+    changed = _absorb_reread(cell, kept, [_cand("p:d1:late_adaptation:A:text#0", 12.0)],
+                             superseded, replace=True, protected=frozenset({"A"}))
+    assert changed and [c.mean for c in kept] == [12.0]
+
+
+def test_fix_b_declines_to_reopen_a_group_whose_value_a_reviewer_supplied(monkeypatch,
+                                                                          tmp_path):
+    """Nothing here was requested by a person and the call has not been bought — the cheapest
+    honest protection is not to buy it, and the warning is the audit trace."""
+    import json
+    from types import SimpleNamespace
+
+    from canopy.models import PaperStatus
+    from canopy.pipeline import run as run_mod
+    from canopy.pipeline.overrides import OVERRIDES_FILE
+
+    dataset, sources, cell, verdict, inset = _reopen_fixture()
+    (tmp_path / OVERRIDES_FILE).write_text(json.dumps(
+        {"kind": "value", "dataset_id": "p:d2", "outcome_key": "late_adaptation",
+         "group": "B", "mean": 10.6, "justification": "typed", "seq": 1}) + "\n")
+    called = {"n": 0}
+
+    def no_call(*a, **k):
+        called["n"] += 1
+        return []
+
+    monkeypatch.setattr(run_mod, "_extract_cell", no_call)
+    ctx = SimpleNamespace(out_dir=tmp_path)
+    paper = SimpleNamespace(sha256="p" * 64)
+    status = PaperStatus(paper_id="p")
+    out = run_mod._reopen_on_better_source(ctx, paper, dataset, sources, [verdict], cell,
+                                           status)
+    assert out is None and called["n"] == 0
+    assert any("theirs wins" in w and "seq 1" in w for w in status.warnings)
+
+
+def test_fix_g_a_value_on_the_other_group_no_longer_blocks_a_reacquire(monkeypatch, tmp_path):
+    """The narrowing, pinned as intended: a reviewer's number for group A says nothing about B,
+    and blocking B's re-acquire on it left B's refutation dead-ended in a card. A pending
+    re_extract hint still blocks the whole cell (a hint re-reads both groups)."""
+    import json
+    from types import SimpleNamespace
+
+    from canopy.models import Candidate, PaperStatus
+    from canopy.pipeline import run as run_mod
+    from canopy.pipeline.overrides import OVERRIDES_FILE
+
+    dataset, sources, winner, verdict, paper = _reacquire_fixture()
+
+    def fake_extract(ctx, p, ds, srcs, figures_dir, status, **kwargs):
+        return [Candidate(candidate_id="p:d2:late_adaptation:B:digitize:ensemble", group="B",
+                          mean=79.0, dataset_id="p:d2", outcome_key="late_adaptation",
+                          kind="group_stats", status="found", page=5, locator="Fig. 4a",
+                          extractor_id="digitize:ensemble",
+                          pixel_provenance={"figure_id": "fig04!page",
+                                            "crop_reacquired": True})]
+
+    monkeypatch.setattr(run_mod, "_extract_cell", fake_extract)
+    ctx = SimpleNamespace(out_dir=tmp_path)
+    (tmp_path / OVERRIDES_FILE).write_text(json.dumps(
+        {"kind": "value", "dataset_id": "p:d2", "outcome_key": "late_adaptation",
+         "group": "A", "mean": 84.0, "justification": "typed", "seq": 1}) + "\n")
+    out = run_mod._reacquire_on_refutation(ctx, paper, dataset, sources, [(verdict, winner)],
+                                           [winner], PaperStatus(paper_id="p"))
+    assert out is not None, "group A's number is not a decision about group B"
+    (tmp_path / OVERRIDES_FILE).write_text(json.dumps(
+        {"kind": "re_extract", "dataset_id": "p:d2", "outcome_key": "late_adaptation",
+         "hint": "look at the transfer bars", "justification": "hint", "seq": 1}) + "\n")
+    out = run_mod._reacquire_on_refutation(ctx, paper, dataset, sources, [(verdict, winner)],
+                                           [winner], PaperStatus(paper_id="p"))
+    assert out is None, "a pending hint is a human mid-decision on the whole cell"
+
+
+def test_an_automated_repair_s_sibling_reading_never_enters_a_protected_group_s_vote(tmp_path):
+    """M-2: fix-B/fix-G re-read the WHOLE cell, so the repair aimed at group A's refutation
+    returns group B's reading too — and a B a human has valued must not have it weighed. The
+    reading stays on the record (the caller keeps it in extra_candidates), is stamped, warned
+    about, and collected for the T1 flags — and leaves the vote merge."""
+    import json
+    from types import SimpleNamespace
+
+    from canopy.models import Candidate, PaperStatus
+    from canopy.pipeline.overrides import OVERRIDES_FILE, human_landed_values
+    from canopy.pipeline.run import _human_valued_groups, _shelve_protected
+
+    (tmp_path / OVERRIDES_FILE).write_text(json.dumps(
+        {"kind": "value", "dataset_id": "p:d2", "outcome_key": "late_adaptation",
+         "group": "B", "mean": 78.5, "justification": "typed", "seq": 20}) + "\n")
+    landed = human_landed_values(tmp_path)
+    protected = _human_valued_groups(landed, "p:d2", "late_adaptation")
+    assert protected == frozenset({"B"})
+
+    def reading(group, mean):
+        return Candidate(candidate_id=f"p:d2:late_adaptation:{group}:x:reopen", group=group,
+                         mean=mean, dataset_id="p:d2", outcome_key="late_adaptation",
+                         kind="group_stats", status="found")
+
+    status, shelved = PaperStatus(paper_id="p"), []
+    kept = _shelve_protected([reading("A", 21.0), reading("B", 24.6)], protected, landed,
+                             "p:d2", "late_adaptation", status, shelved)
+    assert [c.group for c in kept] == ["A"], "the repair's target group still merges"
+    assert [c.group for c in shelved] == ["B"]
+    assert "seq 20" in shelved[0].pixel_provenance["set_aside_for_human_value"]
+    assert any("recorded, not weighed" in w for w in status.warnings)
+    assert _shelve_protected([reading("A", 21.0)], frozenset(), landed, "p:d2",
+                             "late_adaptation", PaperStatus(paper_id="p"), []) \
+        and not shelved[1:], "no protection, no shelving"

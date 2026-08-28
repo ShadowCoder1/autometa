@@ -71,10 +71,11 @@ from ..verify.checks import (CHECK_SEVERITY, DF_PROVENANCE_FLAGS, ORIENTATION_FL
 from ..verify.confidence import ROW_REFUSAL_CODES, resolve_cell
 from ..verify.panels import apply_panel_check
 from ..verify.vote import (LOCATOR_CONFLICT, LOCATOR_CONFLICT_NOTE, NEGLIGIBLE_SPLIT, VoteResult,
-                           model_family, vote_groups)
+                           _verified_sd, model_family, vote_groups)
 from .aggregate import AGGREGATED_FLAG, Aggregation, aggregate_one_row_per_paper
-from .overrides import (HUMAN_OVERRIDE, OVERRIDES_FILE, apply_overrides_and_repool,
-                        eligibility_answers, map_answers, read_overrides, re_extract_answers)
+from .overrides import (HUMAN_OVERRIDE, OVERRIDES_FILE, HumanLanded, apply_overrides_and_repool,
+                        eligibility_answers, human_landed_values, map_answers, read_overrides,
+                        re_extract_answers, within_read_tolerance)
 from .resolve import resolve_effect_with_fallback
 from .rows import (DISPERSION_APPROXIMATED, approximation_flags, cell_candidates,
                    house_spread_type, prepare_rows,
@@ -480,7 +481,8 @@ def _categorical_answer(answers: Sequence[Mapping[str, Any]]) -> str:
 
 def _absorb_reread(cell: tuple[str, str], candidates: list[Candidate],
                    fresh: Sequence[Candidate], superseded: list[Candidate],
-                   replace: bool = False) -> bool:
+                   replace: bool = False, protected: frozenset[str] = frozenset(),
+                   protected_note: str = "") -> bool:
     """Merge a hinted re-read into the cell's readings, losing none of them. Did anything change?
 
     `replace` is the one case where the earlier readings may not stand: a reviewer has changed WHICH
@@ -504,21 +506,87 @@ def _absorb_reread(cell: tuple[str, str], candidates: list[Candidate],
     `superseded_candidates` in the stage file, because a reading a run bought is evidence about
     the paper whether or not the analysis weighs it.
 
+    **A re-read never displaces a value a human supplied** (`protected`: the groups of this cell
+    with a reviewer-typed mean, from `overrides.human_landed_values`). One step past the rule
+    above: the hint still buys the reading — a human asked — but a fresh reading for a protected
+    group goes straight to the shelf with `protected_note` in its provenance, and the standing
+    readings (the ones the human's number was decided against) stay live, so verify re-votes that
+    group over unchanged evidence and the reviewer is never asked to re-assert their own number.
+    BOTH doors are shut: a colliding fresh reading may not win, and a non-colliding one (a route
+    the first round never ran) may not slip into the live pool either — that side door is exactly
+    how the observed clobber recurred. `replace` bypasses protection deliberately: a measure
+    switch is itself a later human decision about the same cell, and a value typed against the
+    rejected measure describes a number the review no longer wants.
+
     Returns whether the cell's readings actually changed, which is what makes the verdict and the
     row built from them stale. A re-read that changed nothing has nothing to rebuild.
     """
-    won = {c.candidate_id for c in fresh if c.status == "found"}
+    guarded: list[Candidate] = []
+    live_fresh = list(fresh)
+    if protected and not replace:
+        guarded = [c for c in fresh if c.group in protected]
+        live_fresh = [c for c in fresh if c.group not in protected]
+        for reading in guarded:
+            reading.pixel_provenance["set_aside_for_human_value"] = protected_note \
+                or "a reviewer supplied this group's value; this reading is recorded, not weighed"
+    won = {c.candidate_id for c in live_fresh if c.status == "found"}
     if replace:
         won = {c.candidate_id for c in candidates if (c.dataset_id, c.outcome_key) == cell}
     kept = [c for c in candidates if (c.dataset_id, c.outcome_key) != cell
             or c.candidate_id not in won]
     standing = {c.candidate_id for c in kept}
-    added = [c for c in fresh if c.candidate_id not in standing]
+    added = [c for c in live_fresh if c.candidate_id not in standing]
     superseded.extend(c for c in candidates
                       if (c.dataset_id, c.outcome_key) == cell and c.candidate_id in won)
-    superseded.extend(c for c in fresh if c.candidate_id in standing)
+    superseded.extend(c for c in live_fresh if c.candidate_id in standing)
+    superseded.extend(guarded)
     candidates[:] = [*kept, *added]
     return bool(added or won)
+
+
+def _human_valued_groups(landed: HumanLanded, dataset_id: str, outcome_key: str
+                         ) -> frozenset[str]:
+    """The groups of this cell whose MEAN a reviewer has stated — the write-protected ones.
+
+    STATED, not landed: a number stuck pending is still a human's stated number, and protection
+    against machine overwrite must not lapse while it waits (the hold-retirement rules are the
+    ones that demand landed values). Group-scoped: a value on group A says nothing about B.
+    """
+    out = []
+    for group in ("A", "B"):
+        landed_cell = landed.for_cell(dataset_id, outcome_key, group)
+        if landed_cell is not None and landed_cell.get("mean") is not None:
+            out.append(group)
+    return frozenset(out)
+
+
+def _shelve_protected(extra: Sequence[Candidate], protected: frozenset[str],
+                      landed: HumanLanded, dataset_id: str, outcome_key: str,
+                      status: PaperStatus, shelved_out: list[Candidate]) -> list[Candidate]:
+    """The candidates of an automated repair that may enter the VOTE — the protected groups'
+    readings are stamped with the set-aside note, reported, collected for the T1 flags, and
+    returned OUT of the merge. They stay wherever the caller records them (a paid reading is
+    evidence about the paper) but are never weighed as a protected group's value."""
+    if not protected:
+        return list(extra)
+    kept: list[Candidate] = []
+    for reading in extra:
+        if reading.group not in protected:
+            kept.append(reading)
+            continue
+        human = landed.for_cell(dataset_id, outcome_key, str(reading.group)) or {}
+        seq = (human.get("field_seqs") or {}).get("mean", human.get("seq", 0))
+        reading.pixel_provenance["set_aside_for_human_value"] = (
+            f"set aside: a reviewer supplied this group's value (override seq {seq}); this "
+            f"automated repair's reading is recorded here, never weighed as the cell's value "
+            f"without a human decision")
+        shelved_out.append(reading)
+        if reading.mean is not None:
+            status.warnings.append(
+                f"{dataset_id}/{outcome_key}: an automated repair read group {reading.group} "
+                f"as {reading.mean:g}, but a reviewer has supplied that group's value "
+                f"(override seq {seq}) — the fresh reading is recorded, not weighed")
+    return kept
 
 
 def _consumed_seqs(ctx: "RunContext", paper: PaperRecord, study: StudyMap, keys: set[str],
@@ -887,6 +955,9 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
     #: hints this map puts out of reach, and what is in the way. Never silently dropped: the
     #: promise on the card ("the next --resume re-reads this cell") is one no resume can keep.
     unreachable: dict[str, str] = {}
+    #: what humans have stated about this run's cells — recomputed from the log on every entry,
+    #: so an interrupted resume re-derives the same protection instead of trusting stage state
+    landed = human_landed_values(ctx.out_dir)
 
     def say_what_cannot_be_read() -> None:
         """Warn once per hint nothing will ever act on — before any early return, in every branch.
@@ -1031,6 +1102,18 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
             hint = _hint_text(hints.get(cell, ()))
             categorical = _categorical_answer(hints.get(cell, ()))
             pair = (dataset.dataset_id, sources.outcome_key)
+            protected = _human_valued_groups(landed, dataset.dataset_id, sources.outcome_key)
+            protected_note = ""
+            if protected:
+                seqs = sorted({(landed.for_cell(dataset.dataset_id, sources.outcome_key, g)
+                                or {}).get("field_seqs", {}).get("mean", 0) for g in protected})
+                protected_note = (
+                    f"set aside: a reviewer supplied this group's value (override seq "
+                    f"{', '.join(str(s) for s in seqs)}); this re-read's reading is recorded "
+                    f"here, never weighed as the cell's value without a human decision "
+                    # repeated set-asides collide on deterministic candidate ids — the stamp is
+                    # what tells one shelved batch from another
+                    f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}]")
             # a hinted re-read is read into a scratch list and merged afterwards, never over the
             # cell's own readings: nothing may be removed before the reading meant to replace it
             # is known to have found anything. A cap that lands mid-cell takes the same path, so
@@ -1047,7 +1130,8 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
                     # two measures is the `metric_mixed` state C6 exists to prevent. The seq is
                     # not retired on this path, so the next resume reads the cell again.
                     _absorb_reread(pair, candidates, fresh, superseded,
-                                   replace=cell in remeasured)
+                                   replace=cell in remeasured, protected=protected,
+                                   protected_note=protected_note)
                 stopped = str(exc)
                 exhausted.append(cell)
                 status.warnings.append(
@@ -1092,8 +1176,22 @@ def _extract(ctx: RunContext, paper: PaperRecord, study: StudyMap,
                 # row built from them stale, and that is recorded in the stage file beside the
                 # consumption it pairs with — never in memory alone (see `REREAD_CELLS`).
                 if _absorb_reread(pair, candidates, fresh, superseded,
-                                  replace=cell in remeasured):
+                                  replace=cell in remeasured, protected=protected,
+                                  protected_note=protected_note):
                     reread.add(cell)
+                # S-5: a hint whose readings were ALL set aside would otherwise vanish — bought,
+                # shelved, and shown nowhere. The warning names what was read; the disagreement,
+                # if any, becomes the T1 flag (and its one card) at the next verify pass.
+                shelved_now = [c for c in fresh
+                               if c.group in protected and c.mean is not None] \
+                    if cell not in remeasured else []
+                if shelved_now:
+                    status.warnings.append(
+                        f"{cell}: the hinted re-read bought fresh reading(s) for group(s) "
+                        f"whose value a reviewer supplied — set aside, never weighed: "
+                        + "; ".join(f"group {c.group} read {c.mean:g}"
+                                    for c in shelved_now[:4])
+                        + " — the reviewer's numbers stand")
                 re_read.extend(int(answer["seq"]) for answer in hints[cell]
                                if isinstance(answer.get("seq"), int))
             save(complete=False)
@@ -1304,6 +1402,7 @@ def _reopen_on_better_source(ctx: RunContext, paper: PaperRecord, dataset: Datas
     """
     readable = readable_sources(sources.sources)
     already = _already_read(cell, readable)
+    landed = human_landed_values(ctx.out_dir) if ctx is not None else HumanLanded({}, {})
     for verdict in verdicts:
         named = (verdict.better_source or "").strip()
         if not named:
@@ -1319,6 +1418,21 @@ def _reopen_on_better_source(ctx: RunContext, paper: PaperRecord, dataset: Datas
                 f"{dataset.dataset_id}/{sources.outcome_key}: a verifier named {named!r} as a "
                 f"better source — not re-opened, because {why}")
             continue
+        # nothing here was requested by a person, and the model call has not been bought yet —
+        # so when a reviewer has supplied the refuted group's value, the cheapest honest
+        # protection is not to buy it (the same rule fix G draws below). Skip, and say so.
+        refuted_group = next((c.group for c in cell
+                              if c.candidate_id == verdict.candidate_id), None)
+        if refuted_group in ("A", "B"):
+            human = landed.for_cell(dataset.dataset_id, sources.outcome_key, str(refuted_group))
+            if human is not None and human.get("mean") is not None:
+                status.warnings.append(
+                    f"{dataset.dataset_id}/{sources.outcome_key}: a verifier named {named!r} as "
+                    f"a better source for group {refuted_group}, but a reviewer has supplied "
+                    f"that group's value (override seq "
+                    f"{human['field_seqs'].get('mean', human['seq'])}) — the re-open was not "
+                    f"bought; theirs wins")
+                continue
         if _source_marker(source) in already:
             # "already read" only counts when the reading it bought actually SERVED the refuted
             # group (fix B). Kumar's insets were mapped, read, and refused by a gate that has
@@ -1374,15 +1488,25 @@ def _reacquire_on_refutation(ctx: RunContext, paper: PaperRecord, dataset: Datas
     """
     if any(str(c.candidate_id).endswith(":reacquire") for c in cell):
         return None                       # once per cell, ever — the marker survives resume
-    if any(str(rec.get("kind")) in ("value", "re_extract")
+    if any(str(rec.get("kind")) == "re_extract"
            and rec.get("dataset_id") == dataset.dataset_id
            and rec.get("outcome_key") == sources.outcome_key
            for rec in read_overrides(ctx.out_dir)):
-        return None                       # a human is mid-decision on this cell; theirs wins
+        return None                       # a pending hint is a human mid-decision on this whole
+        # cell (a hint re-reads both groups); theirs wins
+    #: …while a typed VALUE is group-scoped, like the value itself: a reviewer's number for
+    #: group A says nothing about B, and blocking B's re-acquire on it left B's refutation
+    #: dead-ended in a card. The registry (not a raw kind-scan) is what all three protection
+    #: paths consult, so a group-less record in an old log still protects both groups.
+    landed = human_landed_values(ctx.out_dir)
     readable = readable_sources(sources.sources)
     for verdict, winner in refuted:
         if verdict.verdict != "refuted":
             continue
+        if winner.group in ("A", "B"):
+            human = landed.for_cell(dataset.dataset_id, sources.outcome_key, str(winner.group))
+            if human is not None and human.get("mean") is not None:
+                continue                  # a human stated this group's value; theirs wins
         quote = str(verdict.alt_quote or "")
         if not any(ch.isdigit() for ch in quote) or verdict.alt_mean is None:
             continue
@@ -1588,9 +1712,18 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                  all_candidates: Sequence[Candidate], file_id: str,
                  orientation: OrientationVerdict | None,
                  status: PaperStatus,
-                 tiebroken: set[tuple[str, str]] | None = None) -> _CellVerification:
+                 tiebroken: set[tuple[str, str]] | None = None,
+                 shelved: Sequence[Candidate] = ()) -> _CellVerification:
     key = sources.outcome_key
     outcome_def = ctx.protocol.outcome(key)
+    #: T1: the groups of this cell whose value a reviewer has stated. Consulted by every
+    #: automated repair below before its fresh readings may enter the VOTE, and by the flag
+    #: block at the end. `shelved` is the extract stage's set-aside shelf — the readings
+    #: protection kept out of the live pool, which are the only evidence that genuinely
+    #: POSTDATES the human's number.
+    landed_here = human_landed_values(ctx.out_dir)
+    protected_cell = _human_valued_groups(landed_here, dataset.dataset_id, key)
+    shelved_this_pass: list[Candidate] = []
     # D2: the caption says which panel is whose, and a reading taken off another group's panel is
     # that group's number wearing this cell's name. It is settled BEFORE anything else looks at
     # the cell — the vote, the checks and the adversarial verifier all see the filtered list —
@@ -1720,6 +1853,13 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
         named, extra = reopened
         out.reopened_source = named
         out.extra_candidates.extend(extra)
+        # M-2: `_extract_cell` reads the source for the WHOLE cell, so an automated repair
+        # aimed at one group's refutation returns the sibling's reading too — and a sibling a
+        # human has valued must not have it WEIGHED. It stays on the record (extra_candidates —
+        # a paid reading is evidence about the paper, and the option it backs is a choice a
+        # person may still make); it never enters the vote.
+        extra = _shelve_protected(extra, protected_cell, landed_here, dataset.dataset_id, key,
+                                  status, shelved_this_pass)
         cell = [*cell, *vote_candidates(extra)]
         extra_flags.append(CheckFlag(
             code="reopened_on_better_source", severity=CHECK_SEVERITY["reopened_on_better_source"],
@@ -1738,6 +1878,8 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
         if reacq is not None:
             quote, extra = reacq
             out.extra_candidates.extend(extra)
+            extra = _shelve_protected(extra, protected_cell, landed_here, dataset.dataset_id,
+                                      key, status, shelved_this_pass)      # M-2, as above
             cell = [*cell, *vote_candidates(extra)]
             extra_flags.append(CheckFlag(
                 code="reacquired_on_refutation",
@@ -1801,6 +1943,40 @@ def _verify_cell(ctx: RunContext, paper: PaperRecord, dataset: DatasetSpec,
                          "disagreeing readings were settled as measurement noise"),
             candidate_ids=sorted(set(result.agreeing_ids)))]
 
+    # T1's record, once the votes are final — derived from the SET-ASIDE readings only, never
+    # from the vote. A protected group's live pool cannot gain fresh readings (protection
+    # shelves them), so this pass's vote re-resolves the pre-human number for ever: comparing
+    # IT with the human's value would raise "disputes" off evidence the reviewer already read
+    # when they typed their number — and the disputes flag blocks T4's retirement, re-arming
+    # the very loop the protection kills (M-3). The shelf is the one place evidence that
+    # genuinely POSTDATES the human's number can be, so it alone speaks: agreement is a record
+    # (info), disagreement holds the cell once, capped, for its one human look. A re-vote over
+    # unchanged candidates raises nothing — `overridden_by_human` already records the standing
+    # disagreement. (A `replace=True` measure-switch re-read bypasses protection and its
+    # readings enter the live pool unflagged — the named residual of design edge 4.7.)
+    for group in ("A", "B"):
+        human = landed_here.for_cell(dataset.dataset_id, key, group)
+        if human is None or human.get("mean") is None:
+            continue
+        fresh = [c for c in [*shelved, *shelved_this_pass]
+                 if c.dataset_id == dataset.dataset_id and c.outcome_key == key
+                 and c.group == group and c.mean is not None]
+        if not fresh:
+            continue
+        reading = fresh[-1]                     # the latest set-aside batch speaks
+        own_sd = _verified_sd([c for c in cell if c.group == group])
+        agrees = within_read_tolerance(reading.mean, human["mean"], sd=own_sd)
+        code = "reread_confirms_human_value" if agrees else "reread_disputes_human_value"
+        flags = [*flags, CheckFlag(
+            code=code, severity=CHECK_SEVERITY[code],
+            message=(f"a reviewer supplied this group's value ({human['mean']:g}, override seq "
+                     f"{human['field_seqs'].get('mean', human['seq'])}); a later re-read's own "
+                     f"reading was {reading.mean:g}, set aside rather than adopted — "
+                     + ("the two agree within read tolerance" if agrees else
+                        "the fresh reading DISAGREES; the reviewer's value stands unless a "
+                        "person decides otherwise")),
+            candidate_ids=[reading.candidate_id])]
+
     disagreed = any(v.agreement == "disagree" for v in votes.values())
     if disagreed or refuted or buys_adjudication(flags):
         out.adjudication = adjudicate(
@@ -1846,6 +2022,15 @@ def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: li
     #: here because the ruling is per (paper, outcome, measure) and a cell cannot see its siblings.
     tiebroken: set[tuple[str, str]] = set()
     only: set[tuple[str, str]] | None = None
+    #: T1: the extract stage's set-aside shelf — the readings protection kept out of the live
+    #: pool because a reviewer had supplied the group's value. Read ONCE per paper (the stage
+    #: file runs to megabytes) and handed to every cell: they are the only evidence that
+    #: genuinely postdates a human's number, which is what the T1 flags speak from.
+    shelf = [Candidate.model_validate(c)
+             for c in (read_stage(ctx.out_dir, paper.sha256, "extract") or {}
+                       ).get("superseded_candidates") or []
+             if isinstance(c, dict)
+             and (c.get("pixel_provenance") or {}).get("set_aside_for_human_value")]
 
     if ctx.resume and stage_done(ctx.out_dir, paper.sha256, "verify"):
         payload = read_stage(ctx.out_dir, paper.sha256, "verify")
@@ -1939,7 +2124,8 @@ def _verify(ctx: RunContext, paper: PaperRecord, study: StudyMap, candidates: li
                     protocol=ctx.protocol, outcome=ctx.protocol.outcome(sources.outcome_key),
                     pdf_file_id=file_id or None)
             result = _verify_cell(ctx, paper, dataset, sources, cell, [*candidates, *extra],
-                                  file_id, orientations[measure], status, tiebroken)
+                                  file_id, orientations[measure], status, tiebroken,
+                                  shelved=shelf)
             if result.orientation is not None:
                 # C3 row 1 may have discarded a reader once this cell's means existed. That is a
                 # fact about the MEASURE, so every later dataset carrying it inherits the checked

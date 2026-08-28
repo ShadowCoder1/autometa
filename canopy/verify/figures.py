@@ -29,7 +29,8 @@ from ..models import Candidate, SourceKind
 
 __all__ = ["FIGURE_KINDS", "is_figure", "FigureCalibration", "figure_calibration", "axis_limits",
            "figure_tolerance", "calibration_status", "routes_agree", "AXIS_FRACTION",
-           "TICK_FRACTION", "FALLBACK_FRACTION"]
+           "TICK_FRACTION", "FALLBACK_FRACTION", "offer_gate", "GATE_MARGIN_TICKS",
+           "GATE_MARGIN_FRACTION", "PLOTBOX_SANE_FACTOR"]
 
 AXIS_FRACTION = 0.02            # a digitised mean may differ by 2% of the axis range …
 TICK_FRACTION = 0.5             # … or half a tick, whichever is looser (amendment F)
@@ -196,3 +197,84 @@ def figure_tolerance(cand: Candidate, axis_range: float | None = None) -> float 
     if cal.tick:
         options.append(TICK_FRACTION * abs(cal.tick))
     return max(options) if options else None
+
+
+# ------------------------------------------------------------- ticket 3: the offer gate
+#: one full labelled-tick interval past the outermost label. An axis frame extends past its
+#: labels by at most about one labelled interval — publishers either label the frame's end or
+#: stop one division short, and a datum drawn beyond that would have forced another printed
+#: label. Clipped bars and whiskers render AT the frame edge, i.e. inside this same interval,
+#: so a clipped read passes the gate.
+GATE_MARGIN_TICKS = 1.0
+#: the floor for sparsely labelled ladders: 5% of the labelled span
+GATE_MARGIN_FRACTION = 0.05
+#: a "plot box" more than twice its labelled ladder is not one panel's frame: a real single
+#: panel whose frame exceeded its labels by a full extra ladder-length would have half its area
+#: unlabelled, which is not a shape publishers print. (Measured over a real corpus as
+#: corroboration: sane single-panel frames ran ~1.0–1.3× their tick span; the one that ran 5×
+#: was a multi-panel crop whose box handed −147.9 a pass on a −30..30 axis.)
+PLOTBOX_SANE_FACTOR = 2.0
+
+
+def offer_gate(pixel_provenance: dict[str, Any] | None, mean: Any) -> dict[str, Any] | None:
+    """`None` when `mean` could plausibly be drawn in this frame (or nothing reliable says
+    otherwise); else a record naming the bounds and why. Fails OPEN on every doubt: a wrong
+    calibration must never suppress a right value.
+
+    This is deliberately NOT `axis_limits` + `value_outside_axis`: those keep their generous
+    semantics (conviction stays hard — `error`, unconditional). The gate is a cheaper-severity
+    screen with strictly harder RELIABILITY preconditions, which is the only combination that
+    closes the plot-box hole without risking the misread-ladder failure ("a correct read sent
+    to a human by a wrong calibration"):
+
+    - the calibration must be `confirmed` (two independent witnesses agreed on the mapping —
+      `single_witness`, `cal_refuted`, `none` and old records all leave the gate inert);
+    - linear only — a one-tick additive margin is meaningless on a log ladder;
+    - at least three labelled ticks — a two-point fit is exact through its rungs and verifies
+      nothing between them, so it may not exclude anybody;
+    - the plot-box slack `axis_limits` hands out is honoured ONLY when the box is believable:
+      not a `panel_not_isolated` crop (the box then spans the neighbours' panels — the exact
+      hole the −147.9 case fell through), and no more than `PLOTBOX_SANE_FACTOR` times the
+      labelled span.
+    """
+    provenance = pixel_provenance if isinstance(pixel_provenance, dict) else {}
+    if calibration_status(provenance) != "confirmed":
+        return None
+    cal = provenance.get("cal")
+    if not isinstance(cal, dict) or str(cal.get("scale") or "") != "linear":
+        return None
+    ticks = _tick_values(cal)
+    if len(ticks) < 3:
+        return None
+    tick_low, tick_high = ticks[0], ticks[-1]
+    gaps = [b - a for a, b in zip(ticks, ticks[1:]) if b > a]
+    tick_span = tick_high - tick_low
+    if not gaps or tick_span <= 0:
+        return None
+    tick = float(statistics.median(gaps))
+    margin = max(GATE_MARGIN_TICKS * tick, GATE_MARGIN_FRACTION * tick_span)
+    low, high = tick_low - margin, tick_high + margin
+    # per-route candidates carry the panel record nested under "panel"; ensembles lift it to
+    # the top level — read both spellings or the gate trusts exactly the boxes it must not
+    panel = provenance.get("panel")
+    not_isolated = bool(provenance.get("panel_not_isolated")
+                        or (isinstance(panel, dict) and panel.get("panel_not_isolated")))
+    source = str(provenance.get("axis_range_source") or "")
+    span = _number(provenance.get("axis_range"))
+    box_note = ""
+    if source == "plot_bbox" and span:
+        if not not_isolated and span <= PLOTBOX_SANE_FACTOR * tick_span:
+            limits = axis_limits(provenance)
+            if limits is not None:
+                low, high = min(low, limits[0]), max(high, limits[1])
+        else:
+            box_note = (f"; the wider plot-box span ({span:g}) was not trusted because "
+                        + ("the crop holds more than one panel" if not_isolated else
+                           f"it exceeds {PLOTBOX_SANE_FACTOR:g}× the labelled ladder"))
+    value = _number(mean)
+    if value is None or low <= value <= high:
+        return None
+    return {"low": low, "high": high, "margin": margin,
+            "tick_low": tick_low, "tick_high": tick_high, "axis_range_source": source,
+            "why": (f"the value {value:g} lies outside this panel's printed tick range "
+                    f"[{tick_low:g}, {tick_high:g}] (margin ±{margin:g}){box_note}")}

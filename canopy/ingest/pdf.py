@@ -220,6 +220,23 @@ class FigureRegion:
     #: refusal requires this, so an old run's resume can never refuse a figure on a hardcoded zero.
     primitives_measured: bool = False
 
+    #: ticket 2a: what the caption ITSELF says the error bars show — a deterministic parse of the
+    #: publisher's own sentence (`caption_dispersion`), empty when the caption names nothing or
+    #: names it ambiguously. One full run held ~35 review slots asking a human to read exactly
+    #: this sentence off the screen. A `DispersionType` value ("SE", "SD", …) or "".
+    caption_dispersion: str = ""
+    #: the matched sentence, verbatim — the provenance every consumer must show
+    caption_dispersion_quote: str = ""
+    #: per-letter statements ("error bars in A show SD"), via `_caption_panel_texts`' own
+    #: segmentation: {"a": {"type": "SD", "quote": "…"}}. Empty when segmentation cannot account
+    #: for the whole caption — a scope it cannot place must not manufacture evidence.
+    caption_dispersion_panels: dict[str, dict[str, str]] = field(default_factory=dict)
+    #: ticket 2b: the caption's marker/series key ("circles represent adaptation with the right
+    #: hand"), each {"descriptor", "series_text", "quote", "line_style"}. Explicit statements
+    #: only; the digitiser resolves descriptors through its own `_marker_words` and binds series
+    #: text to groups — this record never guesses either.
+    caption_series_keys: list[dict] = field(default_factory=list)
+
 @dataclass
 class PageRecord:
     number: int                     # 1-based
@@ -792,6 +809,232 @@ def _verify_panel_letters(panels: list[dict], caption: str, letters: list[str],
         # figure, because each description's words sit before its mark, not after
         return None, ""
     return None, evidence
+
+
+# ------------------------------------------- ticket 2: what the caption itself states
+#: the marker vocabulary, canonical HERE: the caption parser and the digitiser must speak one
+#: language or a key parsed from print would fail to match the very words a reader used
+#: (`digitize.digitizer` aliases these under its old names; a pinned test asserts identity).
+MARKER_FILL_WORDS = {"open": "open", "unfilled": "open", "hollow": "open", "white": "open",
+                     "empty": "open", "outline": "open",
+                     "filled": "filled", "solid": "filled", "black": "filled",
+                     "closed": "filled", "dark": "filled"}
+MARKER_SHAPE_WORDS = ("square", "circle", "triangle", "diamond", "star", "cross", "bar")
+#: words that identify a series by colour or line style without being a fill claim. A colour key
+#: feeds the reader's prompt and the group binding but NEVER the marker-mismatch machinery —
+#: mapping colour names to detected-marker hex is guesswork this record refuses to do.
+MARKER_COLOUR_WORDS = frozenset({"black", "grey", "gray", "white", "red", "blue", "green",
+                                 "orange", "purple", "dark", "light"})
+MARKER_LINE_WORDS = frozenset({"line", "lines", "dashed", "dotted", "curve", "curves",
+                               "trace", "traces"})
+#: neutral carriers a descriptor may include beside a real marker word ("filled symbols")
+_MARKER_CARRIER_WORDS = frozenset({"symbol", "symbols", "marker", "markers", "point", "points",
+                                   "dot", "dots"})
+
+#: a sentence is ABOUT the rendering of spread only when it says so: in this literature
+#: "standard deviation" routinely names the OUTCOME ("the SD of heading direction was
+#: analysed"), and crediting that would invent an error-bar type the figure never states.
+_DISPERSION_ANCHOR_RE = re.compile(
+    r"error\s+bars?|whiskers?|\bshaded\b|\bshading\b|"
+    r"(?:vertical|horizontal)\s+(?:error\s+)?(?:bars?|lines?)|"
+    r"\bbars?\s+(?:denote|indicate|represent|show|are)\b", re.IGNORECASE)
+
+#: multiplier forms: "± 2 SE" draws a bar TWICE the statistic — crediting the bare type would
+#: corrupt every digitised dispersion by that factor, so any such caption is refused whole
+_DISPERSION_MULTIPLIER_RE = re.compile(
+    r"(?:±\s*|\b(?:denote|indicate|represent|show|are)\s+)\d+(?:\.\d+)?\s*(?:×|x\s)?\s*"
+    r"(?=S\.?E|S\.?D|SEM\b|SD\b|SE\b|s\.e|s\.d|standard\s)", re.IGNORECASE)
+
+#: `(DispersionType value, pattern)` in scan order. Spelled-out phrases are case-insensitive
+#: with their known impostors excluded by lookahead (the SEE of a regression, the historical
+#: "standard deviation of the mean" = SEM); abbreviations count only dotted or uppercase —
+#: bare lowercase "se"/"sd" are words in several languages and are never credited.
+_CAPTION_DISPERSION_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
+    ("SE", re.compile(r"\bstandard\s+errors?\s+of\s+the\s+means?\b", re.IGNORECASE)),
+    ("SE", re.compile(r"\bstandard\s+errors?\b(?!\s+of\s+the\s+(?:estimate|mean))",
+                      re.IGNORECASE)),
+    ("SE", re.compile(r"\bS\.E\.M\b\.?|\bs\.e\.m\.")),
+    ("SE", re.compile(r"\bSEM\b")),
+    ("SE", re.compile(r"\bSE\b|\bs\.e\.")),
+    ("SD", re.compile(r"\bstandard\s+deviations?\b(?!\s+of\s+the\s+mean)", re.IGNORECASE)),
+    ("SD", re.compile(r"\bS\.D\b\.?|\bs\.d\.")),
+    ("SD", re.compile(r"\bSD\b|\bstd\.?\s*dev\w*")),
+    ("CI95", re.compile(r"\b95\s*%\s*(?:confidence\s+intervals?|CI\b)", re.IGNORECASE)),
+    ("CI90", re.compile(r"\b90\s*%\s*(?:confidence\s+intervals?|CI\b)", re.IGNORECASE)),
+    ("IQR", re.compile(r"\binterquartile\b|\bIQR\b")),
+    ("RANGE", re.compile(r"\bmin\s*[-–—]\s*max\b", re.IGNORECASE)),
+)
+
+
+def _sentences(text: str) -> list[str]:
+    return [s for s in re.split(r"(?<=[.;])\s+", text) if s.strip()]
+
+
+def caption_dispersion(caption: str) -> dict[str, str]:
+    """`{"type": "SE", "quote": "<the matched sentence>"}` or `{}` — never a guess.
+
+    Conservative by construction, exactly like `_caption_panel_texts`: explicit statements only,
+    refusal on any ambiguity. A match counts only when its sentence is ANCHORED to the rendering
+    of spread (`_DISPERSION_ANCHOR_RE`) or the match itself sits in a `mean ± TYPE` form; two
+    different anchored types with no scope separating them refuse the whole caption (the
+    per-letter helper below may still resolve each); a multiplier form ("± 2 SE") refuses it
+    outright. Non-English captions match nothing, which IS the conservative behaviour.
+    """
+    text = _norm_ws(caption).replace("+/-", "±").replace("+/−", "±")
+    if not text or _DISPERSION_MULTIPLIER_RE.search(text):
+        return {}
+    found: dict[str, str] = {}
+    for sentence in _sentences(text):
+        anchored_sentence = bool(_DISPERSION_ANCHOR_RE.search(sentence))
+        for kind, pattern in _CAPTION_DISPERSION_PATTERNS:
+            for m in pattern.finditer(sentence):
+                prefix = sentence[max(0, m.start() - 8):m.start()]
+                if not anchored_sentence and "±" not in prefix:
+                    continue
+                found.setdefault(kind, sentence)
+    if len(found) != 1:
+        return {}
+    kind, quote = next(iter(found.items()))
+    return {"type": kind, "quote": quote}
+
+
+def caption_panel_dispersions(caption: str, letters: list[str]) -> dict[str, dict[str, str]]:
+    """Per-letter dispersion statements, through `_caption_panel_texts`' own segmentation.
+
+    `{}` whenever segmentation cannot account for the whole caption: a statement whose scope
+    cannot be placed must not be scoped by guesswork.
+    """
+    out: dict[str, dict[str, str]] = {}
+    for letter, description in _caption_panel_texts(caption, letters).items():
+        entry = caption_dispersion(description)
+        if entry:
+            out[letter] = entry
+    return out
+
+
+_SERIES_KEY_VERB_RE = re.compile(r"\b(represents?|denotes?|indicates?|shows?|are|is)\b",
+                                 re.IGNORECASE)
+
+
+def _marker_descriptor(words: list[str]) -> bool:
+    """Is this 1–3 word phrase a marker descriptor — every word vocabulary, at least one real?
+
+    Carriers ("symbols") may ride along; a phrase of only carriers describes nothing.
+    """
+    if not words or len(words) > 3:
+        return False
+    if any(ch in word for word in words for ch in "()"):
+        # a phrase crossing a paren boundary ("circles)") is shape-B territory — a key minted
+        # from it would carry half a parenthetical as its descriptor
+        return False
+    cleaned = [w.lower().strip(",;:.\"'") for w in words]
+    real = 0
+    for word in cleaned:
+        if _is_shape_word(word) or word in MARKER_FILL_WORDS or word in MARKER_COLOUR_WORDS \
+                or word in MARKER_LINE_WORDS:
+            real += 1
+        elif word not in _MARKER_CARRIER_WORDS:
+            return False
+    if cleaned == [cleaned[0]] and cleaned[0] in MARKER_COLOUR_WORDS:
+        return False                    # a lone colour word keys nothing ("the green is …")
+    return real >= 1
+
+
+def _is_shape_word(word: str) -> bool:
+    """Exactly a shape word (plural allowed) — never a prefix: "crosshair" is not a cross,
+    "stars" of significance are stars but "start" is not, and "barely" is not a bar."""
+    return any(re.fullmatch(rf"{shape}(?:s|es)?", word) for shape in MARKER_SHAPE_WORDS)
+
+
+def _key_of(descriptor: str, series_text: str, quote: str) -> dict[str, str] | None:
+    """One parsed key, or None when the pair fails the refusal rules."""
+    series_text = series_text.strip(" ,;:.").strip()
+    if not 2 <= len(series_text) <= 60:
+        return None
+    # a statement about SPREAD is never a series key: "Error bars represent the standard error
+    # of the mean" once minted `bars = 'the standard error of the mean'` — an instruction-grade
+    # false fact in every reader prompt of that figure. Same for significance annotations.
+    if any(pattern.search(series_text) for _, pattern in _CAPTION_DISPERSION_PATTERNS) \
+            or "significan" in series_text.lower():
+        return None
+    lowered = series_text.lower().split()
+    if any(w in MARKER_FILL_WORDS or w in MARKER_COLOUR_WORDS or w in MARKER_LINE_WORDS
+           or _is_shape_word(w) for w in lowered):
+        return None                     # "circles represent filled symbols" keys nothing
+    words = descriptor.lower().split()
+    return {"descriptor": descriptor.strip(), "series_text": series_text, "quote": quote,
+            "line_style": any(w.strip(",;:") in MARKER_LINE_WORDS for w in words)}
+
+
+def caption_series_keys(caption: str) -> list[dict[str, str]]:
+    """The caption's own marker→series key, or `[]` — explicit statements only.
+
+    Two sentence shapes, measured on real captions: key-first ("Circles represent adaptation
+    with the right hand") and parenthetical ("dominant arm performance (open circles)"). Two
+    keys whose descriptors no longer distinguish anything (identical) are BOTH dropped;
+    everything unrecognized parses to nothing, by construction.
+    """
+    text = _norm_ws(caption)
+    out: list[dict[str, str]] = []
+
+    def trailing_descriptor(prefix: str) -> list[str]:
+        words = prefix.split()[-3:]
+        while words and not _marker_descriptor(words):
+            dropped = words[0]
+            words = words[1:]           # "…right hand and squares" keys on "squares" alone
+            if words and dropped.lower().strip(",;:.") == "error":
+                return []               # "error bars" is a spread phrase, never a series key
+        return words
+
+    for sentence in _sentences(text):
+        # shape A: descriptor VERB series-text, possibly chained with "and"/"while"/"whereas"
+        spans: list[tuple[Any, list[str], int]] = []
+        for m in _SERIES_KEY_VERB_RE.finditer(sentence):
+            words = trailing_descriptor(sentence[:m.start()])
+            if not words:
+                continue
+            at = sentence[:m.start()].rfind(" ".join(words))
+            spans.append((m, words, at if at >= 0 else m.start()))
+        for i, (m, descriptor_words, _) in enumerate(spans):
+            # one key's series text ends where the NEXT key's descriptor begins, not at its verb
+            stop = spans[i + 1][2] if i + 1 < len(spans) else len(sentence)
+            tail = re.split(r"[,;.]", sentence[m.end():stop])[0]
+            tail = re.sub(r"\s+(?:and|while|whereas)\s*$", "", tail)
+            key = _key_of(" ".join(descriptor_words), tail, sentence)
+            if key:
+                out.append(key)
+        # shape B: series-text (descriptor)
+        for m in re.finditer(r"([^(),;.]{2,80})\(([^()]{2,40})\)", sentence):
+            inner = m.group(2).split()
+            if not _marker_descriptor(inner):
+                continue
+            lead = m.group(1).strip()
+            lead = re.split(r"\b(?:for|and|with|of)\s+(?=\S+\s+\S+)", lead)[-1]
+            key = _key_of(" ".join(inner), lead, sentence)
+            if key:
+                out.append(key)
+    counted: dict[str, int] = {}
+    for key in out:
+        counted[key["descriptor"].lower()] = counted.get(key["descriptor"].lower(), 0) + 1
+    return [key for key in out if counted[key["descriptor"].lower()] == 1]
+
+
+def _caption_semantics(caption: str, letters: list[str]) -> dict[str, Any]:
+    """Everything ticket 2 reads off one caption, with the figure/letter scoping rule applied.
+
+    Figure-level dispersion is withheld when any letter-scoped statement names a DIFFERENT type,
+    and when the figure-level match's own sentence lives inside a letter's description — a
+    statement about panel b must never speak for its siblings.
+    """
+    per_panel = caption_panel_dispersions(caption, letters)
+    figure = caption_dispersion(caption)
+    if figure and per_panel:
+        descriptions = _caption_panel_texts(caption, letters)
+        if any(entry["type"] != figure["type"] for entry in per_panel.values()) \
+                or any(figure["quote"] in desc for desc in descriptions.values()):
+            figure = {}
+    return {"type": str(figure.get("type") or ""), "quote": str(figure.get("quote") or ""),
+            "panels": per_panel, "series_keys": caption_series_keys(caption)}
 
 
 def _panel_left(rect: pymupdf.Rect, siblings: list[pymupdf.Rect],
@@ -1386,6 +1629,7 @@ def ingest_pdf(path: str | Path, out_dir: str | Path, page_dpi: int = PAGE_DPI, 
             claude_rel = f"figures/{fid}.claude.png"
             prep.image.save(out / claude_rel, optimize=True)
             panels = _render_panels(page, out, fid, reg, dpi, clip, crop_rel, claude_rel, prep.scale)
+            _sem = _caption_semantics(reg["caption"], list(reg.get("caption_panels") or []))
             figures.append(FigureRegion(id=fid, page=n, bbox=Bbox.from_rect(clip), caption=reg["caption"], label=reg["label"],
                                         kind=reg["kind"], n_images=reg["n_images"], n_drawings=reg["n_drawings"],
                                         native_px=reg["native_px"], crop_png=crop_rel, claude_png=claude_rel,
@@ -1403,7 +1647,14 @@ def ingest_pdf(path: str | Path, out_dir: str | Path, page_dpi: int = PAGE_DPI, 
                                         # see, because that test builds the record directly
                                         primitives_measured=bool(reg.get("primitives_measured", False)),
                                         panel_labels_disputed=bool(reg.get("panel_labels_disputed", False)),
-                                        panel_label_note=str(reg.get("panel_label_note", ""))))
+                                        panel_label_note=str(reg.get("panel_label_note", "")),
+                                        # ticket 2: deterministic parses of the caption itself,
+                                        # computed at this one seam so every region path (grouped,
+                                        # caption_only, loose) gets them from the same words
+                                        **{"caption_dispersion": _sem["type"],
+                                           "caption_dispersion_quote": _sem["quote"],
+                                           "caption_dispersion_panels": _sem["panels"],
+                                           "caption_series_keys": _sem["series_keys"]}))
     first_text = doc[0].get_text() if len(doc) else ""
     has_text = total_chars > 200 * max(1, len(doc)) * 0.2
     if not has_text:

@@ -147,10 +147,19 @@ CAPPING_FLAGS: frozenset[str] = frozenset({
     "calibration_two_point",
     #: the error-bar type came from the figure's legend because the map never determined one
     "dispersion_type_from_legend",
+    #: …or from the figure's own caption sentence (ticket 2a) — deterministic and quoted, but
+    #: still one uncorroborated witness of what the bars show, so it caps exactly as the legend
+    #: fill does. Its dispute sibling `dispersion_caption_conflict` is deliberately NOT here: a
+    #: live caption-vs-pipeline disagreement is a pre-human dispute and may hold the cell.
+    "dispersion_type_from_caption",
     #: the reader's words about this series and the markers the pixel pass found do not line up.
     #: A soft doubt about a shape vocabulary — the *transposition* it used to share a code with
     #: is `series_transposed`, below, because the two have opposite consequences.
     "series_marker_mismatch",
+    #: ticket 2b's sibling: the reader's words and the CAPTION's own key for the series do not
+    #: line up. The same vocabulary-level identity doubt — the caption never re-binds a value,
+    #: so this can only ever be a reason to look, and the `which_series` answer retires it.
+    "series_caption_mismatch",
     #: how thin the agreement behind the measure's DIRECTION was (ceiling items C3 / C12 / the
     #: P-A residue, raised in `canopy.verify.checks`). Neither says the direction is wrong — one
     #: says a single ballot set it after the other was re-issued or discarded, the other says a
@@ -198,7 +207,24 @@ CAPPING_FLAGS: frozenset[str] = frozenset({
     #: value came from where it was asked for, and what an n four people too large moves is the
     #: variance — a reason to look at the cell, not evidence that the number is another quantity.
     "n_before_exclusions",
+    #: T1: an automated re-read resolved a value that DISAGREES with the number a reviewer
+    #: supplied. The fresh reading is recorded beside the human's, never adopted; this is the
+    #: durable marker of the disagreement, and the placement follows the principle below: a flag
+    #: about a decision a human has ALREADY made must not be able to re-hold it. A bare warn
+    #: deducts un-floored and could push the settled cell back to `needs_human` (the very loop
+    #: the protection kills); a contradiction would force a human unconditionally on one machine
+    #: read (an unreleasable cell). The cap is the only bucket that says "look" without either.
+    "reread_disputes_human_value",
 })
+
+#: WHERE A NEW FLAG GOES, in one sentence each, because every placement above was argued from
+#: half of it: a flag that fires on a decision a human has already made must not be able to
+#: re-hold it — `info` when it agrees with the human, CAPPING when it disputes (floored at
+#: `ACCEPT_WITH_NOTE`, clearable on the once-asked card); a flag that fires BEFORE any human
+#: decision may hold the cell for its first human look — a bare `warn` when it is a live
+#: dispute or a suspicion about the number itself, CAPPING when it merely names thin
+#: corroboration. The clears each card offers are what keep the first half true: a flag no
+#: answer can retire re-holds forever.
 
 #: `CONTRADICTING_FLAGS` — **"this may be a different quantity."** Each one is evidence that the
 #: number was measured somewhere other than where it was asked for: off another value axis, off
@@ -304,6 +330,11 @@ INFERRED_PREMISE_FLAGS: frozenset[str] = frozenset({SPREAD_TYPE_HOUSE_STYLE,
                                                     CATEGORICAL_X_SINGLE_WITNESS})
 
 CAP_REASONS: dict[str, str] = {
+    "reread_disputes_human_value": ("a reviewer supplied this group's value and a later "
+                                    "automated re-read resolved a different number; the fresh "
+                                    "reading is recorded as a candidate, never adopted, and the "
+                                    "reviewer's value stands — a person should look once at the "
+                                    "disagreement, and their answer retires it"),
     "crop_reacquired": ("a majority of readers refused the panel crop — the named target was "
                         "not in that image — so the reading was re-acquired from the full page "
                         "render, which is wider than any panel; a reviewer should see the "
@@ -355,6 +386,13 @@ CAP_REASONS: dict[str, str] = {
                           "sign of the effect is inverted"),
     "dispersion_type_from_legend": ("the error-bar type was read off the figure's legend, not "
                                     "determined by the map, so nothing independent confirms it"),
+    "dispersion_type_from_caption": ("the error-bar type came from the figure's own caption "
+                                     "sentence because the map never determined one; the "
+                                     "sentence is quoted, and nobody has confirmed the reading "
+                                     "of it"),
+    "series_caption_mismatch": ("the readers' description of this series and the caption's own "
+                                "key for it do not line up, so which series this number was "
+                                "measured on rests on words the caption disputes"),
     "axis_conflict": ("the readers answered off different value axes and only one of them was "
                       "pooled, so which ladder this number is on rests on a majority"),
     "orientation_single_witness": ("the direction of this measure was set by one ballot, because "

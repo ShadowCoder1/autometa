@@ -146,6 +146,12 @@ class TargetSpec:
     #: the collapse instruction's claim that the outcome is their average, which nothing here has
     #: established. Appended at the tail so cached calls of every other cell are byte-identical.
     resolve_categorical: bool = False
+    #: ticket 2b (set by the digitiser from the ingested caption, never by a mapper): the
+    #: caption's own marker→series statements, as `(stated_line, group_binding)` pairs — the
+    #: binding is "A"/"B" when the series text names that arm's vocabulary and not the other's,
+    #: else "". Empty for figures whose caption keys nothing, so their prompts stay
+    #: byte-identical with every cached call.
+    caption_series_keys: tuple[tuple[str, str], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return dict(self.__dict__)
@@ -158,6 +164,10 @@ class TargetSpec:
             ("group A", self.group_a_label),
             ("group B", self.group_b_label),
             ("series / legend hint", self.series_hint),
+            # ticket 2b: the caption's own key, stated as fact — a bound key names its group so
+            # the reader stops hunting the other series' marker for both arms
+            *((f"group {bound} marker per the caption" if bound else "caption key (stated)",
+               line) for line, bound in self.caption_series_keys),
             ("x position to read", self._x_instruction()),
             ("what the x categories are", "" if self.categorical_x == "unknown" else (
                 "the two comparison groups themselves — one point per group"

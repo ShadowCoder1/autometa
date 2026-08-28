@@ -250,6 +250,10 @@ UNREADABLE_SAMPLES: frozenset[str] = frozenset({"pooled", "other"})
 #: how the record names who took a map-stage decision. Here, beside the notes those decisions
 #: write, because the review page has to print the name and may not import the agent package.
 HUMAN_DECIDER_NAME = "a human reviewer"
+#: ticket 2a's marker, a `Source.notes` token (never a model field: study dumps ride verbatim in
+#: mapper prompts, so a new field would re-key every cached mapper call). Lives HERE because the
+#: mapper writes it and the digitizer reads it — one home, no drift.
+EBT_FROM_CAPTION = "error-bar type from the figure's own caption"
 MAP_ADJUDICATOR_NAME = "map-adjudicator"
 
 

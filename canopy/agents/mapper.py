@@ -42,7 +42,8 @@ from ..ingest.pdf import PaperRecord
 from ..llm.client import LLMClient
 from ..llm.errors import LLMError
 from ..llm.context import FILES_API_BETA, figure_blocks, text_block
-from ..models import (C6_DEMOTION_NOTE, C6_WITHHELD_NOTE, HUMAN_DECIDER_NAME,
+from ..models import (C6_DEMOTION_NOTE, C6_WITHHELD_NOTE, EBT_FROM_CAPTION,
+                      HUMAN_DECIDER_NAME,
                       UNREADABLE_SAMPLES,
                       MAP_ADJUDICATOR_NAME, AnalysisMetric, Citation, DatasetSpec,
                       DispersionType, ErrorBarScope, ExposureOrder, GroupSpec, MapQuestion,
@@ -1019,13 +1020,51 @@ def _roster_determinations(check: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _caption_statement(paper: PaperRecord | None,
+                       source: Source) -> tuple[DispersionType | None, str]:
+    """What the figure's own ingested caption states the error bars are — `(None, "")` otherwise.
+
+    Panel-aware through the same scoping ingest decided (`pdf._caption_semantics`): a
+    letter-scoped statement answers only the letter this source's locator names. Deterministic —
+    it reads fields, never re-parses — and empty on every record from before the fields existed.
+    """
+    if paper is None or not source.figure_id:
+        return None, ""
+    fig = next((f for f in paper.figures or [] if f.id == source.figure_id), None)
+    if fig is None:
+        return None, ""
+    from ..digitize.digitizer import panel_named
+
+    letter = panel_named(source.locator, source.quote)
+    entry = (getattr(fig, "caption_dispersion_panels", None) or {}).get(letter) or {}
+    named = str(entry.get("type") or "") or str(getattr(fig, "caption_dispersion", "") or "")
+    quote = (str(entry.get("quote") or "") if entry.get("type")
+             else str(getattr(fig, "caption_dispersion_quote", "") or ""))
+    if not named:
+        return None, ""
+    try:
+        return DispersionType(named), quote
+    except ValueError:                                     # pragma: no cover - defensive
+        return None, ""
+
+
 def _agree_error_bars(study: StudyMap, determinations: dict[str, dict[str, Any]],
-                      conflicts: _Conflicts, disagreements: list[str], flags: list[str]) -> None:
+                      conflicts: _Conflicts, disagreements: list[str], flags: list[str],
+                      paper: PaperRecord | None = None) -> None:
     """Amendment D: a figure/table error bar counts only when a second agent read it the same way.
 
     The cross-check reports an error-bar type for every id on the deterministic roster, so coverage
     — not just the absence of a conflict — decides: no determination for that id leaves the source
     `unconfirmed` and in the human queue. Text sources carry no id and are Task 8's job.
+
+    Ticket 2a adds the CAPTION as a bounded third voice, deliberately weaker than either agent:
+    it may FILL an UNKNOWN (one deterministic quoted witness — the fill is capped downstream, so
+    nothing pools on it unlooked-at), and it may CONFLICT with a stated type (a real card, no
+    silent preference). It never settles `agreed` and never pre-empts the adjudicator: Amendment
+    D's requirement is about reading the FIGURE, and a sentence regex cannot see the one thing
+    that separates a witness from a guess — whether the sentence describes the element that was
+    digitised. Where the two agents already conflict, the caption's statement rides into the
+    adjudicator's evidence as a disagreement note: evidence, never a verdict.
     """
     for index, dataset in enumerate(study.datasets):
         for outcome in dataset.outcomes:
@@ -1035,15 +1074,53 @@ def _agree_error_bars(study: StudyMap, determinations: dict[str, dict[str, Any]]
                     continue
                 cell = (f"dataset {dataset.dataset_id} {outcome.outcome_key} {source.locator} "
                         f"(p{source.page})")
+                caption_type, caption_quote = _caption_statement(paper, source)
                 ruling = determinations.get(ident)
+
+                def fill_from_caption() -> bool:
+                    """UNKNOWN filled from the caption's own sentence; agreement unchanged."""
+                    if caption_type is None or caption_type is DispersionType.UNKNOWN \
+                            or source.error_bar_type is not DispersionType.UNKNOWN:
+                        return False
+                    source.error_bar_type = caption_type
+                    source.notes = _note(source.notes, EBT_FROM_CAPTION)
+                    if not source.error_bar_evidence:
+                        source.error_bar_evidence = caption_quote
+                    flags.append(f"{cell}: error-bar type was UNKNOWN and the figure's own "
+                                 f"caption states {caption_type.value} "
+                                 f"(“{caption_quote[:120]}”) — filled from that one witness, "
+                                 f"capped downstream")
+                    return True
+
                 if ruling is None or ADDED_BY_CROSSCHECK in source.notes:
                     source.error_bar_agreement = "unconfirmed"
+                    if fill_from_caption():
+                        continue
+                    if caption_type is not None and caption_type is not source.error_bar_type \
+                            and source.error_bar_type is not DispersionType.UNKNOWN:
+                        # publisher's sentence vs the primary's determination: a live dispute,
+                        # queued exactly as a cross-check conflict is — a card, never a silent
+                        # preference for either side
+                        source.error_bar_agreement = "conflict"
+                        disagreements.append(
+                            f"{cell} error bar: primary={source.error_bar_type.value} but the "
+                            f"figure's own caption states {caption_type.value} "
+                            f"(“{caption_quote[:120]}”)")
+                        conflicts.error_bars.append({"dataset_index": index,
+                                                     "dataset_id": dataset.dataset_id,
+                                                     "outcome_key": outcome.outcome_key,
+                                                     "source": source,
+                                                     "check_type": caption_type})
+                        continue
                     flags.append(f"{cell}: error-bar type {source.error_bar_type.value} "
                                  f"unconfirmed by a second agent — needs human")
                     continue
                 other = DispersionType(ruling.get("error_bar_type") or "UNKNOWN")
                 if other is source.error_bar_type:
                     source.error_bar_agreement = "agreed"
+                    # the Kumar shape: two agents AGREED on UNKNOWN. Agreement about ignorance
+                    # is not knowledge — the caption may still fill, one witness, capped.
+                    fill_from_caption()
                     scope = ruling.get("error_bar_scope") or "unknown"
                     if scope != source.error_bar_scope:
                         disagreements.append(f"{cell} error-bar scope: primary="
@@ -1052,6 +1129,10 @@ def _agree_error_bars(study: StudyMap, determinations: dict[str, dict[str, Any]]
                 source.error_bar_agreement = "conflict"
                 disagreements.append(f"{cell} error bar: primary={source.error_bar_type.value} "
                                      f"cross-check={other.value}")
+                if caption_type is not None:
+                    # rides to the adjudicator as evidence, never as a verdict
+                    disagreements.append(f"{cell}: the figure's own caption states "
+                                         f"{caption_type.value}: “{caption_quote[:160]}”")
                 conflicts.error_bars.append({"dataset_index": index,
                                              "dataset_id": dataset.dataset_id,
                                              "outcome_key": outcome.outcome_key,
@@ -1752,7 +1833,8 @@ def map_study(client: LLMClient, paper: PaperRecord, protocol: Protocol, *,
     checked = check.parsed or {}
     labels = [(d.group_a.label, d.group_b.label) for d in study.datasets]
     conflicts = _diff(study, checked, outcome_keys, ids, disagreements, flags)
-    _agree_error_bars(study, _roster_determinations(checked), conflicts, disagreements, flags)
+    _agree_error_bars(study, _roster_determinations(checked), conflicts, disagreements, flags,
+                      paper=paper)
     _flag_thin_outcomes(study, flags)
     _diff_measures(study, conflicts, disagreements)          # C6, before anything is extracted
 

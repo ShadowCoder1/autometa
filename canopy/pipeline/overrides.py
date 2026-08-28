@@ -66,7 +66,9 @@ __all__ = ["GROUP_STATISTICS", "HUMAN_OVERRIDE", "KINDS", "MAP_KINDS", "MAP_PEND
            "OVERRULABLE", "RE_EXTRACT_PENDING", "codes_cleared_by_value", "consumed_seqs",
            "recorded_flags", "recorded_holds", "row_flags", "append_override", "append_overrides",
            "read_overrides", "apply_overrides_and_repool", "map_answers", "eligibility_answers",
-           "re_extract_answers", "override_summary", "repool_lock"]
+           "re_extract_answers", "override_summary", "repool_lock",
+           "HumanLanded", "human_landed_values", "within_read_tolerance", "stale_hold_names",
+           "READ_TOLERANCE_REL"]
 
 OVERRIDES_FILE = "overrides.jsonl"
 SUMMARY_FILE = "overrides_applied.json"
@@ -169,6 +171,10 @@ def _validate(payload: Mapping[str, Any]) -> dict[str, Any]:
         # question has been answered — only the id can. Empty for a decision taken outside the
         # questions page.
         "question_id": _text(payload.get("question_id"), 200),
+        #: T4: which refutation evidence the answered card presented (`questions._evidence_key`).
+        #: Stored for every kind — the page copies it onto whatever record the card writes — and
+        #: empty for answers from before the key existed, which settle exactly as they always did.
+        "evidence_key": _text(payload.get("evidence_key"), 64),
         "justification": justification,
     }
     if kind in ("value", "mark_reviewed", "exclude_dataset", "re_extract", "group_n") \
@@ -625,6 +631,256 @@ def consumed_seqs(run_dir: str | Path) -> set[int]:
     return out
 
 
+# --------------------------------------------------------------- what a human has landed
+def _stated_number(value: Any) -> float | None:
+    """`_number` made total. The fold below reads RAW log lines — the same lines the apply loop
+    reads — so it must accept exactly what `_apply_value` would (`float(value)`) and refuse
+    nothing loudly: a line the loop cannot use contributes nothing, rather than crashing the
+    recall of every other line. Never `_validate` here: the apply loop does not re-validate value
+    records, and a registry stricter than the loop would leave applied human numbers unguarded —
+    the exact clobberable value the registry exists to name."""
+    if value is None or value == "" or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _stated_count(value: Any) -> int | None:
+    number = _stated_number(value)
+    return int(number) if number is not None and number == int(number) else None
+
+
+#: the empty cell-group entry; a copy of this is what the fold grows per (dataset, outcome, group)
+_NO_STATEMENT: dict[str, Any] = {
+    "mean": None, "dispersion_value": None, "dispersion_type": "", "n": None, "unit": "",
+    "seq": 0, "field_seqs": {}, "question_ids": [], "overrules": set(), "mean_landed": False,
+}
+
+
+class HumanLanded:
+    """Every statistic a human has stated about this run's cells, folded per field.
+
+    ONE fact, consulted from three places that used to be blind to it: the extract stage
+    (an automated re-read must not displace a human's number), the questions page (a card must
+    not re-ask a decision the log already records) and the apply loop (a hold whose subject a
+    human has displaced is released, not re-litigated). Per-field latest-wins, because value
+    records are field-sparse — a record may state only a dispersion type — and cumulative by
+    design (`_live_overrides`): the registry answers "what does the record currently say", the
+    log itself stays the history.
+
+    STATED vs LANDED: `mean` is what the human said; `mean_landed` is whether the last re-pool
+    could act on it (its supplying seq is not in the summary's `pending`). Write-protection
+    guards STATED values — a number stuck pending is still a human's stated number, and
+    protection must not lapse while it waits. Hold-retirement requires LANDED ones — an
+    unapplied number displaces nothing, and retiring a hold the analysis still enforces would
+    strand the cell "held with nothing to answer".
+    """
+
+    def __init__(self, cells: dict[tuple[str, str, str], dict[str, Any]],
+                 dataset_n: dict[str, tuple[int, int, int]]) -> None:
+        self.cells = cells
+        self.dataset_n = dataset_n
+
+    def for_cell(self, dataset_id: str, outcome_key: str, group: str) -> dict[str, Any] | None:
+        """This cell-group as the log last stated it, or None when no human said anything.
+
+        A dataset-level analysed-n answer folds in as the arm's `n` — the ANSWERED size,
+        pre-split (`_apply_group_n` may still divide a shared control arm among sibling
+        datasets, which needs cluster state no fold over the log can see) — and only when no
+        per-cell n answer is later than it, the same precedence `_apply_group_n` gives
+        `n_answered`. None of the consumers weighs `n`; protection and staleness compare means.
+        """
+        record = self.cells.get((dataset_id, outcome_key, group))
+        sizes = self.dataset_n.get(dataset_id)
+        if record is None and sizes is None:
+            return None
+        out = {**_NO_STATEMENT, "field_seqs": {}, "question_ids": [], "overrules": set()} \
+            if record is None else {**record, "field_seqs": dict(record["field_seqs"]),
+                                    "question_ids": list(record["question_ids"]),
+                                    "overrules": set(record["overrules"])}
+        if sizes is not None and group in ("A", "B") \
+                and int(out["field_seqs"].get("n", 0)) < sizes[2]:
+            out["n"] = sizes[0] if group == "A" else sizes[1]
+            out["field_seqs"]["n"] = sizes[2]
+        return out
+
+
+def human_landed_values(run_dir: str | Path) -> HumanLanded:
+    """The registry: one pass over the raw log, total (a malformed line contributes nothing).
+
+    `mark_reviewed` contributes NO value fields — a hold is not a number, and protection guards
+    numbers a human stated, not cells a human looked at. Its `overrules` do flow in (trace
+    material and idempotence, never suppression authority on their own). A raw value record
+    whose group is not A/B — nothing this codebase writes, but old or foreign logs may — states
+    its numbers about the cell, so it protects BOTH groups, preserving the width of the raw
+    scan `_reacquire_on_refutation` used before the registry existed.
+    """
+    pending = {entry.get("seq") for entry in (override_summary(run_dir).get("pending") or [])
+               if isinstance(entry, dict)}
+    cells: dict[tuple[str, str, str], dict[str, Any]] = {}
+    dataset_n: dict[str, tuple[int, int, int]] = {}
+
+    def entry(dataset_id: str, outcome_key: str, group: str) -> dict[str, Any]:
+        return cells.setdefault((dataset_id, outcome_key, group),
+                                {**_NO_STATEMENT, "field_seqs": {}, "question_ids": [],
+                                 "overrules": set()})
+
+    for record in read_overrides(run_dir):
+        kind = record.get("kind")
+        dataset_id = str(record.get("dataset_id") or "")
+        outcome_key = str(record.get("outcome_key") or "")
+        seq = record.get("seq") if isinstance(record.get("seq"), int) else 0
+        if kind == "group_n" and dataset_id:
+            n_a, n_b = _stated_count(record.get("n_a")), _stated_count(record.get("n_b"))
+            if n_a is not None and n_b is not None:
+                dataset_n[dataset_id] = (n_a, n_b, seq)
+            continue
+        if not dataset_id or not outcome_key:
+            continue
+        groups = (str(record.get("group")),) if record.get("group") in ("A", "B") else ("A", "B")
+        if kind == "mark_reviewed":
+            for group in groups:
+                entry(dataset_id, outcome_key, group)["overrules"] |= {
+                    str(x) for x in record.get("overrules") or []}
+            continue
+        if kind != "value":
+            continue
+        stated: dict[str, Any] = {
+            "mean": _stated_number(record.get("mean")),
+            "dispersion_value": _stated_number(record.get("dispersion_value")),
+            "n": _stated_count(record.get("n")),
+            "unit": str(record.get("unit") or "").strip(),
+        }
+        # a type only lands when `_apply_value` could coerce it, and UNKNOWN is what the page
+        # copies off a candidate nobody could identify the bars of — not a human's statement
+        named = str(record.get("dispersion_type") or "").strip()
+        if named and named in {d.value for d in DispersionType} \
+                and named != DispersionType.UNKNOWN.value:
+            stated["dispersion_type"] = named
+        for group in groups:
+            cell = entry(dataset_id, outcome_key, group)
+            for field, value in stated.items():
+                if value is None or value == "":
+                    continue
+                cell[field] = value
+                cell["field_seqs"][field] = seq
+            cell["seq"] = max(int(cell["seq"]), seq)
+            if record.get("question_id"):
+                cell["question_ids"].append(str(record["question_id"]))
+            cell["overrules"] |= {str(x) for x in record.get("overrules") or []}
+            if stated["mean"] is not None:
+                cell["mean_landed"] = seq not in pending
+    return HumanLanded(cells, dataset_n)
+
+
+#: the option-dedupe line `_value_options` already draws: two numbers within half a percent of
+#: each other present as ONE option on a card, so a rule asking a person to choose between them
+#: is asking them to flip a coin. A pinned test asserts this constant and the page's stay equal.
+READ_TOLERANCE_REL = 0.005
+
+
+def within_read_tolerance(a: float | None, b: float | None, *, sd: float | None = None) -> bool:
+    """Are two numbers the same reading taken twice, by the codebase's own two lines?
+
+    Two precedents, deliberately reused rather than a third threshold invented: the relative
+    option-dedupe line above, and — when the cell's own verified SD is in hand
+    (`vote._verified_sd`, never a guess) — the SD-scaled `NEGLIGIBLE_D` line fix H already
+    draws: a split under a tenth of the cell's SD cannot visibly move the effect. Equal within
+    EITHER counts: each line is independently a proof that no choice between the numbers
+    changes anything a reviewer could check. None-vs-anything is unequal.
+    """
+    if a is None or b is None:
+        return False
+    a, b = float(a), float(b)
+    if abs(a - b) <= max(abs(b) * READ_TOLERANCE_REL, 1e-9):
+        return True
+    if sd:
+        from ..verify.vote import NEGLIGIBLE_D
+        return abs(a - b) <= NEGLIGIBLE_D * abs(sd)
+    return False
+
+
+def stale_hold_names(*, stage_mean: float | None, verifier_verdict: str, adjudicated: bool,
+                     alt_means: Sequence[float], alt_quote_cites_number: bool,
+                     disputes_flag_present: bool, human_mean: float | None,
+                     sd: float | None = None) -> set[str]:
+    """The findings on one cell-group that a human-landed mean has already answered.
+
+    THE rule, in one place, called by the questions page (before a card is built) and by the
+    apply loop (before a bucket is derived) — two mirrored implementations of it would drift,
+    and the page would suppress a card the analysis still holds. A stage verdict never sees the
+    log (`repool` rewrites only derived artefacts), so "the stage's mean differs from the
+    human's beyond read tolerance" IS "the objection's subject has been displaced".
+
+    Deliberately narrow, each bound because its absence retires a live objection:
+    - only refutations with a STRUCTURED numeric target (an `alt_mean`, an `alt_quote` citing a
+      number — the same structured-shape-only trigger fix G draws): an identity objection
+      ("this is the baseline panel") indicts the human's number too and keeps its card;
+    - never when `reread_disputes_human_value` stands on the cell: that flag is the one durable
+      marker that the stage evidence POSTDATES the human's number, so the objection is new, not
+      displaced;
+    - an adjudication auto-resolves only beside a refutation that does (the adjudicator was
+      convened for that same displaced dispute); a lone adjudication may rule on identity,
+      where a new mean does not displace the subject, and always keeps its card;
+    - `low_score` never: corroboration is about whatever number stands, and the human's number
+      still deserves its one confirm. Flag codes never: they have their own clears channel.
+
+    The two ways a refutation is answered by the record: DISPLACED (the human's number differs
+    from the one the verifier judged — the objection's subject is gone) and ADOPTED (the
+    human's number IS the verifier's alternative, within read tolerance — fix H3's rule,
+    generalised from picked options to typed values).
+    """
+    if human_mean is None or disputes_flag_present or verifier_verdict != "refuted":
+        return set()
+    # an alternative that AGREES with the reading it refutes is not a numeric objection — the
+    # verifier cited the standing number and objected to something else (identity, location),
+    # which a landed value neither displaces nor adopts. The same guard fix G draws before it
+    # buys a re-read ("the printed value agrees with the reading").
+    numeric = [alt for alt in alt_means
+               if stage_mean is None or not within_read_tolerance(alt, stage_mean, sd=sd)]
+    if not numeric or not alt_quote_cites_number:
+        return set()
+    displaced = stage_mean is not None and not within_read_tolerance(stage_mean, human_mean,
+                                                                     sd=sd)
+    adopted = any(within_read_tolerance(human_mean, alt, sd=sd) for alt in numeric)
+    if not (displaced or adopted):
+        return set()
+    return {"verifier_refuted", "adjudicated"} if adjudicated else {"verifier_refuted"}
+
+
+def _stale_holds(run_dir: str | Path, override: Mapping[str, Any]) -> set[str]:
+    """The apply loop's half of `stale_hold_names`: extract the rule's inputs for THIS value
+    answer from the fixed stage file and nothing else.
+
+    `_recorded_verdict`, never the working copies: a replay mutates the copies, so for a second
+    value record on one cell the copy's mean is the PREVIOUS human value — within tolerance of
+    its restatement, so nothing would ever read as displaced and the re-litigation would
+    survive (the Carroll seq-20/109/110 shape). `sd=None` for the same reason the page's wrapper
+    uses it: one rule, identical inputs from both callers.
+    """
+    mean = _stated_number(override.get("mean"))
+    if mean is None:
+        return set()
+    verdict = _recorded_verdict(run_dir, override)
+    if not verdict:
+        return set()
+    refuted = [v for v in (verdict.get("verifiers") or [])
+               if str(v.get("verdict")) == "refuted" and v.get("alt_mean") is not None]
+    return stale_hold_names(
+        stage_mean=verdict.get("mean"),
+        verifier_verdict=str(verdict.get("verifier_verdict") or ""),
+        adjudicated=bool(verdict.get("adjudicated")),
+        alt_means=[float(v["alt_mean"]) for v in refuted],
+        alt_quote_cites_number=any(any(ch.isdigit() for ch in str(v.get("alt_quote") or ""))
+                                   for v in refuted),
+        disputes_flag_present=any(str(f.get("code") or "") == "reread_disputes_human_value"
+                                  for f in verdict.get("flags") or []),
+        human_mean=mean)
+
+
 def map_answers(run_dir: str | Path, paper_id: str) -> list[dict[str, Any]]:
     """Validated override records of kinds include_dataset / which_measure for this paper, in
     log order (later answers win). Empty list when there is no overrides file.
@@ -797,6 +1053,9 @@ def apply_overrides_and_repool(run_dir: str | Path, *, protocol_path: str | Path
     applied: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
     excluded: list[dict[str, Any]] = []
+    #: T4's trace on the analysis side: every hold a landed value answer auto-retired this
+    #: replay, written into the summary beside `applied` — nothing is silent
+    auto_resolved: list[dict[str, Any]] = []
     records = {(r.dataset_id, r.outcome_key): r.model_copy(deep=True) for r in state.records}
     verdicts = {(v.dataset_id, v.outcome_key, v.group): v.model_copy(deep=True)
                 for v in state.verdicts}
@@ -961,8 +1220,27 @@ def apply_overrides_and_repool(run_dir: str | Path, *, protocol_path: str | Path
                 continue
             names = overruled.setdefault(
                 (dataset_id, outcome_key, str(override.get("group") or "")), set())
+            # raw, NOT evidence-scoped like the page's union (questions.py): the analysis
+            # honours every recorded overrule, so an old keyed answer can release a refutation
+            # the page still asks about. The asymmetry is deliberate and conservative — the
+            # page may over-ask, and the queue the next repool writes reconciles the two;
+            # scoping the loop would instead hold a row on evidence no card presents.
             names |= {str(x) for x in override.get("overrules") or []}
-            ok, why = _apply_value(override, records, verdicts, state, protocol, names)
+            # T4: the holds this answer's own mean has already displaced (or adopted) — the SAME
+            # rule the questions page applies (`stale_hold_names`), read from the SAME fixed
+            # stage file, so the page never stops asking about a hold this loop still enforces.
+            # Computed BEFORE `_apply_value` mutates the working copies, merged for this one
+            # call, and committed into the cell's persistent set only when the apply succeeded:
+            # a refused answer displaces nothing, and stale names left behind by one would be
+            # inherited by every later answer on the cell.
+            stale = _stale_holds(out, override)
+            ok, why = _apply_value(override, records, verdicts, state, protocol, names | stale)
+            if ok and stale:
+                names |= stale
+                auto_resolved.extend(
+                    {"dataset_id": dataset_id, "outcome_key": outcome_key,
+                     "group": str(override.get("group") or ""), "name": name,
+                     "from_seq": override.get("seq")} for name in sorted(stale))
             if ok:
                 touched_rows.add((dataset_id, outcome_key))
             if ok and override.get("mean") is not None:
@@ -973,7 +1251,7 @@ def apply_overrides_and_repool(run_dir: str | Path, *, protocol_path: str | Path
     kept = [record for key, record in records.items() if key not in dropped]
     outcomes = _rewrite(out, manifest, protocol, kept, state, verdicts, excluded)
     summary = {"applied": len(applied), "pending": pending, "excluded": excluded,
-               "outcomes": outcomes, "overrides": applied,
+               "outcomes": outcomes, "overrides": applied, "auto_resolved": auto_resolved,
                "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     dump_json(summary, out / SUMMARY_FILE)
     return summary
@@ -1356,9 +1634,10 @@ HUMAN_OVERRIDE = "human_override"
 VALUE_CLEARS_MEAN: frozenset[str] = frozenset({
     "axis_conflict", "calibration_disputed", "calibration_refuted", "calibration_single_witness",
     "calibration_two_point",
-    "calibration_missing", "value_outside_axis"})
+    "calibration_missing", "value_outside_axis", "value_beyond_ticks"})
 VALUE_CLEARS_SPREAD_TYPE: frozenset[str] = frozenset({
-    "dispersion_type_from_legend", "figure_error_bar_unknown", "dispersion_type_conflict"})
+    "dispersion_type_from_legend", "figure_error_bar_unknown", "dispersion_type_conflict",
+    "dispersion_type_from_caption", "dispersion_caption_conflict"})
 #: the spread types a typed answer can build a row from — the ONLY ones that retire the error-bar
 #: question above. A `value` override writes a mean, a spread value, an `n` and a type and nothing
 #: else, and `resolve._has_spread` accepts exactly these five from that much: RANGE wants a minimum

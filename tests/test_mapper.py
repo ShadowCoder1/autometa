@@ -2288,3 +2288,63 @@ def test_a_metric_only_answer_still_settles_an_outcome_nobody_has_ruled_on(paper
             if s.analysis_metric != "unknown"} == {"change_from_baseline": "value",
                                                    "endpoint": "alternate"}
     assert not answered.open_questions
+
+
+# ------------------------------------------- ticket 2a: the caption as a bounded third voice
+def _caption_fixture(primary="UNKNOWN", caption_type="SE"):
+    from types import SimpleNamespace
+
+    from canopy.agents.mapper import _Conflicts
+    from canopy.models import (DatasetSpec, DispersionType, OutcomeSources, Source, SourceKind,
+                               StudyMap)
+
+    src = Source(kind=SourceKind.figure_line, page=4, locator="Fig 2a", figure_id="fig02",
+                 error_bar_type=DispersionType(primary))
+    study = StudyMap(paper_id="p", datasets=[DatasetSpec(
+        dataset_id="p:d1", outcomes=[OutcomeSources(outcome_key="late_adaptation",
+                                                    sources=[src])])])
+    fig = SimpleNamespace(id="fig02", caption_dispersion=caption_type,
+                          caption_dispersion_quote="mean ± SE across subjects",
+                          caption_dispersion_panels={})
+    paper = SimpleNamespace(figures=[fig])
+    return study, src, paper, _Conflicts(), [], []
+
+
+def test_the_caption_fills_an_unknown_and_never_settles_agreement():
+    from canopy.agents.mapper import EBT_FROM_CAPTION, _agree_error_bars
+    from canopy.models import DispersionType
+
+    # cross-check silent (no determination) + primary UNKNOWN → filled, still unconfirmed
+    study, src, paper, conflicts, disagreements, flags = _caption_fixture()
+    _agree_error_bars(study, {}, conflicts, disagreements, flags, paper=paper)
+    assert src.error_bar_type is DispersionType.SE
+    assert EBT_FROM_CAPTION in src.notes
+    assert src.error_bar_agreement == "unconfirmed", "one witness is one witness"
+    assert src.error_bar_evidence == "mean ± SE across subjects"
+    # both agents AGREED on UNKNOWN (the Kumar shape): agreement about ignorance is not
+    # knowledge — the caption still fills, and the agreement stands as what the agents said
+    study, src, paper, conflicts, disagreements, flags = _caption_fixture()
+    _agree_error_bars(study, {"fig02": {"error_bar_type": "UNKNOWN"}}, conflicts,
+                      disagreements, flags, paper=paper)
+    assert src.error_bar_type is DispersionType.SE and EBT_FROM_CAPTION in src.notes
+    assert src.error_bar_agreement == "agreed"
+
+
+def test_the_caption_disputes_a_stated_type_and_rides_conflicts_as_evidence_only():
+    from canopy.agents.mapper import _agree_error_bars
+    from canopy.models import DispersionType
+
+    # cross-check silent + primary SD + caption SE → a real conflict card, no silent preference
+    study, src, paper, conflicts, disagreements, flags = _caption_fixture(primary="SD")
+    _agree_error_bars(study, {}, conflicts, disagreements, flags, paper=paper)
+    assert src.error_bar_type is DispersionType.SD, "no side is preferred"
+    assert src.error_bar_agreement == "conflict"
+    assert conflicts.error_bars and conflicts.error_bars[0]["check_type"] is DispersionType.SE
+    # the two AGENTS conflict: the adjudicator keeps the ruling; the caption's statement rides
+    # in the disagreement notes as evidence, never as a verdict
+    study, src, paper, conflicts, disagreements, flags = _caption_fixture(primary="SD")
+    _agree_error_bars(study, {"fig02": {"error_bar_type": "CI95"}}, conflicts,
+                      disagreements, flags, paper=paper)
+    assert src.error_bar_agreement == "conflict"
+    assert conflicts.error_bars[0]["check_type"] is DispersionType.CI95
+    assert any("caption states SE" in d for d in disagreements)

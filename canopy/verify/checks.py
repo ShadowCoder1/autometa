@@ -28,6 +28,7 @@ from ..models import (Candidate, CheckFlag, DatasetSpec, DispersionType, GroupSp
                       OrientationVerdict, OutcomeSources, Source)
 from ..stats.effect_sizes import CONVERTIBLE_DESIGNS, cohens_d
 from .figures import (CAL_STATUSES, FIGURE_KINDS, axis_limits, calibration_status, is_figure,
+                      offer_gate,
                       routes_agree)
 from .grounding import ROW_ONLY, SIGN_NOTE, is_short_quote
 
@@ -125,6 +126,10 @@ CHECK_SEVERITY: dict[str, str] = {
     "se_sd_inconsistent": "warn",
     "ci_asymmetric": "warn",
     "value_outside_axis": "error",
+    #: ticket 3's cheaper-severity sibling: outside the panel's own printed tick range under the
+    #: gate's hard reliability preconditions. Warn, never error — a legitimately clipped read
+    #: can trip it — and never raised beside `value_outside_axis` (one doubt, one price).
+    "value_beyond_ticks": "warn",
     #: the axis a figure value was read against, and how much corroboration it had (task 16 P1/P3)
     "calibration_single_witness": "warn",
     "calibration_refuted": "error",
@@ -166,6 +171,15 @@ CHECK_SEVERITY: dict[str, str] = {
     "unit_incoherent": "warn",
     "dispersion_type_conflict": "warn",
     "dispersion_type_from_legend": "warn",
+    #: ticket 2a: the type was filled from the caption's own sentence (capped, like the legend
+    #: fill), and the live dispute where the caption and the standing type disagree (a bare
+    #: warn — pre-human dispute, may hold the cell for its first look; the error_bar_type card
+    #: retires both)
+    "dispersion_type_from_caption": "warn",
+    "dispersion_caption_conflict": "warn",
+    #: ticket 2b: the readers' words and the caption's stated series key disagree — identity
+    #: doubt at the vocabulary level, capped beside `series_marker_mismatch`
+    "series_caption_mismatch": "warn",
     #: the named panel could not be isolated from its neighbours, so the reader was handed the
     #: union crop. DOUBT, not evidence of error: the value may be perfectly right, and the
     #: axis-identity, overlay and verifier nets still apply to it. Doubt caps; contradiction
@@ -184,6 +198,15 @@ CHECK_SEVERITY: dict[str, str] = {
     #: re-acquired from the full page render. The re-read's own `crop_reacquired` is the cap;
     #: this code is the cell-level record that the repair happened, priced as information only.
     "reacquired_on_refutation": "warn",
+    #: T1: a reviewer supplied this group's value and a later automated pass read the cell
+    #: again. `confirms` is a record, not a doubt — the machine's own reading agrees within
+    #: read tolerance with the number the human typed. `disputes` is the durable marker that
+    #: this stage's evidence POSTDATES the human's number: the fresh reading is recorded as a
+    #: candidate and never adopted, and the flag is a cap in `confidence`, deliberately NOT a
+    #: bare warn — an un-floored deduction could re-hold the very cell the human just settled,
+    #: which is the loop the protection exists to kill.
+    "reread_confirms_human_value": "info",
+    "reread_disputes_human_value": "warn",
     #: WHERE in a figure a reading was taken, and whether the caption agrees it is this group's
     #: panel (D2). All three are `warn`: a reading off the wrong panel is a claim about the
     #: LOCATION, and the location is decided by the caption and the vote, not by an error budget
@@ -407,14 +430,27 @@ def _check_one(cand: Candidate, dataset: DatasetSpec, outcome: OutcomeSources | 
     status = calibration_status(cand.pixel_provenance)
     testable = AXIS_TESTABLE[status] and (
         status != "single_witness" or routes_agree(cand.pixel_provenance) is not False)
+    convicted = False
     if cand.mean is not None and testable:
         limits = axis_limits(cand.pixel_provenance)
         if limits is not None:
             low, high = limits
             margin = AXIS_MARGIN * (high - low)
             if not (low - margin <= cand.mean <= high + margin):
+                convicted = True
                 _flag(out, "value_outside_axis",
                       f"the value {cand.mean} is outside the calibrated axis [{low}, {high}]", cid)
+    # ticket 3, and never beside the conviction above (one doubt, one price — the fix-E rule):
+    # the generous `axis_limits` slack comes from a plot box the record itself may say spans
+    # several panels, which is how −147.9 passed a −30..30 axis unflagged. `offer_gate` is the
+    # stricter-precondition, cheaper-severity screen: warn, not error, because a legitimately
+    # clipped read can trip it, and `error` would over-convict.
+    if cand.mean is not None and not convicted:
+        gated = offer_gate(cand.pixel_provenance, cand.mean)
+        if gated is not None:
+            out.append(CheckFlag(code="value_beyond_ticks",
+                                 severity=severity_of("value_beyond_ticks"),
+                                 message=gated["why"], candidate_ids=[cid], detail=gated))
 
     # --- what the mapper saw at this location
     conflict = _dispersion_conflict(cand, outcome)
@@ -593,6 +629,14 @@ def _check_series_identity(cand: Candidate, out: list[CheckFlag]) -> None:
             _flag(out, "series_marker_mismatch",
                   notes or "the described marker is not the one found at this value",
                   cand.candidate_id)
+        # ticket 2b: the readers' own words and the caption's stated key disagree about which
+        # series this is — a vocabulary-level doubt about identity (the caption never re-binds a
+        # value), recorded on its own code so the `which_series` card can retire it
+        if series.get("caption_mismatch"):
+            _flag(out, "series_caption_mismatch",
+                  notes or "the readers' description of this series and the caption's own key "
+                           "for it do not line up",
+                  cand.candidate_id)
     if provenance.get("axis_agreement") == "conflict":
         _flag(out, "axis_conflict",
               f"the readers of this figure answered off different value axes; the ensemble kept "
@@ -611,14 +655,36 @@ def _check_dispersion_source(cand: Candidate, out: list[CheckFlag]) -> None:
     would otherwise pool unflagged where UNKNOWN went to a human, so it is flagged and capped.
     """
     provenance = cand.pixel_provenance or {}
-    if provenance.get("dispersion_type_from") != "legend":
-        return
     kind = getattr(cand.dispersion_type, "value", cand.dispersion_type)
-    _flag(out, "dispersion_type_from_legend",
-          f"the map never determined what the error bars at this location are; {kind} was taken "
-          f"from the figure's own legend ({str(provenance.get('legend_says') or '')[:120]!r}) "
-          f"rather than from the two agents that are supposed to agree on it",
-          cand.candidate_id)
+    if provenance.get("dispersion_type_from") == "legend":
+        _flag(out, "dispersion_type_from_legend",
+              f"the map never determined what the error bars at this location are; {kind} was "
+              f"taken from the figure's own legend "
+              f"({str(provenance.get('legend_says') or '')[:120]!r}) "
+              f"rather than from the two agents that are supposed to agree on it",
+              cand.candidate_id)
+    # ticket 2a's sibling: the fill came from the caption's own sentence — deterministic and
+    # quoted, stronger provenance than a model's legend paraphrase, but still one uncorroborated
+    # witness, so it caps exactly as the legend fill does
+    if provenance.get("dispersion_type_from") == "caption":
+        _flag(out, "dispersion_type_from_caption",
+              f"the map never determined what the error bars at this location are; {kind} came "
+              f"from the figure's own caption sentence "
+              f"(“{str(provenance.get('caption_dispersion_quote') or '')[:160]}”) — the sentence "
+              f"is quoted, and nobody has confirmed the reading of it",
+              cand.candidate_id)
+    # …and the live dispute: the caption states one type, the standing determination another.
+    # No preference is taken — the type stays what the chain chose, and this code is the durable
+    # record that the publisher's sentence and the pipeline disagree (the digitiser's `reasons`
+    # string alone is prose nothing re-checks). The `error_bar_type` card is the resolution.
+    stated = str(provenance.get("caption_dispersion") or "")
+    if stated and str(kind) not in ("", "UNKNOWN") and stated != str(kind) \
+            and provenance.get("dispersion_type_from") != "caption":
+        _flag(out, "dispersion_caption_conflict",
+              f"the figure's own caption states {stated} "
+              f"(“{str(provenance.get('caption_dispersion_quote') or '')[:160]}”) but this "
+              f"reading carries {kind} — the two disagree and neither is preferred",
+              cand.candidate_id)
 
 
 def _check_panel_isolation(cand: Candidate, out: list[CheckFlag]) -> None:

@@ -1320,3 +1320,76 @@ def test_f_an_undisputed_figure_raises_no_dispute_flag():
     dataset = make_dataset()
     flags = run_checks(dataset, "late_adaptation", [_figure_cand()])
     assert "panel_labels_disputed" not in codes(flags)
+
+
+# ------------------------------------------------- ticket 3: the offer gate at checks time
+def _kumar_cand(mean=-147.9, isolated=False, scale="linear", cal_status="confirmed",
+                ticks=((1906.2, -30.0), (1793.7, -20.0), (1681.2, -10.0), (1568.6, 0.0),
+                       (1456.1, 10.0), (1343.5, 20.0), (1231.0, 30.0)), **kwargs) -> Candidate:
+    """The −147.9 record's exact shape: confirmed cal, −30..30 ladder, a plot box spanning the
+    un-isolated multi-panel crop that handed the value ±120.9 of slack."""
+    provenance = {"figure_id": "fig04", "cal_status": cal_status, "mean_agreement": True,
+                  "cal": {"axis": "y", "scale": scale, "rmse": 0.51,
+                          "ticks": [list(t) for t in ticks]},
+                  "axis_range": 301.87, "axis_range_source": "plot_bbox",
+                  "panel": {"panel_named": "c", "panel_not_isolated": "" if isolated else "c"}}
+    return cand("B", candidate_id="figB", source_kind=SourceKind.figure_line,
+                extractor_id="digitize:ensemble", route="figure", mean=mean, quote="",
+                pixel_provenance=provenance, **kwargs)
+
+
+def test_the_gate_catches_what_the_generous_axis_slack_waves_through():
+    flags = run_checks(make_dataset(), "late_adaptation", [_kumar_cand()])
+    assert "value_beyond_ticks" in codes(flags)
+    assert "value_outside_axis" not in codes(flags), "one doubt, one price"
+    assert CHECK_SEVERITY["value_beyond_ticks"] == "warn", \
+        "a legitimately clipped read can trip it — error would over-convict"
+    detail = next(f for f in flags if f.code == "value_beyond_ticks").detail
+    assert detail["tick_low"] == -30.0 and detail["tick_high"] == 30.0
+
+
+def test_the_gate_fails_open_on_every_reliability_doubt():
+    dataset = make_dataset()
+    for wrong in (dict(cal_status="single_witness"), dict(scale="log"),
+                  dict(ticks=((0.0, 30.0), (100.0, -30.0)))):
+        flags = run_checks(dataset, "late_adaptation", [_kumar_cand(**wrong)])
+        assert "value_beyond_ticks" not in codes(flags), wrong
+    # a clipped read one tick past the top passes; an isolated sane frame keeps its slack
+    assert "value_beyond_ticks" not in codes(
+        run_checks(dataset, "late_adaptation", [_kumar_cand(mean=33.0)]))
+
+
+# ------------------------------------------------- ticket 2: the caption codes at checks time
+def test_a_caption_filled_type_caps_and_a_caption_dispute_warns():
+    from canopy.verify.confidence import CAPPING_FLAGS
+
+    dataset = make_dataset()
+    filled = _figure_cand(dispersion_value=2.0, dispersion_type=DispersionType.SE)
+    filled.pixel_provenance.update({"dispersion_type_from": "caption",
+                                    "caption_dispersion": "SE",
+                                    "caption_dispersion_quote": "mean ± SE"})
+    flags = codes(run_checks(dataset, "late_adaptation", [filled]))
+    assert "dispersion_type_from_caption" in flags
+    assert "dispersion_type_from_caption" in CAPPING_FLAGS
+    disputed = _figure_cand(dispersion_value=2.0, dispersion_type=DispersionType.SD)
+    disputed.pixel_provenance.update({"dispersion_type_from": "mapper",
+                                      "caption_dispersion": "SE",
+                                      "caption_dispersion_quote": "mean ± SE"})
+    flags = codes(run_checks(dataset, "late_adaptation", [disputed]))
+    assert "dispersion_caption_conflict" in flags
+    assert "dispersion_caption_conflict" not in CAPPING_FLAGS, \
+        "a live pre-human dispute may hold the cell — the un-floored bucket is deliberate"
+
+
+def test_a_caption_key_dispute_about_the_series_caps_for_the_which_series_card():
+    from canopy.verify.confidence import CAPPING_FLAGS
+
+    disputed = _figure_cand()
+    disputed.pixel_provenance["series_identity"] = {
+        "described": {"B": ["", "circle"]}, "caption_mismatch": True,
+        "conflict": False, "transposed": False, "marker_mismatch": False,
+        "notes": ["group B's readers describe 'circle' but the figure's own caption keys it "
+                  "as 'square'"]}
+    flags = codes(run_checks(make_dataset(), "late_adaptation", [disputed]))
+    assert "series_caption_mismatch" in flags
+    assert "series_caption_mismatch" in CAPPING_FLAGS

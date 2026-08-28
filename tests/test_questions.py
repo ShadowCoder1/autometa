@@ -988,7 +988,9 @@ def test_each_override_kind_clears_only_the_blocker_it_names(tmp_path):
     assert "axis_conflict" in codes_cleared_by_value(axis_answer)
     assert "quote_not_grounded" not in codes_cleared_by_value(axis_answer)
     assert codes_cleared_by_value({"dispersion_type": "SE"}) == frozenset(
-        {"dispersion_type_from_legend", "figure_error_bar_unknown", "dispersion_type_conflict"})
+        {"dispersion_type_from_legend", "figure_error_bar_unknown", "dispersion_type_conflict",
+         # ticket 2a: a typed type answers the caption fill and the caption dispute the same way
+         "dispersion_type_from_caption", "dispersion_caption_conflict"})
     assert codes_cleared_by_value({}) == frozenset()
     # …and "UNKNOWN" answers nothing: it is the error-bar question restated. The test was the
     # field's truthiness and the string is truthy, so "the paper never labels these bars" used to
@@ -2179,7 +2181,9 @@ def test_a_confirmed_value_raises_no_further_card_however_often_the_run_is_repoo
     _pair(run, dataset_id, outcome_key, a=(31.9, 2.1, 12), b=(24.4, 1.9, 12))
     _repool(run)
     assert not _value_settled(log_for("A")), "a value nobody has confirmed is not a settled cell"
-    assert not _value_settled(log_for("B"))
+    # B's second record RESTATES the standing numbers — history, not a new number (T4): the
+    # confirmation stands, and the re-assertion loop the reset used to arm stays dead.
+    assert _value_settled(log_for("B"))
 
 
 # ================================================== fix round 2: the map's word, and the last card
@@ -2788,3 +2792,105 @@ def test_h_picking_the_verifiers_own_value_settles_the_refutation():
     other = next(o for o in options if o.get("mean") == 3.89)
     assert "verifier_refuted" not in (other.get("overrules") or []), \
         "a value the verifier never cited does not answer the objection"
+
+
+# ---------------------------------------------- ticket 3: values the panel cannot draw
+def _kumar_backer(mean, isolated=False, with_cal=True):
+    provenance = {"cal_status": "confirmed",
+                  "cal": {"axis": "y", "scale": "linear", "rmse": 0.5,
+                          "ticks": [[1906.2, -30.0], [1568.6, 0.0], [1231.0, 30.0]]},
+                  "axis_range": 301.87, "axis_range_source": "plot_bbox",
+                  "panel": {"panel_named": "c", "panel_not_isolated": "" if isolated else "c"}}
+    return {"mean": mean, "candidate_id": f"c{mean}", "extractor_id": "digitize:ensemble",
+            "unit": "deg", "pixel_provenance": provenance if with_cal else {}}
+
+
+def test_an_impossible_value_is_not_offered_and_the_suppression_is_audited():
+    from canopy.review.questions import _value_options
+
+    suppressed: list = []
+    options = _value_options([_kumar_backer(-147.9), _kumar_backer(12.2)], {}, "deg",
+                             suppressed_out=suppressed)
+    assert [o["mean"] for o in options] == [12.2]
+    assert suppressed and suppressed[0]["mean"] == -147.9
+    assert "printed tick range" in suppressed[0]["why"]
+
+
+def test_the_gate_never_suppresses_to_zero_and_never_touches_text_backers():
+    from canopy.review.questions import _value_options, fingerprint
+
+    # every numeric option impossible → everything restored, stamped, labels untouched
+    suppressed: list = []
+    options = _value_options([_kumar_backer(-147.9)], {}, "deg", suppressed_out=suppressed)
+    assert [o["mean"] for o in options] == [-147.9] and not suppressed
+    assert options[0]["implausible"]["tick_high"] == 30.0
+    assert "outside" not in options[0]["label"], \
+        "fingerprints hash labels — the stamp, not the label, carries the doubt"
+    with_stamp, without = dict(options[0]), dict(options[0])
+    without.pop("implausible")
+    assert fingerprint(with_stamp) == fingerprint(without)
+    # a text-backed number has no axis to be outside of
+    text_backed = {"mean": -147.9, "candidate_id": "t", "extractor_id": "text",
+                   "unit": "deg", "pixel_provenance": {}}
+    options = _value_options([text_backed], {}, "deg")
+    assert [o["mean"] for o in options] == [-147.9]
+    assert "implausible" not in options[0]
+
+
+def test_the_verifier_s_own_cited_number_stays_pickable_and_the_resolved_value_is_stamped():
+    from canopy.review.questions import _value_options
+
+    # the objection's number must never be hidden — the H3 settle path depends on picking it
+    verdict = {"verifiers": [{"verdict": "refuted", "alt_mean": -147.9,
+                              "alt_quote": "printed as -147.9"}]}
+    options = _value_options([_kumar_backer(-147.9), _kumar_backer(12.2)], verdict, "deg")
+    assert -147.9 in [o["mean"] for o in options]
+    # the resolved value is exempt from suppression but carries the stamp
+    options = _value_options([_kumar_backer(12.2)], {"mean": -99.0}, "deg")
+    resolved = next(o for o in options if o["key"] == "resolved")
+    assert resolved["implausible"]["tick_low"] == -30.0
+
+
+# -------------------------------- ticket 4: a refutation's answer is scoped to its evidence
+def test_a_refutation_card_carries_its_evidence_key_and_a_keyed_answer_settles_only_it(tmp_path):
+    from canopy.pipeline.overrides import append_override
+    from canopy.review.questions import answers_to_overrides, questions_for_run
+    from tests.helpers import nine
+
+    run = nine.copy_to(tmp_path)
+    cards = [q for q in questions_for_run(run, fold=False) if q["kind"] == "verifier_refuted"]
+    assert cards and all(q["evidence_key"] for q in cards)
+    card = cards[0]
+    written = answers_to_overrides(card, {"option": "stands",
+                                          "note": "read the objection; disagree"})
+    assert all(r.get("evidence_key") == card["evidence_key"] for r in written)
+    for record in written:
+        append_override(run, record)
+    after = {q["id"]: q for q in questions_for_run(run, fold=False)}
+    assert after.get(card["id"]) is None or after[card["id"]]["answered"], \
+        "an overrule bearing the card's own key settles it"
+    # a record keyed to DIFFERENT evidence settles nothing: the card re-opens exactly once for
+    # what it has not been shown (a raw line, the way a stale answer would replay)
+    run2 = nine.copy_to(tmp_path / "second")
+    stale = dict(written[0])
+    stale["evidence_key"] = "0" * 12
+    append_override(run2, stale)
+    again = {q["id"]: q for q in questions_for_run(run2, fold=False)}
+    assert card["id"] in again and not again[card["id"]]["answered"], \
+        "an answer to other evidence does not tick this card"
+
+
+def test_a_keyless_legacy_overrule_still_settles_outright(tmp_path):
+    from canopy.pipeline.overrides import append_override
+    from canopy.review.questions import answers_to_overrides, questions_for_run
+    from tests.helpers import nine
+
+    run = nine.copy_to(tmp_path)
+    card = next(q for q in questions_for_run(run, fold=False)
+                if q["kind"] == "verifier_refuted")
+    legacy = answers_to_overrides(card, {"option": "stands", "note": "pre-key answer"})[0]
+    legacy.pop("evidence_key", None)
+    append_override(run, legacy)
+    after = {q["id"]: q for q in questions_for_run(run, fold=False)}
+    assert after.get(card["id"]) is None or after[card["id"]]["answered"], \
+        "records from before the key existed settle exactly as they did the day they were written"

@@ -982,3 +982,111 @@ def test_f_a_clean_swap_rebinds_and_anything_less_disputes_or_stays_silent():
     generic_cap = "Fig. 4. (A) Error across blocks. (B) Error across blocks."
     generic = [word(0, "Error"), word(100, "Error")]
     assert _verify_panel_letters(panels, generic_cap, ["a", "b"], generic) == (None, "")
+
+
+# --------------------------------------------- ticket 2: what the caption itself states
+def test_caption_dispersion_credits_only_anchored_explicit_statements():
+    from canopy.ingest.pdf import caption_dispersion
+
+    said = caption_dispersion
+    assert said("Data are presented across all subjects (mean ± SE).") == \
+        {"type": "SE", "quote": "Data are presented across all subjects (mean ± SE)."}
+    assert said("Error bars represent the standard error of the mean.")["type"] == "SE"
+    assert said("Values are means (±SEM) for the last block.")["type"] == "SE"
+    assert said("Shaded regions indicate 95% confidence intervals.")["type"] == "CI95"
+    assert said("Error bars, s.d.")["type"] == "SD"
+    assert said("Whiskers denote the standard deviation.")["type"] == "SD"
+    # the refusals, each a way a wrong type would have been invented:
+    assert said("Error bars show mean ± 2 SE.") == {}, "a multiplied bar is not its bare type"
+    assert said("The standard deviation of movement time was analysed.") == {}, \
+        "the OUTCOME's SD, not the bars' — the anchor rule"
+    assert said("The standard error of the estimate is shown.") == {}, "regression SEE"
+    assert said("The standard deviation of the mean is displayed on error bars.") == {}, \
+        "historically = SEM; a caption printing it is ambiguous"
+    assert said("Error bars show SD in A and SEM in B.") == {}, "two types, unscoped"
+    assert said("se was small in every condition.") == {}, "bare lowercase is a word"
+    assert said("Fehlerbalken zeigen die Standardabweichung.") == {}, \
+        "non-English matches nothing — the conservative default IS the non-English behaviour"
+    assert said("") == {}
+
+
+def test_caption_panel_dispersions_scope_by_letter_and_never_generalize():
+    from canopy.ingest.pdf import _caption_semantics, caption_panel_dispersions
+
+    cap = "(a) Baseline reach error. (b) Aftereffects; error bars show SD. Mean ± SEM elsewhere."
+    per = caption_panel_dispersions(cap, ["a", "b"])
+    assert per.get("b", {}).get("type") == "SD" and "a" not in per
+    # a statement living inside letter b's own description must never speak for its siblings
+    scoped = _caption_semantics("(a) Baseline. (b) Errors; error bars show SD.", ["a", "b"])
+    assert scoped["type"] == "" and scoped["panels"]["b"]["type"] == "SD"
+    # trailing figure-wide prose beyond the letters' sentence caps stays figure-level
+    wide = _caption_semantics("(a) Baseline. (b) Errors. Error bars show the SEM throughout.",
+                              ["a", "b"])
+    assert wide["type"] == "SE" and wide["panels"] == {}
+
+
+def test_caption_series_keys_parse_both_shapes_and_refuse_the_rest():
+    from canopy.ingest.pdf import caption_series_keys
+
+    balitsky = ("Circles represent adaptation with the right hand and squares represent "
+                "adaptation with the left hand. Black lines represent cursor view trials.")
+    keys = {k["descriptor"].lower(): k for k in caption_series_keys(balitsky)}
+    assert "right hand" in keys["circles"]["series_text"]
+    assert "left hand" in keys["squares"]["series_text"]
+    assert keys["black lines"]["line_style"], "a line key never feeds marker matching"
+    addison = ("Mean reaction time for dominant arm performance (open circles) and for "
+               "nondominant arm performance (filled circles).")
+    parsed = caption_series_keys(addison)
+    assert {k["descriptor"] for k in parsed} == {"open circles", "filled circles"}
+    assert caption_series_keys("Circles represent filled symbols.") == [], \
+        "marker vocabulary inside the series text keys nothing"
+    assert caption_series_keys("Circles show left hand. Circles show right hand.") == [], \
+        "identical descriptors distinguish nothing — both dropped"
+    assert caption_series_keys("The right hand adapted faster than the left.") == []
+
+
+def test_figure_region_from_before_the_caption_fields_loads_with_defaults():
+    from canopy.ingest.pdf import Bbox, FigureRegion
+
+    old = dict(id="fig01", page=1, bbox=Bbox(x0=0, y0=0, x1=10, y1=10), caption="c", label="F",
+               kind="raster", n_images=1, n_drawings=0, native_px=None, crop_png="a",
+               claude_png="b", crop_dpi=72.0, claude_scale=1.0, confidence=0.9)
+    fig = FigureRegion(**old)
+    assert fig.caption_dispersion == "" and fig.caption_dispersion_panels == {}
+    assert fig.caption_series_keys == []
+
+
+def test_the_marker_vocabulary_has_one_home():
+    from canopy.digitize import digitizer
+    from canopy.ingest import pdf
+
+    assert digitizer._FILL_WORDS is pdf.MARKER_FILL_WORDS
+    assert digitizer._SHAPE_WORDS is pdf.MARKER_SHAPE_WORDS
+
+
+def test_series_keys_never_mint_from_spread_statements_or_annotation_prose():
+    """M-1's junk classes, each a verbatim shape from a real run that once minted a key."""
+    from canopy.ingest.pdf import caption_series_keys
+
+    junk = [
+        "Error bars represent the standard error of the mean.",
+        "Error bars represent SE of the mean across participants.",
+        "Vertical bars show 95% confidence intervals.",
+        "Bars are standard deviations with respect to mean performance.",
+        "Error bars represent SE for the left hand.",       # would BIND and cap falsely
+        "Stars indicate the significant GROUP by TRIAL interactions.",
+        "The crosshair represents the cursor feedback position.",
+        "Movements start at the position shown by the cursor.",
+    ]
+    for sentence in junk:
+        assert caption_series_keys(sentence) == [], sentence
+    # the paren-crossing junk: shape A must not eat half a parenthetical; shape B still keys it
+    both = ("Data for naive performance (open circles) and opposite-arm performance "
+            "(filled circles) are shown separately.")
+    keys = caption_series_keys(both)
+    assert {k["descriptor"] for k in keys} == {"open circles", "filled circles"}
+    assert all(")" not in k["descriptor"] and "shown separately" not in k["series_text"]
+               for k in keys)
+    # …and the legitimate bar-series key survives the error-bar refusal
+    assert caption_series_keys("Black bars represent cursor view trials.") \
+        [0]["descriptor"] == "Black bars"

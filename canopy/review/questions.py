@@ -29,7 +29,8 @@ from pathlib import Path
 from typing import Any, Collection, Iterable, Mapping, Sequence
 
 from ..pipeline.overrides import (GROUP_STATISTICS, MAP_KINDS, ORIENTATION_ANSWERED, ROW_REFUSALS,
-                                  codes_cleared_by_value, consumed_seqs)
+                                  HumanLanded, codes_cleared_by_value, consumed_seqs,
+                                  human_landed_values, stale_hold_names, within_read_tolerance)
 from ..models import (HUMAN_DECIDER_NAME, MAP_ADJUDICATOR_NAME, UNREADABLE_SAMPLES,
                       c6_demoted_note)
 from ..pipeline.rows import converted_route
@@ -137,13 +138,17 @@ _FLAG_TO_KIND: tuple[tuple[str, str], ...] = (
     ("calibration_refuted", "which_axis"),
     ("calibration_two_point", "which_axis"),
     ("value_outside_axis", "which_value"),
+    ("value_beyond_ticks", "which_value"),
     ("sign_mismatch", "which_value"),
     #: D2: two places in one figure were read and they gave two numbers, so the vote refused to
     #: average them. Naming the right one is the whole answer.
     ("locator_reads_conflict", "which_value"),
     ("quote_not_grounded", "quote_not_found"),
     ("series_marker_mismatch", "which_series"),
+    ("series_caption_mismatch", "which_series"),
     ("dispersion_type_from_legend", "error_bar_type"),
+    ("dispersion_type_from_caption", "error_bar_type"),
+    ("dispersion_caption_conflict", "error_bar_type"),
     ("figure_error_bar_unknown", "error_bar_type"),
     ("dispersion_type_conflict", "error_bar_type"),
     ("df_missing", "needs_group_values"),
@@ -290,6 +295,7 @@ def questions_for_run(run_dir: str | Path, *,
     overrides = _overrides(run)
     pending = _pending_seqs(run)
     consumed = consumed_seqs(run)
+    landed = human_landed_values(run)
     rows = _rows_by_cell(run)
     provenance = _json_if_present(run / "provenance" / "provenance.json") or {}
     out: list[Question] = []
@@ -324,7 +330,28 @@ def questions_for_run(run_dir: str | Path, *,
         # addressed on the record is not a reason to ask them again, exactly as a recorded
         # direction is not. Without this the refutation question is asked for ever, because the
         # verify stage file a re-pool reads still says "refuted" and always will.
-        overruled = {str(name) for o in already for name in (o.get("overrules") or [])}
+        # a recorded overrule of `verifier_refuted` retires the refutation it was SHOWN: a
+        # record keyed to other evidence (T4's `evidence_key`) must not retire an objection the
+        # reviewer has never seen, or one old answer silences every future refutation on the
+        # cell. A keyless record — every answer from before the key existed, and every confirm
+        # card's "yes" — retires unconditionally, exactly as it always did.
+        current_evidence = _evidence_key(verdict or {})
+        overruled = set()
+        for o in already:
+            for name in (o.get("overrules") or []):
+                recorded = str(o.get("evidence_key") or "")
+                if str(name) == "verifier_refuted" and recorded \
+                        and recorded != current_evidence:
+                    continue
+                overruled.add(str(name))
+        # T4: …and what the record itself has already answered. A refutation whose subject a
+        # human's LANDED value has displaced (or adopted) is retired here exactly as if the
+        # reviewer had overruled it — the rule is `overrides.stale_hold_names`, which the apply
+        # loop reads too, so the page never suppresses a card the analysis still holds. Never a
+        # card drop: the retirement feeds `_kind`, and the cell asks its next open question or
+        # leaves the queue because the repool releases it.
+        auto = _resolved_by_record(landed, verdict or {}, dataset_id, outcome_key, group)
+        overruled |= {a["name"] for a in auto}
         answered_value = any(o.get("kind") == "value" for o in already)
         if verdict and (settled is not None or retired):
             flags = [f for f in verdict.get("flags") or []
@@ -338,6 +365,8 @@ def questions_for_run(run_dir: str | Path, *,
         question = _question(entry, verdict, candidates, study, dataset, provenance,
                              run, already, pending, answered_value, consumed, overruled,
                              row, settled)
+        if auto:
+            question["auto_resolved"] = auto
         # what `_question` itself counted as holding this cell: the verdict's codes AND the row's
         # own refusals (line ~479). Read the same two halves here. Reading only the verdict's
         # meant the two ends of one function disagreed about what was still open, and the half
@@ -432,15 +461,128 @@ def _value_settled(already: Sequence[Mapping[str, Any]]) -> bool:
     confirmation was about the value that stood when it was made and a new one has been confirmed
     by nobody. Read from the LOG, which is the only durable record of it: the stage files a
     re-pool reads are never rewritten and always say what the run decided.
+
+    A value record that RESTATES what the log already says is history, not a new number: every
+    field it carries equals (within read tolerance) the standing state, so nothing has changed
+    that anybody could confirm differently. Before this, every re-assertion of a clobbered value
+    re-armed the confirm loop — the reviewer re-typed the same number and was asked "are you
+    sure?" about it again.
     """
     typed = confirmed = False
+    standing: dict[str, Any] = {}
     for override in already:
         kind = str(override.get("kind") or "")
         if kind == "mark_reviewed" and override.get("confidence") == "accept_with_note":
             confirmed = confirmed or typed
         elif kind in _CHANGES_THE_VALUE:
+            if kind == "value" and _restates(override, standing):
+                typed = True
+                continue
+            if kind == "value":
+                for field in ("mean", "dispersion_value", "n", "dispersion_type", "unit"):
+                    if override.get(field) not in (None, ""):
+                        standing[field] = override.get(field)
             typed, confirmed = kind == "value" or typed, False
     return confirmed
+
+
+def _restates(override: Mapping[str, Any], standing: Mapping[str, Any]) -> bool:
+    """Does this value record say only what the log already says?
+
+    Every field it carries must equal the standing state — numerics within read tolerance, the
+    type and unit verbatim — and it must carry at least one. A field the record states that the
+    log holds nothing for is a NEW statement, not a restatement.
+    """
+    said = False
+    for field in ("mean", "dispersion_value", "n"):
+        value = override.get(field)
+        if value is None:
+            continue
+        said = True
+        held = standing.get(field)
+        try:
+            if held is None or not within_read_tolerance(float(value), float(held)):
+                return False
+        except (TypeError, ValueError):
+            return False
+    for field in ("dispersion_type", "unit"):
+        value = str(override.get(field) or "")
+        if not value or (field == "dispersion_type" and value == "UNKNOWN"):
+            continue                       # UNKNOWN is the page copying a candidate, not a claim
+        said = True
+        if value != str(standing.get(field) or ""):
+            return False
+    return said
+
+
+def _evidence_key(verdict: Mapping[str, Any]) -> str:
+    """A short hash of the EVIDENCE a refutation card presents, so an answer can name it.
+
+    Keys the evidence, never the wording: the refuted mean and the verifiers' structured
+    alternatives, with the quote normalised hard (case, whitespace, quote marks) so a
+    cache-replayed refutation can never mint a spuriously distinct key and re-open a settled
+    card. A later answer records the key it addressed; genuinely NEW evidence — which only a new
+    paid reading can produce — makes a new key and re-opens the card exactly once.
+    """
+    refuted = [v for v in (verdict.get("verifiers") or [])
+               if str(v.get("verdict")) == "refuted"]
+    quotes = sorted(" ".join(str(v.get("alt_quote") or "").split()).casefold()
+                    .replace('"', "").replace("'", "").replace("“", "").replace("”", "")
+                    .replace("‘", "").replace("’", "") for v in refuted)
+    payload = json.dumps({
+        "refuted_mean": round(float(verdict["mean"]), 6)
+        if verdict.get("mean") is not None else None,
+        "alt_means": sorted(round(float(v["alt_mean"]), 6) for v in refuted
+                            if v.get("alt_mean") is not None),
+        "alt_quotes": quotes,
+    }, sort_keys=True)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
+
+
+def _resolved_by_record(landed: HumanLanded, verdict: Mapping[str, Any],
+                        dataset_id: str, outcome_key: str,
+                        group: str | None) -> list[dict[str, Any]]:
+    """Holds on this cell-group that the override log has already answered, each with its trace.
+
+    The RULE is `overrides.stale_hold_names` — one function, which the apply loop feeds from the
+    same stage file — so the page can never suppress a card the analysis still holds. This
+    wrapper only extracts the rule's inputs from the verdict dict and turns each retired name
+    into a sentence a reader of the card can check. LANDED means only: a human number the last
+    re-pool could not apply displaces nothing.
+
+    `sd=None` on BOTH sides, deliberately: the SD-scaled tolerance needs the cell's candidates,
+    which only this caller has in hand — feeding the one rule different inputs from its two call
+    sites is exactly the drift having one function exists to prevent, so both use the relative
+    line alone.
+    """
+    if not group or not verdict:
+        return []
+    human = landed.for_cell(dataset_id, outcome_key, group)
+    if human is None or human.get("mean") is None or not human.get("mean_landed"):
+        return []
+    refuted = [v for v in (verdict.get("verifiers") or [])
+               if str(v.get("verdict")) == "refuted" and v.get("alt_mean") is not None]
+    alt_means = [float(v["alt_mean"]) for v in refuted]
+    cites = any(any(ch.isdigit() for ch in str(v.get("alt_quote") or "")) for v in refuted)
+    disputes = any(str(f.get("code") or "") == "reread_disputes_human_value"
+                   for f in verdict.get("flags") or [])
+    names = stale_hold_names(
+        stage_mean=verdict.get("mean"),
+        verifier_verdict=str(verdict.get("verifier_verdict") or ""),
+        adjudicated=bool(verdict.get("adjudicated")),
+        alt_means=alt_means, alt_quote_cites_number=cites,
+        disputes_flag_present=disputes, human_mean=human["mean"])
+    if not names:
+        return []
+    seq = human["field_seqs"].get("mean", human["seq"])
+    stage = verdict.get("mean")
+    adopted = any(within_read_tolerance(human["mean"], alt) for alt in alt_means)
+    why = (f"the reviewer's value {human['mean']:g} (override seq {seq}) IS the verifier's own "
+           f"cited alternative — the objection was adopted, not dodged"
+           if adopted else
+           f"the objection targets {stage:g}; the record's value is the reviewer's "
+           f"{human['mean']:g} (override seq {seq}) — the objection's subject no longer stands")
+    return [{"name": name, "why": why, "by_seq": seq} for name in sorted(names)]
 
 
 def _codes_answered(already: Sequence[Mapping[str, Any]]) -> set[str]:
@@ -530,6 +672,9 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
                              str(entry.get("dataset_id") or ""), outcome_key, None)
     statistic = _statistic_of(whole_cell, str(row.get("route") or ""))
     kind = _kind(verdict, flags, valued, holding, answered_value, overruled, row, statistic)
+    # T4: what evidence THIS refutation card presents, so its answer can be scoped to it — a
+    # settled objection stays settled, and only genuinely new evidence re-opens the card (once)
+    evidence = _evidence_key(verdict) if kind == "verifier_refuted" else ""
     measure = _measure(dataset, outcome_key)
     # an answer answers the question it was given to, and no other. A cell is asked one thing at
     # a time: when the answer retires that blocker the cell moves on to the next one, and the new
@@ -580,8 +725,15 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
             if kind == "verifier_refuted":
                 # a number does not retire a refutation: the verifier said the value is wrong, and
                 # a different value is not an answer to that. Only overruling it on the record —
-                # or removing the cell, handled above — settles this question.
-                return "verifier_refuted" in (override.get("overrules") or [])
+                # or removing the cell, handled above — settles this question. A KEYED overrule
+                # settles only the evidence it was shown (`evidence_key` on the card it answered):
+                # a new refutation is a new question, asked once. A keyless record — every answer
+                # from before the key existed — settles outright, which is exactly what it did
+                # the day it was written.
+                if "verifier_refuted" not in (override.get("overrules") or []):
+                    return False
+                recorded = str(override.get("evidence_key") or "")
+                return not recorded or recorded == evidence
             named = bool(override.get("overrules")) or bool(override.get("clears"))
             if on_a_card:
                 return named
@@ -623,7 +775,9 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
     where = _where(candidates)
     unit = _unit(candidates, dataset, outcome_key)
     x_hint = _x_hint(candidates)
-    options = _stamped(_options(kind, valued, verdict, flags, unit, overruled))
+    suppressed_options: list[dict[str, Any]] = []
+    options = _stamped(_options(kind, valued, verdict, flags, unit, overruled,
+                                suppressed_out=suppressed_options))
     if kind == "dispersion_doubt":
         options = _stamped(_dispersion_options(flags))
     if kind == "converted_statistic":
@@ -642,6 +796,13 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
     if kind == "reader_contradicts_values":
         prompt = _contradiction_prompt(prompt, run, entry, dataset, outcome_key, measure)
     why = _why(entry, verdict)
+    if suppressed_options:
+        # ticket 3's trace on the card: nothing is silently narrowed, and free text stays open
+        why += (f" || {len(suppressed_options)} candidate value(s) are not offered because they "
+                f"lie outside the panel's own printed axis "
+                f"({'; '.join(_fmt(s['mean']) + ': ' + str(s.get('why') or '') for s in suppressed_options[:4])})"
+                f" — they are listed under suppressed_options and the true value can still be "
+                f"typed as free text")
     if kind in ("no_value", "categorical_axis_kind") and bought:
         why = _reread_why(bought, why)
     if kind == "orientation":
@@ -673,7 +834,9 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
         ("unit", unit),
         ("image", image),
         ("options", options),
+        ("suppressed_options", suppressed_options),
         ("free_text", True),                       # a reviewer may always type the answer
+        ("evidence_key", evidence),
         ("answer_writes", _answer_kind(kind)),
         ("why", why),
         ("confidence", entry.get("confidence")),
@@ -1134,7 +1297,8 @@ def _present(flags: Sequence[str], *codes: str) -> list[str]:
 
 def _options(kind: str, valued: Sequence[Mapping[str, Any]], verdict: Mapping[str, Any],
              flags: Sequence[str], unit: str,
-             overruled: Collection[str] = ()) -> list[dict[str, Any]]:
+             overruled: Collection[str] = (),
+             suppressed_out: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """The answers on offer. Values are the candidates' own numbers; never invented."""
     if kind == "error_bar_type":
         return [{"key": k, "label": lbl, "dispersion_type": k}
@@ -1158,18 +1322,21 @@ def _options(kind: str, valued: Sequence[Mapping[str, Any]], verdict: Mapping[st
         # an axis is only answerable if choosing it says which NUMBER the cell should hold, so
         # every option carries a candidate's own value and names the ladder it was read against.
         # Before C4 these were three prose descriptions of a ladder whose answer wrote nothing.
-        return _value_options(valued, verdict, unit, axis=True)
+        return _value_options(valued, verdict, unit, axis=True,
+                              suppressed_out=suppressed_out)
     if kind == "which_series":
         # "yes, this series is this group" is a decision about a NUMBER, so it writes the number
         # it confirms. Before C4 it wrote `mark_reviewed / needs_human` — the answer and the
         # question in the same state.
-        resolved = _value_options(valued, verdict, unit)[:1]
+        resolved = _value_options(valued, verdict, unit,
+                                  suppressed_out=suppressed_out)[:1]
         out = []
         if resolved and resolved[0].get("mean") is not None:
             out.append({**resolved[0], "key": "as_read",
                         # confirming the identity is the whole answer to the identity findings:
                         # without saying so, the cell keeps asking a question it has answered.
                         "clears": _present(flags, "series_marker_mismatch",
+                                           "series_caption_mismatch",
                                            "series_identity_conflict", "series_transposed",
                                            "locator_panel_mismatch"),
                         "label": f"this series is this group — {resolved[0]['label']} is right"})
@@ -1184,13 +1351,14 @@ def _options(kind: str, valued: Sequence[Mapping[str, Any]], verdict: Mapping[st
                  "clears": _present(flags, "orientation_reader_contradicts_values")},
                 {"key": "groups_swapped",
                  "label": "the two groups are swapped — this number is the other group's"},
-                *_value_options(valued, verdict, unit)]
+                *_value_options(valued, verdict, unit, suppressed_out=suppressed_out)]
     if kind == "quote_not_found":
         # the quote nobody could find was the number's whole provenance, so the answer has to be a
         # number a person will stand behind — or the statement that the paper does not print one.
         # Standing behind it IS the answer to the grounding, and the option says so.
         return [*({**option, "clears": _present(flags, "quote_not_grounded")}
-                  for option in _value_options(valued, verdict, unit)),
+                  for option in _value_options(valued, verdict, unit,
+                                                suppressed_out=suppressed_out)),
                 {"key": "not_reported", "label": "the paper does not print this value"}]
     if kind == "number_unusable":
         # nothing here can be picked off the page: the missing n / df / spread has to be typed, or
@@ -1203,11 +1371,14 @@ def _options(kind: str, valued: Sequence[Mapping[str, Any]], verdict: Mapping[st
         # It carries what it OVERRULES, because the findings that hold such a cell — a refutation,
         # an adjudication, a score below the line — are not flag codes, so no `clears` can name
         # them and nothing else in the record would say the reviewer had addressed them.
-        settled = _value_options(valued, verdict, unit)
+        settled = _value_options(valued, verdict, unit, suppressed_out=suppressed_out)
         overrules = _overrulable(verdict, overruled)
         said = (" — this overrules " + ", ".join(_SAID[name] for name in overrules)
                 if overrules else "")
         head = {"key": "yes", "overrules": overrules,
+                # T1: "yes, the value I typed is right" is also the one look the disputes flag
+                # asks for — confirming retires it on the record, or it re-holds forever
+                "clears": _present(flags, "reread_disputes_human_value"),
                 "label": (f"yes — {settled[0]['label']} is right, I have checked it{said}"
                           if settled else f"yes — this value is right, I have checked it{said}")}
         return [head, *settled[1:]]
@@ -1238,19 +1409,24 @@ def _options(kind: str, valued: Sequence[Mapping[str, Any]], verdict: Mapping[st
 
         return [{"key": "stands",
                  "overrules": holds,
+                 "clears": _present(flags, "reread_disputes_human_value"),
                  "label": "the value is right anyway — I have read the verifier's objection and "
                           "disagree with it"},
                 *({**option, "clears": _present(flags, "value_outside_axis", "sign_mismatch",
-                                                 "locator_reads_conflict"),
+                                                 "locator_reads_conflict", "value_beyond_ticks",
+                                                 "reread_disputes_human_value"),
                    **({"overrules": holds} if holds and _adopts(option) else {})}
-                  for option in _value_options(valued, verdict, unit))]
+                  for option in _value_options(valued, verdict, unit,
+                                                suppressed_out=suppressed_out))]
     if kind == "which_value":
         # naming the right number is the answer to "that number is off the ladder", to "the paper
         # says the other group was higher", and to "two places in this figure were read and they
         # do not agree" — the findings that raise this question.
         return [{**option, "clears": _present(flags, "value_outside_axis", "sign_mismatch",
-                                              "locator_reads_conflict")}
-                for option in _value_options(valued, verdict, unit)]
+                                              "locator_reads_conflict", "value_beyond_ticks",
+                                              "reread_disputes_human_value")}
+                for option in _value_options(valued, verdict, unit,
+                                              suppressed_out=suppressed_out)]
     if kind == "no_value":
         # the free-text answer ("it is on p. 5, Table 2") is a re-extraction; the one thing a
         # reviewer can settle without a model call is that there is nothing to read.
@@ -1273,7 +1449,8 @@ def _options(kind: str, valued: Sequence[Mapping[str, Any]], verdict: Mapping[st
 
 
 def _value_options(valued: Sequence[Mapping[str, Any]], verdict: Mapping[str, Any], unit: str,
-                   *, axis: bool = False) -> list[dict[str, Any]]:
+                   *, axis: bool = False,
+                   suppressed_out: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """The candidates' own numbers as answers, most-backed first. Nothing here is invented.
 
     When `axis` is set, each option also names the ladder its backers said they read it against,
@@ -1281,8 +1458,48 @@ def _value_options(valued: Sequence[Mapping[str, Any]], verdict: Mapping[str, An
     actually resolved is always on offer even when no candidate carries it (an adjudicated cell
     holds a number no single reader wrote), because "the one you have is right" has to be a
     sayable answer — and because it has to be a *recorded* one, not a shrug.
+
+    Ticket 3: a value the panel's own printed ladder cannot draw is not OFFERED as an answer
+    (`figures.offer_gate` — one full run menued −147.9 against a −30..30 axis). Suppression is
+    conservative three ways: an option is gated only when EVERY backer carrying usable axis
+    evidence is excluded and at least one carries it (a text-backed number has no axis to be
+    outside of); an option within read tolerance of a refuting verifier's own cited alternative
+    is never gated (the objection's number must stay pickable — the H3 settle path depends on
+    it); and a menu is never suppressed to zero numeric options — then everything is restored,
+    each stamped `implausible` (the stamp, not the label: fingerprints hash labels, and a
+    restored option still means its numbers). The resolved value is exempt the same way — hiding
+    the cell's standing value would misdescribe the record — but carries the stamp. Suppressed
+    options land in `suppressed_out` with the gate's record: audited, never silent, and free
+    text stays open on every card.
     """
+    from ..verify.figures import offer_gate
+    from ..verify.units import unit_key
+
+    cited = [float(v["alt_mean"]) for v in (verdict.get("verifiers") or [])
+             if str(v.get("verdict")) == "refuted" and v.get("alt_mean") is not None]
+
+    def gate_of(value: float, backers: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
+        if any(within_read_tolerance(value, alt) for alt in cited):
+            return None
+        verdicts, testable = [], 0
+        for backer in backers:
+            if unit and unit_key(str(backer.get("unit") or "")) not in ("", unit_key(unit)):
+                continue                # another axis's units are `axis_conflict`'s business
+            record = offer_gate(backer.get("pixel_provenance"), value)
+            # DELIBERATELY over-conservative: `testable` counts every cal-carrying backer,
+            # including ones whose calibration the gate's own preconditions reject (single
+            # witness, log scale, two ticks) — such a backer returns None below and shields
+            # the option from suppression even when every reliable backer excludes it. An
+            # option suppression is the strongest thing this page does to a number, and one
+            # doubtful ladder is enough reason to keep offering it; the checks-side
+            # `value_beyond_ticks` still names the doubt on the reliable backers.
+            testable += 1 if (backer.get("pixel_provenance") or {}).get("cal") else 0
+            verdicts.append(record)
+        usable = [record for record in verdicts if record is not None]
+        return usable[0] if testable and usable and len(usable) == testable else None
+
     out: list[dict[str, Any]] = []
+    suppressed: list[dict[str, Any]] = []
     for value, backers in _distinct_values(valued).items():
         best = backers[0]
         option = {
@@ -1302,13 +1519,22 @@ def _value_options(valued: Sequence[Mapping[str, Any]], verdict: Mapping[str, An
             option["axis"] = _axis_of(backers)
             if option["axis"]:
                 option["label"] += f" — read against {_short(option['axis'], 90)}"
+        gated = gate_of(float(value), backers)
+        if gated is not None:
+            option["implausible"] = gated
+            suppressed.append(option)
+            continue
         out.append(option)
+    if suppressed and not out:
+        # never to zero: with nothing plausible left, the honest menu is everything with the
+        # doubt stamped on each entry, not an empty page
+        out, suppressed = suppressed, []
     out.sort(key=lambda o: -o["n_backers"])
     resolved = verdict.get("mean")
     if resolved is not None and not any(
             abs(float(o["mean"]) - float(resolved)) <= max(abs(float(resolved)) * 0.005, 1e-9)
             for o in out):
-        out.insert(0, {
+        option = {
             "key": "resolved", "mean": float(resolved),
             "label": f"{_fmt(float(resolved))}{(' ' + unit) if unit else ''} — the value this run "
                      f"resolved is right",
@@ -1316,10 +1542,17 @@ def _value_options(valued: Sequence[Mapping[str, Any]], verdict: Mapping[str, An
             "dispersion_type": _enum(verdict.get("dispersion_type")),
             "n": verdict.get("n"), "unit": unit, "backed_by": [], "n_backers": 0,
             "quote": "", "page": None,
-        })
+        }
+        gated = gate_of(float(resolved), valued)
+        if gated is not None:
+            option["implausible"] = gated
+        out.insert(0, option)
     for i, option in enumerate(out, 1):
         if option["key"] != "resolved":
             option["key"] = f"v{i}"
+    if suppressed_out is not None:
+        suppressed_out.extend({"mean": o["mean"], "backed_by": o["backed_by"],
+                               **o["implausible"]} for o in suppressed)
     return out[:_MAX_OPTIONS]
 
 
@@ -2136,7 +2369,10 @@ def _single_override(question: Mapping[str, Any], answer: Mapping[str, Any]) -> 
     kind = str(question.get("kind") or "other")
     base = {"paper_id": question.get("paper_id", ""), "dataset_id": question.get("dataset_id", ""),
             "outcome_key": question.get("outcome_key", ""), "group": question.get("group"),
-            "question_id": question.get("id", "")}
+            "question_id": question.get("id", ""),
+            # T4: which refutation evidence this answer was shown, so the settle rule can scope
+            # it — an empty key (any other kind, or a pre-key card) settles as it always did
+            "evidence_key": str(question.get("evidence_key") or "")}
     note = str(answer.get("note") or "").strip()
     stem = f"answered question #{question.get('number', '?')} ({kind})"
     just = f"{stem}: {note}" if note else stem
@@ -2306,7 +2542,7 @@ _CARD_KEYS: tuple[str, ...] = (
     "id", "kind", "prompt", "paper", "paper_id", "dataset_id", "dataset_label", "outcome_key",
     "measure_name", "group", "group_label", "where", "unit", "image", "options", "free_text",
     "answer_writes", "why", "confidence", "route", "impact", "answered", "status", "pending_why",
-    "answers",
+    "answers", "evidence_key", "auto_resolved", "suppressed_options",
     "scope", "member_ids", "cells", "slots", "settled", "impact_basis", "impact_rank",
     "impact_band", "blocking_rank", "status_line", "best_guess", "slot_answers")
 
@@ -2316,6 +2552,9 @@ _CARD_DEFAULTS: dict[str, Any] = {
     "where": "", "unit": "", "image": {}, "options": [], "free_text": True,
     "answer_writes": "mark_reviewed", "why": "", "confidence": None, "route": "", "impact": None,
     "answered": False, "status": "open", "pending_why": "", "answers": [],
+    # T4: the evidence a refutation card presents (scopes its answer), and the holds the record
+    # itself has already answered (the auditable trace of every auto-retirement, never silent)
+    "evidence_key": "", "auto_resolved": [], "suppressed_options": [],
     "scope": "cell", "member_ids": [], "cells": [], "slots": [], "settled": [],
     "impact_basis": "unknown", "impact_rank": -1.0, "impact_band": "high", "blocking_rank": 0,
     "status_line": "", "best_guess": {},
@@ -2560,6 +2799,7 @@ def _slot_of(question: Mapping[str, Any], run: Path,
     return {"group": question.get("group"),
             "group_label": str(question.get("group_label") or ""),
             "kind": str(question.get("kind") or ""),
+            "evidence_key": str(question.get("evidence_key") or ""),
             "member_id": str(question.get("id") or ""),
             "dataset_id": str(question.get("dataset_id") or ""),
             "outcome_key": str(question.get("outcome_key") or ""),
@@ -2837,6 +3077,9 @@ def _folded(card_id: str, kind: str, scope: str, members: Sequence[Question], ru
         settled=[s for m in members
                  for s in _settled(overrides, str(m.get("dataset_id") or ""),
                                    str(m.get("outcome_key") or ""), m.get("group"))],
+        auto_resolved=[entry for m in members for entry in (m.get("auto_resolved") or [])],
+        suppressed_options=[entry for m in members
+                            for entry in (m.get("suppressed_options") or [])],
         status_line=_status_line(row), best_guess=_best_guess(row))
     card.update(fields)
     _answered_from(card, members)
@@ -3727,6 +3970,7 @@ def _slot_answer(card: Mapping[str, Any], slot: Mapping[str, Any],
             "outcome_key": slot.get("outcome_key") or card.get("outcome_key", ""),
             "measure_name": card.get("measure_name", ""),
             "unit": slot.get("unit") or card.get("unit", ""),
+            "evidence_key": str(slot.get("evidence_key") or ""),
             "options": list(slot.get("options") or [])}
     return _single_override(view, answer)
 
@@ -3864,6 +4108,12 @@ def write_questions(run_dir: str | Path, questions: Sequence[Mapping[str, Any]] 
             # card 23 has no way back to a sentence forty cards above it.
             head += " — decided by the tool"
         md += [head, "", f"**{_md(q['prompt'])}**", ""]
+        if q.get("auto_resolved"):
+            # T4's trace, on the card it changed: a hold the record itself answered is not asked
+            # again, and a reader of this file can check each retirement against the seq it names
+            for entry in q["auto_resolved"]:
+                md += [f"_Auto-resolved by the record: `{_md(entry.get('name'))}` — "
+                       f"{_md(entry.get('why'))}_", ""]
         if q.get("status_line"):
             md += [f"_{_md(q['status_line'])}_", ""]
         if q.get("image", {}).get("path"):

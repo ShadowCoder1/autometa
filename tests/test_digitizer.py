@@ -3949,3 +3949,130 @@ def test_f_the_page_copy_clears_the_dispute():
     page_fig = _page_reacquire_fig(SimpleNamespace(pages=[rec]), fig)
     assert page_fig is not None
     assert page_fig.panel_labels_disputed is False and page_fig.panel_label_note == ""
+
+
+# --------------------------------------------- ticket 2: the caption inside the digitiser
+def _bare_fig():
+    from canopy.ingest.pdf import Bbox, FigureRegion
+
+    return FigureRegion(id="fig01", page=1, bbox=Bbox(0, 0, 10, 10), caption="", label="F",
+                        kind="raster", n_images=1, n_drawings=0, native_px=None, crop_png="a",
+                        claude_png="b", crop_dpi=72.0, claude_scale=1.0, confidence=0.9)
+
+
+def test_dispersion_chain_prefers_mapper_then_caption_then_legend():
+    from canopy.digitize.digitizer import _caption_dispersion_for
+    from canopy.models import DispersionType
+
+    fig = _bare_fig()
+    assert _caption_dispersion_for(fig, {}) == (None, "")
+    fig.caption_dispersion, fig.caption_dispersion_quote = "SE", "mean ± SE"
+    assert _caption_dispersion_for(fig, {}) == (DispersionType.SE, "mean ± SE")
+    # a letter-scoped statement answers its own panel and only its own
+    fig.caption_dispersion_panels = {"b": {"type": "SD", "quote": "error bars in b show SD"}}
+    assert _caption_dispersion_for(fig, {"panel": {"panel_named": "b"}}) == \
+        (DispersionType.SD, "error bars in b show SD")
+    assert _caption_dispersion_for(fig, {"panel": {"panel_named": "a"}}) == \
+        (DispersionType.SE, "mean ± SE")
+
+
+def test_bind_caption_keys_binds_only_a_series_that_names_its_own_arm():
+    from canopy.digitize.digitizer import _bind_caption_keys
+    from canopy.digitize.vlm import TargetSpec
+
+    fig = _bare_fig()
+    target = TargetSpec(outcome_key="late_adaptation", group_a_label="right hand",
+                        group_b_label="left hand")
+    assert _bind_caption_keys(fig, target) == (), "no keys, no rows — cache safety"
+    fig.caption_series_keys = [
+        {"descriptor": "Circles", "series_text": "adaptation with the right hand",
+         "quote": "…", "line_style": False},
+        {"descriptor": "squares", "series_text": "adaptation with the left hand",
+         "quote": "…", "line_style": False},
+        {"descriptor": "triangles", "series_text": "washout trials",
+         "quote": "…", "line_style": False}]
+    bound = dict(_bind_caption_keys(fig, target))
+    assert bound["Circles = 'adaptation with the right hand'"] == "A"
+    assert bound["squares = 'adaptation with the left hand'"] == "B"
+    assert bound["triangles = 'washout trials'"] == "", \
+        "a series naming neither arm rides unbound — the fact travels, the binding is not faked"
+
+
+def test_describe_is_byte_identical_without_keys_and_carries_them_when_bound():
+    from canopy.digitize.vlm import TargetSpec
+
+    bare = TargetSpec(outcome_key="k", group_a_label="right")
+    keyed = TargetSpec(outcome_key="k", group_a_label="right",
+                       caption_series_keys=(("circles = 'right hand'", "A"),
+                                            ("squares = 'left hand'", "")))
+    assert bare.describe() == TargetSpec(outcome_key="k", group_a_label="right").describe()
+    text = keyed.describe()
+    assert "group A marker per the caption: circles = 'right hand'" in text
+    assert "caption key (stated): squares = 'left hand'" in text
+
+
+def test_series_identity_takes_the_caption_as_a_third_witness():
+    """Fills silence (which is what lets the Balitsky shape trip `conflict` at all),
+    corroborates agreement, DISPUTES a reader's contrary words — and never re-binds a value."""
+    from canopy.digitize.digitizer import _series_identity
+
+    class Core:
+        markers = []
+        axes = None
+
+    def sample(group, label):
+        from types import SimpleNamespace
+        return SimpleNamespace(group=group, label_read=label, y_px=None, x_px=None)
+
+    # a reader silent about B's marker: the caption fills the silence, marked as its source
+    samples = [sample("A", "filled circles"), sample("B", "the left hand series")]
+    info = _series_identity(samples, Core(),
+                            caption_keys=(("squares = 'left hand'", "B"),))
+    assert info["described"]["B"][1] == "square"
+    assert info["described_from"]["B"] == "caption"
+    # the real Balitsky shape — BOTH readers said circles: B's stated word is never overridden,
+    # and the disagreement with the caption's key is recorded as the dispute it is
+    samples = [sample("A", "filled circles"), sample("B", "circles again")]
+    info = _series_identity(samples, Core(),
+                            caption_keys=(("squares = 'left hand'", "B"),))
+    assert info["described"]["B"] == ["", "circle"]
+    assert info.get("caption_mismatch")
+    # a reader that STATED a descriptor is never overridden — the disagreement is recorded
+    samples = [sample("B", "open triangles")]
+    info = _series_identity(samples, Core(),
+                            caption_keys=(("squares = 'left hand'", "B"),))
+    assert info["described"]["B"] == ["open", "triangle"]
+    assert info.get("caption_mismatch") and any("caption" in n for n in info["notes"])
+    # a line-style key never feeds marker matching: a line has no fill to mismatch
+    info = _series_identity([sample("B", "")], Core(),
+                            caption_keys=(("black lines = 'cursor view'", "B"),))
+    assert "B" not in info["described"] and not info.get("caption_mismatch")
+
+
+def test_a_single_caption_key_never_populates_both_groups():
+    """E2's pin: a key bound to one group fills that group's silence and no other's."""
+    from types import SimpleNamespace
+
+    from canopy.digitize.digitizer import _series_identity
+
+    class Core:
+        markers = []
+
+    silent = [SimpleNamespace(group="A", label_read="", y_px=None, x_px=None),
+              SimpleNamespace(group="B", label_read="", y_px=None, x_px=None)]
+    info = _series_identity(silent, Core(), caption_keys=(("squares = 'left hand'", "B"),))
+    assert "B" in info["described"] and "A" not in info["described"]
+
+
+def test_the_offer_gate_is_inert_on_a_real_log_scale_calibration():
+    """F3: the log ladder from a real run record (Carroll 2014's Fig 5, values as recorded) —
+    the gate's linear-only precondition leaves it alone however far the value sits."""
+    from canopy.verify.figures import offer_gate
+
+    provenance = {"cal_status": "confirmed",
+                  "cal": {"axis": "y", "scale": "log", "rmse": 0.4,
+                          "ticks": [[900.0, 1.0], [600.0, 10.0], [300.0, 100.0]]},
+                  "axis_range": 99.0, "axis_range_source": "ticks"}
+    assert offer_gate(provenance, 1e6) is None
+    assert offer_gate({**provenance, "cal": {**provenance["cal"], "scale": "linear"}},
+                      1e6) is not None, "the same ladder linear IS gated — scale is the guard"
