@@ -18,9 +18,9 @@
   </div>
   <p class="run-title" id="run-title"></p>
   <div class="topbar-right">
-    <span class="pill" id="key-pill" title="Loaded from .env; never shown here">key …</span>
+    <span class="pill" id="key-pill" title="Loaded from .env; never shown here">checking key</span>
     <span class="meter" id="cost-meter" hidden>
-      <span class="meter-label">spent</span>
+      <span class="meter-label">Spent</span>
       <span class="meter-value" id="cost-value">$0.00</span>
     </span>
   </div>
@@ -47,8 +47,8 @@
   <section id="screen-new" class="screen">
     <div class="lede">
       <h1>Start a review</h1>
-      <p>Point Canopy at a folder of PDFs and a protocol. The protocol is the only place your
-         field's knowledge lives — Canopy itself knows nothing about your subject.</p>
+      <p>Choose a folder of PDFs and write a protocol. The protocol carries all the field
+         knowledge; Canopy contributes the reading, the checks, and the audit trail.</p>
     </div>
 
     <form id="run-form" autocomplete="off">
@@ -69,7 +69,7 @@
             <input type="text" id="draft-sentence"
                    placeholder="Does treatment X change outcome Y in adults, compared with controls?">
           </label>
-          <button type="button" class="btn" id="draft-btn">Draft it for me</button>
+          <button type="button" class="btn" id="draft-btn">Draft a protocol</button>
         </div>
         <p class="hint" id="draft-note">A draft is a starting point, not a protocol: every line is
            yours to change.</p>
@@ -85,7 +85,7 @@
             <textarea id="p-question" rows="2"></textarea></label>
 
           <div class="grid-2 groups">
-            <fieldset class="sub"><legend>Group A <em>— the group an effect is “in”</em></legend>
+            <fieldset class="sub"><legend>Group A <em>the group an effect is “in”</em></legend>
               <label class="field"><span class="label">Label</span>
                 <input type="text" id="a-label"></label>
               <label class="field"><span class="label">How a paper identifies it</span>
@@ -93,7 +93,7 @@
               <label class="field"><span class="label">Synonyms <em>comma separated</em></span>
                 <input type="text" id="a-synonyms"></label>
             </fieldset>
-            <fieldset class="sub"><legend>Group B <em>— its comparator</em></legend>
+            <fieldset class="sub"><legend>Group B <em>its comparator</em></legend>
               <label class="field"><span class="label">Label</span>
                 <input type="text" id="b-label"></label>
               <label class="field"><span class="label">How a paper identifies it</span>
@@ -166,7 +166,7 @@
       </details>
 
       <div class="actions">
-        <button type="button" class="btn ghost" id="dry-run-btn">Dry run the mapper on 2–3 papers</button>
+        <button type="button" class="btn" id="dry-run-btn">Dry run on 3 papers</button>
         <button type="submit" class="btn primary" id="run-btn">Run the review</button>
       </div>
       <p class="hint" id="upload-progress" role="status" aria-live="polite" hidden></p>
@@ -180,8 +180,8 @@
     <div class="lede row">
       <div>
         <h1>Run monitor</h1>
-        <p id="monitor-sub">Each paper moves through five stages. Nothing is spent twice: a run
-           you stop can be resumed.</p>
+        <p id="monitor-sub">Each paper moves through five stages. A stopped run resumes where it
+           left off, and finished work is never paid for twice.</p>
       </div>
       <button type="button" class="btn danger" id="cancel-btn">Stop the run</button>
     </div>
@@ -265,14 +265,10 @@
     <div class="card pane" id="pane-questions" role="tabpanel" tabindex="0"
          aria-labelledby="tab-questions" hidden>
       <div class="card-head">
-        <p class="hint">Each held cell as one question: the picture the tool read, the answers it
-           is choosing between, and why it could not decide. Every answer on offer changes the
-           cell — a question whose answers could not is not asked. Answering writes a recorded
-           override and re-pools the forest plot; a cell held for two reasons stays held until
-           both are answered. The questions the map could not settle are here too — which
-           measure an outcome carries, and whether a dataset only one mapping agent proposed is
-           in the review. Nothing was read for those, so their answers are applied by the next
-           <code>--resume</code>.</p>
+        <p class="hint">Each open question shows the page Canopy read, the answers it weighed,
+           and why it could not decide. Answering records an override and re-pools the plot.
+           Questions from the mapping stage are applied on the next resume, since those pages
+           have not been read yet.</p>
       </div>
       <div id="questions"></div>
     </div>

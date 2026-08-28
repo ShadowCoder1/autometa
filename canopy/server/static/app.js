@@ -75,6 +75,11 @@
     return String(text || "").split(",").map(function (s) { return s.trim(); })
       .filter(function (s) { return s.length > 0; });
   }
+  // real plurals, everywhere a count is written: "1 paper", "3 papers" — never "paper(s)"
+  function plural(count, word) {
+    var n = Number(count) || 0;
+    return n + " " + word + (n === 1 ? "" : "s");
+  }
 
   /* ───────────────────────────────────────────────────────── state + API */
   var state = {
@@ -206,7 +211,7 @@
     return api("/api/settings").then(function (settings) {
       state.settings = settings;
       var pill = $("key-pill");
-      pill.textContent = settings.api_key_configured ? "api key configured" : "no api key";
+      pill.textContent = settings.api_key_configured ? "key loaded" : "no key";
       pill.className = "pill " + (settings.api_key_configured ? "on" : "off");
       var profiles = $("p-profile");
       clear(profiles);
@@ -225,7 +230,7 @@
       state.examples = body.examples || [];
       var picker = $("example-picker");
       clear(picker);
-      picker.appendChild(h("option", { text: "— a blank skeleton —", attrs: { value: "" } }));
+      picker.appendChild(h("option", { text: "Blank protocol", attrs: { value: "" } }));
       state.examples.forEach(function (example) {
         picker.appendChild(h("option", { text: example.title, attrs: { value: example.name } }));
       });
@@ -353,7 +358,7 @@
 
   $("draft-btn").addEventListener("click", function () {
     var sentence = $("draft-sentence").value.trim();
-    if (!sentence) { toast("Say what your review is about first."); return; }
+    if (!sentence) { toast("Describe your review in a sentence first."); return; }
     var button = $("draft-btn");
     button.disabled = true;
     button.textContent = "Drafting…";
@@ -366,10 +371,10 @@
         (body.warnings || []).forEach(function (warning) {
           note.appendChild(h("span", { text: warning + " " }));
         });
-        toast("Drafted — now read every line of it.");
+        toast("Draft ready. Check every line before you run.");
       })
       .catch(function (error) { toast(error.message); })
-      .then(function () { button.disabled = false; button.textContent = "Draft it for me"; });
+      .then(function () { button.disabled = false; button.textContent = "Draft a protocol"; });
   });
 
   /* ───────────────────────────────────────────────────────── files */
@@ -387,8 +392,8 @@
       ]));
     });
     var skipped = (fileList ? fileList.length : 0) - chosen.length;
-    $("files-note").textContent = chosen.length + " PDF" + (chosen.length === 1 ? "" : "s")
-      + " ready" + (skipped > 0 ? " · " + skipped + " non-PDF file(s) ignored" : "");
+    $("files-note").textContent = plural(chosen.length, "PDF") + " ready"
+      + (skipped > 0 ? " · " + plural(skipped, "non-PDF file") + " ignored" : "");
   }
 
   $("folder-input").addEventListener("change", function (event) { acceptFiles(event.target.files); });
@@ -469,7 +474,8 @@
     if (!note) { return; }
     show(note, percent !== null);
     if (percent === null) { return; }
-    note.textContent = message || ("Uploading " + state.files.length + " files… " + percent + "%");
+    note.textContent = message || ("Uploading " + plural(state.files.length, "file")
+      + "… " + percent + "%");
   }
 
   function createRun(start) {
@@ -535,7 +541,7 @@
     }).catch(function (error) { toast(error.message); })
       .then(function () {
         button.disabled = false;
-        button.textContent = "Dry run the mapper on 2–3 papers";
+        button.textContent = "Dry run on 3 papers";
       });
   });
 
@@ -550,7 +556,7 @@
             resolve(body);
           } else if (tries > 800) {
             window.clearInterval(timer);
-            reject(new Error("the dry run is taking too long — watch the log instead"));
+            reject(new Error("The dry run is taking too long. Watch the log instead."));
           }
         }).catch(function (error) { window.clearInterval(timer); reject(error); });
       }, 1500);
@@ -677,7 +683,7 @@
         if (seen.status === "started") { applyStage(entry, stage, "started", seen.message); }
       });
     });
-    $("stage-summary").textContent = Object.keys(state.papers).length + " paper(s)";
+    $("stage-summary").textContent = plural(Object.keys(state.papers).length, "paper");
   }
 
   function onEvent(event) {
@@ -709,8 +715,8 @@
     ]));
     while (log.children.length > 400) { log.removeChild(log.firstChild); }
     log.scrollTop = log.scrollHeight;
-    $("log-count").textContent = state.events.length + " events";
-    $("stage-summary").textContent = Object.keys(state.papers).length + " paper(s)";
+    $("log-count").textContent = plural(state.events.length, "event");
+    $("stage-summary").textContent = plural(Object.keys(state.papers).length, "paper");
   }
 
   function listen() {
@@ -728,7 +734,7 @@
       state.source = null;
       $("monitor-sub").textContent = (event.status === "not_started"
         ? "This run has not been started yet."
-        : "Run " + (event.status || "finished") + (event.message ? " — " + event.message : ""));
+        : "Run " + (event.status || "finished") + (event.message ? ". " + event.message : ""));
       refreshRun().then(function () {
         if (event.status === "done") { loadResults(); }
       }).catch(function (error) { toast(error.message); });
@@ -738,12 +744,12 @@
 
   $("cancel-btn").addEventListener("click", function () {
     if (!state.runId) {          // the create request is still uploading: there is nothing to cancel
-      toast("The papers are still uploading — the run has not been created yet. "
-            + "Reload the page to abandon it.");
+      toast("Papers are still uploading, so there is no run to stop yet. "
+            + "Reload the page to abandon the upload.");
       return;
     }
     api("/api/runs/" + state.runId + "/cancel", { method: "POST" })
-      .then(function (body) { toast("Run " + body.status + " — what finished is kept."); })
+      .then(function (body) { toast("Run " + body.status + ". Finished work is saved."); })
       .catch(function (error) { toast(error.message); });
   });
 
@@ -791,10 +797,10 @@
     if (finished) {
       var word = run.status === "done" ? "Run finished." : "Run " + run.status + ".";
       banner.appendChild(h("span", { text: word + " " + money(run.cost_usd) + " over "
-        + (run.papers || []).length + " paper(s)." }));
+        + plural((run.papers || []).length, "paper") + "." }));
       if (run.status !== "error") {
         banner.appendChild(h("button", {
-          cls: "btn primary small", text: "Open Results", attrs: { type: "button" },
+          cls: "btn ghost small", text: "Open results", attrs: { type: "button" },
           on: { click: function () { loadResults(); } }
         }));
       }
@@ -881,13 +887,13 @@
     var badge = $("questions-count");
     badge.textContent = String(nOpen);
     badge.title = nPending
-      ? nPending + " answered decision(s) waiting for a re-run" : "";
+      ? plural(nPending, "answered decision") + " waiting for a re-run" : "";
     show(badge, nOpen > 0 || nPending > 0);
     var holder = $("questions");
     clear(holder);
     if (!questions.length) {
       holder.appendChild(h("p", { cls: "hint",
-        text: "Nothing to ask: every cell was settled by the tool itself." }));
+        text: "No open questions. Every value was settled during verification." }));
       return;
     }
     // DECISION C4: what answering is WORTH decides where a card sits. The tool never answers a
@@ -904,15 +910,15 @@
     });
     [["Decisions that move the result", moving,
       "Ordered by how far the pooled estimate moves when this is settled."],
-     ["Low impact — answer if you have time", low,
+     ["Low impact. Answer if you have time", low,
       "Every answer on offer here moves this row's effect size by less than 0.10 and the pooled "
       + "estimate by less than 0.05. They are still open; nothing was decided for you."],
      ["Answered", answered,
-      "Kept on the page with what was decided and when — a re-pool has already used them."],
-     ["Decided by the tool — confirm or change", settled,
+      "Kept on the page with what was decided and when. A re-pool has already used them."],
+     ["Resolved automatically. Confirm or change", settled,
       "Nothing here blocked the run. Where a paper reports one outcome two ways, the map picked "
       + "one and the numbers above were read with it. Each card shows the reading it set aside "
-      + "and the words it decided on; changing one re-reads that cell on the next --resume."]
+      + "and the words it decided on; changing one re-reads that cell on the next resume."]
     ].forEach(function (part) {
       if (!part[1].length) { return; }
       var section = h("section", { cls: "q-section" }, [
@@ -938,7 +944,7 @@
   function impactPill(q) {
     var basis = q.impact_basis || "unknown";
     if (basis === "unknown") {
-      return h("span", { cls: "pill", text: "impact not priced",
+      return h("span", { cls: "pill", text: "Impact not estimated",
         attrs: { title: "nothing on the record says what answering this would move" } });
     }
     var moves = basis === "pooled" ? "moves the pooled estimate by "
@@ -982,7 +988,7 @@
 
   function optionText(o) {
     return o.label
-      + (o.backed_by && o.backed_by.length ? " — " + o.backed_by.join(", ") : "")
+      + (o.backed_by && o.backed_by.length ? " · " + o.backed_by.join(", ") : "")
       + (o.quote ? " “" + String(o.quote).slice(0, 140) + "”" : "");
   }
 
@@ -995,13 +1001,13 @@
       // three states, not two: a decision whose consequence has not happened yet is not
       // "answered" — the extraction it decides has to be bought before anything changes.
       (q.status === "pending_rerun")
-        ? h("span", { cls: "pill off", text: "answered — pending re-run",
+        ? h("span", { cls: "pill off", text: "Answered. Applies on the next resume.",
                       attrs: { title: q.pending_why || "" } })
         // …and a fourth: a choice the TOOL made for itself, which blocked nothing and was never
         // asked. Not "answered" in the sense a reviewer means by it, and the pill has to say so or
         // the card reads as one somebody already looked at.
         : (q.status === "settled")
-        ? h("span", { cls: "pill off", text: "decided by the tool — confirm or change",
+        ? h("span", { cls: "pill off", text: "Resolved automatically. Confirm or change.",
                       attrs: { title: q.why || "" } })
         : q.answered ? h("span", { cls: "pill ok", text: "answered" })
                      : h("span", { cls: "pill", text: (q.kind === "cell" && q.slot_answers)
@@ -1120,7 +1126,7 @@
           : { type: "radio", name: "option", value: "__free__", id: freeId } }),
         h("span", { text: (q.kind === "no_value")
           ? "it is here (say where), or it is not reported"
-          : "none of these — I will type it" })
+          : "None of these. I will type it." })
       ]));
     }
     var free = h("div", { cls: "q-free", attrs: { hidden: true } });
@@ -1138,7 +1144,7 @@
       free.appendChild(h("span", { cls: "hint", text: "" }));
     } else if (q.kind === "no_value") {
       free.appendChild(h("input", { attrs: { type: "text", name: "hint",
-        placeholder: "e.g. Table 2, row 'older', p. 5 — or leave empty for 'not reported'" } }));
+        placeholder: "e.g. Table 2, row 'older', p. 5. Leave empty for 'not reported'." } }));
     } else {
       free.appendChild(h("input", { attrs: { type: "number", step: "any", name: "mean",
         placeholder: "mean" + (q.unit ? " (" + q.unit + ")" : "") } }));
@@ -1168,9 +1174,9 @@
     }
     form.appendChild(h("input", { cls: "q-note", attrs: { type: "text", name: "note",
       placeholder: (q.kind === "orientation")
-        ? "the sentence in the paper that says so — recorded with the direction"
+        ? "the sentence in the paper that says so, recorded with the direction"
         : isChoiceOnly(q)
-        ? "why — the rule or the sentence that decides it, recorded with the answer"
+        ? "why: the rule or the sentence that decides it, recorded with the answer"
         : "note for the record (optional)" } }));
     var actions = h("div", { cls: "q-actions" }, [
       h("button", { cls: "btn small", attrs: { type: "submit" }, text: "Answer & re-pool" })
@@ -1205,14 +1211,14 @@
           + (cell.group_label || cell.group ? " · " + (cell.group_label || cell.group) : "") }));
       });
       right.appendChild(h("details", { cls: "q-settles" }, [
-        h("summary", { text: "this settles " + cells.length + " cell(s)" }), list
+        h("summary", { text: "this settles " + plural(cells.length, "cell") }), list
       ]));
     }
     // the reason, one sentence per thing that is holding it — a card folded from two cells
     // carries both cells' reasons, and a wall of them joined by `||` reads as neither
     var why = h("details", { cls: "q-why" }, [
-      h("summary", { text: q.status === "settled" ? "what the tool decided, and on what"
-                                                : "why the tool could not decide" })
+      h("summary", { text: q.status === "settled" ? "what Canopy decided, and on what"
+                                                : "why Canopy could not decide" })
     ]);
     String(q.why || "").split(" || ").forEach(function (reason) {
       if (reason.trim()) { why.appendChild(h("p", { text: reason.trim() })); }
@@ -1227,7 +1233,7 @@
     if (q.answered && q.answers && q.answers.length) {
       right.appendChild(h("p", { cls: "hint",
         text: "Answered: " + (q.answers[q.answers.length - 1].justification || "")
-          + (q.status === "pending_rerun" ? " — not applied yet: " + (q.pending_why || "") : "") }));
+          + (q.status === "pending_rerun" ? " · Not applied yet: " + (q.pending_why || "") : "") }));
     }
     body.appendChild(right);
     return h("section", { cls: "card q-card"
@@ -1276,7 +1282,7 @@
     else if (free && slotPicks.length) {
       // a typed value and slot picks in one submit would drop one of them on the floor: the
       // typed value goes to one group, the picks to others, and the page cannot know which
-      toast("Answer the slots above, or type a value — not both in one submit."); return;
+      toast("Answer the slots above, or type a value. Not both in one submit."); return;
     } else if (!picked && !combined && !slotPicks.length && !free) {
       toast(isCombination(q) ? "Choose an answer for each group first." : "Choose an answer first.");
       return;
@@ -1334,10 +1340,10 @@
         })[0];
         var wrote = records.length > 1 ? " (" + records.length + " overrides)" : "";
         var waitingCount = body.n_pending
-          ? " " + body.n_pending + " answered decision(s) waiting for a re-run." : "";
-        toast(waiting ? "Recorded" + wrote + " — " + waiting.why
+          ? " " + plural(body.n_pending, "answered decision") + " waiting for a re-run." : "";
+        toast(waiting ? "Recorded" + wrote + ". " + waiting.why
                       : "Recorded" + wrote + ". "
-                        + (body.n_open ? body.n_open + " question(s) still open."
+                        + (body.n_open ? plural(body.n_open, "question") + " still open."
                                        : "No open questions.") + waitingCount);
         return refreshRun().then(loadResults).then(loadQuestions);
       })
@@ -1352,8 +1358,9 @@
     button.disabled = true;
     api("/api/runs/" + state.runId + "/repool", { method: "POST" })
       .then(function (summary) {
-        toast(summary.applied + " override(s) applied"
-          + (summary.pending.length ? ", " + summary.pending.length + " need a re-run" : ""));
+        toast(plural(summary.applied, "override") + " applied"
+          + (summary.pending.length ? ", " + summary.pending.length + " "
+            + (summary.pending.length === 1 ? "needs" : "need") + " a re-run" : ""));
         highlightRepool(false);
         return refreshRun().then(loadResults);
       })
@@ -1436,11 +1443,11 @@
         button.disabled = mine === "best_guess" && !possible;
       });
     $("line-note").textContent = !possible
-      ? "No second line: no held row could be admitted by a rule."
+      ? "No secondary line. No held row qualifies under a rule."
       : (state.line === "best_guess"
         ? guess.note || "Not the primary analysis."
-        : "The primary analysis. " + (guess.n_added || 0)
-          + " held row(s) a rule would admit are on the other line.");
+        : "The primary analysis. The other line admits "
+          + plural(guess.n_added || 0, "held row") + " under a rule.");
   }
 
   function renderPooled(results) {
@@ -1469,14 +1476,15 @@
       // the caveat is the report's own sentence, served with the results — one wording for the
       // page, the report and the plot, rather than three that drift apart
       card.appendChild(h("div", { cls: "stat wide" }, [
-        h("span", { cls: "pill guess", text: "best guess — not the primary analysis" }),
+        h("span", { cls: "pill guess", text: "Best guess · secondary analysis" }),
         h("p", { cls: "caveat", text: results.best_guess_caveat || "" })
       ]));
     }
     card.appendChild(stat(guess ? "best-guess estimate" : "pooled estimate", num(pooled.estimate)));
     var ciLevel = (settings && settings.ci_level !== null && settings.ci_level !== undefined) ? Number(settings.ci_level) : 0.95;
     card.appendChild(stat((ciLevel * 100) + "% CI", "[" + num(pooled.ci_low, 2) + ", " + num(pooled.ci_high, 2) + "]"));
-    card.appendChild(stat("k", String(pooled.k), "from " + (pooled.k_papers || pooled.k) + " papers"));
+    card.appendChild(stat("k", String(pooled.k),
+      "from " + plural(pooled.k_papers || pooled.k, "paper")));
     // I² is a fraction in `pooled.json`, on both lines, and this card is where a reader reads it
     card.appendChild(stat("I²", num(100 * (Number(pooled.I2) || 0), 1) + "%"));
     card.appendChild(stat("τ²", num(pooled.tau2, 3)));
@@ -1640,7 +1648,7 @@
       if (guess) { parts.push(results.best_guess_caveat || ""); }
       if (renderer.renderer) {
         parts.push("Drawn by " + renderer.renderer
-          + (renderer.reason ? " — " + renderer.reason : "") + ".");
+          + (renderer.reason ? ": " + renderer.reason : "") + ".");
       }
       var text = parts.filter(Boolean).join(" ");
       if (text) { holder.appendChild(h("p", { cls: guess ? "caveat" : "hint", text: text })); }
@@ -1755,7 +1763,7 @@
   function decide(entry, payload, done) {
     api("/api/runs/" + state.runId + "/overrides", { method: "POST", json: payload })
       .then(function (body) {
-        toast("recorded as override #" + body.override.seq + " — re-pool to see it");
+        toast("Recorded as override #" + body.override.seq + ". Re-pool to see it.");
         highlightRepool(true);
         if (done) { done(); }
       })
@@ -1782,7 +1790,7 @@
     clear(holder);
     var queue = results.review || [];
     if (!queue.length) {
-      holder.appendChild(h("p", { cls: "hint", text: "Nothing is waiting for a human." }));
+      holder.appendChild(h("p", { cls: "hint", text: "Nothing needs your review." }));
     }
     queue.forEach(function (entry) {
       var impact = entry.impact_abs_delta_pooled;
@@ -1804,7 +1812,7 @@
 
       var outcomeKey = entry.outcome_key || state.outcome;
       var reason = h("input", { attrs: { type: "text", placeholder:
-        "why — e.g. “checked against Table 2, the reading is right”" } });
+        "why, e.g. “checked against Table 2, the reading is right”" } });
       var accept = h("button", {
         cls: "btn primary small", text: "Accept as read", attrs: { type: "button" },
         on: { click: function () {
@@ -1821,7 +1829,7 @@
         cls: "btn small", text: "Exclude dataset", attrs: { type: "button" },
         on: { click: function () {
           var why = reason.value.trim();
-          if (!why) { toast("say why this dataset should not be pooled"); reason.focus(); return; }
+          if (!why) { toast("Give a reason for excluding this dataset."); reason.focus(); return; }
           exclude.disabled = true;
           decide(entry, { kind: "exclude_dataset", dataset_id: entry.dataset_id,
                           outcome_key: outcomeKey, justification: why },
@@ -1972,7 +1980,7 @@
         h("img", { cls: "ev-img", attrs: { src: withToken(image.url), loading: "lazy",
           alt: "Page " + (image.page || "?") + " of the paper, with the quoted value highlighted" } }),
         image.quote ? h("blockquote", { cls: "ev-quote", text: image.quote }) : null,
-        h("p", { cls: "hint", text: (image.matched ? "" : "the quote could not be located on the page — ")
+        h("p", { cls: "hint", text: (image.matched ? "" : "the quote could not be located on the page. ")
           + (image.note || "") })
       ]));
     });
@@ -2088,7 +2096,7 @@
       eligible.appendChild(h("option", { text: pair[1], attrs: { value: pair[0] } }));
     });
     var justification = h("textarea", { attrs: { rows: 2,
-      placeholder: "why — this is the record a reader of your review will check" } });
+      placeholder: "why: this is the record a reader of your review will check" } });
 
     var valueRow = h("div", { cls: "grid-3" }, [
       h("label", { cls: "field" }, [h("span", { cls: "label", text: "group" }), group]),
@@ -2144,8 +2152,8 @@
         submit.disabled = true;
         api("/api/runs/" + state.runId + "/overrides", { method: "POST", json: payload })
           .then(function (body) {
-            status.textContent = "recorded as override #" + body.override.seq
-              + " — re-pool to see it in the plot";
+            status.textContent = "Recorded as override #" + body.override.seq
+              + ". Re-pool to see it in the plot.";
             justification.value = "";
             highlightRepool(true);
           })
@@ -2158,8 +2166,9 @@
         repool.disabled = true;
         api("/api/runs/" + state.runId + "/repool", { method: "POST" })
           .then(function (summary) {
-            toast(summary.applied + " override(s) applied"
-              + (summary.pending.length ? ", " + summary.pending.length + " need a re-run" : ""));
+            toast(plural(summary.applied, "override") + " applied"
+              + (summary.pending.length ? ", " + summary.pending.length + " "
+            + (summary.pending.length === 1 ? "needs" : "need") + " a re-run" : ""));
             return refreshRun().then(loadResults);
           })
           .catch(function (error) { toast(error.message); })
