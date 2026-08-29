@@ -8,7 +8,24 @@ is a claim about a publisher that nobody checked. So a candidate this stage neve
 the fetch cap stopped first, because the job was cancelled — keeps `state == "wanted"` and gets
 `fetch_outcome = "over_fetch_cap"` (or `"cancelled"`), which is a fact about *Canopy*, in Canopy's
 own words. Silently leaving it `wanted` with no explanation would be the same failure one step
-quieter.
+quieter. The corollary holds too: a candidate NOBODY SCREENED never becomes `paywalled`, however
+the fetch went, because "the screener wanted this and the publisher would not give it" is two
+claims and only the second one was tested.
+
+WHAT THIS STAGE FETCHES, AND WHY IT IS NOT JUST `wanted` (review §B3)
+--------------------------------------------------------------------
+Two populations, in this order: everything the screener **wanted**, then everything **nobody
+read** that carries an open-access route. The second half is what makes a search without an API
+key a feature rather than a dead end — with no model nothing is screened, so nothing is `wanted`,
+so the old rule fetched *nothing at all* and left the user a list of titles they could not open,
+could not judge and could not begin a run from. An unscreened paper with an OA route costs
+bandwidth and no money, and a PDF on disk is the difference between a list and a review.
+
+`excluded` and `unsure` are never fetched: the screener read them and had an opinion, and a human
+who disagrees follows the link or uploads the PDF. Every row this stage does not attempt records
+WHY it did not (`NOT_WANTED`, `NO_OA_LOCATION`, `OVER_FETCH_CAP`, `CANCELLED`) — a blank
+`fetch_outcome` reads the same as "we tried and found nothing", and that is the one thing it must
+never be mistaken for.
 
 WHAT A RATE LIMIT IS, AND WHAT IT IS NOT (review §C-BLK1, the blocker this module answers)
 ------------------------------------------------------------------------------------------
@@ -60,8 +77,8 @@ from .models import Candidate
 from .transport import DEFAULT_FETCH_TIMEOUT, SearchTransport
 
 __all__ = ["MAX_ATTEMPTS", "MAX_HOST_WORKERS", "RETRYABLE", "NO_OA_LOCATION", "OVER_FETCH_CAP",
-           "CANCELLED", "FetchSummary", "host_of", "oa_sources", "fetch_candidate",
-           "fetch_candidates", "default_probe"]
+           "CANCELLED", "NOT_WANTED", "FetchSummary", "host_of", "oa_sources", "fetch_candidate",
+           "fetch_candidates", "fetchable", "default_probe"]
 
 #: URLs tried per candidate. Three, because the order is quality-sorted: if the index's own copy,
 #: the best OA location and the next location have all failed, the fourth is a landing page and the
@@ -83,6 +100,7 @@ RETRYABLE = frozenset({"rate_limited"})
 NO_OA_LOCATION = "no_oa_location"      # tried nothing, because no index offered a URL
 OVER_FETCH_CAP = "over_fetch_cap"      # the search's own cap stopped before this one
 CANCELLED = "cancelled"                # the user stopped the search
+NOT_WANTED = "not_wanted"              # the screener read it and ruled it out or could not tell
 
 
 @dataclass
@@ -91,6 +109,10 @@ class FetchSummary:
 
     n_fetched: int = 0
     n_paywalled: int = 0
+    #: tried, no PDF, and nobody had screened it. Kept apart from `n_paywalled` for the reason
+    #: `models.py` keeps `wanted` and `paywalled` apart: "the screener wanted it and the publisher
+    #: refused" is two claims, and only the second one was tested here.
+    n_no_copy: int = 0
     n_rate_limited: int = 0          # still `wanted`: we were told to slow down, not refused
     n_over_cap: int = 0
     n_attempts: int = 0
@@ -174,6 +196,20 @@ def _slow_down_note(host: str) -> str:
             f"not a paywall; this paper is worth trying again in a minute")
 
 
+def _record_path(written: Path, dest_dir: Path) -> str:
+    """Where a fetched PDF lives, said the way the rest of the system says it.
+
+    `dest_dir` is the search's `staging/`, so the search directory is its parent and the
+    recorded string is `staging/<sha>.pdf`. Falling back to the bare name would re-create the
+    mismatch this function exists to remove, so an unexpected layout says so loudly instead.
+    """
+    root = dest_dir.resolve().parent
+    try:
+        return str(written.resolve().relative_to(root))
+    except ValueError:                                     # pragma: no cover - defensive
+        return str(written.resolve())
+
+
 def fetch_candidate(candidate: Candidate, dest_dir: str | Path, *,
                     transport: SearchTransport,
                     probe: Callable[[Path], Mapping[str, Any]] | None = None,
@@ -192,14 +228,21 @@ def fetch_candidate(candidate: Candidate, dest_dir: str | Path, *,
     * a host told us to slow down and nothing else worked → the state STAYS `wanted`, the outcome
       is `rate_limited`, and the caller retries it later. Calling that a paywall would be blaming a
       publisher for our own request rate.
+
+    Only a candidate that arrived `wanted` can be left `paywalled`. A `not_screened` one keeps its
+    state whatever the fetch did, because `paywalled` in this tool means "the screener wanted it
+    and no open copy exists", and half of that sentence was never established for a paper nobody
+    read. Its `fetch_outcome` still says exactly what happened.
     """
+    was_wanted = candidate.state == "wanted"
     sources = oa_sources(candidate, limit)
     if not sources:
         # nothing was tried, so nothing may be claimed about a publisher. This is still a real
         # answer to "can we read it?" — no index offered an open-access copy — and the page shows
         # it beside the links, which is what makes it actionable.
         candidate.fetch_outcome = NO_OA_LOCATION
-        candidate.state = "paywalled"
+        if was_wanted:
+            candidate.state = "paywalled"
         return NO_OA_LOCATION
 
     rate_limited_host = ""
@@ -221,7 +264,13 @@ def fetch_candidate(candidate: Candidate, dest_dir: str | Path, *,
         if download.ok and download.path is not None:
             candidate.state = "fetched"
             candidate.fetch_outcome = "fetched"
-            candidate.pdf_path = Path(download.path).name
+            # RELATIVE TO THE SEARCH DIRECTORY, which is what `models.Candidate.pdf_path`
+            # documents and what `server/searches.py` resolves against. Recording the bare
+            # filename here made every fetched paper unresolvable at begin time — the file
+            # sits in `staging/`, the reader looked beside it, found nothing, and the run was
+            # refused for having no PDFs while the page showed them ticked and readable. The
+            # two sides now agree, and `test_search_fetch.py` asserts they still do.
+            candidate.pdf_path = _record_path(Path(download.path), Path(dest_dir))
             candidate.pdf_bytes = int(download.n_bytes)
             pages = seen.get("n_pages")
             candidate.pdf_pages = int(pages) if isinstance(pages, int) and pages > 0 else None
@@ -234,7 +283,8 @@ def fetch_candidate(candidate: Candidate, dest_dir: str | Path, *,
         # is still "wanted".
         candidate.fetch_outcome = "rate_limited"
         return "rate_limited"
-    candidate.state = "paywalled"
+    if was_wanted:
+        candidate.state = "paywalled"
     candidate.fetch_outcome = last_outcome or NO_OA_LOCATION
     return candidate.fetch_outcome
 
@@ -255,6 +305,36 @@ def _group_by_host(candidates: Sequence[Candidate]) -> list[list[Candidate]]:
     return list(groups.values())
 
 
+def fetchable(candidates: Sequence[Candidate]) -> list[Candidate]:
+    """The candidates this stage may fetch, best claim first — see the module docstring.
+
+    Wanted papers first, so a cap that bites cuts the unscreened tail and never a paper the
+    screener asked for. Then the records nobody read that carry an open-access route: with no
+    model NOTHING is wanted, and a stage that fetched only `wanted` fetched nothing at all.
+    """
+    wanted = [c for c in candidates if c.state == "wanted"]
+    unread = [c for c in candidates if c.state == "not_screened" and oa_sources(c)]
+    return wanted + unread
+
+
+def _record_skips(candidates: Sequence[Candidate], attempting: set[str]) -> None:
+    """Write WHY on every row this stage will not try. Nothing leaves here with a blank reason.
+
+    A blank `fetch_outcome` is indistinguishable from "we tried every route and none worked", and
+    the keyless search left every single row blank: nothing was screened, so nothing was wanted,
+    so nothing was fetched and the record did not even say so (review §B3). A row that already
+    carries an outcome — a previous pass, a cap, a cancellation — keeps the one it earned.
+    """
+    for candidate in candidates:
+        if candidate.key in attempting or candidate.fetch_outcome or candidate.pdf_path:
+            continue                     # attempted below, already answered, or already readable
+        if candidate.state == "not_screened":
+            # it survived `fetchable`'s filter only by having no route at all
+            candidate.fetch_outcome = NO_OA_LOCATION
+        elif candidate.state in ("excluded", "unsure"):
+            candidate.fetch_outcome = NOT_WANTED
+
+
 def fetch_candidates(candidates: Sequence[Candidate], dest_dir: str | Path, *,
                      transport: SearchTransport,
                      probe: Callable[[Path], Mapping[str, Any]] | None = None,
@@ -263,28 +343,30 @@ def fetch_candidates(candidates: Sequence[Candidate], dest_dir: str | Path, *,
                      timeout: float = DEFAULT_FETCH_TIMEOUT,
                      max_workers: int = MAX_HOST_WORKERS,
                      cancelled: Callable[[], bool] | None = None) -> FetchSummary:
-    """Fetch every wanted candidate, serial per host, and retry the rate-limited ones at the end.
+    """Fetch every `fetchable` candidate, serial per host, and retry the rate-limited ones at the
+    end.
 
     `max_fetch` is a cap on candidates ATTEMPTED, not on candidates fetched, and the ones it cuts
     off are recorded (`over_fetch_cap`) rather than dropped: a user who sees "40 wanted, 20
     fetched" and no explanation has been told a smaller lie than the truth.
     """
     summary = FetchSummary()
-    wanted = [c for c in candidates if c.state == "wanted"]
-    if not wanted:
+    workload = fetchable(candidates)
+    _record_skips(candidates, {c.key for c in workload})
+    if not workload:
         return summary
 
-    attempted, over_cap = wanted, []
-    if max_fetch is not None and len(wanted) > max_fetch:
-        attempted, over_cap = wanted[:max(0, max_fetch)], wanted[max(0, max_fetch):]
+    attempted, over_cap = workload, []
+    if max_fetch is not None and len(workload) > max_fetch:
+        attempted, over_cap = workload[:max(0, max_fetch)], workload[max(0, max_fetch):]
     for candidate in over_cap:
-        # still `wanted`, and it must stay that way: nothing was tried, so nothing about a
-        # publisher may be recorded. The outcome names OUR cap.
+        # the state is left exactly as it was, and it must be: nothing was tried, so nothing
+        # about a publisher may be recorded. The outcome names OUR cap.
         candidate.fetch_outcome = OVER_FETCH_CAP
         summary.n_over_cap += 1
     if over_cap:
         summary.notes.append(
-            f"the fetch cap of {max_fetch} stopped this search before {len(over_cap)} wanted "
+            f"the fetch cap of {max_fetch} stopped this search before {len(over_cap)} more "
             f"papers were tried — they are listed with their links, and raising the cap would "
             f"fetch them")
 
@@ -305,7 +387,10 @@ def fetch_candidates(candidates: Sequence[Candidate], dest_dir: str | Path, *,
 
     # the second pass: only the ones a host told us to slow down for, and only after everyone else
     # has had their turn. Retrying a 429 immediately is asking the same question at the same rate.
-    retry = [c for c in attempted if c.fetch_outcome in RETRYABLE and c.state == "wanted"]
+    # `not c.pdf_path` rather than `state == "wanted"`: an unscreened candidate that was told to
+    # slow down keeps `not_screened`, and keying the retry on the state would have quietly
+    # dropped exactly the rows the keyless path exists to fetch.
+    retry = [c for c in attempted if c.fetch_outcome in RETRYABLE and not c.pdf_path]
     if retry and not stopped():
         summary.notes.append(
             f"{len(retry)} paper(s) were rate-limited on the first pass and retried at the end")
@@ -318,6 +403,11 @@ def fetch_candidates(candidates: Sequence[Candidate], dest_dir: str | Path, *,
             summary.n_fetched += 1
         elif candidate.state == "paywalled":
             summary.n_paywalled += 1
+        elif candidate.fetch_attempts and candidate.fetch_outcome not in RETRYABLE:
+            # tried, nothing came back, and nobody had screened it — so it is counted here and
+            # not as a paywall, which would be a claim about a publisher on a paper the screener
+            # never asked for
+            summary.n_no_copy += 1
         if candidate.fetch_outcome == "rate_limited":
             summary.n_rate_limited += 1
             for attempt in candidate.fetch_attempts:

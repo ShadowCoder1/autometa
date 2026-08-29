@@ -259,9 +259,14 @@ def create_app(runs_dir: str | Path = "runs", *,
     callable (see `searches.SearchJobs`), defaulting to `canopy.search.run.run_search`. A test
     passes a fake and the search endpoints then reach no index and no model.
 
-    `searches_dir` defaults to a SIBLING of the runs directory. Sibling and not a subdirectory:
-    `JobManager.list()` globs `<dir>/*/job.json`, so a search living under `runs/` would appear in
-    `GET /api/runs` as a review with no papers.
+    `searches_dir` defaults to a SIBLING of the runs directory, so that a search directory can
+    never be a run directory: `GET /api/runs` must not offer a search as a review with no papers.
+    The reason it is a sibling rather than `runs/searches/` is NOT that the nested layout would
+    break — `JobManager.list()` globs `<dir>/*/job.json`, one component, and a nested search's
+    `job.json` sits two deep, so it would be missed today. It is that "missed by a glob" is an
+    accident of the pattern, and one `**` in a later edit would put every search on the review
+    list. A sibling makes the separation structural. `test_a_search_never_appears_in_the_run_list`
+    passes both directories explicitly, so it pins the endpoint and not this default.
     """
     app = FastAPI(title="Canopy", docs_url=None, redoc_url=None, openapi_url=None)
     manager = JobManager(runs_dir, client_factory=client_factory,
@@ -968,7 +973,19 @@ def create_app(runs_dir: str | Path = "runs", *,
 
     @app.get("/api/searches")
     def list_searches() -> dict[str, Any]:
-        """Every search on disk. The token comes back only on a loopback-only server."""
+        """Every search on disk, newest first. The token comes back only on a loopback server.
+
+        This is the ONLY way back to a search the browser has forgotten, and forgetting is easy:
+        the page keeps its tokens in `localStorage`, so clearing site data, opening the review on
+        another browser, or simply starting a second search leaves a finished — possibly already
+        paid-for — search with no route to it. The rows are shaped for that job and no other: a
+        row carries `search_id` and, on a loopback server, `token`, which is exactly the pair
+        `attachSearch(id, token)` takes. `run_id` says which of them already became a review.
+
+        Deliberately the same shape and the same rules as `GET /api/runs`, including handing the
+        token back on loopback: the run list is how the page already re-opens a review it has
+        lost, and a search should not be harder to find than a run.
+        """
         rows = []
         for job in searches.list():
             row: dict[str, Any] = {"search_id": job.run_id, "question": job.title,
@@ -1015,9 +1032,24 @@ def create_app(runs_dir: str | Path = "runs", *,
 
     @app.get("/api/searches/{search_id}")
     def search_state(search_id: str, request: Request) -> dict[str, Any]:
-        """The whole search as the page reads it — counts, ladder, sources and candidates."""
+        """The whole search as the page reads it — counts, ladder, sources and candidates.
+
+        A stopped search is repaired first. The pipeline only writes its candidates when it
+        returns, so a server that died mid-search left staged PDFs that nothing pointed at:
+        `searches.recover_staged` gives each of them a row, which is the difference between "the
+        server restarted" and "the papers this search fetched are gone". It is idempotent and it
+        never runs for a search that is still going — see the method's own docstring.
+        """
         job = search_of(search_id, request)
-        return state_of(job, searches.load_record(job))
+        record = searches.load_record(job)
+        # the repair takes the record lock, so it is entered only when there is something to
+        # repair: `begin` can hold that lock for as long as it takes to copy forty PDFs into a
+        # run, and a poll that queued behind it would look to the user like a hung page
+        if job.status in TERMINAL_STATES and searches.orphan_staged(job, record):
+            with searches.record_lock(job):
+                record = searches.load_record(job)
+                searches.recover_staged(job, record)
+        return state_of(job, record)
 
     @app.get("/api/searches/{search_id}/events")
     def search_events(search_id: str, request: Request) -> StreamingResponse:
@@ -1104,20 +1136,37 @@ def create_app(runs_dir: str | Path = "runs", *,
         spending the user's budget twice on the same papers: the run id is recorded on the
         search, so a double-click, a retry after a dropped connection and a reloaded tab all get
         the same review back with its current status.
+
+        That last sentence is only true because the id is re-read INSIDE `record_lock`. Read once
+        before the lock, it is a plain time-of-check/time-of-use race: two begins arriving
+        together both saw "not begun yet", both built a run, both started it and both spent the
+        budget — and only the second was remembered, so the first was a paid, orphaned run
+        directory that no search pointed at and nothing would ever collect. Two threads on one
+        barrier reproduced it first try. The fast path below the status check stays because it
+        keeps the ordinary repeat-begin cheap and keeps the refusal ORDER unchanged (an oversize
+        protocol still 413s before anything else); the read inside the lock is the authority.
         """
         job = search_of(search_id, request)
         if job.status not in TERMINAL_STATES:
             raise HTTPException(status_code=409,
                                 detail="this search is still going — wait for it to finish "
                                        "before starting the review")
-        begun = searches.run_id_of(job)
-        if begun:
+
+        def already_begun() -> dict[str, Any] | None:
+            """`begin`'s own answer for the run this search has already become, or None."""
+            begun = searches.run_id_of(job)
+            if not begun:
+                return None
             run = manager.get(begun)
             if run is None:                                # deleted from under us
                 raise HTTPException(status_code=409,
                                     detail=f"this search became review {begun}, which is no "
                                            f"longer on disk")
             return begin_answer(run, searches.skipped_of(job))
+
+        answer = already_begun()
+        if answer is not None:
+            return answer
 
         body = body or {}
         # the protocol the page sends wins; the one pasted when the search started is the
@@ -1127,14 +1176,29 @@ def create_app(runs_dir: str | Path = "runs", *,
         protocol_text_or_413(text)
         chosen = _options(json.dumps(body.get("options") or {}))
         with searches.record_lock(job):
+            # the authoritative idempotency check: whoever holds this lock is the only thread
+            # that can be building this search's run (see the docstring)
+            answer = already_begun()
+            if answer is not None:
+                return answer
             record = searches.load_record(job)
+            # PDFs a dead server left behind get their rows here too, so a review begun after a
+            # restart is built from the papers that are actually on disk
+            searches.recover_staged(job, record)
             kept = searches.kept_pdfs(job, record)
             if not kept:
                 raise HTTPException(status_code=422,
                                     detail="no paper in this search is both ticked and readable "
                                            "yet — tick the ones you want, and attach a PDF for "
                                            "any that are paywalled")
-            skipped: list[dict[str, str]] = []
+            rejected: list[dict[str, str]] = []
+            # `make_run` reports a skip by the name it streamed, which is `safe_filename` of the
+            # source name — so the map is keyed on exactly that string. A list per name, because
+            # two candidates can be called the same thing and each of them is still its own row.
+            keys_by_name: dict[str, list[str]] = {}
+            for candidate, _path in kept:
+                keys_by_name.setdefault(safe_filename(pdf_name(candidate)),
+                                        []).append(candidate.key)
             run = make_run(
                 manager, protocol_text=text, options=chosen,
                 sources=[PdfSource(pdf_name(candidate), (lambda p=path: p.open("rb")))
@@ -1143,17 +1207,36 @@ def create_app(runs_dir: str | Path = "runs", *,
                 max_total_bytes=app.state.max_total_bytes,
                 probe_timeout=app.state.probe_timeout, max_files=DEFAULT_MAX_FILES,
                 # the run carries its own provenance: what was asked, what each index answered
-                # and why every paper is or is not in it, readable without this server
+                # and why every paper is or is not in it, readable without this server. Written
+                # here WITHOUT `skipped` — nothing has been skipped yet, and a key that said
+                # `[]` before the loop ran would be a claim rather than an absence. The corrected
+                # copy is written below, once the skips are facts.
                 copy_into={"search/search.json": json.dumps(record.to_json(),
                                                             ensure_ascii=False, indent=1,
                                                             default=str)},
                 # a staged PDF was fetched by a machine hours ago; one that no longer probes is
                 # reported and skipped rather than destroying a 40-paper review
-                on_source_rejected="skip", rejected_out=skipped,
+                on_source_rejected="skip", rejected_out=rejected,
                 stream_upload=stream_upload, probe_pdf=probe_pdf)
+            skipped: list[dict[str, str]] = []
+            for row in rejected:
+                name = str(row.get("name") or "")
+                pending = keys_by_name.get(name) or []
+                skipped.append({"key": pending.pop(0) if pending else "", "name": name,
+                                "reason": str(row.get("reason") or "")})
+            # the run's own copy, corrected: a review whose `search/search.json` lists forty kept
+            # papers while `uploads/` holds one is an audit trail that lies about the run it is
+            # inside. Rewritten rather than appended to, so the file is whole either way; the
+            # relative path is this endpoint's own literal and never comes from a paper.
+            (run.run_dir / "search" / "search.json").write_text(
+                json.dumps({**record.to_json(), "skipped": skipped},
+                           ensure_ascii=False, indent=1, default=str), encoding="utf-8")
             # recorded BEFORE the run is started, so even a 429 from a busy server leaves the
             # search pointing at a real run directory that can be started later
             searches.remember_run(job, run.run_id, skipped)
+            # …and into the SEARCH's own record, so a reload — or a reviewer opening
+            # `search.json` next year — can still see which papers never made it and why
+            searches.save_record(job, record)
         if chosen.start:
             _start(manager, run)
         return begin_answer(run, skipped)

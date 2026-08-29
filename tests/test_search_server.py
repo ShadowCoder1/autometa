@@ -699,3 +699,323 @@ def test_one_search_cannot_read_another(make_app):
     second, second_token, _ = finished(api)
     assert first != second
     assert api.get(f"/api/searches/{first}", headers=auth(second_token)).status_code == 401
+
+
+# ==================================================== the gaps an adversarial review found
+def test_two_begins_at_once_build_exactly_one_run(api, tmp_path):
+    """`begin`'s promise is that a search becomes exactly ONE run. It was a TOCTOU.
+
+    The id was read before `record_lock` and written inside it, so two begins arriving together
+    both saw "not begun yet", both built a run and — because the page sends `start: true` and
+    `MAX_ACTIVE_RUNS` is 2 — both would have started and both would have been paid for. Only the
+    second was remembered; the first was an orphaned run directory nothing pointed at. Two
+    threads on one barrier reproduced it first try, which is why this test is threaded too.
+    """
+    search_id, token, _ = finished(api)
+    barrier = threading.Barrier(2)
+    answers: list[Any] = []
+
+    def press_begin() -> None:
+        barrier.wait(timeout=10)
+        answers.append(begin(api, search_id, token))
+
+    threads = [threading.Thread(target=press_begin) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert [a.status_code for a in answers] == [201, 201]
+    run_ids = {a.json()["run_id"] for a in answers}
+    assert len(run_ids) == 1, f"two runs were built: {run_ids}"
+    assert len(list((tmp_path / "runs").glob("*/job.json"))) == 1
+    # …and the search points at the run both callers were given
+    state = api.get(f"/api/searches/{search_id}", headers=auth(token)).json()
+    assert state["run_id"] == run_ids.pop()
+
+
+def test_begin_refuses_an_oversize_protocol_with_mode_ones_own_413(api):
+    """Amendment A2, which had no test anywhere: the second door must refuse an over-large
+    protocol with the same status and the SAME SENTENCE as `POST /api/runs`, or one user's
+    413 becomes another user's confusing 422 from the YAML parser."""
+    search_id, token, _ = finished(api)
+    huge = "title: x\n" + ("# padding\n" * 200_000)
+    response = api.post(f"/api/searches/{search_id}/begin",
+                        json={"protocol_text": huge, "options": {"start": False}},
+                        headers=auth(token))
+    assert response.status_code == 413
+    assert response.json()["detail"] == "a protocol may not be larger than 1 MB"
+    # and nothing was built: the search is still beginnable
+    assert begin(api, search_id, token).status_code == 201
+
+
+def test_a_paper_that_cannot_be_read_at_begin_is_named_and_stays_named(api, tmp_path):
+    """A partial begin must be accountable afterwards, not once, in a toast that scrolls away.
+
+    39 of 40 papers skipped used to produce a one-paper review, a number on a toast, and a
+    `search/search.json` inside the run that still claimed forty — serialised before `make_run`
+    had skipped anything. The skips are keyed by candidate KEY, because the page has to be able
+    to mark the row, and two papers can be called the same thing.
+    """
+    search_id, token, _ = finished(api)
+    api.post(f"/api/searches/{search_id}/papers/{KEY_PAYWALLED}/upload",
+             files={"file": ("smith_2011.pdf", UPLOADED, "application/pdf")},
+             headers=auth(token))
+    # the staged PDF rots between the fetch and the begin — the case `on_source_rejected="skip"`
+    # exists for. It is still on disk, so it is still kept and still offered to `make_run`.
+    staged = tmp_path / "searches" / search_id / "staging" / f"{sha_of(FETCHED)}.pdf"
+    staged.write_bytes(b"%PDF-1.4\n% unreadable rubbish\n")
+
+    body = begin(api, search_id, token).json()
+    assert body["n_files"] == 1                        # only the paper a person supplied
+    assert body["skipped"] == [{"key": KEY_FETCHED, "name": "bock_2005.pdf",
+                                "reason": "no readable page"}]
+
+    # it survives the request: a reload, another tab, next week
+    state = api.get(f"/api/searches/{search_id}", headers=auth(token)).json()
+    assert state["skipped"] == body["skipped"]
+    on_disk = json.loads((tmp_path / "searches" / search_id / "search.json")
+                         .read_text(encoding="utf-8"))
+    assert on_disk["skipped"] == body["skipped"]
+
+    # …and the RUN's own copy says which papers it does not contain, rather than claiming three
+    copied = json.loads((tmp_path / "runs" / body["run_id"] / "search" / "search.json")
+                        .read_text(encoding="utf-8"))
+    assert copied["skipped"] == body["skipped"]
+    assert len(list((tmp_path / "runs" / body["run_id"] / "uploads").glob("*.pdf"))) == 1
+
+    # and a second begin tells the same story rather than a shorter one
+    assert begin(api, search_id, token).json()["skipped"] == body["skipped"]
+
+
+def test_skip_survives_a_source_that_vanished_and_a_probe_that_raises(tmp_path):
+    """F3 through the two exception types it did not cover.
+
+    `source.stream()` is evaluated inside the try and `probe_pdf` can raise instead of returning
+    `ok: False`; both used to reach `make_run`'s `BaseException` cleanup and `rmtree` the whole
+    run. A staged PDF is a file a machine fetched hours ago — deleted by a cleaner, unreadable
+    on a failing disk — and one of them may not destroy a 40-paper review.
+    """
+    import io
+
+    from canopy.server.jobs import JobManager
+    from canopy.server.make_run import PdfSource, RunOptions, make_run
+
+    def vanished() -> Any:
+        raise FileNotFoundError(2, "No such file or directory", "staging/gone.pdf")
+
+    def exploding_probe(path: Any, timeout: float = 0.0) -> dict[str, Any]:
+        if Path(path).read_bytes() == EXTRA:
+            raise OSError("the probe process could not be started")
+        return fake_probe(path, timeout)
+
+    def build(sources: list[PdfSource], rejected: list[dict[str, str]], probe: Any) -> Any:
+        manager = JobManager(tmp_path / f"runs-{len(list(tmp_path.glob('runs-*')))}")
+        return manager, make_run(
+            manager, protocol_text=PROTOCOL.read_text(encoding="utf-8"),
+            options=RunOptions(start=False), sources=sources, max_upload_bytes=1e6,
+            max_total_bytes=1e7, probe_timeout=1.0, on_source_rejected="skip",
+            rejected_out=rejected, probe_pdf=probe)
+
+    # 1. one source that is not there any more, one that is
+    gone: list[dict[str, str]] = []
+    manager, run = build([PdfSource("gone.pdf", vanished),
+                          PdfSource("bock_2005.pdf", lambda: io.BytesIO(FETCHED))], gone,
+                         fake_probe)
+    assert run.n_files == 1 and manager.runs_dir.is_dir()
+    assert (run.run_dir / "uploads" / f"{sha_of(FETCHED)}.pdf").is_file()
+    assert [r["name"] for r in gone] == ["gone.pdf"]
+    assert "FileNotFoundError" in gone[0]["reason"]
+
+    # 2. a probe that raises rather than returning `ok: False`
+    exploded: list[dict[str, str]] = []
+    _manager, run = build([PdfSource("extra.pdf", lambda: io.BytesIO(EXTRA)),
+                           PdfSource("bock_2005.pdf", lambda: io.BytesIO(FETCHED))], exploded,
+                          exploding_probe)
+    assert run.n_files == 1
+    assert [r["name"] for r in exploded] == ["extra.pdf"]
+    assert "could not be started" in exploded[0]["reason"]
+    # the file the probe could not read is gone; the one it could is there
+    assert not (run.run_dir / "uploads" / f"{sha_of(EXTRA)}.pdf").exists()
+    assert (run.run_dir / "uploads" / f"{sha_of(FETCHED)}.pdf").is_file()
+
+
+def test_fail_mode_still_lets_those_two_exceptions_through(tmp_path):
+    """The other half of the same rule: mode 1 is unchanged. `POST /api/runs` uses "fail", and a
+    file that vanished mid-request there is not something to quietly drop from the person's own
+    upload — it propagates exactly as it always did, and the half-built run is removed."""
+    import io
+
+    from canopy.server.jobs import JobManager
+    from canopy.server.make_run import PdfSource, RunOptions, make_run
+
+    def vanished() -> Any:
+        raise FileNotFoundError(2, "No such file or directory", "chosen.pdf")
+
+    manager = JobManager(tmp_path / "runs-fail")
+    with pytest.raises(FileNotFoundError):
+        make_run(manager, protocol_text=PROTOCOL.read_text(encoding="utf-8"),
+                 options=RunOptions(start=False),
+                 sources=[PdfSource("a.pdf", lambda: io.BytesIO(FETCHED)),
+                          PdfSource("chosen.pdf", vanished)],
+                 max_upload_bytes=1e6, max_total_bytes=1e7, probe_timeout=1.0,
+                 probe_pdf=fake_probe)
+    assert list((tmp_path / "runs-fail").glob("*/job.json")) == []
+
+
+def test_a_server_that_died_mid_search_does_not_lose_the_pdfs_it_fetched(make_app, tmp_path):
+    """The pipeline writes its candidates only when it returns, so a restart used to leave
+    `staging/` full of PDFs that `search.json` never mentioned: charged against the byte cap,
+    invisible to `begin`, unreachable from the page — while the page said "Nothing was lost".
+
+    They come back as rows of their own. No metadata is invented (there is none to invent), and
+    the note says what was actually lost, because "recovered" and "nothing happened" are
+    different facts.
+    """
+    search_id = "20260101-000000-does-tdcs"
+    search_dir = tmp_path / "searches" / search_id
+    (search_dir / "staging").mkdir(parents=True)
+    (search_dir / "staging" / f"{sha_of(FETCHED)}.pdf").write_bytes(FETCHED)
+    (search_dir / "job.json").write_text(json.dumps({
+        "run_id": search_id, "title": "does tDCS help motor learning?", "token": "t" * 32,
+        "created_at": "2026-01-01T00:00:00+00:00", "status": "running", "kind": "search",
+        "options": {"max_usd": 2.0, "max_screened": 200}}), encoding="utf-8")
+    (search_dir / "search.json").write_text(json.dumps({
+        "search_id": search_id, "question": "does tDCS help motor learning?",
+        "phases": [{"name": "queries", "status": "ok", "message": "3 queries", "seconds": 0.1}],
+        "candidates": []}), encoding="utf-8")
+
+    api = make_app()
+    body = api.get(f"/api/searches/{search_id}", headers=auth("t" * 32)).json()
+
+    assert body["status"] == "interrupted"                 # `Job.load`'s own rule, unchanged
+    assert body["counts"]["fetched"] == 1
+    row = body["candidates"][0]
+    assert row["pdf"] == {"pages": None, "bytes": len(FETCHED)}
+    assert row["keep"] is True and row["state"] == "fetched"
+    assert "interrupted" in row["title"] and "recovered from disk" in " ".join(body["notes"])
+
+    # idempotent: polling twice does not grow a second row for the same file
+    again = api.get(f"/api/searches/{search_id}", headers=auth("t" * 32)).json()
+    assert len(again["candidates"]) == 1
+
+    # …and the papers are genuinely recoverable: the review can be begun from them
+    response = begin(api, search_id, "t" * 32)
+    assert response.status_code == 201, response.text
+    assert response.json()["n_files"] == 1
+
+
+def test_a_finished_search_never_costs_less_than_the_money_already_spent(make_app):
+    """M9's third door. `job.cost_usd` is the live ledger copied off the client; the record's own
+    total is the sum of the stages that managed to report one, and a batch billed inside a
+    `BudgetExceeded` is in the first and not the second. Assigning the record's at the end made
+    the number the user had been watching go DOWN when the search finished."""
+    def underreporting_search(record: SearchRecord, *, search_dir: Path, options: Any,
+                              client_factory: Any, cancel: Any, progress: Any,
+                              save: Any) -> SearchRecord:
+        progress({"stage": "screen", "paper": "", "status": "running", "cost_so_far": 0.05,
+                  "message": "screened 20 abstracts"})
+        save(record)
+        # the record accounts for one cent of the five that were billed
+        return SearchRecord(search_id=record.search_id, question=record.question, cost_usd=0.01)
+
+    api = make_app(search_runner=underreporting_search)
+    search_id, token, body = finished(api)
+    assert body["cost_usd"] == pytest.approx(0.05)
+    assert api.get("/api/searches").json()["searches"][0]["cost_usd"] == pytest.approx(0.05)
+
+
+def test_the_search_list_is_the_way_back_to_a_search_the_browser_forgot(api):
+    """A search is reachable ONLY through `localStorage["canopy.search"]` unless the page asks
+    for this list — so clearing site data, another browser, or simply starting a second search
+    strands a finished search that may already have cost money. The server half: every search,
+    with the token on a loopback server, in the shape `attachSearch(id, token)` takes."""
+    first_id, first_token, _ = finished(api)
+    second_id, _second_token, _ = finished(api)        # …which is what evicts the first
+    begin(api, first_id, first_token)
+
+    listed = api.get("/api/searches").json()
+    assert listed["loopback_only"] is True
+    rows = {row["search_id"]: row for row in listed["searches"]}
+    assert set(rows) == {first_id, second_id}
+    for row in rows.values():
+        assert set(row) == {"search_id", "question", "created_at", "status", "cost_usd",
+                            "run_id", "token"}
+        assert row["question"] == "does tDCS help motor learning?"
+        assert row["status"] == "done"
+        # the pair the page needs, proved by using it exactly as `attachSearch` would
+        reopened = api.get(f"/api/searches/{row['search_id']}", headers=auth(row["token"]))
+        assert reopened.status_code == 200
+        assert reopened.json()["search_id"] == row["search_id"]
+    assert rows[first_id]["run_id"] and not rows[second_id]["run_id"]
+
+
+def test_the_search_transport_is_handed_the_budget_it_will_be_held_to(tmp_path, monkeypatch):
+    """S1's `ByteBudget` is correct code that nothing called: `HttpxTransport()` was built with no
+    `budget=`, so `budget.total` was `None` and a search could keep `DEFAULT_MAX_FETCH` × the
+    per-file cap — about 3 GB — against a 2 GB total the upload door enforces. One search door
+    may not be allowed to write more than the other."""
+    pipeline = pytest.importorskip("canopy.search.run")
+    from canopy.search.transport import DEFAULT_MAX_PDF_BYTES
+    from canopy.server import searches
+    from canopy.server.uploads import DEFAULT_MAX_TOTAL_MB
+
+    seen: dict[str, Any] = {}
+
+    def fake_run_search(**kwargs: Any) -> SearchRecord:
+        seen.update(kwargs)
+        return SearchRecord(search_id="s1", question=kwargs["question"])
+
+    monkeypatch.setattr(pipeline, "run_search", fake_run_search)
+    # the transport stands in as its own keyword dict, so the budget object itself is inspectable
+    monkeypatch.setattr("canopy.search.transport.HttpxTransport", lambda **kw: kw)
+
+    def run_it() -> Any:
+        searches.default_search_runner(
+            SearchRecord(search_id="s1", question="does tDCS help motor learning?"),
+            search_dir=tmp_path, options={}, client_factory=lambda **kw: "a client",
+            cancel=threading.Event(), progress=lambda event: None, save=lambda current=None: None)
+        return seen["transport"]["budget"]
+
+    budget = run_it()
+    assert budget.total == searches.SEARCH_BYTE_BUDGET == DEFAULT_MAX_TOTAL_MB * 1e6
+    # …and it is the cap that binds: the per-file cap alone would let a search keep far more
+    assert 60 * DEFAULT_MAX_PDF_BYTES > searches.SEARCH_BYTE_BUDGET
+
+    # what a person has already staged is charged against it, so the two caps cannot be added up
+    (tmp_path / "staging").mkdir(exist_ok=True)
+    (tmp_path / "staging" / "already.pdf").write_bytes(b"%PDF-1.4\n" + b"x" * 991)
+    assert run_it().total == searches.SEARCH_BYTE_BUDGET - 1000
+
+
+def test_the_name_a_paper_enters_a_run_under_always_ends_in_pdf(api):
+    """Amendment A5, pinned where it belongs — at the function that BUILDS the name.
+
+    A5 asked that a source's name end in `.pdf`. It was briefly enforced in `PdfSource`, which
+    ran before `make_run`'s ordered refusals and turned mode 1's honest 400 into a 500; the door
+    that actually needed it is `begin`, and `pdf_name` is what guarantees it there. A paper title
+    used raw would fail every begin with an error about the file rather than about the name.
+    """
+    from canopy.server.searches import pdf_name
+
+    cases = [
+        Candidate(key=KEY_FETCHED, title="Adaptation in older adults", authors=["Bock, O"],
+                  year=2005),
+        Candidate(key=KEY_FETCHED, title="A title with / slashes and \\ backslashes"),
+        Candidate(key=KEY_FETCHED, title="", upload_filename="../../etc/passwd"),
+        Candidate(key=KEY_FETCHED, title="", upload_filename="smith_2011.pdf"),
+        Candidate(key=KEY_FETCHED, title="x" * 400),
+        Candidate(key=KEY_FETCHED, title="", upload_filename="", authors=[]),
+    ]
+    for candidate in cases:
+        name = pdf_name(candidate)
+        assert name.lower().endswith(".pdf"), name
+        assert "/" not in name and "\\" not in name, name
+        assert len(name) <= 200, name
+
+    # a human's own filename wins when it is already a PDF, because that is what they will look
+    # for in the review; anything else becomes the study label the run's tables use
+    assert pdf_name(Candidate(key=KEY_FETCHED, upload_filename="smith_2011.pdf")) \
+        == "smith_2011.pdf"
+    assert pdf_name(Candidate(key=KEY_FETCHED, title="Adaptation in older adults",
+                              authors=["Bock, O"], year=2005)) == "bock_2005.pdf"

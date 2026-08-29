@@ -149,17 +149,16 @@ class PdfSource:
     below the loop, a cleanup), and a caller that handed over a live handle would have to know
     which of those paths closed it. A fresh reader per call means nobody has to know.
 
-    The name must end in `.pdf` because `stream_upload` refuses anything else — a candidate
-    title used as a filename would 400 every begin, and the failure would look like a bad PDF
-    rather than a naming bug. Checked here, where the caller can still fix it.
+    The name must end in `.pdf`: `stream_upload` refuses anything else, so a candidate title
+    used as a filename would fail every begin and the failure would read as a bad PDF rather
+    than a naming bug. It is NOT enforced in `__post_init__` — that raised a bare ValueError
+    while the endpoint was building its source list, i.e. BEFORE `make_run`'s ordered refusals
+    ran, which turned an upload that had always been an honest 400 into a 500. `stream_upload`
+    makes that judgement, in the loop, where it becomes the status it always was.
     """
 
     name: str
     stream: Callable[[], IO[bytes]]
-
-    def __post_init__(self) -> None:
-        if not self.name.lower().endswith(".pdf"):
-            raise ValueError(f"a PDF source must be named *.pdf, not {self.name!r}")
 
 
 def make_run(manager: JobManager, *, protocol_text: str, options: RunOptions,
@@ -210,6 +209,13 @@ def make_run(manager: JobManager, *, protocol_text: str, options: RunOptions,
     because one of them times out in the probe is not a service — those are skipped and
     reported ("skip"). Each skip lands in `rejected_out` as `{name, reason}`; a caller that
     passes no list is saying it expects none, which is true of every "fail" caller.
+
+    "skip" survives a bad source WHATEVER it raises, and that is the point of it: a staged file
+    that has been deleted since it was fetched raises `FileNotFoundError` from `source.stream()`,
+    and a probe handed a decompression bomb or a broken xref raises out of the parser instead of
+    returning `ok: False`. Both used to escape the loop, hit the `BaseException` cleanup and
+    `rmtree` the whole run — F3's own failure through a different exception type. In "fail" mode
+    nothing is caught that was not caught before: those exceptions propagate exactly as they did.
 
     The `stream_upload` / `probe_pdf` parameters default to the module's own imports and exist
     so a caller can pass ITS module globals — which is what keeps
@@ -270,6 +276,7 @@ def make_run(manager: JobManager, *, protocol_text: str, options: RunOptions,
             target.write_text(text, encoding="utf-8")
         saved: dict[str, str] = {}
         remaining = float(max_total_bytes)
+        skipping = on_source_rejected == "skip"
         for source in sources:
             name = safe_filename(source.name)
             try:
@@ -277,16 +284,34 @@ def make_run(manager: JobManager, *, protocol_text: str, options: RunOptions,
                                            max_bytes=max_upload_bytes,
                                            remaining_bytes=remaining)
             except UploadRejected as exc:
-                if on_source_rejected == "skip":
+                if skipping:
                     rejected.append({"name": name, "reason": str(exc)})
                     continue
                 raise HTTPException(status_code=exc.status_code, detail=str(exc))
+            except OSError as exc:
+                # skip mode only. `source.stream()` opens a file a machine staged hours ago; one
+                # that has since been deleted raises FileNotFoundError here and never reaches
+                # `UploadRejected`. In "fail" mode this re-raises untouched, so mode 1 sees the
+                # same exception it always saw.
+                if not skipping:
+                    raise
+                rejected.append({"name": name, "reason": f"{type(exc).__name__}: {exc}"[:200]})
+                continue
             remaining -= size
             first_time = str(path) not in saved      # `<sha256>.pdf`: the same paper twice
             saved.setdefault(str(path), name)
             if first_time:                           # probing a duplicate buys nothing, and a
                 # folder of 79 files is often a dozen papers — each probe is a child process
-                probe = probe_pdf(path, timeout=probe_timeout)
+                try:
+                    probe = probe_pdf(path, timeout=probe_timeout)
+                except Exception as exc:             # noqa: BLE001 - skip mode only, see below
+                    # the probe parses bytes a publisher chose, so it RAISING is an ordinary
+                    # outcome rather than a bug (`transport._store` reasons the same way about the
+                    # same call). Turned into the refusal it would have returned; re-raised
+                    # unchanged in "fail" mode, where the person who chose the file is waiting.
+                    if not skipping:
+                        raise
+                    probe = {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:200]}
                 if not probe.get("ok"):
                     if on_source_rejected == "skip":
                         rejected.append({"name": name, "reason": str(probe.get("error") or

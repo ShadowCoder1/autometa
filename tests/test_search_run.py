@@ -150,7 +150,13 @@ def test_a_whole_search_end_to_end(tmp_path, phase_log):
 
     fetched = [c for c in record.candidates if c.state == "fetched"]
     assert all(c.pdf_path.endswith(".pdf") and c.pdf_pages == 5 for c in fetched)
-    assert all((tmp_path / "pdfs" / c.pdf_path).exists() for c in fetched)
+    # `pdf_path` is relative to the SEARCH directory, not to the staging directory inside it —
+    # `staging_dir` here is `tmp_path/"pdfs"`, so the search directory is `tmp_path`. This
+    # assertion used to join the staging directory onto a staging-relative path and pass only
+    # because the fetcher wrote a bare filename, which is the convention that made every fetched
+    # paper unresolvable at begin time (review §B1).
+    assert all(c.pdf_path.startswith("pdfs/") for c in fetched)
+    assert all((tmp_path / c.pdf_path).exists() for c in fetched)
     # every attempt is on the record, including the two that proved a landing page is not a paper
     assert sum(len(c.fetch_attempts) for c in record.candidates) == 6
     assert {a["outcome"] for c in record.candidates for a in c.fetch_attempts} == {"ok",
@@ -278,11 +284,11 @@ def test_both_indexes_failing_is_recorded_not_raised(tmp_path, phase_log):
     assert len(record.phases) == 2 * len(PHASES), "every rung still reported"
 
 
-def test_with_no_model_the_queries_are_the_user_s_own_words_and_nothing_is_screened(tmp_path):
-    """The keyless path is a working feature, not a degraded one.
+def keyless_transport() -> RecordedTransport:
+    """Europe PMC answering both template queries; OpenAlex answering both with nothing.
 
-    Every paper is listed with its abstract and its links for a person to read, and the record says
-    `template` so a reader knows what to expect of the recall.
+    The template path builds two queries out of the user's own words, so each index is asked
+    twice, and `RecordedTransport` refuses any request it has no recording for.
     """
     index = EuropePmc()
     transport = RecordedTransport()
@@ -301,18 +307,107 @@ def test_with_no_model_the_queries_are_the_user_s_own_words_and_nothing_is_scree
     transport.record(url, HttpResponse(url=url, status=200, outcome="ok",
                                        body=json.dumps({"results": [], "meta": {}}).encode()),
                      params)
+    return transport
 
-    record = run_search(question=QUESTION, transport=transport, client=None,
-                        model_roles=MODEL_ROLES, budget_usd=None, max_screened=200, max_fetch=60,
-                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+
+#: the four Europe PMC records in the recording that carry a `?pdf=render` copy
+KEYLESS_RENDER = [f"https://europepmc.org/articles/{p}?pdf=render"
+                  for p in ("PMC13317673", "PMC12941259", "PMC12982457", "PMC13065030")]
+
+
+def test_with_no_model_the_queries_are_the_user_s_own_words_and_nothing_is_screened(tmp_path):
+    """The keyless path is a working feature, not a degraded one.
+
+    Every paper reaches the PAGE with an abstract excerpt and a link — asserted through
+    `project()`, which is what a browser actually receives. Asserting `candidate.abstract` here
+    instead was green for months while `project()` stripped the abstract and the user got a list
+    of bare titles (review §M15): the record having a thing is not the user reading it.
+    """
+    from canopy.search.models import project
+
+    record = run_search(question=QUESTION, transport=serve_pdfs(keyless_transport(),
+                                                                KEYLESS_RENDER),
+                        client=None, model_roles=MODEL_ROLES, budget_usd=None, max_screened=200,
+                        max_fetch=60, staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
 
     counts = counts_of(record.candidates, record.possible_duplicates)
     assert record.query_source == "template" and record.cost_usd == 0.0
     assert counts["after_dedupe"] == 6 and counts["screened"] == 0
-    assert counts["not_screened"] == 6 and counts["fetched"] == 0
-    assert all(c.abstract for c in record.candidates), "the abstracts are there to be read"
-    assert all(c.links for c in record.candidates), "and every row has a link out"
+    rows = [project(c) for c in record.candidates]
+    assert all(row["abstract_excerpt"] for row in rows), "the abstracts reach the screen"
+    assert all(row["links"] for row in rows), "and every row has a link out"
+    assert all(link["url"].startswith("https://") for row in rows for link in row["links"])
     assert any("no model was available" in note for note in record.notes)
+
+
+def test_a_keyless_search_still_fetches_the_open_copies_and_can_become_a_run(tmp_path):
+    """§B3: with no key nothing is screened, so nothing is `wanted` — and the old fetch stage
+    therefore fetched NOTHING, leaving a list of titles with no PDF, no reason and no way to begin.
+
+    What is asserted here is the whole keyless chain: unscreened records with an open-access route
+    are fetched, the file is where `server/searches.py` looks for it, and every row that was NOT
+    fetched says in one word why not.
+    """
+    record = run_search(question=QUESTION, transport=serve_pdfs(keyless_transport(),
+                                                                KEYLESS_RENDER),
+                        client=None, model_roles=MODEL_ROLES, budget_usd=None, max_screened=200,
+                        max_fetch=60, staging_dir=tmp_path / "staging", per_query=PER_QUERY,
+                        probe=fake_probe)
+
+    counts = counts_of(record.candidates, record.possible_duplicates)
+    assert counts["screened"] == 0, "nobody read a word of these"
+    assert counts["fetched"] == 4, "…and the four open-access copies are on disk anyway"
+    fetched = [c for c in record.candidates if c.state == "fetched"]
+    assert all((tmp_path / c.pdf_path).is_file() for c in fetched)
+    # nothing may be called paywalled: the screener never asked for any of these
+    assert counts["paywalled"] == 0
+    unfetched = [c for c in record.candidates if not c.pdf_path]
+    assert unfetched and all(c.fetch_outcome for c in unfetched), \
+        "a blank outcome reads as 'we tried and found nothing', which is not what happened"
+
+
+def test_the_records_count_is_the_rows_the_indexes_returned_not_the_index_names(tmp_path):
+    """§M11: `records` is the top-of-funnel number a reviewer publishes, and it was derived from
+    `found_by`, which is unique — so one index answering two queries with the same six papers was
+    reported as six records instead of twelve, four lines from a phase message that said twelve.
+
+    The keyless transport asks Europe PMC the same recording for both template queries, which is
+    exactly that case.
+    """
+    record = run_search(question=QUESTION, transport=keyless_transport(), client=None,
+                        model_roles=MODEL_ROLES, budget_usd=None, max_screened=200, max_fetch=0,
+                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+
+    counts = counts_of(record.candidates, record.possible_duplicates)
+    assert counts["after_dedupe"] == 6, "six distinct papers"
+    assert counts["records"] == 12, "…from twelve rows, which is what the indexes returned"
+    assert sum(row["n_returned"] for row in record.sources) == counts["records"], \
+        "the flow strip and the per-index table are one measurement"
+    dedupe_rung = next(p for p in record.phases
+                       if p["name"] == "dedupe" and p["status"] == "ok")
+    assert "12 record(s)" in dedupe_rung["message"], "…and so is the phase ladder"
+
+
+def test_the_screening_batch_map_is_written_into_the_record(tmp_path):
+    """§M10: `screen.py` said the map was in `search.json` and re-read on resume. It was in
+    neither. It is written now — as the audit trail it really is, so a reader can price screening
+    per batch — and the docstring no longer claims a resume that does not exist."""
+    transport = index_transport(epmc=load("europepmc_search"), openalex=load("openalex_works"))
+    record = run_search(question=QUESTION, transport=transport,
+                        client=scripted_client(QUERIES_PAYLOAD, include_everything(11)),
+                        model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=0,
+                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+
+    blob = json.loads(json.dumps(record.to_json()))
+    assert blob["batches"], "the map reaches disk"
+    assert [k for batch in blob["batches"] for k in batch["keys"]] == \
+        sorted(c.key for c in record.candidates), "every screened record is accounted for, once"
+    assert all(set(batch) >= {"index", "keys", "sent", "estimated_usd", "cost_usd", "n_verdicts"}
+               for batch in blob["batches"])
+    assert sum(batch["cost_usd"] for batch in blob["batches"]) > 0
+    from canopy.search import screen as screen_module
+
+    assert "re-batching from it on resume" not in (screen_module.ScreenBatch.__doc__ or "")
 
 
 def test_unpaywall_is_skipped_with_a_note_when_there_is_no_contact_address(tmp_path):

@@ -303,6 +303,54 @@ def test_a_budget_exceeded_from_inside_the_client_is_the_same_clean_stop():
     assert "$100.00" not in cands[0].screen_reason
 
 
+def test_the_reservation_covers_the_retry_the_client_may_make():
+    """§M8: `client.structured` retries once at double `max_tokens` when the model runs out of
+    output room, and that retry is a SECOND billed call. A reservation that priced only the first
+    one let a measured batch of 20 bill $0.134 against a $0.051 check — the cap was not a cap.
+
+    Asserted as arithmetic, because the number the cap is compared against is the thing that was
+    wrong: it must be the first call PLUS the retry, not twice the first (the retry re-sends the
+    whole prompt as well as doubling the output room).
+    """
+    from canopy.llm.costs import estimate_request_cost
+    from canopy.search.screen import MAX_TOKENS, SYSTEM, _prompt_for
+
+    cands = [_cand(1), _cand(2)]
+    client, _ = _client([_verdicts(("1", "include", "fine"), ("2", "include", "fine"))])
+
+    outcome = _screen(client, cands)
+
+    messages = [{"role": "user", "content": _prompt_for(cands, question=QUESTION,
+                                                        criteria=CRITERIA)}]
+    first = estimate_request_cost(MODEL, SYSTEM, messages, MAX_TOKENS)
+    retry = estimate_request_cost(MODEL, SYSTEM, messages, MAX_TOKENS * 2)
+    assert outcome.batches[0].estimated_usd == pytest.approx(first + retry)
+    assert outcome.batches[0].estimated_usd > first, "the retry is priced in, not hoped away"
+
+
+def test_money_billed_inside_a_budget_exceeded_batch_is_charged_to_somebody():
+    """§M9: `BudgetExceeded` can be raised by the RETRY's reservation, long after the first call
+    was answered and billed. That branch used to leave `record.cost_usd` at zero, so a batch that
+    really cost money was reported to the user — and to the cap's own arithmetic — as $0.00.
+
+    `stop_reason="max_tokens"` is what makes the client retry; a budget that fits the first
+    reservation and not the second is what makes the retry raise.
+    """
+    cands = [_cand(1)]
+    provider = FakeProvider([_verdicts(("1", "include", "fine"))], stop_reason="max_tokens",
+                            usage=EXPENSIVE)
+    client = LLMClient(provider=provider, cache_dir=None, budget_usd=1.05)
+
+    outcome = _screen(client, cands, budget_usd=100.0)
+
+    assert outcome.stopped_because == "budget"
+    assert len(provider.requests) == 1, "answered and billed once; the retry was refused"
+    billed = client.total_cost()
+    assert billed > 0.9, "the provider really was paid for that call"
+    assert outcome.batches[0].cost_usd == pytest.approx(billed)
+    assert outcome.cost_usd == pytest.approx(billed), "every cent reaches the record"
+
+
 def test_no_cap_screens_everything():
     cands = [_cand(1), _cand(2)]
     client, provider = _client([_verdicts(("1", "include", "fine"))], usage=EXPENSIVE)

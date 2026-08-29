@@ -30,13 +30,21 @@ WHAT COUNTS AS "SCREENED" AND WHAT COUNTS AS "WANTED"
 -----------------------------------------------------
 The screener sets `include`/`exclude`/`unknown` and, for an included paper, `state = "wanted"`.
 Only the fetch stage may turn `wanted` into `fetched` or `paywalled` — so with no model, or under a
-cap, the candidates stay `not_screened` and nothing is fetched, and the record says so in the
-user's own arithmetic (`counts_of`). The keyless path is a working feature, not a degraded one: a
-list of candidates with their abstracts and their links is still worth a person's afternoon.
+cap, the candidates stay `not_screened`, and the record says so in the user's own arithmetic
+(`counts_of`).
+
+**The keyless path is a working feature, and it is fetched.** With no model nothing is screened, so
+nothing is `wanted` — and a fetch stage that fetched only `wanted` therefore fetched nothing at
+all, leaving the user a list of bare titles with no PDF, which is not worth anyone's afternoon.
+`fetch.fetchable` takes the wanted papers first and then every record nobody read that carries an
+open-access route, so a search run without an API key ends with PDFs on disk, an abstract excerpt
+and links on every row, and a Begin button that works once the reviewer ticks what they want. What
+it does NOT get is a screener's verdict, and `counts_of` says `screened: 0` in so many words.
 """
 from __future__ import annotations
 
 import time
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -183,6 +191,7 @@ def run_search(*, question: str,
     merged, pairs = dedupe(found)
     record.candidates = merged
     record.possible_duplicates = pairs
+    _count_rows(merged, found)
     _measure_unique(record)
     phases.emit("dedupe", "ok",
                 f"{len(merged)} distinct paper(s) from {len(found)} record(s)"
@@ -201,6 +210,11 @@ def run_search(*, question: str,
             f"records were read — they are listed unscreened, with their abstracts")
     outcome = _screen(client, to_screen, record, model_roles, budget_usd)
     record.cost_usd = round(record.cost_usd + outcome.cost_usd, 6)
+    # the batch map goes to disk. `screen.py` claimed for a while that it was already there and
+    # re-read on resume; it was neither, and a false line in an audit trail is worse than a
+    # missing one (review §M10). What it buys is real but smaller: a reader can price screening
+    # per batch and see which twenty records one failed call cost.
+    record.batches = [asdict(batch) for batch in outcome.batches]
     record.notes.extend(outcome.notes)
     if outcome.stopped_because:
         record.stopped_because = outcome.stopped_because
@@ -243,18 +257,36 @@ def _build_queries(client: Any | None, question: str, protocol: Any,
         result = template_queries(question, protocol)
         result.setdefault("notes", []).append(
             "no model was available, so these queries are made of your own words and nothing was "
-            "screened — every paper found is listed for you to read")
+            "screened — every paper found is listed for you to read, and the open-access copies "
+            "were still fetched")
         return result
     model = model_roles.get("queries") or model_roles.get("secondary") or "claude-sonnet-5"
+    billed_before = _client_cost(client)
     try:
-        return build_queries(client, question, model=model, protocol=protocol)
+        result = build_queries(client, question, model=model, protocol=protocol)
     except Exception as exc:                    # noqa: BLE001 - reported, never raised
         result = template_queries(question, protocol)
         result.setdefault("notes", []).append(
             f"the query call failed ({type(exc).__name__}), so the queries below were built from "
             f"your own words instead")
         record.notes.append(f"query building fell back to your own words: {exc}"[:300])
-        return result
+    # A call that failed after the provider answered was still BILLED, and `template_queries`
+    # reports `cost_usd: 0.0` because it never called anything — so a failed query call used to
+    # be charged to nobody and shown to the user as $0.00 (review §M9). The client's own ledger
+    # is the one that knows, and the difference across the call is the truth whichever path ran.
+    spent = max(0.0, _client_cost(client) - billed_before)
+    if spent > float(result.get("cost_usd") or 0.0):
+        result["cost_usd"] = round(spent, 6)
+    return result
+
+
+def _client_cost(client: Any) -> float:
+    """What the client has billed so far, or 0.0 for a stand-in that keeps no ledger."""
+    total = getattr(client, "total_cost", None)
+    try:
+        return float(total()) if callable(total) else 0.0
+    except Exception:                           # pragma: no cover - a stand-in without a ledger
+        return 0.0
 
 
 def _run_indexes(transport: SearchTransport, record: SearchRecord,
@@ -287,6 +319,31 @@ def _run_indexes(transport: SearchTransport, record: SearchRecord,
                 if note not in record.notes:
                     record.notes.append(str(note))
     return found
+
+
+def _count_rows(merged: Sequence[Candidate], found: Sequence[Candidate]) -> None:
+    """Attribute every raw index row to the candidate that survived it (`Candidate.n_rows`).
+
+    This is the only place the raw list and the merged list are both in scope, and it is the
+    number `counts_of` publishes as `records`. Counting `len(found_by)` instead — which is what
+    the page used to show — under-counts by exactly the rows one index returned for several
+    queries: twelve rows were reported as four, four lines below a phase message that said
+    "2 distinct paper(s) from 12 record(s)". The two now agree because they are one measurement.
+    """
+    owner: dict[str, Candidate] = {}
+    for candidate in merged:
+        candidate.n_rows = 0
+        owner[candidate.key] = candidate
+        for absorbed in candidate.merged_from:
+            owner.setdefault(absorbed, candidate)
+    for raw in found:
+        target = owner.get(raw.key)
+        if target is not None:
+            target.n_rows += 1
+    for candidate in merged:
+        # a candidate the raw list cannot account for is one row, not zero: the honest floor is
+        # "it exists", and a zero here would silently shrink the top of the funnel
+        candidate.n_rows = max(1, candidate.n_rows)
 
 
 def _measure_unique(record: SearchRecord) -> None:
@@ -346,18 +403,25 @@ def _fetch(record: SearchRecord, staging: Path, *, transport: SearchTransport,
            cancelled: Callable[[], bool] | None) -> Any:
     """Resolve the long tail with Unpaywall, then fetch. Both halves failure-tolerant.
 
-    The Unpaywall pass runs FIRST and only for candidates that are wanted, have a DOI and have no
-    OA URL from either discovery index — that is the population it exists for, and asking it about
-    a paper Europe PMC already offered would spend a request to learn something we know.
+    The Unpaywall pass runs FIRST and only for candidates that this stage would fetch, have a DOI,
+    and have no OA URL from either discovery index — that is the population it exists for, and
+    asking it about a paper Europe PMC already offered would spend a request to learn something we
+    know. The list is filtered BEFORE `max_fetch` is applied, so the cap bounds the requests this
+    pass makes rather than being eaten by candidates it was going to skip anyway.
+
+    "Would fetch" now includes the records nobody screened: with no model nothing is `wanted`, so
+    a pass that resolved only `wanted` asked Unpaywall about nothing, and the fetch stage then had
+    nothing to fetch. Wanted papers are still resolved first, so a cap that bites cuts the
+    unscreened tail.
     """
     from .fetch import FetchSummary, oa_sources
 
-    wanted = [c for c in record.candidates if c.state == "wanted"]
+    unresolved = [c for c in record.candidates
+                  if c.doi and not oa_sources(c) and c.state in ("wanted", "not_screened")]
+    unresolved.sort(key=lambda c: c.state != "wanted")      # stable: wanted first, order kept
     unpaywall = Unpaywall()
     if contact_email():
-        for candidate in wanted[:max_fetch]:
-            if oa_sources(candidate) or not candidate.doi:
-                continue
+        for candidate in unresolved[:max_fetch]:
             if cancelled and cancelled():
                 break
             try:
@@ -370,7 +434,7 @@ def _fetch(record: SearchRecord, staging: Path, *, transport: SearchTransport,
             if not candidate.license and row.get("license"):
                 candidate.license = str(row["license"])
             record.sources.append(row)
-    elif wanted:
+    elif unresolved:
         record.notes.append(
             "Unpaywall was not consulted for the papers no index offered a PDF for: it needs a "
             "real contact address, so set CANOPY_CONTACT_EMAIL to widen the fetch")
@@ -413,6 +477,10 @@ def _fetch_message(summary: Any) -> str:
     parts = [f"{summary.n_fetched} PDF(s) fetched"]
     if summary.n_paywalled:
         parts.append(f"{summary.n_paywalled} with no open-access copy")
+    if summary.n_no_copy:
+        # deliberately not folded into the line above: nobody screened these, so calling them
+        # paywalled would put a claim about a publisher on a paper the screener never asked for
+        parts.append(f"{summary.n_no_copy} unscreened with no copy we could fetch")
     if summary.n_rate_limited:
         parts.append(f"{summary.n_rate_limited} rate-limited")
     if summary.n_over_cap:

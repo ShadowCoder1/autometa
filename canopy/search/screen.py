@@ -26,9 +26,13 @@ Four rules, each of which is a test:
   "not_screened"`, an empty `screen_decision` (so `counts_of` does not count it as screened) and a
   reason saying, in words, that nobody read it.
 * **The batch composition is pinned.** Candidates are sorted by `key` and cut into fixed batches, so
-  a resumed search rebuilds byte-identical prompts and replays from the disk cache at $0
-  (client.py:511-513). Re-batching in a different order would be a full second bill with no warning
-  (review §D3).
+  the same paper set always builds byte-identical prompts and hits the disk cache at $0
+  (client.py:511-513) rather than re-batching in a different order and paying a second full bill
+  (review §D3). Two honest limits on that, because this docstring used to claim more than the code
+  did: there is **no resume endpoint** — a search is screened once, in `_start` — and the cache
+  lives inside the search's own directory (`jobs.py:75`), so pressing **"Search again" pays the
+  full screening bill again** even for byte-identical prompts. The batch map is written into
+  `search.json` (`SearchRecord.batches`) as an audit trail, not as a resume key.
 
 **Model role.** The design asks for `MODELS["screener"] = "claude-sonnet-5"`; `canopy/config.py` has
 no such role and this task may not add one, so callers pass `MODELS["secondary"]` — which *is*
@@ -89,10 +93,6 @@ TRUNCATION_MARKER = " […abstract truncated]"
 #: and telling a user their paper sits behind one is a claim about a publisher nobody contacted.
 #: `fetch` overwrites this with `fetched`, or with the `paywalled` it actually measured — and a
 #: search that stops before fetching leaves rows reading "wanted", which is what is true.
-#: An included candidate is `wanted`, NOT `paywalled`: the fetch stage has not run, so nothing
-#: has established that a paywall exists. `fetch` overwrites this with `fetched` or with the
-#: `paywalled` it actually measured — and a search that stops before fetching leaves rows that
-#: say "wanted", which is true, instead of blaming a publisher nobody contacted.
 _STATE_FOR: dict[str, str] = {"include": "wanted", "exclude": "excluded", "unknown": "unsure"}
 
 #: `include` and `unknown` default to ON, `exclude` to OFF (design §2.6). Screening is
@@ -172,15 +172,18 @@ answer its one-sentence reason.
 class ScreenBatch:
     """One batch, sent or not — the pinned composition plus what it cost.
 
-    `keys` is the audit trail *and* the resume key: writing it into `search.json` and re-batching
-    from it on resume is what keeps a resumed search on the disk cache instead of paying twice
-    (review §D3).
+    `keys` is the audit trail: `run.py` writes these rows into `search.json` so a reader can price
+    screening per batch and see which twenty records one failed call cost. It is NOT a resume key —
+    there is no resume, and the module docstring says what "Search again" actually costs.
     """
 
     index: int
     keys: list[str]
     sent: bool = False
-    estimated_usd: float = 0.0       # what the cap was checked against, before the call
+    #: what the cap was checked against, before the call — the WORST case, which is this call plus
+    #: the one `client.structured` makes if the model runs out of output room. See
+    #: `screen_candidates`; reserving only the first call let one batch bill 2.6× its reservation.
+    estimated_usd: float = 0.0
     cost_usd: float = 0.0            # what it actually cost
     n_verdicts: int = 0              # verdicts that landed on a candidate in this batch
     error: str = ""                  # "" unless the call failed; the failure's own words
@@ -369,26 +372,34 @@ def screen_candidates(client: Any | None, candidates: Sequence[Candidate], *,
     `keep=False` and `stopped_because=""`, and the user reads the abstracts themselves. Degrade
     honestly, never die.
 
-    **The cost cap is hard, and its worst case is one batch.** Before each batch the next call's
-    reservation price (`estimate_request_cost`, costs.py:217-221) is added to what screening has
-    already spent; if that exceeds `budget_usd` the stage stops cleanly, every remaining record is
-    `not_screened` with a reason naming the cap, and `stopped_because == "budget"`. `LLMClient`
-    reserves the same money before it calls (client.py:525) and raises `BudgetExceeded` if its own
-    budget would not take it — that is caught here and becomes the same clean stop, never a lost
-    batch. The residual overshoot is one batch's *actual* cost above its *reservation*, which is
-    positive only when the real tokeniser beats the `chars/3.5` estimate (costs.py:143): **≈ $0.05
-    on ordinary English abstracts and ≈ $0.15 on a batch of dense non-Latin abstracts**, where CJK
-    text runs nearer one character per token. The client logs real cost, so the next check sees it
-    and the cap self-corrects; the overshoot cannot compound across batches (review §D2).
+    **The cost cap is hard, and its worst case is one batch — INCLUDING that batch's retry.**
+    Before each batch the next call's reservation price (`estimate_request_cost`, costs.py:217-221)
+    is added to what screening has already spent; if that exceeds `budget_usd` the stage stops
+    cleanly, every remaining record is `not_screened` with a reason naming the cap, and
+    `stopped_because == "budget"`. The reservation is **two** calls, not one: when the model runs
+    out of output room `client.structured` silently retries at double `max_tokens`
+    (client.py:539-546), and that retry is a second billed call. Reserving only the first one let a
+    measured batch of 20 bill **$0.134 against a $0.051 reservation** — the retry, not tokeniser
+    variance, was the dominant term, and it is deterministic rather than occasional (review §M8).
+    `LLMClient` reserves its own money before each call (client.py:525) and raises `BudgetExceeded`
+    if its budget would not take it — that is caught here, charged to the ledger and turned into the
+    same clean stop, never a lost batch. The residual overshoot is now only one batch's *actual*
+    cost above its *reservation*, which is positive when the real tokeniser beats the `chars/3.5`
+    estimate (costs.py:143): **≈ $0.05 on ordinary English abstracts and ≈ $0.15 on a batch of dense
+    non-Latin abstracts**, where CJK text runs nearer one character per token. The client logs real
+    cost, so the next check sees it and the cap self-corrects; the overshoot cannot compound across
+    batches (review §D2).
 
     **What it costs.** With abstracts truncated at `MAX_ABSTRACT_CHARS` = 1,800 characters, one
     record is ~1,800/3.5 ≈ 514 tokens of abstract plus ~30 of title/year/venue ≈ **545**, so a batch
     of 20 is ~700 (system + criteria) + 20 × 545 ≈ **11,600 input tokens** ≈ $0.023 on
     `claude-sonnet-5`, plus ~1,200 output tokens ≈ $0.012 — **≈ $0.035 per batch**, ≈ **$0.35 per
     200 records**. The original design said $0.25 because it costed a 290-token record while its own
-    §2.6 truncated at 1,800 characters: ~35 % low (review §D1). Note also that the *reservation* is
-    larger than the actual (it reserves `max_tokens` of output), so under a $1.00 cap the effective
-    ceiling is ~18 batches ≈ 370 records rather than the arithmetic 28.
+    §2.6 truncated at 1,800 characters: ~35 % low (review §D1). The *reservation* is much larger
+    than that actual — it reserves `max_tokens` of output for two calls, ≈ $0.13 a batch — so under
+    a $1.00 cap the effective ceiling is ~7 batches ≈ 150 records rather than the arithmetic 28.
+    That is the price of a cap that cannot be walked past: a cap the retry could overshoot is not a
+    cap, and a user who wants the other 200 records raises a number they can see.
 
     `cell_key_prefix` is the call log's handle on this stage — pass `f"screen:{search_id}"`; each
     batch is logged as `<prefix>:<index>` so a reader can price screening apart from the rest.
@@ -425,7 +436,11 @@ def screen_candidates(client: Any | None, candidates: Sequence[Candidate], *,
 
         messages = [{"role": "user", "content": _prompt_for(batch, question=question,
                                                             criteria=criteria)}]
-        record.estimated_usd = estimate_request_cost(model, SYSTEM, messages, max_tokens)
+        # this call AND the retry it may provoke — see the money paragraph in the docstring. Two
+        # separate estimates rather than one at `2 * max_tokens`, because the retry re-sends the
+        # whole prompt too: the worst case is 2× input, not 2× output.
+        record.estimated_usd = (estimate_request_cost(model, SYSTEM, messages, max_tokens)
+                                + estimate_request_cost(model, SYSTEM, messages, max_tokens * 2))
 
         # The cap, checked BETWEEN batches: the work already paid for is kept, and the batch that
         # would not fit is never sent.
@@ -455,6 +470,12 @@ def screen_candidates(client: Any | None, candidates: Sequence[Candidate], *,
             stopped_reason = cap_reason(_client_budget(client, default=budget_usd))
             outcome.stopped_because = "budget"
             record.error = str(exc)
+            # A `BudgetExceeded` raised AFTER the provider answered — a retry the reservation
+            # would not take — was still billed. This branch used to leave `record.cost_usd` at
+            # zero, so a batch that really cost $0.052 was reported to the user as $0.00 and the
+            # cap's own arithmetic never saw it (review §M9). Same ledger, same rule as `LLMError`.
+            record.cost_usd = max(0.0, _client_cost(client) - billed_before)
+            spent += record.cost_usd
             outcome.notes.append(
                 f"the cost cap stopped screening after {done} of {total} records; the rest are "
                 f"listed unscreened")

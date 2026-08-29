@@ -56,11 +56,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from ..search.models import (KEY_RE, PHASES, Candidate, SearchRecord, counts_of, new_key,
                              project)
 from .jobs import Job, JobManager
-from .uploads import DEFAULT_INGEST_TIMEOUT, safe_filename
+from .uploads import DEFAULT_INGEST_TIMEOUT, DEFAULT_MAX_TOTAL_MB, safe_filename
 
-__all__ = ["DEFAULT_MAX_SCREENED", "DEFAULT_MAX_USD", "SearchJobs", "SearchOptions",
-           "candidate_from_json", "default_search_runner", "pdf_name", "phase_rows",
-           "record_from_json", "search_options_from", "state_of"]
+__all__ = ["DEFAULT_MAX_SCREENED", "DEFAULT_MAX_USD", "SEARCH_BYTE_BUDGET", "SearchJobs",
+           "SearchOptions", "candidate_from_json", "default_search_runner", "pdf_name",
+           "phase_rows", "record_from_json", "search_options_from", "skipped_of", "state_of"]
 
 #: what a search costs at most, and how many abstracts it reads at most, when the page does not
 #: say. Both are caps a *person* should be able to raise, so they are environment-tunable like
@@ -71,6 +71,14 @@ __all__ = ["DEFAULT_MAX_SCREENED", "DEFAULT_MAX_USD", "SearchJobs", "SearchOptio
 #: that must agree is a smell — the pin is `test_the_default_cap_agrees_with_the_pipeline`.
 DEFAULT_MAX_USD = float(os.environ.get("CANOPY_SEARCH_MAX_USD", "2") or 2)
 DEFAULT_MAX_SCREENED = int(os.environ.get("CANOPY_SEARCH_MAX_SCREENED", "200") or 200)
+
+#: how many bytes one search may KEEP on disk, in total, across every PDF it fetches.
+#: Deliberately the SAME number the upload door enforces — same disk, same person, and a search
+#: allowed to write more than a human may upload is a cap in name only. It matters because the
+#: per-file cap does not bound a search: `run.DEFAULT_MAX_FETCH` (60) × `CANOPY_SEARCH_MAX_PDF_MB`
+#: (50 MB) is ~3 GB against a 2 GB total. `transport.ByteBudget` was written for exactly this and
+#: was never handed to a transport, so the arithmetic that was supposed to stop it never ran.
+SEARCH_BYTE_BUDGET = DEFAULT_MAX_TOTAL_MB * 1e6
 
 #: the fields each dataclass actually has, so a `search.json` written by an older (or newer)
 #: build loads instead of raising `TypeError: unexpected keyword argument`. A record is an audit
@@ -189,6 +197,20 @@ def pdf_name(candidate: Candidate) -> str:
     return f"{(stem or candidate.key)[:80].lower()}.pdf"
 
 
+def skipped_of(job: Job) -> list[dict[str, str]]:
+    """The papers `begin` could not put in the run — `{key, name, reason}` each.
+
+    Lives in `job.options`, which is `job.json`, so it survives the request that produced it: it
+    is written once, when the run is built, and every later reader (a poll, a reload, another
+    browser) gets the same list. `key` is the candidate key rather than the display name, because
+    the page has to be able to point at the ROW a skip belongs to, and two papers can be called
+    the same thing.
+    """
+    rows = [dict(s) for s in (job.options.get("skipped") or []) if isinstance(s, Mapping)]
+    return [{"key": str(r.get("key") or ""), "name": str(r.get("name") or ""),
+             "reason": str(r.get("reason") or "")} for r in rows]
+
+
 def state_of(job: Job, record: SearchRecord) -> dict[str, Any]:
     """Everything `GET /api/searches/{id}` answers — the job's state and the record's contents.
 
@@ -207,7 +229,13 @@ def state_of(job: Job, record: SearchRecord) -> dict[str, Any]:
         "created_at": job.created_at,
         "started_at": job.started_at,
         "finished_at": job.finished_at,
-        "cost_usd": round(float(record.cost_usd or job.cost_usd or 0.0), 6),
+        # the LARGER of the two ledgers, never the record's alone. `job.cost_usd` is what the
+        # client was actually billed (copied off `client.total_cost()` at every phase boundary);
+        # `record.cost_usd` is assembled from the stages that managed to report a number, and a
+        # stage that was billed and then failed — a `BudgetExceeded` batch, a query call the
+        # provider charged for before it errored — is in the first and not the second. Taking the
+        # record's would show a user their search getting CHEAPER as it finished.
+        "cost_usd": round(max(float(record.cost_usd or 0.0), float(job.cost_usd or 0.0)), 6),
         "error": job.error,
         "stopped_because": record.stopped_because,
         "counts": counts_of(record.candidates, record.possible_duplicates),
@@ -219,6 +247,11 @@ def state_of(job: Job, record: SearchRecord) -> dict[str, Any]:
         "notes": list(record.notes),
         "possible_duplicates": [dict(d) for d in record.possible_duplicates
                                 if isinstance(d, Mapping)],
+        # the papers `begin` dropped, with the reason for each. Sent on EVERY poll and not only
+        # in `begin`'s own answer: the answer is seen once, by one tab, and then the page
+        # navigates to the run — a reload used to lose the fact that 39 of 40 papers never made
+        # it, leaving a one-paper review that claimed to be forty.
+        "skipped": skipped_of(job),
         "candidates": [project(c) for c in record.candidates],
         # the run this search became, if it has: the page needs it to link there, and its
         # presence is also what makes the search read-only (see the module docstring)
@@ -247,7 +280,7 @@ def default_search_runner(record: SearchRecord, *, search_dir: Path, options: Ma
     try:
         from ..config import MODELS, api_key, live_enabled
         from ..search.run import run_search
-        from ..search.transport import HttpxTransport
+        from ..search.transport import ByteBudget, HttpxTransport
     except ImportError as exc:                             # pragma: no cover - shipped together
         raise RuntimeError("this build has no search pipeline "
                            f"(canopy.search.run.run_search): {exc}") from None
@@ -284,16 +317,35 @@ def default_search_runner(record: SearchRecord, *, search_dir: Path, options: Ma
         progress({"stage": name, "paper": "", "status": status,
                   "cost_so_far": record.cost_usd, "message": message})
 
+    # S1: the whole point of `ByteBudget` is that ONE object is shared by every fetch worker for
+    # the life of a search, and it only bounds anything if a transport is holding it. Built here
+    # rather than inside `HttpxTransport` because the number is the SERVER's (this disk, this
+    # deployment's cap), not the transport's — and what is already staged is subtracted, so a
+    # search that a person has attached PDFs to cannot fetch its way past the total.
+    budget = ByteBudget(max(0.0, SEARCH_BYTE_BUDGET - _staged_bytes(Path(search_dir) / "staging")))
+
     # `run_search` builds and returns its OWN record — including the phases it just reported —
     # and `SearchJobs._run` saves whatever comes back, so the live copy above is replaced by the
     # finished one rather than merged with it.
     return run_search(
         question=record.question, protocol=_protocol_or_none(search_dir),
-        transport=HttpxTransport(), client=client, model_roles=dict(MODELS),
+        transport=HttpxTransport(budget=budget), client=client, model_roles=dict(MODELS),
         budget_usd=budget_usd,
         max_screened=int(options.get("max_screened") or DEFAULT_MAX_SCREENED),
         staging_dir=search_dir / "staging", on_phase=on_phase, cancelled=cancel.is_set,
         search_id=record.search_id)
+
+
+def _staged_bytes(staging: Path) -> int:
+    """How many bytes of PDF a search is already holding. One definition, two callers.
+
+    `SearchJobs.staged_bytes` charges it against the upload cap and `default_search_runner`
+    subtracts it from the fetch budget; two copies of this sum would be two caps that agree until
+    somebody edits one of them.
+    """
+    if not staging.is_dir():
+        return 0
+    return sum(p.stat().st_size for p in staging.glob("*.pdf") if p.is_file())
 
 
 def _protocol_or_none(search_dir: Path) -> Any:
@@ -397,11 +449,22 @@ class SearchJobs(JobManager):
         return record
 
     def save_record(self, job: Job, record: SearchRecord) -> None:
-        """Write `search.json` atomically — a poll must never read half a record."""
+        """Write `search.json` atomically — a poll must never read half a record.
+
+        The papers `begin` dropped ride along under `skipped`. They are not a `SearchRecord`
+        field: nothing the pipeline does produces them, they are a fact about the run this search
+        became, and `search.json` is the file a reviewer opens years later to ask "why is this
+        paper not in the review?". A skip that lived only in `job.json` answered that question
+        nowhere a person would look.
+        """
+        data = record.to_json()
+        skipped = skipped_of(job)
+        if skipped:
+            data["skipped"] = skipped
         path = self.record_path(job)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".json.part")
-        tmp.write_text(json.dumps(record.to_json(), ensure_ascii=False, indent=1, default=str),
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1, default=str),
                        encoding="utf-8")
         with contextlib.suppress(OSError):                 # exotic filesystem
             tmp.chmod(0o600)
@@ -517,10 +580,70 @@ class SearchJobs(JobManager):
 
     def staged_bytes(self, job: Job) -> int:
         """How much this search already holds, so the total-size cap counts the whole search."""
+        return _staged_bytes(self.staging_dir(job))
+
+    def orphan_staged(self, job: Job, record: SearchRecord) -> list[Path]:
+        """Staged PDFs no candidate in this record points at. Read-only, and lock-free by design.
+
+        The check is separate from the repair so a poll can ask "is there anything to fix?"
+        without taking `record_lock`: `begin` holds that lock for as long as it takes to copy
+        forty PDFs into a run, and a `GET` that queued behind it would look like a hung page.
+        """
         staging = self.staging_dir(job)
         if not staging.is_dir():
-            return 0
-        return sum(p.stat().st_size for p in staging.glob("*.pdf") if p.is_file())
+            return []
+        known = {c.pdf_path for c in record.candidates if c.pdf_path}
+        return [path for path in sorted(staging.glob("*.pdf"))
+                if path.is_file() and self.relative_pdf(job, path) not in known]
+
+    def recover_staged(self, job: Job, record: SearchRecord) -> int:
+        """Give every staged PDF that no candidate points at a row of its own. Returns how many.
+
+        `run_search` builds its OWN record and hands it back only when it returns, so a server
+        that dies mid-search leaves `staging/` holding PDFs that `search.json` does not mention.
+        Nothing could reach them again: `kept_pdfs` walks the candidates, so the files were
+        invisible to `begin`, unreachable from the page — and still charged against the search's
+        byte cap by `staged_bytes`, which is the worst of both. Meanwhile the page said "Nothing
+        was lost". This is the half of that sentence the server can actually make true: the PDFs
+        the search had already fetched come back as papers a person can read, untick, or begin a
+        review from.
+
+        What it does NOT do is invent metadata. There is no title, author or DOI for these rows —
+        that knowledge died with the record — so the title says what the file is and where it came
+        from. A plausible-looking citation on a paper nobody screened would be the one kind of
+        fiction this package refuses everywhere else. The note it appends names what was lost
+        (the queries, the index rows, the screening decisions), because "recovered" and "nothing
+        happened" are different facts.
+
+        Idempotent, and only ever called for a search that has STOPPED. While the pipeline is
+        running every staged file is legitimately an orphan — its record is still in memory — and
+        a recovery there would race the record the runner is about to return.
+        """
+        keys = {c.key for c in record.candidates}
+        recovered = 0
+        for path in self.orphan_staged(job, record):
+            # keyed on the file's own sha256, exactly as `add_extra` is, so a second call to this
+            # method — or a person who later uploads the same paper — updates one row, not two
+            key = new_key("u", path.stem)
+            if key in keys:
+                continue
+            keys.add(key)
+            record.candidates.append(Candidate(
+                key=key, title=("a PDF this search fetched before it was interrupted "
+                                f"({path.stem[:12]}…)"),
+                found_by=["recovered"], state="fetched", fetch_outcome="fetched",
+                # ticked, because that is what it was: only a paper the screener wanted is ever
+                # fetched, so unticking it here would silently drop a paper the search chose
+                keep=True, pdf_path=self.relative_pdf(job, path), pdf_bytes=path.stat().st_size))
+            recovered += 1
+        if recovered:
+            record.notes.append(
+                f"this search stopped before it could save what it found: {recovered} PDF(s) it "
+                f"had already fetched are listed below, recovered from disk, but the queries, the "
+                f"index results and the screening decisions behind them were lost — search again "
+                f"to rebuild that list")
+            self.save_record(job, record)
+        return recovered
 
     # ------------------------------------------------------------------ the run it became
     def run_id_of(self, job: Job) -> str:
@@ -528,13 +651,19 @@ class SearchJobs(JobManager):
 
     def remember_run(self, job: Job, run_id: str, skipped: list[dict[str, str]]) -> None:
         """Record which run this search became, so a second `begin` returns it rather than
-        building a second one out of the same papers and the same money."""
+        building a second one out of the same papers and the same money.
+
+        `skipped` is `{key, name, reason}` per dropped paper — the candidate key included, so the
+        page can mark the row rather than print a number.
+        """
         job.options["run_id"] = str(run_id)
-        job.options["skipped"] = [dict(s) for s in skipped]
+        job.options["skipped"] = [{"key": str(s.get("key") or ""),
+                                   "name": str(s.get("name") or ""),
+                                   "reason": str(s.get("reason") or "")} for s in skipped]
         job.save()
 
     def skipped_of(self, job: Job) -> list[dict[str, str]]:
-        return [dict(s) for s in (job.options.get("skipped") or []) if isinstance(s, Mapping)]
+        return skipped_of(job)
 
     # ------------------------------------------------------------------ running
     def _run(self, job: Job) -> None:                      # noqa: D102 - overrides JobManager
@@ -563,7 +692,13 @@ class SearchJobs(JobManager):
                                    client_factory=self.client_factory, cancel=job.cancel,
                                    progress=progress, save=save)
             record = returned if isinstance(returned, SearchRecord) else record
-            job.cost_usd = float(record.cost_usd or job.cost_usd)
+            # never DOWN. `job.cost_usd` is the live ledger `on_phase` copied off the client — the
+            # money the provider actually billed — and `record.cost_usd` is the sum of the stages
+            # that managed to report one. A batch billed inside a `BudgetExceeded`, or a query
+            # call charged for and then failed, is in the first number and missing from the
+            # second, so assigning the record's here made a finished search cost less than it had
+            # cost a moment earlier, on the user's own screen.
+            job.cost_usd = max(float(record.cost_usd or 0.0), float(job.cost_usd or 0.0))
             if job.cancel.is_set() and not record.stopped_because:
                 record.stopped_because = "cancelled"
             self.save_record(job, record)
@@ -571,8 +706,10 @@ class SearchJobs(JobManager):
                 self._finish(job, "cancelled", "stopped by the reviewer")
             else:
                 counts = counts_of(record.candidates, record.possible_duplicates)
+                # `job.cost_usd`, the larger of the two ledgers (see above): the sentence a user
+                # keeps must not be smaller than the number they watched climb
                 self._finish(job, "done", f"{counts['after_dedupe']} paper(s), "
-                                          f"{counts['fetched']} fetched, ${record.cost_usd:.2f}")
+                                          f"{counts['fetched']} fetched, ${job.cost_usd:.2f}")
         except RunCancelled:
             record.stopped_because = record.stopped_because or "cancelled"
             self.save_record(job, record)

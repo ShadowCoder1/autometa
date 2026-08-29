@@ -20,14 +20,16 @@ content-addressed filename are the real ones.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import threading
 from pathlib import Path
 
 import pytest
 
-from canopy.search.fetch import (CANCELLED, MAX_ATTEMPTS, NO_OA_LOCATION, OVER_FETCH_CAP,
-                                 _group_by_host, fetch_candidate, fetch_candidates, host_of,
-                                 oa_sources)
+from canopy.search.fetch import (CANCELLED, MAX_ATTEMPTS, NOT_WANTED, NO_OA_LOCATION,
+                                 OVER_FETCH_CAP, _group_by_host, fetch_candidate,
+                                 fetch_candidates, fetchable, host_of, oa_sources)
 from canopy.search.models import Candidate
 from canopy.search.transport import Download, HttpResponse, RecordedTransport, fixture_key
 
@@ -317,16 +319,71 @@ def test_cancelling_leaves_the_untouched_papers_wanted(tmp_path):
     assert all(p.fetch_outcome == CANCELLED for p in papers[1:])
 
 
-def test_only_wanted_candidates_are_touched(tmp_path):
-    """An excluded paper, an unscreened one and one a human uploaded are not fetch material."""
+def test_a_paper_the_screener_read_and_did_not_want_is_not_fetched(tmp_path):
+    """An excluded paper and one a human already uploaded are not fetch material.
+
+    The screener had an opinion about the first and the file already exists for the second, so
+    neither is worth a request — but the excluded one still says, in one word, why nothing was
+    tried, because a blank outcome reads exactly like "we tried every route and none worked".
+    """
     excluded = Candidate(key="c000000000001", state="excluded", ids={"europepmc_render": EPMC})
-    uploaded = Candidate(key="u000000000001", state="uploaded", ids={"europepmc_render": EPMC})
+    uploaded = Candidate(key="u000000000001", state="uploaded", ids={"europepmc_render": EPMC},
+                         pdf_path="staging/ab.pdf")
     transport = serving(EPMC)
 
     summary = fetch_candidates([excluded, uploaded], tmp_path, transport=transport, probe=None)
     assert summary == type(summary)(), "an empty run, and no attempt on either"
     assert excluded.fetch_attempts == [] and uploaded.fetch_attempts == []
+    assert excluded.fetch_outcome == NOT_WANTED
+    assert uploaded.fetch_outcome == "", "it has the PDF; there was nothing to skip"
     assert transport.calls == []
+
+
+# ------------------------------------------------------- the keyless path (review §B3)
+def test_a_record_nobody_screened_is_fetched_and_is_never_called_paywalled(tmp_path):
+    """With no API key NOTHING is `wanted`, so a stage that fetched only `wanted` fetched nothing.
+
+    An unscreened paper with an open-access route costs bandwidth and no money, and the PDF is the
+    difference between a list of titles and a review. What it must NOT become is `paywalled`:
+    that word means "the screener wanted it and no open copy exists", and nobody read this one.
+    """
+    unread = Candidate(key="c000000000001", state="not_screened",
+                       ids={"europepmc_render": EPMC})
+    blocked = Candidate(key="c000000000002", state="not_screened",
+                        ids={"openalex_pdf": PUBLISHER})
+    transport = refusing(serving(EPMC), PUBLISHER, status=403, outcome="http_error")
+
+    summary = fetch_candidates([unread, blocked], tmp_path, transport=transport, probe=None)
+
+    assert unread.state == "fetched" and unread.pdf_path.endswith(".pdf")
+    assert blocked.state == "not_screened", "nobody read it, so nobody may call it paywalled"
+    assert blocked.fetch_outcome == "http_error"
+    assert (summary.n_fetched, summary.n_paywalled, summary.n_no_copy) == (1, 0, 1)
+
+
+def test_an_unscreened_record_with_no_route_says_so_instead_of_saying_nothing(tmp_path):
+    """The keyless search's own bug: every row came back blank, so the record did not even say
+    that nothing had been tried."""
+    unread = Candidate(key="c000000000001", state="not_screened")
+    transport = serving(EPMC)
+
+    summary = fetch_candidates([unread], tmp_path, transport=transport, probe=None)
+
+    assert unread.fetch_outcome == NO_OA_LOCATION and unread.state == "not_screened"
+    assert transport.calls == [] and summary == type(summary)()
+
+
+def test_wanted_papers_are_fetched_before_the_unread_ones(tmp_path):
+    """The cap has to bite the tail, not the papers the screener actually asked for."""
+    unread = Candidate(key="c000000000001", state="not_screened",
+                       ids={"europepmc_render": f"{EPMC}&n=1"})
+    wanted = candidate("c000000000002", europepmc_render=f"{EPMC}&n=2")
+    transport = serving(f"{EPMC}&n=1", f"{EPMC}&n=2")
+
+    fetch_candidates([unread, wanted], tmp_path, transport=transport, probe=None, max_fetch=1)
+
+    assert wanted.state == "fetched", "the screener's own choice went first"
+    assert unread.fetch_outcome == OVER_FETCH_CAP and unread.fetch_attempts == []
 
 
 def test_the_summary_counts_what_the_page_prints(tmp_path):
@@ -344,8 +401,65 @@ def test_the_summary_counts_what_the_page_prints(tmp_path):
 
 @pytest.mark.parametrize("state", ["fetched", "paywalled"])
 def test_a_second_fetch_pass_does_not_re_fetch_what_it_already_answered(tmp_path, state):
-    """Only `wanted` is fetch material, so a resumed search cannot pay for the same PDF twice."""
+    """A paper this stage has already answered about is never asked about twice."""
     paper = Candidate(key="c000000000001", state=state, ids={"europepmc_render": EPMC})
     transport = serving(EPMC)
     fetch_candidates([paper], tmp_path, transport=transport, probe=None)
     assert transport.calls == []
+
+
+def test_fetchable_is_the_two_populations_and_their_order():
+    """The whole policy in one function: wanted first, then the records nobody read."""
+    wanted = candidate("c000000000001", europepmc_render=EPMC)
+    unread = Candidate(key="c000000000002", state="not_screened",
+                       ids={"europepmc_render": EPMC})
+    routeless = Candidate(key="c000000000003", state="not_screened")
+    excluded = Candidate(key="c000000000004", state="excluded",
+                         ids={"europepmc_render": EPMC})
+    unsure = Candidate(key="c000000000005", state="unsure", ids={"europepmc_render": EPMC})
+
+    assert fetchable([unread, wanted, routeless, excluded, unsure]) == [wanted, unread]
+
+
+# ------------------- the seam the unit tests on either side could not see
+def test_a_fetched_pdf_is_findable_by_the_code_that_builds_the_run(tmp_path):
+    """`fetch` writes `pdf_path`; `server/searches.py` resolves it. They must agree.
+
+    They did not: the fetcher recorded a bare filename and the server resolved it against the
+    search directory, where the file is not — it is in `staging/`. Every unit test on both
+    sides passed, because each used its own convention, and the result was that no fetched
+    paper could ever become a run: `begin` refused the search for having no PDFs while the
+    page showed them ticked and readable. This test owns the seam rather than either side.
+    """
+    from canopy.search.fetch import _record_path
+    from canopy.server.searches import SearchJobs
+
+    search_dir = tmp_path / "20260101-000000-s"
+    staging = search_dir / "staging"
+    staging.mkdir(parents=True)
+    written = staging / "abc123.pdf"
+    written.write_bytes(b"%PDF-1.4\n")
+
+    recorded = _record_path(written, staging)
+    assert recorded == "staging/abc123.pdf", "relative to the SEARCH dir, as models.py says"
+
+    candidate = Candidate(key="c" + "0" * 12, pdf_path=recorded)
+    jobs = SearchJobs(tmp_path)
+    job = SimpleNamespace(run_dir=search_dir)
+    assert jobs.pdf_on_disk(job, candidate) == written.resolve(), \
+        "the server must find the file the fetcher wrote"
+
+    # …and the traversal guard still holds on a hand-edited record
+    evil = Candidate(key="c" + "1" * 12, pdf_path="../../etc/passwd")
+    assert jobs.pdf_on_disk(job, evil) is None
+
+
+def test_a_recorded_path_never_escapes_the_search_directory(tmp_path):
+    from canopy.search.fetch import _record_path
+
+    staging = tmp_path / "s" / "staging"
+    staging.mkdir(parents=True)
+    inside = staging / "x.pdf"
+    inside.write_bytes(b"%PDF-1.4\n")
+    assert not _record_path(inside, staging).startswith("/")
+    assert ".." not in _record_path(inside, staging)

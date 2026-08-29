@@ -1905,7 +1905,10 @@ def test_every_search_failure_says_what_happened():
                    "Nothing found was open access",
                    "This search stopped when the server did",
                    "nothing was thrown away",
-                   "Finding papers needs a model",
+                   # not "finding papers needs a model" any more: a keyless search finds them,
+                   # fetches the open-access copies and lists them — what it does not do is sort
+                   # them for you (review §B3)
+                   "Sorting the papers for you needs a model",
                    "That file is not a PDF",
                    "Upload at least one PDF to begin",
                    "Search stopped.",
@@ -1914,6 +1917,63 @@ def test_every_search_failure_says_what_happened():
         assert needle in app_js, needle
     page = (STATIC / "index.html").read_text(encoding="utf-8")
     assert 'id="card-unscreened"' in page and "Not screened" in page
+
+
+def test_a_paper_with_no_pdf_gets_its_links_and_an_upload_slot_whatever_bucket_it_is_in():
+    """§B3: offering them only to `locked` and `wanted` made a keyless search a dead end.
+
+    With no model nothing is screened, so every paper lands in `unscreened` — and every one of
+    them had no link to follow, nowhere to put a PDF, and no way to reach the Begin button.
+    """
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    row = app_js.split("function candRow(")[1].split("\n  }")[0]
+    assert "if (!candidate.pdf) {" in row, "the gate is the PDF, not the bucket"
+    assert "linkNodes(candidate)" in row and "uploadSlot(candidate, row, problem)" in row
+    assert '"locked"' not in row and '"wanted"' not in row
+    # …and the abstract the server now sends is what a person judges an unscreened paper by
+    assert "candidate.abstract_excerpt" in row
+    # the unscreened list ships collapsed; when nothing was screened it IS the result set
+    assert '$("card-unscreened").open = true;' in app_js
+
+
+def test_the_search_shows_what_it_wrote_down_and_what_it_would_not_merge():
+    """§M12 and §M13: the server sent `notes` and `possible_duplicates` and the page rendered
+    neither — the tool telling the user something and then hiding it.
+
+    `notes` is every degradation sentence the pipeline writes; the duplicate pairs are the half
+    of the no-auto-merge rule that is supposed to cost the reader one click.
+    """
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "function renderNotes(" in app_js and "search.notes" in app_js
+    assert "renderNotes(search);" in app_js
+    assert "function renderDuplicates(" in app_js and "search.possible_duplicates" in app_js
+    assert "renderDuplicates(search);" in app_js
+    assert "function dropDuplicate(" in app_js, "the one click a false split is supposed to cost"
+    # the cards are built by the page, so they must be built from the same helpers as every
+    # other list — no markup, no innerHTML
+    assert "function cardOnce(" in app_js and "innerHTML" not in app_js
+
+
+def test_every_row_says_why_it_has_no_pdf_in_canopys_own_words():
+    """`fetch_outcome` was recorded for every candidate the fetch stage did not reach and shown
+    nowhere, so "no index offered a copy" and "the cap stopped us" read the same on screen."""
+    from canopy.search.fetch import CANCELLED, NOT_WANTED, NO_OA_LOCATION, OVER_FETCH_CAP
+
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    words = app_js.split("var FETCH_WORDS = {")[1].split("\n  };")[0]
+    for outcome in (NO_OA_LOCATION, OVER_FETCH_CAP, CANCELLED, NOT_WANTED, "rate_limited"):
+        assert outcome + ":" in words, outcome
+    assert "FETCH_WORDS[candidate.fetch]" in app_js
+
+
+def test_a_partial_begin_names_the_papers_it_left_out():
+    """§M4: a review that starts without 39 of its 40 papers is not a toast carrying a number."""
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "var skippedAtBegin = [];" in app_js
+    assert "skippedAtBegin = (body.skipped || []).slice();" in app_js
+    assert "Left out of the review: " in app_js       # …and it stays on the search screen
+    banner = app_js.split("function searchBanner(")[1].split("\n  }\n")[0]
+    assert "skippedAtBegin" in banner
 
 
 def test_the_search_counts_are_written_in_real_plurals():
@@ -1949,3 +2009,179 @@ def test_the_search_ui_adds_no_new_colour():
     for reused in (".cand", ".counts", ".begin-bar", ".phases", ".sr-only", ".find-panel"):
         assert reused in block, reused
     assert ".src-btn" in css                               # appended to the existing selector list
+
+
+def test_a_file_whose_name_is_not_a_pdf_is_a_400_not_a_500(api):
+    """Mode 1's own contract: an upload Canopy will not take is refused, not crashed on.
+
+    The search feature briefly regressed this. Building the list of sources for `make_run`
+    happens BEFORE `make_run`'s ordered refusals run, so a `.pdf`-name check that raised a bare
+    ValueError there escaped as a 500 — on a request the endpoint had always answered with an
+    honest 400. `safe_filename` truncates at 200 characters, so a long enough name reaches this
+    path through the ordinary page, which is how a user would have met it.
+    """
+    long_name = ("a" * 260) + ".pdf"       # truncated past its extension by safe_filename
+    response = api.post("/api/runs",
+                        files=[("files", (long_name, PDFS[0].read_bytes(), "application/pdf")),
+                               ("protocol", ("protocol.yaml", PROTOCOL.read_bytes(),
+                                             "text/yaml"))],
+                        data={"options": json.dumps({"start": False})})
+    assert response.status_code != 500, response.text
+    assert response.status_code in (201, 400, 413)
+    if response.status_code == 400:
+        assert "PDF" in response.json()["detail"] or "pdf" in response.json()["detail"]
+
+
+# ============================== the refusals and invariants the order test did not reach
+def test_creating_a_run_refuses_the_per_file_and_manager_rules_in_order_too(api, monkeypatch,
+                                                                           tmp_path):
+    """The half of `POST /api/runs`'s refusal table the order pin above never covered.
+
+    It covered five refusals and omitted the 413 too-many-files, the 400 no-key, the 429
+    capacity and — the gap that mattered — EVERY per-file refusal, which is exactly where a
+    regression walked through: a `.pdf`-suffix check moved out of the loop turned an honest 400
+    into a 500. Each case asserts the SENTENCE, not only the status: the status says something
+    went wrong and the sentence is the only part a person can act on.
+    """
+    from canopy.server.jobs import JobManager, TooManyRuns
+
+    pdf = ("files", (PDFS[0].name, PDFS[0].read_bytes(), "application/pdf"))
+    good = ("protocol", ("protocol.yaml", PROTOCOL.read_bytes(), "text/yaml"))
+    tiny = b"%PDF-1.4\n%%EOF\n"
+
+    def post(files, options="{}"):
+        return api.post("/api/runs", files=files, data={"options": options})
+
+    # 6. too many files — after the "at least one PDF" rule, before the key and the parse
+    monkeypatch.setattr("canopy.server.app.DEFAULT_MAX_FILES", 2)
+    many = post([("files", (f"p{n}.pdf", tiny, "application/pdf")) for n in range(3)] + [good])
+    assert many.status_code == 413 and many.json()["detail"] == "3 files is over the 2 limit"
+
+    # 7. `start` with no key — after the file count, before the capacity check
+    monkeypatch.setattr(JobManager, "key_required", lambda self: True)
+    monkeypatch.setattr(JobManager, "has_capacity", lambda self: False)
+    no_key = post([pdf, good])
+    assert no_key.status_code == 400
+    assert no_key.json()["detail"] == ("no ANTHROPIC_API_KEY is configured — add one to .env "
+                                       "and try again")
+    # …and the file count still beats it, which is the ORDER half of the claim
+    assert post([("files", (f"p{n}.pdf", tiny, "application/pdf")) for n in range(3)]
+                + [good]).status_code == 413
+
+    # 8. …then the capacity check, with its own sentence
+    monkeypatch.setattr(JobManager, "key_required", lambda self: False)
+    busy = post([pdf, good])
+    assert busy.status_code == 429 and "CANOPY_MAX_ACTIVE_RUNS" in busy.json()["detail"]
+    # neither fires when the run is not being started: both are `options.start` rules
+    assert post([pdf, good], json.dumps({"start": False})).status_code == 201
+
+    # 9. the PER-FILE refusals, all of them below the protocol parse and inside the loop
+    monkeypatch.setattr(JobManager, "has_capacity", lambda self: True)
+    off = json.dumps({"start": False})
+    cases = [
+        (("notes.txt", PDFS[0].read_bytes()), 400, "is not a PDF (the name must end in .pdf)"),
+        (("notes", PDFS[0].read_bytes()), 400, "is not a PDF (the name must end in .pdf)"),
+        # `safe_filename` truncates at 200 characters, so a long name loses its extension and
+        # reaches the same rule — through the page's own `/\.pdf$/i` filter, which passes it
+        (("x" * 250 + ".pdf", PDFS[0].read_bytes()), 400, "is not a PDF (the name must end in"),
+        (("nope.pdf", b"<html>not a paper at all</html>"), 400, "does not start with %PDF-"),
+        (("empty.pdf", b""), 400, "is empty"),
+    ]
+    for (name, payload), status, sentence in cases:
+        answer = post([("files", (name, payload, "application/pdf")), good], off)
+        assert answer.status_code == status, f"{name}: {answer.text}"
+        assert sentence in answer.json()["detail"], name
+
+    # …and an unparseable protocol still beats every one of them: the loop is below the parse
+    both = api.post("/api/runs",
+                    files=[("files", ("notes.txt", PDFS[0].read_bytes(), "application/pdf")),
+                           ("protocol", ("p.yaml", b"title: [unclosed", "text/yaml"))],
+                    data={"options": off})
+    assert both.status_code == 422 and "YAML" in both.json()["detail"]
+
+
+def test_a_duplicate_pdf_is_charged_to_the_allowance_even_though_it_lands_once(api, tmp_path):
+    """A4a, which its own test named and never checked. `remaining` is charged for EVERY file,
+    duplicates included: both copies came off the wire. Moving `remaining -= size` inside
+    `if first_time:` leaves `n_files == 1` true and silently moves when a 413 fires — so this
+    pins the 413 rather than the count."""
+    payload = PDFS[0].read_bytes()
+    api.app.state.max_total_bytes = len(payload) * 1.5          # room for one copy, not two
+
+    twice = api.post("/api/runs",
+                     files=[("files", ("a.pdf", payload, "application/pdf")),
+                            ("files", ("a.pdf", payload, "application/pdf")),
+                            ("protocol", ("protocol.yaml", PROTOCOL.read_bytes(), "text/yaml"))],
+                     data={"options": json.dumps({"start": False})})
+    assert twice.status_code == 413
+    assert "total size limit" in twice.json()["detail"]
+    assert list((tmp_path / "runs").glob("*/job.json")) == []   # and the run was cleaned up
+
+
+def test_the_first_name_a_paper_arrived_under_is_the_one_the_run_keeps(api, tmp_path):
+    """A4c. `saved` keys on the sha256 path and `setdefault` keeps the FIRST name, so
+    `filenames.json` says what the person called the paper the first time they sent it — which
+    is the string every later screen shows beside it."""
+    payload = PDFS[0].read_bytes()
+    created = api.post("/api/runs",
+                       files=[("files", ("first.pdf", payload, "application/pdf")),
+                              ("files", ("second.pdf", payload, "application/pdf")),
+                              ("protocol", ("protocol.yaml", PROTOCOL.read_bytes(), "text/yaml"))],
+                       data={"options": json.dumps({"start": False})}).json()
+
+    assert created["n_files"] == 1
+    names = json.loads((tmp_path / "runs" / created["run_id"] / "uploads" / "filenames.json")
+                       .read_text(encoding="utf-8"))
+    assert list(names.values()) == ["first.pdf"]
+
+
+def test_a_keyboardinterrupt_mid_upload_still_removes_the_half_built_run(tmp_path):
+    """A4e: the cleanup catches `BaseException`, not `Exception`. Narrowing it is invisible to
+    every other test — and the run it would leave behind is a directory with half a folder of
+    PDFs in it that the next `GET /api/runs` offers the user as resumable."""
+    import io
+
+    from canopy.server.jobs import JobManager
+    from canopy.server.make_run import PdfSource, RunOptions, make_run
+
+    def interrupted(path: Any, timeout: float = 0.0) -> dict[str, Any]:
+        raise KeyboardInterrupt("^C while the folder was being read")
+
+    manager = JobManager(tmp_path / "runs")
+    with pytest.raises(KeyboardInterrupt):
+        make_run(manager, protocol_text=PROTOCOL.read_text(encoding="utf-8"),
+                 options=RunOptions(start=False),
+                 sources=[PdfSource("a.pdf", lambda: io.BytesIO(PDFS[0].read_bytes()))],
+                 max_upload_bytes=5e7, max_total_bytes=5e8, probe_timeout=1.0,
+                 probe_pdf=interrupted)
+
+    assert list((tmp_path / "runs").glob("*/job.json")) == []
+    assert manager.list() == []                            # …and the registry forgot it too
+
+
+def test_a_run_refused_at_the_starting_line_is_still_on_disk_and_startable(api, tmp_path,
+                                                                          monkeypatch):
+    """A4f: `_start` sits OUTSIDE `make_run`'s try/except, so a 429 from a busy manager leaves
+    the run directory rather than deleting the upload the user just waited for. The existing
+    capacity test gets its 429 from `make_run`'s PRE-check, before the directory exists, so it
+    never touched this — the invariant survived on nobody's evidence."""
+    from canopy.server.jobs import JobManager, TooManyRuns
+
+    def busy(self, job, **_):
+        raise TooManyRuns("this server already has 2 review(s) running")
+
+    monkeypatch.setattr(JobManager, "start", busy)
+    refused = create_run(api, options={"start": True})
+    assert refused.status_code == 429 and "already has" in refused.json()["detail"]
+
+    on_disk = list((tmp_path / "runs").glob("*/job.json"))
+    assert len(on_disk) == 1, "the upload was thrown away with the refusal"
+    run_id = on_disk[0].parent.name
+    listed = next(r for r in api.get("/api/runs").json()["runs"] if r["run_id"] == run_id)
+    assert listed["n_files"] == 2 and listed["status"] == "created"
+
+    # …and it really is startable later, which is the whole point of keeping it
+    monkeypatch.undo()
+    assert api.post(f"/api/runs/{run_id}/start",
+                    headers=auth(listed["token"])).status_code == 200
+    api.post(f"/api/runs/{run_id}/cancel", headers=auth(listed["token"]))

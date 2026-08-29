@@ -831,3 +831,143 @@ def test_a_recorded_failure_replays_as_that_failure(tmp_path: Path) -> None:
                      HttpResponse(status=429, outcome="rate_limited", error="slow down"))
     result = transport.get_bytes("https://good.example/p.pdf", tmp_path)
     assert result.response.outcome == "rate_limited" and result.path is None
+
+
+# ============================================================ the gaps an adversarial review found
+def test_a_cookie_from_one_publisher_never_reaches_the_next(tmp_path: Path) -> None:
+    """The module promises "no cookies". `httpx.Client(cookies=None)` does not deliver that.
+
+    httpx builds a live `Cookies()` jar anyway, it survives for the life of the client, and it
+    keys on the REQUEST URL's host — which, because this transport pins the address, is the IP.
+    Two publishers behind one CDN address therefore shared a jar: A's `Set-Cookie` went out on
+    the very next request to B. Same root cause as the TLS-session hazard the `limits=` comment
+    already reasons about, and the same shape of fix — the jar is emptied before every hop.
+    """
+    def handler(request: httpx.Request, n: int) -> httpx.Response:
+        headers = {"content-type": "application/pdf"}
+        if n == 1:                                  # publisher A hands out a session cookie
+            headers["set-cookie"] = "session=SECRET-A; Path=/"
+        return httpx.Response(200, headers=headers, content=PDF_BYTES)
+
+    wire = wire_of(handler)
+    # ONE address for both names: this is the leak, and a resolver that gave them different
+    # addresses would make the test pass without proving anything
+    one_cdn_address = HttpxTransport(
+        client=httpx.Client(transport=httpx.MockTransport(wire), follow_redirects=False,
+                            trust_env=False),
+        resolve=lambda host, port=443: (PUBLIC_IP,), clock=HostClock(default=0.0))
+
+    one_cdn_address.get_bytes("https://good.example/a.pdf", tmp_path)     # sets the cookie
+    one_cdn_address.get_bytes("https://also-good.example/b.pdf", tmp_path)  # ANOTHER publisher
+    one_cdn_address.get_json("https://good.example/again")                # and back to the first
+
+    assert len(wire.requests) == 3
+    assert [request.headers.get("cookie") for request in wire.requests] == [None, None, None]
+    assert dict(one_cdn_address.client.cookies) == {}     # and nothing is kept for the next search
+
+
+def test_a_cookie_set_before_a_redirect_does_not_ride_to_the_next_hop(tmp_path: Path) -> None:
+    """The jar is cleared per HOP, not per request: a 302 is the moment a host that has just set
+    a cookie hands us to a host that never asked for one."""
+    def handler(request: httpx.Request, n: int) -> httpx.Response:
+        if n == 1:
+            return httpx.Response(302, headers={"location": "https://also-good.example/real.pdf",
+                                                "set-cookie": "session=SECRET-A; Path=/"})
+        return httpx.Response(200, headers={"content-type": "application/pdf"}, content=PDF_BYTES)
+
+    wire = wire_of(handler)
+    assert wire.transport().get_bytes("https://good.example/p.pdf", tmp_path).ok
+    assert [request.headers.get("cookie") for request in wire.requests] == [None, None]
+
+
+@pytest.mark.parametrize("location", ["data:text/html,x", "javascript:alert(1)", "about:blank"])
+def test_a_location_that_cannot_be_parsed_is_an_outcome_not_an_exception(tmp_path: Path,
+                                                                        location: str) -> None:
+    """`httpx.InvalidURL` is not an `httpx.HTTPError` (its bases are `Exception`, `BaseException`),
+    so neither `except` tuple in this module caught it and it escaped `get_bytes` — whose docstring
+    says *never raises*. One hostile `Location` then aborted the fetch stage for every remaining
+    paper through `run.py`'s broad catch, under a note that named no paper at all.
+
+    Measured: the throw is not at our own `URL.join` (which parses all three of these happily) but
+    inside `client.stream()`, because httpx builds the redirect request EAGERLY to fill in
+    `response.next_request` even with `follow_redirects=False`. That is why the guard is where it
+    is, and why a test written against `join` alone would have gone green over a live bug.
+    """
+    wire = wire_of(redirect_to(location))
+    result = wire.transport().get_bytes("https://good.example/p.pdf", tmp_path)
+
+    assert result.response.outcome == "refused"
+    assert "Location this server cannot follow" in result.response.error
+    assert result.response.hops == ("https://good.example/p.pdf",)
+    assert len(wire.requests) == 1                       # and no second request was ever made
+    assert list(tmp_path.iterdir()) == []
+
+    json_wire = wire_of(redirect_to(location))           # the same rule on the index door
+    assert json_wire.transport().get_json("https://good.example/search").outcome == "refused"
+    assert len(json_wire.requests) == 1
+
+
+@pytest.mark.parametrize("location", ["https://a\nb/x", "https://[::1", "\x7f"])
+def test_a_location_httpx_itself_rejects_is_still_only_an_outcome(tmp_path: Path,
+                                                                  location: str) -> None:
+    """The other half of the same class: these three httpx turns into a `RemoteProtocolError`,
+    which IS an `httpx.HTTPError` and was always contained. Pinned beside the ones that were not,
+    because the invariant being defended is about the whole class — no `Location`, however
+    hostile, leaves this module as an exception — and not about one exception type."""
+    wire = wire_of(redirect_to(location))
+    result = wire.transport().get_bytes("https://good.example/p.pdf", tmp_path)
+
+    assert result.response.outcome in ("network_error", "refused")
+    assert result.response.error and len(wire.requests) == 1
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_the_two_transports_accept_the_same_keywords() -> None:
+    """The fake must refuse what the real one would refuse, or an offline test proves nothing.
+
+    Both `RecordedTransport` methods used to end in `**_: Any`, so the fake swallowed anything —
+    and the two had already drifted apart: `accept`, `content_types` and `allow_http_rewrite`
+    existed only on the real transport. A renamed keyword at any call site would have passed all
+    265 offline tests and `TypeError`d on the first live search, which is the one place there is
+    no test. `SearchTransport` is the contract; nobody may have a `**kwargs` escape hatch from it.
+    """
+    import inspect
+
+    from canopy.search.transport import SearchTransport
+
+    #: every keyword the callers actually pass — `indices.py` (four `get_json` sites) and
+    #: `fetch.py` (the one `get_bytes` site). Named here so that renaming one breaks THIS test.
+    used = {"get_json": {"params", "timeout"},
+            "get_bytes": {"filename", "timeout", "probe", "max_bytes"}}
+
+    for name in ("get_json", "get_bytes"):
+        contract = inspect.signature(getattr(SearchTransport, name)).parameters
+        for implementation in (HttpxTransport, RecordedTransport):
+            actual = inspect.signature(getattr(implementation, name)).parameters
+            assert set(actual) == set(contract), f"{implementation.__name__}.{name}"
+            assert not any(p.kind is p.VAR_KEYWORD for p in actual.values()), implementation
+            assert not any(p.kind is p.VAR_POSITIONAL for p in actual.values()), implementation
+            for keyword in used[name]:
+                assert keyword in actual, f"{implementation.__name__}.{name}({keyword}=…)"
+                assert actual[keyword].kind is inspect.Parameter.KEYWORD_ONLY
+
+
+def test_the_fake_takes_every_keyword_the_real_one_takes(tmp_path: Path) -> None:
+    """The signature check above, exercised: the same call, made against both, must be accepted."""
+    source = tmp_path / "fixture.pdf"
+    source.write_bytes(PDF_BYTES)
+    fake = RecordedTransport(payloads={fixture_key("https://good.example/p.pdf"): source})
+
+    result = fake.get_bytes("https://good.example/p.pdf", tmp_path / "papers",
+                            filename="paper.pdf", timeout=5.0, max_bytes=1e6,
+                            headers={"Accept": "application/pdf"},
+                            accept="application/pdf", content_types=("application/pdf",),
+                            allow_http_rewrite=True, probe=lambda path: {"ok": True, "n_pages": 3})
+    assert result.ok
+    # accepted AND recorded, so a test can assert what the caller asked for rather than assuming
+    assert fake.calls[-1]["accept"] == "application/pdf"
+    assert fake.calls[-1]["allow_http_rewrite"] is True
+
+    fake.record("https://good.example/s", HttpResponse(status=200, outcome="ok", body=b"{}"))
+    assert fake.get_json("https://good.example/s", params=None, headers={}, timeout=3.0,
+                         accept="application/json", max_bytes=1024).ok

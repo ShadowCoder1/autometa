@@ -53,7 +53,12 @@ reaches `169.254.169.254` and returns credentials. So:
   request URL's (scheme, host, port), the SNI name is not part of that key, and our host *is* an
   IP — so two vetted names on one CDN address would otherwise share a TLS session authenticated
   for only one of them. See the `limits=` comment in `HttpxTransport.__init__`.
-* **No cookies, no auth, no credentials, port 443 only, https only.**
+* **No cookies, no auth, no credentials, port 443 only, https only.** `cookies=None` is not the
+  cookie half of that: httpx builds a live jar anyway and it persists for the life of the client.
+  Worse, the jar keys on the REQUEST URL's host — which, because we pin, is the shared CDN
+  address — so publisher A's `Set-Cookie` rode out on the next request to publisher B. Same root
+  cause as the TLS-session hazard two bullets up, and the same answer: the jar is emptied before
+  every hop of every request (`_open`), so nothing a publisher sets can outlive its own response.
 
 WHAT IT COSTS TO GET THIS WRONG IN THE OTHER DIRECTION
 ------------------------------------------------------
@@ -556,15 +561,24 @@ class SearchTransport(Protocol):
     """The one seam. Two methods, so a test can replace the internet without mocking httpx.
 
     Neither method raises for anything that happened on the wire; both return the outcome as data.
+
+    Every keyword either implementation accepts is named HERE, and both of them are checked
+    against this class by `test_the_two_transports_accept_the_same_keywords`. The fake used to end
+    both signatures in `**_: Any`, which meant it swallowed anything: the two had already drifted
+    (`accept`, `content_types` and `allow_http_rewrite` existed only on the real one), so a
+    renamed parameter at any call site would have passed every offline test and `TypeError`d the
+    first time a real search ran.
     """
 
     def get_json(self, url: str, *, params: Mapping[str, Any] | None = ...,
-                 headers: Mapping[str, str] | None = ..., timeout: float = ...) -> HttpResponse:
+                 headers: Mapping[str, str] | None = ..., timeout: float = ...,
+                 accept: str = ..., max_bytes: float = ...) -> HttpResponse:
         ...
 
     def get_bytes(self, url: str, dest_dir: str | Path, *, filename: str = ...,
                   headers: Mapping[str, str] | None = ..., timeout: float = ...,
-                  max_bytes: float = ...,
+                  max_bytes: float = ..., accept: str = ...,
+                  content_types: Iterable[str] = ..., allow_http_rewrite: bool = ...,
                   probe: Callable[[Path], Mapping[str, Any]] | None = ...) -> Download:
         ...
 
@@ -806,13 +820,33 @@ class HttpxTransport:
                                       outcome=exc.outcome, hops=tuple(hops)) from None
                 hops.append(vetted.url)
                 seen.add(vetted.url)
+                # Empty the jar before EVERY hop, not once per request. `Client(cookies=None)`
+                # still builds a live `Cookies()` that outlives the response, and it keys on the
+                # request URL's host — the pinned IP — so one publisher's session cookie was sent
+                # to the next publisher that happened to share a CDN address, and to the next hop
+                # of a redirect chain that had left the host that set it. Assigning a fresh jar
+                # does NOT work (the setter re-wraps whatever it is given); clearing does.
+                self.client.cookies.clear()
                 self.clock.wait(vetted.host)
                 wire_url = pinned_url(vetted) if self.pin_address else vetted.url
-                response = stack.enter_context(self.client.stream(
-                    "GET", wire_url,
-                    headers={**request_headers, "Host": vetted.host},
-                    extensions={"sni_hostname": vetted.host},
-                    timeout=timeout))
+                try:
+                    response = stack.enter_context(self.client.stream(
+                        "GET", wire_url,
+                        headers={**request_headers, "Host": vetted.host},
+                        extensions={"sni_hostname": vetted.host},
+                        timeout=timeout))
+                except httpx.InvalidURL as exc:
+                    # httpx builds the redirect request EAGERLY, to fill in
+                    # `response.next_request`, even though `follow_redirects=False` means it will
+                    # never send it — so a `Location: data:…` / `javascript:…` / `about:blank`
+                    # raises `InvalidURL` out of `stream()` itself, before our own join ever sees
+                    # it. `InvalidURL` is not an `httpx.HTTPError` (its bases are `Exception`,
+                    # `BaseException`), so neither caller's except tuple matched and it escaped a
+                    # method documented as never raising; `run.py`'s broad catch then voided the
+                    # fetch stage for every remaining paper, under a note naming none of them.
+                    raise UrlRejected(f"{vetted.url} answered with a Location this server cannot "
+                                      f"follow ({exc})", outcome="refused",
+                                      hops=tuple(hops)) from None
                 if response.status_code not in REDIRECT_STATUSES:
                     yield response, vetted, hops, rewritten_from
                     return
@@ -824,7 +858,17 @@ class HttpxTransport:
                                       hops=tuple(hops))
                 # relative Location resolves against the NAME-form URL of the hop that sent it,
                 # never against the address-pinned one we actually put on the wire
-                target = str(httpx.URL(vetted.url).join(location))
+                try:
+                    target = str(httpx.URL(vetted.url).join(location))
+                except (httpx.InvalidURL, ValueError, TypeError) as exc:
+                    # Belt to the braces above: the same exception type from the other place it
+                    # can come from. httpx's eager redirect build catches most of these first, so
+                    # this arm is for a `Location` that parses on its own and not against this
+                    # base — and the answer is the same either way, a refusal about THIS
+                    # candidate rather than an exception out of a method that promises none.
+                    raise UrlRejected(f"{vetted.url} redirected to {str(location)[:120]!r}, "
+                                      f"which is not a URL this server can follow ({exc})",
+                                      outcome="refused", hops=tuple(hops)) from None
                 if target in seen:
                     raise UrlRejected(f"redirect loop at {target}", outcome="http_error",
                                       hops=tuple(hops))
@@ -1028,7 +1072,11 @@ class RecordedTransport:
 
     def get_json(self, url: str, *, params: Mapping[str, Any] | None = None,
                  headers: Mapping[str, str] | None = None,
-                 timeout: float = DEFAULT_TIMEOUT, **_: Any) -> HttpResponse:
+                 timeout: float = DEFAULT_TIMEOUT, accept: str = "application/json",
+                 max_bytes: float = MAX_JSON_BYTES) -> HttpResponse:
+        """The recorded answer for this URL. Signature-identical to the real one on purpose —
+        see `SearchTransport`. There is no `**kwargs`: a keyword the real transport does not have
+        must fail HERE, in a test, and not in the one place there are no tests."""
         key = fixture_key(url, params)
         self.calls.append({"method": "get_json", "url": url, "params": dict(params or {}),
                            "key": key})
@@ -1042,10 +1090,21 @@ class RecordedTransport:
                   headers: Mapping[str, str] | None = None,
                   timeout: float = DEFAULT_FETCH_TIMEOUT,
                   max_bytes: float = DEFAULT_MAX_PDF_BYTES,
-                  probe: Callable[[Path], Mapping[str, Any]] | None = None,
-                  **_: Any) -> Download:
+                  accept: str = "application/pdf",
+                  content_types: Iterable[str] = PDF_CONTENT_TYPES,
+                  allow_http_rewrite: bool = True,
+                  probe: Callable[[Path], Mapping[str, Any]] | None = None) -> Download:
+        """The recorded PDF for this URL, stored through the real `_store`.
+
+        `accept`, `content_types` and `allow_http_rewrite` are accepted and RECORDED rather than
+        honoured: a replayed payload is already known to be a PDF, and there is no wire to
+        rewrite. They are here because a fake that quietly swallowed them let the two signatures
+        drift apart — see `SearchTransport`.
+        """
         key = fixture_key(url)
-        self.calls.append({"method": "get_bytes", "url": url, "key": key})
+        self.calls.append({"method": "get_bytes", "url": url, "key": key, "accept": accept,
+                           "content_types": sorted(str(t) for t in content_types),
+                           "allow_http_rewrite": bool(allow_http_rewrite)})
         recorded = self.responses.get(key)
         if recorded is not None and recorded.outcome != "ok":
             return Download(recorded)          # a recorded 429/403 replays as itself

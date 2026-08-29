@@ -237,12 +237,14 @@
       // to, so the form shows the truth rather than a hopeful default of its own
       $("f-max-usd").value = settings.search_max_usd;
       $("f-max-screened").value = settings.search_max_screened;
-      // A search with no model still runs — template queries, nothing screened — so this is a
-      // warning about what it will be, never a locked door.
+      // A search with no model still runs AND still fetches — template queries, nothing screened,
+      // every open-access copy on disk — so this is a warning about what the list will and will
+      // not have been sorted by, never a locked door.
       var keyNote = $("find-key-note");
-      keyNote.textContent = "Finding papers needs a model. Without one the search still runs: the "
-        + "queries come from your own words and no abstract is read, so nothing is sorted for you. "
-        + "Canopy reads ANTHROPIC_API_KEY from .env; nothing on this page ever shows it.";
+      keyNote.textContent = "Sorting the papers for you needs a model. Without one the search "
+        + "still runs and still fetches the open-access PDFs: the queries come from your own "
+        + "words and no abstract is read, so every paper is listed for you to judge and none is "
+        + "ticked. Canopy reads ANTHROPIC_API_KEY from .env; nothing on this page ever shows it.";
       show(keyNote, !!settings.search_key_required);
     });
   }
@@ -2284,6 +2286,13 @@
 
   // files this server refused, kept on screen with their reason rather than silently dropped
   var refusedFiles = [];
+  /* …and the same for papers `begin` could not read at the last moment. A staged PDF was fetched
+     by a machine hours ago; one that no longer probes is left out of the run rather than
+     destroying it. That is right, but the page used to report it as a toast carrying only a
+     COUNT and then navigate away, so 39 papers could vanish from a review that had already
+     started and nothing on any screen would say which. NOTE: the server records the list in
+     `job.options` and not in `search.json`, so this survives a navigation and not a reload. */
+  var skippedAtBegin = [];
   var beginning = false;        // a `begin` request is in flight: nothing may re-enable the button
   var settledShown = false;     // focus is handed to the title once per search, not on every poll
 
@@ -2404,6 +2413,7 @@
     state.searchEvents = [];
     state.pendingDecisions = {};
     refusedFiles = [];
+    skippedAtBegin = [];
     beginning = false;
     settledShown = false;
     clear($("search-log"));
@@ -2553,6 +2563,88 @@
     $("search-flow").textContent = text;
   }
 
+  /* Two cards the markup does not carry, built once on first render and reused. Both exist
+     because the server was already sending the data and this page was dropping it on the floor:
+     `notes` is where every degradation sentence in the pipeline ends up ("no model was available,
+     so nothing was screened", "the screening cap stopped this search", "Unpaywall was not
+     consulted"), and the possible-duplicate pairs are the half of the no-auto-merge rule that is
+     supposed to cost the reader one click — a click that did not exist. */
+  function cardOnce(id, heading, hint) {
+    var card = $(id);
+    if (card) { return card; }
+    card = h("section", { cls: "card", attrs: { id: id, hidden: true,
+                                                "aria-labelledby": id + "-h" } }, [
+      h("div", { cls: "card-head" }, [
+        h("h2", { text: heading, attrs: { id: id + "-h" } }),
+        h("span", { cls: "hint", text: hint })
+      ]),
+      h("ul", { cls: "cand-list", attrs: { id: id + "-list" } })
+    ]);
+    var before = $("search-log-card");
+    before.parentNode.insertBefore(card, before);
+    return card;
+  }
+
+  function renderNotes(search) {
+    var notes = (search.notes || []).filter(function (note) {
+      return String(note || "").trim().length > 0;
+    });
+    var card = cardOnce("search-notes", "What the search noticed",
+                        "everything the search wrote down about how it went");
+    var list = $("search-notes-list");
+    clear(list);
+    notes.forEach(function (note) {
+      list.appendChild(h("li", { cls: "cand" }, [
+        h("span", { cls: "cand-main" }, [h("span", { cls: "cand-why", text: String(note) })])
+      ]));
+    });
+    show(card, notes.length > 0);
+  }
+
+  function renderDuplicates(search) {
+    var card = cardOnce("search-dupes", "Might be the same paper twice",
+                        "Canopy never merges these on its own: a wrong merge deletes a study and "
+                        + "nobody ever sees it, while a wrong split costs you one click");
+    var list = $("search-dupes-list");
+    clear(list);
+    var byKey = {};
+    (search.candidates || []).forEach(function (candidate) { byKey[candidate.key] = candidate; });
+    (search.possible_duplicates || []).forEach(function (pair) {
+      var sides = (pair.keys || []).map(function (key) { return byKey[key]; })
+        .filter(function (side) { return !!side; });
+      if (sides.length !== 2) { return; }          // a pair whose rows are gone is not a question
+      var actions = h("span", { cls: "cand-actions" });
+      sides.forEach(function (side) {
+        if (!pendingKeep(side)) { return; }        // already dropped: the question is answered
+        actions.appendChild(h("button", {
+          cls: "btn ghost small", text: "Drop " + (side.study_label || side.key),
+          attrs: { type: "button" },
+          on: { click: function () { dropDuplicate(side); } }
+        }));
+      });
+      list.appendChild(h("li", { cls: "cand" }, [
+        h("span", { cls: "cand-main" }, [
+          h("strong", { text: sides[0].study_label + " · " + sides[1].study_label }),
+          h("span", { cls: "cand-title", text: sides[0].title || "" }),
+          h("span", { cls: "cand-title", text: sides[1].title || "" }),
+          h("span", { cls: "cand-why", text: pair.why || "" })
+        ]),
+        actions
+      ]));
+    });
+    show(card, list.children.length > 0);
+  }
+
+  /* The one click `models.py` says a false split costs. There is no merge endpoint and there
+     should not be one — merging two records is a judgement, and the judgement is the reviewer's;
+     dropping the row they decide is the duplicate reaches the same run through the door that
+     already exists. */
+  function dropDuplicate(candidate) {
+    var row = document.querySelector('[data-key="' + candidate.key + '"]');
+    return decideCandidate(candidate, false, row || h("li", {}), null)
+      .then(function () { redrawCandidates(); });
+  }
+
   function sourceNames(sources) {
     var names = [];
     (sources || []).forEach(function (row) {
@@ -2625,13 +2717,30 @@
     return bits.join(" · ");
   }
 
+  /* Canopy's own word for why there is no PDF on a row, in a sentence. `fetch_outcome` is
+     recorded for every candidate the fetch stage did not reach, and it was recorded correctly
+     and shown nowhere — so a user looking at a paper with no PDF could not tell "no index
+     offered a copy" from "the cap stopped us" from "the publisher refused". */
+  var FETCH_WORDS = {
+    no_oa_location: "No index offered an open-access copy.",
+    over_fetch_cap: "The fetch cap stopped this search before this one was tried.",
+    cancelled: "You stopped the search before this one was tried.",
+    not_wanted: "The screener read it and did not want it, so no copy was fetched.",
+    rate_limited: "An index asked us to slow down — that is our request rate, not a paywall.",
+    not_a_pdf: "The address we were given did not serve a PDF.",
+    http_error: "The publisher refused the download.",
+    unreadable: "A file arrived and could not be opened, so it was not kept."
+  };
+
   // every row says why it is in the list it is in — readable, never a tooltip
   function whyLine(candidate) {
     var kind = candidate.state;
     var reason = candidate.reason || "";
     var head = "";
-    if (kind === "fetched") { head = "Kept: an open-access copy was downloaded."; }
-    else if (kind === "uploaded") { head = "Kept: you supplied this PDF."; }
+    // deliberately not "Kept:" — `keep` is the reviewer's to change, and a paper nobody screened
+    // arrives fetched and unticked, which is the whole point of the keyless path
+    if (kind === "fetched") { head = "An open-access copy was downloaded."; }
+    else if (kind === "uploaded") { head = "You supplied this PDF."; }
     else if (kind === "paywalled") { head = "No open copy could be fetched, so nothing was."; }
     else if (kind === "wanted") { head = "Wanted. Nothing has tried a publisher yet, so nobody "
       + "may call this one paywalled."; }
@@ -2640,6 +2749,9 @@
     else if (kind === "extra") { head = "You added this one; no index proposed it."; }
     else { head = "Nobody read this one: there was no model, or the search stopped first."; }
     if (candidate.title_only) { head += " Only the title was available to read."; }
+    if (!candidate.pdf && FETCH_WORDS[candidate.fetch]) {
+      head += " " + FETCH_WORDS[candidate.fetch];
+    }
     return reason ? head + " " + reason : head;
   }
 
@@ -2671,7 +2783,6 @@
   }
 
   function candRow(candidate) {
-    var kind = bucketOf(candidate);
     var keep = pendingKeep(candidate);
     var name = candidate.study_label || candidate.title || candidate.key;
     var row = h("li", { cls: "cand" + (keep ? "" : " is-dropped"),
@@ -2682,6 +2793,12 @@
       h("span", { cls: "cand-title", text: candidate.title || "" }),
       h("span", { cls: "cand-meta", text: metaLine(candidate) }),
       h("span", { cls: "cand-why", text: whyLine(candidate) }),
+      // the abstract excerpt the server sends. Without it a search run with no API key is a list
+      // of bare titles: nothing was screened, so no row carries a screener's sentence either, and
+      // there is nothing on the page for a person to judge the paper by.
+      candidate.abstract_excerpt
+        ? h("span", { cls: "cand-meta", text: candidate.abstract_excerpt })
+        : null,
       problem
     ]);
     var box = h("input", { attrs: { type: "checkbox", "aria-label": "Keep: " + name } });
@@ -2700,7 +2817,11 @@
       actions.appendChild(h("span", { cls: "badge ok", text: candidate.state }));
     }
     if (candidate.pdf) { actions.appendChild(h("span", { cls: "hint", text: pdfNote(candidate.pdf) })); }
-    if (kind === "locked" || kind === "wanted") {
+    // EVERY row with no PDF gets its links and an upload slot, whichever bucket it is in. Offering
+    // them only to `locked` and `wanted` is what made a keyless search a dead end: with no model
+    // nothing is screened, so every paper lands in `unscreened`, so no row had a link to follow or
+    // anywhere to put a PDF — and Begin then refused the search for having nothing readable.
+    if (!candidate.pdf) {
       linkNodes(candidate).forEach(function (node) { actions.appendChild(node); });
       actions.appendChild(uploadSlot(candidate, row, problem));
       if (keep) {
@@ -2739,7 +2860,11 @@
     if (name === "locked") { return "Nothing was behind a paywall."; }
     if (name === "unsure") { return "The screener was sure about every abstract it read."; }
     if (name === "excluded") { return "Nothing was ruled out."; }
-    if (name === "unscreened") { return "Every record was read."; }
+    if (name === "unscreened") {
+      // "Every record was read" is only true if a screener read them. With no model this list
+      // empties because the open copies were all fetched, and nobody read a word.
+      return counts.screened ? "Every record was read." : "No record is waiting here to be read.";
+    }
     if (name === "extra") { return "Nothing added by hand."; }
     return "";
   }
@@ -2771,6 +2896,12 @@
     });
     show($("card-wanted"), groups.wanted.length > 0);
     show($("card-unscreened"), groups.unscreened.length > 0);
+    // …and it ships collapsed, which is right when a screener read everything and three records
+    // slipped through, and wrong when nothing was screened at all: that is the whole result set,
+    // and a user who has to find a disclosure triangle to see their search has not been shown it.
+    if (!(search.counts || {}).screened && groups.unscreened.length) {
+      $("card-unscreened").open = true;
+    }
   }
 
   /* ── keep, drop, upload ────────────────────────────────────────────────── */
@@ -2778,7 +2909,9 @@
     var key = candidate.key;
     state.pendingDecisions[key] = keep;
     row.classList.toggle("is-dropped", !keep);
-    searchApi(paperPath(key, "/decide"), { method: "POST", json: { keep: keep } })
+    // the promise is returned so a caller that is not the checkbox — the duplicate card's one
+    // click — can redraw once the server has agreed, instead of guessing when to
+    return searchApi(paperPath(key, "/decide"), { method: "POST", json: { keep: keep } })
       .then(function (answer) {
         candidate.keep = !!answer.keep;
         delete state.pendingDecisions[key];
@@ -2914,8 +3047,14 @@
         + " had already been fetched and are still here.");
     }
     if (search.status === "interrupted") {
-      out.push("This search stopped when the server did. Nothing was lost — "
-        + plural(counts.fetched || 0, "paper") + " are staged. Search again to look for the rest.");
+      // NOT "nothing was lost": a search that dies with the server keeps the PDFs already on
+      // disk and loses the screening decisions and the candidate list that had not been
+      // written yet. Saying otherwise was the page telling the user something the server
+      // could not support — the recovery pass explains what survived, and `notes` (below)
+      // carries the server's own account of what did not.
+      out.push("This search stopped when the server did. "
+        + plural(counts.fetched || 0, "paper") + " already fetched are still here; anything the "
+        + "search had not written down when it stopped is gone. Search again to look for the rest.");
     }
     if (search.status === "error" && search.error) { out.push(String(search.error)); }
     var dead = (search.sources || []).filter(function (row) { return row.error; });
@@ -2935,6 +3074,10 @@
     if (search.run_id) {
       out.push("This search has already become a review, so its papers are fixed.");
     }
+    skippedAtBegin.forEach(function (bad) {
+      out.push("Left out of the review: " + (bad.filename || "one paper") + " — "
+        + (bad.reason || "it could not be read when the run was built") + ".");
+    });
     return out;
   }
 
@@ -3006,6 +3149,8 @@
     renderCounts(counts, search.cost_usd);
     renderFlow(counts, sourceNames(search.sources).length);
     renderQueries(search);
+    renderNotes(search);
+    renderDuplicates(search);
     renderCandidates(search);
     renderBeginBar(search);
     $("run-title").textContent = "Paper search · " + (search.search_id || "");
@@ -3022,6 +3167,13 @@
     });
   }
 
+  // papers that have a PDF, ticked or not. The difference between "there is nothing to run on"
+  // and "there is, and you have not chosen it yet" is two different instructions, and a keyless
+  // search reaches the second one with every row unticked.
+  function readablePapers(search) {
+    return (search.candidates || []).filter(function (candidate) { return !!candidate.pdf; });
+  }
+
   function renderBeginBar(search) {
     var over = searchOver(search);
     var kept = keptPapers(search);
@@ -3030,10 +3182,15 @@
     };
     show($("begin-bar"), over);
 
+    var readable = readablePapers(search);
     $("begin-papers").textContent = kept.length
-      ? plural(kept.length, "paper") + " ticked and readable · " + byState("uploaded")
-        + " you uploaded, " + byState("extra") + " you added · this creates the run and starts it."
-      : "Upload at least one PDF to begin. A run needs a paper it can actually read.";
+      ? plural(kept.length, "paper") + " ticked and readable · " + byState("fetched")
+        + " fetched, " + byState("uploaded") + " you uploaded, " + byState("extra")
+        + " you added · this creates the run and starts it."
+      : (readable.length
+         ? "Nothing is ticked. " + plural(readable.length, "paper") + " here can be read — tick "
+           + "the ones you want in the review."
+         : "Upload at least one PDF to begin. A run needs a paper it can actually read.");
     $("begin-protocol").textContent = protocolWritten()
       ? (state.mode === "yaml"
          ? "Protocol: the YAML on the New run screen."
@@ -3065,7 +3222,9 @@
         "Still searching. The button opens when the search is done or you stop it.");
     } else if (!kept.length) {
       button.disabled = true;
-      button.setAttribute("title", "Upload at least one PDF to begin.");
+      button.setAttribute("title", readable.length
+        ? "Tick the papers you want. A run needs at least one it can read."
+        : "Upload at least one PDF to begin.");
     } else if (!protocolWritten()) {
       button.disabled = false;
       button.textContent = "Write the protocol";
@@ -3097,9 +3256,15 @@
     searchApi(searchPath("/begin"),
               { method: "POST", json: { protocol_text: protocolText(), options: options } })
       .then(function (body) {
-        if ((body.skipped || []).length) {
-          toast(plural(body.skipped.length, "paper")
-                + " could not be read at the last moment and was left out of the run.");
+        skippedAtBegin = (body.skipped || []).slice();
+        if (skippedAtBegin.length) {
+          // named, not counted, and written onto the search screen as well as spoken once: a
+          // review that quietly started without 39 of its 40 papers is not a toast
+          toast(plural(skippedAtBegin.length, "paper")
+                + " could not be read at the last moment and was left out of the run: "
+                + skippedAtBegin.map(function (bad) { return bad.filename || "one paper"; })
+                  .join(", ") + ".");
+          if (state.search) { showSearchState(state.search); }
         }
         stopSearchWatchers();
         forgetCurrentSearch();      // the run claims the page now; the search stays openable
@@ -3173,6 +3338,20 @@
     var savedSearchToken = savedSearch ? searchTokenFor(savedSearch) : "";
     if (savedSearchToken) {
       attachSearch(savedSearch, savedSearchToken).catch(function () { forgetCurrentSearch(); });
+    } else {
+      // Nothing remembered here — but a search the user PAID for may still be on the server,
+      // and a search this browser cannot name is a search they cannot get back to. On a
+      // loopback server the listing carries its own tokens (the runs list does the same), so
+      // the most recent unfinished search is re-attachable after a reload, a new tab, or a
+      // browser that forgot its storage. On a remote server no token comes back and nothing
+      // is claimed: silence is correct there, not an error worth showing.
+      api("/api/searches").then(function (body) {
+        var rows = (body && body.searches) || [];
+        var mine = rows.filter(function (row) { return row.token && !row.run_id; });
+        if (mine.length) {
+          attachSearch(mine[0].search_id, mine[0].token).catch(function () {});
+        }
+      }).catch(function () { /* no listing, no news */ });
     }
   }
 })();

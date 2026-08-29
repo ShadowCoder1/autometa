@@ -26,7 +26,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 __all__ = ["Candidate", "CandidateState", "SearchRecord", "PHASES", "COUNT_KEYS", "KEY_RE",
-           "project", "counts_of", "new_key"]
+           "ABSTRACT_EXCERPT", "project", "counts_of", "new_key"]
 
 #: where a candidate ended up, in the words the page shows. One field, because "is it fetched"
 #: and "did the screener want it" and "did a human attach a PDF" are the same question asked at
@@ -69,6 +69,10 @@ COUNT_KEYS: tuple[str, ...] = (
 #: material) and not an index id (it names one index, and a paper found twice has two).
 KEY_RE = re.compile(r"^[cu][0-9a-f]{12}$")
 
+#: characters of abstract `project()` sends to the page. See its docstring: the whole abstract is
+#: a megabyte of JSON per poll, and none of it is a list of titles nobody can judge.
+ABSTRACT_EXCERPT = 400
+
 
 def new_key(prefix: str, seed: str) -> str:
     """A stable key for a candidate: `c…` for something an index proposed, `u…` for a user's PDF.
@@ -104,6 +108,13 @@ class Candidate:
     #: which index(es) proposed it — a paper found by two indexes lists both, and the record
     #: keeps that because "how many indexes agreed" is evidence about the search, not noise
     found_by: list[str] = field(default_factory=list)
+    #: how many rows the indexes actually returned for this paper, across every index and every
+    #: query. NOT `len(found_by)`: that list is unique, so a paper one index returned for five
+    #: queries counted once and the top-of-funnel number a reviewer publishes under-counted (a
+    #: measured 12 rows were reported as 4). `run.py` fills it in from the raw list the dedupe
+    #: consumed. `0` means nobody counted — an older `search.json`, or a candidate built by hand —
+    #: and `counts_of` falls back to `found_by` for those rather than shrinking the funnel.
+    n_rows: int = 0
     #: ids the indexes gave it, for the audit trail and for re-finding the record later
     ids: dict[str, str] = field(default_factory=dict)
     #: the keys of rows this candidate absorbed when two indexes proposed the same paper. A
@@ -148,8 +159,15 @@ class Candidate:
 def project(candidate: Candidate) -> dict[str, Any]:
     """The candidate as the PAGE reads it — display strings, no nesting, no surprises.
 
-    The abstract is deliberately absent: it is up to 4 kB of publisher prose per row, the page
-    never shows it, and 200 of them is a megabyte of JSON on every poll.
+    The abstract travels as an EXCERPT, not in full. In full it is up to 4 kB of publisher prose
+    per row and 200 of them is a megabyte of JSON on every poll; absent altogether — which is what
+    this used to send — it left the keyless user a list of bare titles they could not judge, while
+    `run.py` promised "a list of candidates with their abstracts". `ABSTRACT_EXCERPT` characters is
+    a sentence or three: enough to decide whether to open the link, bounded enough that the
+    row-size arithmetic above still holds.
+
+    `fetch` is the fetch stage's own outcome word, because "there is no PDF here" and "why there
+    is no PDF here" are the same question, and the record already knew the answer.
     """
     return {
         "key": candidate.key,
@@ -160,7 +178,9 @@ def project(candidate: Candidate) -> dict[str, Any]:
         "venue": candidate.venue,
         "doi": candidate.doi,
         "links": [dict(link) for link in candidate.links],
+        "abstract_excerpt": (candidate.abstract or "")[:ABSTRACT_EXCERPT],
         "state": candidate.state,
+        "fetch": candidate.fetch_outcome,
         "reason": candidate.screen_reason,
         "title_only": candidate.screened_on_title_only,
         "source": ", ".join(candidate.found_by),
@@ -206,6 +226,11 @@ class SearchRecord:
     #: costs one click. Measured, not argued — see tests/test_search_dedupe.py.
     possible_duplicates: list[dict[str, Any]] = field(default_factory=list)
     candidates: list[Candidate] = field(default_factory=list)
+    #: one row per screening batch — `{index, keys, sent, estimated_usd, cost_usd, n_verdicts,
+    #: error}`. It is what lets a reader price screening per batch and see which twenty records a
+    #: failed call cost. `screen.py` used to say this was re-read on resume; there is no resume,
+    #: and saying so was worse than not writing it down at all (review §M10).
+    batches: list[dict[str, Any]] = field(default_factory=list)
     phases: list[dict[str, Any]] = field(default_factory=list)
     #: "" | budget | deadline | cancelled — why the search stopped early, if it did. The page
     #: keys its banner on this, NOT on the job status: a capped search still finishes `done`,
@@ -231,7 +256,13 @@ def counts_of(candidates: list[Candidate],
     states = [c.state for c in candidates]
     screened = [c for c in candidates if c.screen_decision]
     return {
-        "records": sum(len(c.found_by) or 1 for c in candidates),
+        # `n_rows` where it was measured, `found_by` where it was not. `found_by` is unique, so
+        # one index answering five queries with the same paper counted ONE record while the dedupe
+        # rung four lines above said "2 distinct paper(s) from 12 record(s)" — two numbers on one
+        # screen, disagreeing, and the wrong one was the top of the funnel. Both quantities are
+        # LOWER bounds on the rows the indexes returned, so the larger is the honest one, and a
+        # record written before `n_rows` existed still counts what it can account for.
+        "records": sum(max(len(c.found_by) or 1, int(c.n_rows or 0)) for c in candidates),
         "after_dedupe": len(candidates),
         "screened": len(screened),
         "included": sum(1 for c in screened if c.screen_decision == "include"),
