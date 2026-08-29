@@ -17,6 +17,18 @@ The shape of a session:
     POST /api/runs/{id}/repool          re-pool under those decisions, no model calls
     POST /api/runs/{id}/cancel          stop after the current step
 
+…and the other door in, where the user has a question rather than a folder. A search never
+appears in the run list (it lives in a sibling directory, see `searches.py`) and it ends by
+becoming a run through the very same `make_run`:
+
+    POST /api/searches                  ask a question, get {search_id, token}
+    GET  /api/searches/{id}             counts, phases, sources and the candidate list
+    GET  /api/searches/{id}/events      the same replayable SSE stream a run has
+    POST /api/searches/{id}/papers/{key}/decide   tick or untick one paper
+    POST /api/searches/{id}/papers/{key}/upload   the PDF for a paywalled one
+    POST /api/searches/{id}/papers      PDFs the search missed
+    POST /api/searches/{id}/begin       those papers become a run — one search, one run
+
 Nothing here computes a statistic, and nothing here knows anything about any research field: every
 label the UI shows comes from the user's own protocol.
 """
@@ -39,13 +51,16 @@ from ..models import Protocol, StatsSettings
 from ..protocol import (apply_profile, available_profiles, dump_protocol, load_protocol,
                         load_yaml_strict)
 from ..report import theme
-from .jobs import Job, JobBusy, JobManager, TooManyRuns
+from ..search.models import project as _project_candidate
+from .jobs import TERMINAL_STATES, Job, JobBusy, JobManager, TooManyRuns
 from .make_run import (MAX_CONCURRENCY, MAX_PROTOCOL_BYTES, PdfSource, RunOptions, make_run,
                        options_from_json as _options, parse_protocol as _parse_protocol,
                        protocol_text_or_413, validation_message as _validation_message)
 from .overrides import (OverrideRejected, append_override, append_overrides,
                         apply_overrides_and_repool,
                         override_summary, read_overrides, repool_lock)
+from .searches import (DEFAULT_MAX_SCREENED, DEFAULT_MAX_USD, SearchJobs, pdf_name,
+                       search_options_from, state_of)
 from .security import (PathRejected, is_attachment, is_loopback, media_type, safe_run_path,
                        token_matches)
 from .uploads import (DEFAULT_MAX_FILES, DEFAULT_MAX_TOTAL_MB, DEFAULT_MAX_UPLOAD_MB,
@@ -235,13 +250,30 @@ def create_app(runs_dir: str | Path = "runs", *,
                max_upload_mb: float | None = None,
                probe_timeout: float | None = None,
                max_active_runs: int | None = None,
-               loopback_only: bool = True) -> FastAPI:
-    """Build the API. `client_factory` is the seam a test fills with a fake or replaying client."""
+               loopback_only: bool = True,
+               searches_dir: str | Path | None = None,
+               search_runner: Callable[..., Any] | None = None) -> FastAPI:
+    """Build the API. `client_factory` is the seam a test fills with a fake or replaying client.
+
+    `search_runner` is the same kind of seam for the OTHER pipeline: the whole paper search as one
+    callable (see `searches.SearchJobs`), defaulting to `canopy.search.run.run_search`. A test
+    passes a fake and the search endpoints then reach no index and no model.
+
+    `searches_dir` defaults to a SIBLING of the runs directory. Sibling and not a subdirectory:
+    `JobManager.list()` globs `<dir>/*/job.json`, so a search living under `runs/` would appear in
+    `GET /api/runs` as a review with no papers.
+    """
     app = FastAPI(title="Canopy", docs_url=None, redoc_url=None, openapi_url=None)
     manager = JobManager(runs_dir, client_factory=client_factory,
                          **({} if max_active_runs is None else {"max_active": max_active_runs}))
+    searches = SearchJobs(searches_dir if searches_dir is not None
+                          else Path(manager.runs_dir).parent / "searches",
+                          client_factory=client_factory, runner=search_runner,
+                          max_active=max_active_runs)
     app.state.runs_dir = str(manager.runs_dir)
+    app.state.searches_dir = str(searches.runs_dir)
     app.state.jobs = manager
+    app.state.searches = searches
     app.state.max_upload_bytes = (max_upload_mb if max_upload_mb is not None
                                   else DEFAULT_MAX_UPLOAD_MB) * 1e6
     app.state.probe_timeout = (probe_timeout if probe_timeout is not None
@@ -281,6 +313,25 @@ def create_app(runs_dir: str | Path = "runs", *,
             raise HTTPException(status_code=401, detail="this run needs its own token")
         return job
 
+    def search_of(search_id: str, request: Request) -> Job:
+        """The search this request may touch — the same two refusals, in the same order.
+
+        Deliberately a copy of `run_of` rather than a shared helper parameterised by manager:
+        the two say different words ("no such run" / "no such search") and a future change to one
+        must not silently change the other. What they DO share is the order — unknown id is 404
+        before the token is looked at, so a wrong token on a real search and any token on a
+        made-up one are told apart only by whoever holds the right token.
+        """
+        job = searches.get(search_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="no such search")
+        header = request.headers.get("authorization") or ""
+        given = header[7:].strip() if header.lower().startswith("bearer ") else ""
+        given = given or (request.query_params.get("token") or "")
+        if not token_matches(given, job.token):
+            raise HTTPException(status_code=401, detail="this search needs its own token")
+        return job
+
     # ------------------------------------------------------------------ static SPA
     if STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -307,6 +358,14 @@ def create_app(runs_dir: str | Path = "runs", *,
             "loopback_only": app.state.loopback_only,
             "max_active_runs": manager.max_active,
             "uses_real_models": manager.uses_real_models,
+            # …and the same three questions about the OTHER door. `api_key_configured` above
+            # already answers "is there a key"; `search_key_required` answers the one the New
+            # search form actually asks — "will this search be worse without one?" — because a
+            # search with no model still runs, on template queries and with nothing screened.
+            "search_key_required": searches.key_required(),
+            "search_uses_real_models": searches.uses_real_models,
+            "search_max_usd": DEFAULT_MAX_USD,
+            "search_max_screened": DEFAULT_MAX_SCREENED,
         }
 
     # ------------------------------------------------------------------ protocols
@@ -827,6 +886,277 @@ def create_app(runs_dir: str | Path = "runs", *,
         return {"run_id": job.run_id, "status": result.get("status", job.status),
                 "maps": result.get("maps", []), "cost_usd": result.get("cost_usd", 0.0),
                 "error": result.get("error", "")}
+
+    # ------------------------------------------------------------------ searches
+    # A search is the OTHER way into a run: a question instead of a folder. Everything below is
+    # additive — no route above it changed — and every one of these endpoints sits inside the same
+    # cross-site guard and takes the same per-object bearer token as a run.
+    def editable(job: Job) -> None:
+        """A search may be edited only when it has stopped, and only until it becomes a run.
+
+        Two 409s, both closing a hole the design review found:
+
+        * **still running** — the pipeline is rewriting `search.json` from its own thread. A
+          `keep` toggle or an upload merged into that would be lost the next time the pipeline
+          saved, and a `begin` half-way through the fetch stage would build a review out of
+          whichever PDFs happened to have landed by then.
+        * **already begun** — the run has its own copy of the PDFs and of `search.json`. A change
+          made here afterwards would look accepted and simply not be in the review.
+        """
+        if job.status not in TERMINAL_STATES:
+            raise HTTPException(status_code=409,
+                                detail="this search is still going — wait for it to finish "
+                                       "before changing its papers")
+        begun = searches.run_id_of(job)
+        if begun:
+            raise HTTPException(status_code=409,
+                                detail=f"this search has already become review {begun}; its "
+                                       f"papers are fixed. Start another search to look again.")
+
+    def stage_upload(job: Job, upload: UploadFile) -> tuple[Path, str]:
+        """One PDF from the wire into `staging/<sha256>.pdf`, with the same caps a run uses.
+
+        The total cap counts what the search ALREADY holds, not just this request: without that,
+        one file at a time is an unbounded directory.
+        """
+        name = safe_filename(upload.filename or "upload.pdf")
+        remaining = app.state.max_total_bytes - searches.staged_bytes(job)
+        try:
+            path, _size = stream_upload(upload.file, searches.staging_dir(job), name,
+                                        max_bytes=app.state.max_upload_bytes,
+                                        remaining_bytes=remaining)
+        except UploadRejected as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc))
+        return path, name
+
+    def readable_pdf(job: Job, record: Any, path: Path, name: str) -> dict[str, Any]:
+        """Probe a staged upload; on failure remove it — unless another candidate is using it.
+
+        Two candidates can share one file (a PDF is stored under its own sha256), so an
+        unconditional `unlink` here would delete a paper somebody else's row is pointing at.
+        """
+        probe = probe_pdf(path, timeout=app.state.probe_timeout)
+        if not probe.get("ok"):
+            relative = searches.relative_pdf(job, path)
+            if not any(c.pdf_path == relative for c in record.candidates):
+                path.unlink(missing_ok=True)
+            why = str(probe.get("error") or "the PDF could not be read")
+            raise HTTPException(status_code=400, detail=f"{name}: {why}")
+        return probe
+
+    def paper_of(record: Any, key: str) -> Any:
+        """The candidate this URL names. A malformed key answers exactly as an unknown one does.
+
+        `searches.candidate` checks `KEY_RE` before it looks at anything, so a key from a URL
+        never reaches code that could join it onto a path — and the 404 says the same thing for
+        `../../etc/passwd` as for a key that is merely not in this search.
+        """
+        candidate = searches.candidate(record, key)
+        if candidate is None:
+            raise HTTPException(status_code=404, detail="no such paper in this search")
+        return candidate
+
+    def begin_answer(run: Job, skipped: list[dict[str, str]]) -> dict[str, Any]:
+        """EXACTLY the body `POST /api/runs` returns, plus `skipped`.
+
+        Same keys in the same shape on purpose: the page's `attach()` already knows how to take a
+        run over from that body, and a second door answering in its own dialect would need a
+        second copy of the code that reads it.
+        """
+        return {"run_id": run.run_id, "token": run.token, "n_files": run.n_files,
+                "status": run.status, "title": run.title, "skipped": skipped}
+
+    @app.get("/api/searches")
+    def list_searches() -> dict[str, Any]:
+        """Every search on disk. The token comes back only on a loopback-only server."""
+        rows = []
+        for job in searches.list():
+            row: dict[str, Any] = {"search_id": job.run_id, "question": job.title,
+                                   "created_at": job.created_at, "status": job.status,
+                                   "cost_usd": round(job.cost_usd, 4),
+                                   "run_id": str(job.options.get("run_id") or "")}
+            if app.state.loopback_only:
+                row["token"] = job.token
+            rows.append(row)
+        return {"searches": rows, "loopback_only": app.state.loopback_only}
+
+    @app.post("/api/searches", status_code=201)
+    def create_search(body: dict[str, Any]) -> dict[str, Any]:
+        """A question becomes a search directory and a background job.
+
+        No API-key check, unlike `POST /api/runs`: a search with no model still runs — the
+        queries come from the protocol's own words and nothing is screened — and refusing it
+        would take away the one part of Canopy that works without a card. `/api/settings` says
+        `search_key_required` so the form can warn instead.
+        """
+        question = str((body or {}).get("question") or "").strip()
+        if not question:
+            raise HTTPException(status_code=422,
+                                detail="say what you are looking for, in one question")
+        text = str((body or {}).get("protocol_text") or "")[:MAX_PROTOCOL_BYTES + 1]
+        protocol_text_or_413(text)                         # the same 413, from both doors
+        chosen = search_options_from((body or {}).get("options"))
+        if not searches.has_capacity():
+            # checked before the directory exists: a 429 that leaves a half-built search behind
+            # puts a row on the user's list that can never be started
+            raise HTTPException(status_code=429,
+                                detail=f"this server already runs {searches.max_active} "
+                                       f"search(es) at a time; wait for one to finish (or raise "
+                                       f"CANOPY_MAX_ACTIVE_RUNS)")
+        job, _record = searches.create_search(question=question[:4000],
+                                              options=chosen.resolved(), protocol_text=text)
+        try:
+            _start(searches, job)
+        except HTTPException:                              # lost the capacity race after all
+            shutil.rmtree(job.run_dir, ignore_errors=True)
+            searches.forget(job.run_id)
+            raise
+        return {"search_id": job.run_id, "token": job.token, "status": job.status}
+
+    @app.get("/api/searches/{search_id}")
+    def search_state(search_id: str, request: Request) -> dict[str, Any]:
+        """The whole search as the page reads it — counts, ladder, sources and candidates."""
+        job = search_of(search_id, request)
+        return state_of(job, searches.load_record(job))
+
+    @app.get("/api/searches/{search_id}/events")
+    def search_events(search_id: str, request: Request) -> StreamingResponse:
+        job = search_of(search_id, request)
+        return StreamingResponse(
+            searches.stream(job), media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+                     "Connection": "keep-alive"})
+
+    @app.post("/api/searches/{search_id}/cancel")
+    def cancel_search(search_id: str, request: Request) -> dict[str, Any]:
+        job = search_of(search_id, request)
+        return {"search_id": job.run_id, "status": searches.cancel(job)}
+
+    @app.post("/api/searches/{search_id}/papers/{key}/decide")
+    def decide_paper(search_id: str, key: str, request: Request,
+                     body: dict[str, Any]) -> dict[str, Any]:
+        """Tick or untick one paper. `state` never moves: a paper dropped by hand still shows
+        how it was found and what the screener said about it."""
+        job = search_of(search_id, request)
+        editable(job)
+        if "keep" not in (body or {}):
+            raise HTTPException(status_code=422, detail='send {"keep": true} or {"keep": false}')
+        with searches.record_lock(job):
+            record = searches.load_record(job)
+            candidate = paper_of(record, key)
+            searches.set_keep(job, record, candidate, bool(body["keep"]))
+        return {"key": candidate.key, "keep": candidate.keep}
+
+    @app.post("/api/searches/{search_id}/papers/{key}/upload")
+    def upload_paper(search_id: str, key: str, request: Request,
+                     file: UploadFile = File(...)) -> dict[str, Any]:
+        """The PDF for a paper the search could not fetch — the paywall escape hatch.
+
+        Probed here rather than at `begin` so the person who chose the file is still looking when
+        they are told it is not a paper.
+        """
+        job = search_of(search_id, request)
+        editable(job)
+        with searches.record_lock(job):
+            record = searches.load_record(job)
+            candidate = paper_of(record, key)
+            path, name = stage_upload(job, file)
+            probe = readable_pdf(job, record, path, name)
+            searches.attach_pdf(job, record, candidate, path=path, filename=name, probe=probe)
+        return _project_candidate(candidate)
+
+    @app.post("/api/searches/{search_id}/papers")
+    def add_papers(search_id: str, request: Request,
+                   files: list[UploadFile] = File(default_factory=list)) -> dict[str, Any]:
+        """Papers the search missed. One bad file does not fail the request: the others land and
+        the refusals come back named, because a person adding six PDFs by hand should not have to
+        binary-search which one this server dislikes."""
+        job = search_of(search_id, request)
+        editable(job)
+        if not files:
+            raise HTTPException(status_code=422, detail="choose at least one PDF")
+        if len(files) > DEFAULT_MAX_FILES:
+            raise HTTPException(status_code=413,
+                                detail=f"{len(files)} files is over the {DEFAULT_MAX_FILES} "
+                                       f"limit")
+        added: list[dict[str, Any]] = []
+        rejected: list[dict[str, str]] = []
+        with searches.record_lock(job):
+            record = searches.load_record(job)
+            for upload in files:
+                name = safe_filename(upload.filename or "upload.pdf")
+                try:
+                    path, name = stage_upload(job, upload)
+                    probe = readable_pdf(job, record, path, name)
+                except HTTPException as exc:
+                    rejected.append({"filename": name, "reason": str(exc.detail)})
+                    continue
+                added.append(_project_candidate(
+                    searches.add_extra(job, record, path=path, filename=name, probe=probe)))
+        return {"added": added, "rejected": rejected}
+
+    @app.post("/api/searches/{search_id}/begin", status_code=201)
+    def begin_review(search_id: str, request: Request,
+                     body: dict[str, Any] | None = None) -> dict[str, Any]:
+        """The papers this search found become a run — through `make_run`, like any upload.
+
+        A search becomes exactly ONE run. A second `begin` returns the first one instead of
+        spending the user's budget twice on the same papers: the run id is recorded on the
+        search, so a double-click, a retry after a dropped connection and a reloaded tab all get
+        the same review back with its current status.
+        """
+        job = search_of(search_id, request)
+        if job.status not in TERMINAL_STATES:
+            raise HTTPException(status_code=409,
+                                detail="this search is still going — wait for it to finish "
+                                       "before starting the review")
+        begun = searches.run_id_of(job)
+        if begun:
+            run = manager.get(begun)
+            if run is None:                                # deleted from under us
+                raise HTTPException(status_code=409,
+                                    detail=f"this search became review {begun}, which is no "
+                                           f"longer on disk")
+            return begin_answer(run, searches.skipped_of(job))
+
+        body = body or {}
+        # the protocol the page sends wins; the one pasted when the search started is the
+        # fallback, so a user who wrote it once is not asked for it twice
+        text = (str(body.get("protocol_text") or "") or searches.protocol_text(job))
+        text = text[:MAX_PROTOCOL_BYTES + 1]
+        protocol_text_or_413(text)
+        chosen = _options(json.dumps(body.get("options") or {}))
+        with searches.record_lock(job):
+            record = searches.load_record(job)
+            kept = searches.kept_pdfs(job, record)
+            if not kept:
+                raise HTTPException(status_code=422,
+                                    detail="no paper in this search is both ticked and readable "
+                                           "yet — tick the ones you want, and attach a PDF for "
+                                           "any that are paywalled")
+            skipped: list[dict[str, str]] = []
+            run = make_run(
+                manager, protocol_text=text, options=chosen,
+                sources=[PdfSource(pdf_name(candidate), (lambda p=path: p.open("rb")))
+                         for candidate, path in kept],
+                max_upload_bytes=app.state.max_upload_bytes,
+                max_total_bytes=app.state.max_total_bytes,
+                probe_timeout=app.state.probe_timeout, max_files=DEFAULT_MAX_FILES,
+                # the run carries its own provenance: what was asked, what each index answered
+                # and why every paper is or is not in it, readable without this server
+                copy_into={"search/search.json": json.dumps(record.to_json(),
+                                                            ensure_ascii=False, indent=1,
+                                                            default=str)},
+                # a staged PDF was fetched by a machine hours ago; one that no longer probes is
+                # reported and skipped rather than destroying a 40-paper review
+                on_source_rejected="skip", rejected_out=skipped,
+                stream_upload=stream_upload, probe_pdf=probe_pdf)
+            # recorded BEFORE the run is started, so even a 429 from a busy server leaves the
+            # search pointing at a real run directory that can be started later
+            searches.remember_run(job, run.run_id, skipped)
+        if chosen.start:
+            _start(manager, run)
+        return begin_answer(run, skipped)
 
     @app.get("/api/health", include_in_schema=False)
     def health() -> PlainTextResponse:
