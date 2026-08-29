@@ -40,6 +40,9 @@ from ..protocol import (apply_profile, available_profiles, dump_protocol, load_p
                         load_yaml_strict)
 from ..report import theme
 from .jobs import Job, JobBusy, JobManager, TooManyRuns
+from .make_run import (MAX_CONCURRENCY, MAX_PROTOCOL_BYTES, PdfSource, RunOptions, make_run,
+                       options_from_json as _options, parse_protocol as _parse_protocol,
+                       protocol_text_or_413, validation_message as _validation_message)
 from .overrides import (OverrideRejected, append_override, append_overrides,
                         apply_overrides_and_repool,
                         override_summary, read_overrides, repool_lock)
@@ -53,9 +56,6 @@ __all__ = ["create_app", "serve"]
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "examples" / "protocols"
-MAX_CONCURRENCY = 16
-#: a protocol is a page of YAML; anything larger is a mistake or an attack
-MAX_PROTOCOL_BYTES = 1_000_000
 #: methods that change something — a page on another origin may not use them
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
@@ -75,95 +75,6 @@ def _protocol_of(job: Job) -> Protocol:
     if not path.exists():
         raise HTTPException(status_code=409, detail="this run has no protocol on disk")
     return load_protocol(path)
-
-
-def _validation_message(error: ValidationError) -> str:
-    parts = []
-    for item in error.errors()[:8]:
-        where = ".".join(str(x) for x in item.get("loc", ()) if x != "__root__")
-        parts.append(f"{where or 'protocol'}: {item.get('msg', 'invalid')}")
-    return "; ".join(parts)
-
-
-def _parse_protocol(text: str) -> Protocol:
-    """The uploaded YAML as a `Protocol`, or a 422 a person can act on."""
-    try:
-        # strict: a repeated key would otherwise drop everything under the first copy in silence
-        raw = load_yaml_strict(text, "the protocol")
-    except yaml.YAMLError as exc:
-        raise HTTPException(status_code=422, detail=f"the protocol is not valid YAML: {exc}")
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    if not isinstance(raw, dict):
-        raise HTTPException(status_code=422, detail="the protocol must be a YAML mapping")
-    try:
-        protocol = Protocol.model_validate(raw)
-    except ValidationError as exc:
-        raise HTTPException(status_code=422,
-                            detail=f"the protocol is incomplete — {_validation_message(exc)}")
-    if protocol.stats.profile not in available_profiles():
-        # caught at upload, where the person who named it is still looking: left for the run to
-        # discover, the same typo is a paid job that dies on its first protocol load
-        raise HTTPException(status_code=422,
-                            detail=f"unknown stats profile {protocol.stats.profile!r} "
-                                   f"(available: {available_profiles()})")
-    return protocol
-
-
-class RunOptions(BaseModel):
-    """Everything the New-run form may ask for, and nothing else.
-
-    This is a schema rather than a pile of `float(...)` calls because the caller is a browser and
-    the answer to `{"budget_usd": "lots"}` must be a 422 that says which field is wrong — not a
-    500 from a `ValueError` nobody caught.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    budget_usd: float | None = Field(default=None, gt=0)
-    max_usd_per_paper: float | None = Field(default=None, gt=0)
-    max_papers: int | None = Field(default=None, ge=1)
-    concurrency: int = Field(default=4, ge=1, le=MAX_CONCURRENCY)
-    resume: bool = True
-    start: bool = True
-    name: str = Field(default="", max_length=60)
-    profile: str | None = None
-    models: dict[str, str] = Field(default_factory=dict)
-
-    @field_validator("budget_usd", "max_usd_per_paper", "max_papers", "profile", mode="before")
-    @classmethod
-    def _blank_is_absent(cls, value: Any) -> Any:
-        """An untouched form field arrives as `""`; that means "no cap", not "zero"."""
-        return None if isinstance(value, str) and not value.strip() else value
-
-    @field_validator("profile")
-    @classmethod
-    def _known_profile(cls, value: str | None) -> str | None:
-        if value is not None and value not in available_profiles():
-            raise ValueError(f"unknown stats profile (available: {available_profiles()})")
-        return value
-
-    @field_validator("models")
-    @classmethod
-    def _known_roles(cls, value: dict[str, str]) -> dict[str, str]:
-        unknown = sorted(set(value) - set(MODELS))
-        if unknown:
-            raise ValueError(f"unknown model role(s) {unknown} (roles: {sorted(MODELS)})")
-        return {k: str(v)[:80] for k, v in value.items() if str(v).strip()}
-
-
-def _options(raw: str) -> RunOptions:
-    """The `options` form field as a validated model, or a 422 naming the field that is wrong."""
-    try:
-        parsed = json.loads(raw or "{}")
-    except ValueError:
-        raise HTTPException(status_code=422, detail="options must be a JSON object")
-    if not isinstance(parsed, dict):
-        raise HTTPException(status_code=422, detail="options must be a JSON object")
-    try:
-        return RunOptions.model_validate(parsed)
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=f"bad options — {_validation_message(exc)}")
 
 
 def _start(manager: JobManager, job: Job, *, dry_run: bool = False,
@@ -465,78 +376,22 @@ def create_app(runs_dir: str | Path = "runs", *,
         text = protocol_text[:MAX_PROTOCOL_BYTES + 1]
         if not text and protocol is not None:
             text = protocol.file.read(MAX_PROTOCOL_BYTES + 1).decode("utf-8", "replace")
-        if len(text.encode("utf-8", "replace")) > MAX_PROTOCOL_BYTES:
-            raise HTTPException(status_code=413,
-                                detail=f"a protocol may not be larger than "
-                                       f"{MAX_PROTOCOL_BYTES / 1e6:.0f} MB")
-        if not text.strip():
-            raise HTTPException(status_code=422, detail="a run needs a protocol (YAML)")
-        if not files:
-            raise HTTPException(status_code=422, detail="a run needs at least one PDF")
-        if len(files) > DEFAULT_MAX_FILES:
-            raise HTTPException(status_code=413,
-                                detail=f"{len(files)} files is over the {DEFAULT_MAX_FILES} limit")
-        if chosen.start and manager.key_required():
-            raise HTTPException(status_code=400, detail="no ANTHROPIC_API_KEY is configured — "
-                                                        "add one to .env and try again")
-        if chosen.start and not manager.has_capacity():
-            raise HTTPException(status_code=429,
-                                detail=f"this server already has {manager.max_active} review(s) "
-                                       f"running; wait for one to finish (or raise "
-                                       f"CANOPY_MAX_ACTIVE_RUNS)")
-
-        parsed = _parse_protocol(text)
-        if chosen.profile:
-            # the picker's choice wins where it speaks and the protocol's own typed stats win
-            # where they do: rebuild from the fields the YAML actually set, under the picked
-            # profile, and resolve. (The guided form sends only `profile` in its stats block, so
-            # for it this is the old wholesale replacement; a pasted protocol that also picked a
-            # profile keeps its typed settings, which replacement silently discarded.)
-            typed = {k: getattr(parsed.stats, k)
-                     for k in parsed.stats.model_fields_set if k != "profile"}
-            parsed.stats = apply_profile(StatsSettings(profile=chosen.profile, **typed))
-
-        job = manager.create(title=parsed.title or chosen.name or "review",
-                             options=chosen.model_dump())
-        try:
-            if chosen.profile:
-                dump_protocol(parsed, job.run_dir / "protocol.yaml")
-            else:
-                # the same rule as the CLI's copyfile branch: the run keeps the document the
-                # person uploaded, verbatim. A re-dump manufactures explicitness — every field of
-                # a full `model_dump` reads back as explicitly chosen, so `apply_profile` becomes
-                # a no-op and the class defaults are frozen in as if somebody picked them; this
-                # run-creation path is how a protocol asking for Hedges' g via `profile: metafor`
-                # produced runs recorded as `estimator: cohen`. The verbatim file also preserves
-                # the uploader's comments, which are the protocol's own audit trail.
-                (job.run_dir / "protocol.yaml").write_text(text, encoding="utf-8")
-            saved: dict[str, str] = {}
-            remaining = float(app.state.max_total_bytes)
-            for upload in files:
-                name = safe_filename(upload.filename or "upload.pdf")
-                try:
-                    path, size = stream_upload(upload.file, job.run_dir / "uploads", name,
-                                               max_bytes=app.state.max_upload_bytes,
-                                               remaining_bytes=remaining)
-                except UploadRejected as exc:
-                    raise HTTPException(status_code=exc.status_code, detail=str(exc))
-                remaining -= size
-                first_time = str(path) not in saved      # `<sha256>.pdf`: the same paper twice
-                saved.setdefault(str(path), name)
-                if first_time:                           # probing a duplicate buys nothing, and a
-                    # folder of 79 files is often a dozen papers — each probe is a child process
-                    probe = probe_pdf(path, timeout=app.state.probe_timeout)
-                    if not probe.get("ok"):
-                        raise HTTPException(status_code=400, detail=f"{name}: {probe['error']}")
-            (job.run_dir / "uploads" / "filenames.json").write_text(
-                json.dumps(saved, ensure_ascii=False, indent=1), encoding="utf-8")
-        except BaseException:
-            shutil.rmtree(job.run_dir, ignore_errors=True)
-            manager.forget(job.run_id)
-            raise
-
-        job.n_files = len(saved)
-        job.save()
+        # the size rule stays HERE, above the shared helper: only this endpoint knows the text
+        # may have arrived as an upload rather than a form field, and `protocol_text_or_413` is
+        # the rule itself so the search's own door refuses the same document the same way
+        protocol_text_or_413(text)
+        # …and everything from here down is what BOTH doors do, so both do it in one place.
+        # `stream_upload`/`probe_pdf` are passed as this module's globals on purpose: the
+        # one-file-at-a-time pin monkeypatches them here, and a helper resolving its own copies
+        # would make that pin green without testing anything.
+        job = make_run(manager, protocol_text=text, options=chosen,
+                       sources=[PdfSource(safe_filename(upload.filename or "upload.pdf"),
+                                          (lambda u=upload: u.file)) for upload in files],
+                       max_upload_bytes=app.state.max_upload_bytes,
+                       max_total_bytes=app.state.max_total_bytes,
+                       probe_timeout=app.state.probe_timeout,
+                       max_files=DEFAULT_MAX_FILES,
+                       stream_upload=stream_upload, probe_pdf=probe_pdf)
         if chosen.start:
             _start(manager, job)
         return {"run_id": job.run_id, "token": job.token, "n_files": job.n_files,

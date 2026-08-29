@@ -97,10 +97,20 @@ def test_pipeline_models_are_clean():
 
 
 def test_registered_agent_schemas_are_clean():
+    """Both audits, on every registered schema — not just the derived-stats one.
+
+    `client.structured` runs `assert_valid_output_schema` on the way to the wire
+    (`llm/client.py`), so a schema that fails it raises on the FIRST call of a feature nobody
+    has run yet — after the code is written, reviewed and merged. This test ran only
+    `assert_no_derived_stats`, which is why that hole stayed open: a string enum with no
+    unknown-like member (the one thing a model must be able to say when it cannot tell) passed
+    collection and died at runtime. Two lines here turn every such blocker into a red test.
+    """
     schemas = agent_schemas()
     assert isinstance(schemas, dict)
     for name, schema in schemas.items():
         assert_no_derived_stats(schema), name
+        assert_valid_output_schema(schema, name)
 
 
 # ------------------------------------------------------------------ output-schema validity

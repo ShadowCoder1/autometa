@@ -1640,3 +1640,67 @@ def test_a_named_profile_in_uploaded_yaml_survives_the_run_dir_roundtrip(tmp_pat
     again = load_protocol(dumped)
     assert again.stats.estimator == "hedges" and again.stats.pi_method == "z"
     assert again.stats.hakn is True
+
+
+# ------------------- the net that must exist BEFORE `create_run`'s body moves anywhere
+def test_creating_a_run_refuses_in_exactly_this_order(api):
+    """Every refusal `POST /api/runs` can make, and the ORDER it makes them in.
+
+    Written before the `make_run` extraction, as its regression net: a helper that validates the
+    same things in a different order is not the same endpoint, and the difference is invisible
+    until a user sends a request that trips two rules at once. Each case below trips the rule
+    named and every rule after it, so the asserted status is the FIRST one that fires.
+    """
+    pdf = ("files", (PDFS[0].name, PDFS[0].read_bytes(), "application/pdf"))
+    good = ("protocol", ("protocol.yaml", PROTOCOL.read_bytes(), "text/yaml"))
+    huge = ("protocol", ("protocol.yaml", b"title: x\n" + b"# padding\n" * 200_000, "text/yaml"))
+
+    # 1. options that are not a JSON object — before anything looks at the protocol or the files
+    assert api.post("/api/runs", files=[pdf, huge],
+                    data={"options": "not json"}).status_code == 422
+    # 2. an oversized protocol — before "a run needs a protocol" and before the file loop
+    over = api.post("/api/runs", files=[pdf, huge], data={"options": "{}"})
+    assert over.status_code == 413 and "protocol" in over.json()["detail"]
+    # 3. no protocol at all
+    none_yet = api.post("/api/runs", files=[pdf], data={"options": "{}"})
+    assert none_yet.status_code == 422 and "protocol" in none_yet.json()["detail"].lower()
+    # 4. a protocol but no PDFs — after the protocol checks, before parsing
+    empty = api.post("/api/runs", files=[good], data={"options": "{}"})
+    assert empty.status_code == 422 and "PDF" in empty.json()["detail"]
+    # 5. unparseable YAML — after the "at least one PDF" rule
+    bad_yaml = api.post("/api/runs",
+                        files=[pdf, ("protocol", ("p.yaml", b"title: [unclosed", "text/yaml"))],
+                        data={"options": "{}"})
+    assert bad_yaml.status_code == 422
+    # …and the happy path still 201s with the response shape the page reads
+    ok = create_run(api, options={"start": False})
+    assert ok.status_code == 201
+    assert set(ok.json()) == {"run_id", "token", "n_files", "status", "title"}
+
+
+def test_the_same_paper_twice_is_one_file_but_two_bites_of_the_allowance(api):
+    """Two upload invariants that a "tidier" helper would quietly change.
+
+    `n_files` counts unique sha256s, so the same PDF sent twice is ONE paper — but both copies
+    are read off the wire, so both are charged against the total-size allowance. A helper that
+    skipped the decrement for a duplicate would move when a 413 fires; one that counted files
+    instead of shas would report a paper the run does not have.
+    """
+    twice = [PDFS[0], PDFS[0]]
+    created = create_run(api, pdfs=twice, options={"start": False})
+    assert created.status_code == 201, created.text
+    assert created.json()["n_files"] == 1
+
+
+def test_an_old_job_json_without_a_kind_still_loads(tmp_path):
+    """Every job.json written before `kind` existed must still load, as a plain run."""
+    from canopy.server.jobs import Job
+
+    run_dir = tmp_path / "20260101-000000-old"
+    run_dir.mkdir(parents=True)
+    (run_dir / "job.json").write_text(json.dumps({
+        "run_id": run_dir.name, "title": "an older review", "token": "t" * 32,
+        "created_at": "2026-01-01T00:00:00+00:00", "status": "done", "options": {}}),
+        encoding="utf-8")
+    job = Job.load(run_dir)
+    assert job is not None and job.kind == "run" and job.title == "an older review"
