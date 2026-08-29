@@ -1,0 +1,60 @@
+{
+  "_fixture_note": "SYNTHETIC, not a recording. Unpaywall's /v2/{doi} endpoint requires a real contact email address in the `email` parameter and rejects placeholders, and the recording agent had no address it was permitted to send to a third-party service. The shape below is transcribed from the fields the design verified live (design_finder_backend.md 3.4): best_oa_location = {url, url_for_pdf, url_for_landing_page, host_type, version, license, oa_date, is_best}, oa_locations[], and the literal string \"deprecated\" that `evidence` and `updated` now return. Everything the adapter reads is present; nothing here should be read as a live measurement.",
+  "doi": "10.1097/npt.0000000000000086",
+  "doi_url": "https://doi.org/10.1097/npt.0000000000000086",
+  "title": "High-Intensity Resistance Training in Persons With Parkinson Disease",
+  "genre": "journal-article",
+  "is_oa": true,
+  "oa_status": "green",
+  "has_repository_copy": true,
+  "journal_name": "Journal of Neurologic Physical Therapy",
+  "journal_is_oa": false,
+  "publisher": "Wolters Kluwer",
+  "published_date": "2015-04-01",
+  "year": 2015,
+  "updated": "deprecated",
+  "best_oa_location": {
+    "url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4366306",
+    "url_for_pdf": "https://europepmc.org/articles/PMC4366306?pdf=render",
+    "url_for_landing_page": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4366306",
+    "host_type": "repository",
+    "version": "acceptedVersion",
+    "license": "cc-by-nc-nd",
+    "oa_date": "2015-04-01",
+    "is_best": true,
+    "evidence": "deprecated",
+    "updated": "deprecated"
+  },
+  "oa_locations": [
+    {
+      "url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4366306",
+      "url_for_pdf": "https://europepmc.org/articles/PMC4366306?pdf=render",
+      "url_for_landing_page": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4366306",
+      "host_type": "repository",
+      "version": "acceptedVersion",
+      "license": "cc-by-nc-nd",
+      "is_best": true,
+      "evidence": "deprecated"
+    },
+    {
+      "url": "https://collections.lib.utah.edu/dl_files/1a/2b/resistance-training.pdf",
+      "url_for_pdf": null,
+      "url_for_landing_page": "https://collections.lib.utah.edu/details?id=123456",
+      "host_type": "repository",
+      "version": "submittedVersion",
+      "license": null,
+      "is_best": false,
+      "evidence": "deprecated"
+    }
+  ],
+  "first_oa_location": {
+    "url": "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4366306",
+    "url_for_pdf": "https://europepmc.org/articles/PMC4366306?pdf=render",
+    "host_type": "repository",
+    "is_best": true
+  },
+  "z_authors": [
+    {"family": "Dibble", "given": "Leland E.", "sequence": "first"},
+    {"family": "Foreman", "given": "K. Bo", "sequence": "additional"}
+  ]
+}

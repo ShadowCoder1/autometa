@@ -1,0 +1,420 @@
+"""The orchestrator (`canopy.search.run`), end to end, with no network and no paid call.
+
+`run_search` is the real function in every test here. What is replaced is the world outside it: a
+`RecordedTransport` answering the index calls out of the JSON those APIs really sent, and an
+`LLMClient` whose provider is `FakeProvider` — so the schema audit, the cost accounting and the
+budget reservation are all the genuine ones and only the model's words are canned.
+
+The four properties being defended:
+
+* **it never raises for something an index or a publisher did.** OpenAlex running out of its $0.10
+  daily budget, a publisher serving a login page, a host answering 429 — each is a row in the
+  record and a sentence in `notes`, and the search finishes.
+* **the five rungs of `PHASES` all report, in order**, whatever happened inside them.
+* **`unique_contributed` is measured.** Europe PMC is asked first because it is unmetered, not
+  because this module believes anything about a research field (review §C4) — so the record has to
+  carry the evidence for whether that ordering paid off.
+* **`stopped_because` is set when a search is cut short**, because a cancelled or capped search
+  still finishes `done` and a page told only "done" would never tell the user.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from canopy.llm.client import LLMClient
+from canopy.llm.providers import FakeProvider
+from canopy.search.indices import EuropePmc, OpenAlex
+from canopy.search.models import PHASES, counts_of
+from canopy.search.run import run_search
+from canopy.search.transport import HttpResponse, RecordedTransport, fixture_key
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "search"
+PDF = Path(__file__).resolve().parent / "fixtures" / "pdfs" / "bock2005.pdf"
+
+QUESTION = "does resistance training reduce tremor in Parkinson's disease?"
+QUERY = "resistance training parkinson tremor"
+PER_QUERY = 25
+MODEL_ROLES = {"primary": "claude-opus-5", "secondary": "claude-sonnet-5"}
+
+#: what the query call answers. One query, so one request per index and one fixture per index.
+QUERIES_PAYLOAD = {"queries": [{"text": QUERY, "why": "the words of the question itself"}],
+                   "criteria": ["adults with Parkinson's disease",
+                                "a resistance-training arm and a comparator",
+                                "a tremor outcome reported numerically"]}
+
+
+def load(name: str) -> dict:
+    return json.loads((FIXTURES / f"{name}.json").read_text())
+
+
+def fake_probe(_path):
+    """A probe that reads nothing. The real one spawns a child interpreter per PDF; what is under
+    test here is the orchestrator's bookkeeping, not the PDF parser's (which has its own suite)."""
+    return {"ok": True, "n_pages": 5}
+
+
+def index_transport(*, epmc: dict | None = None, openalex: dict | None = None,
+                    epmc_response: HttpResponse | None = None,
+                    openalex_response: HttpResponse | None = None) -> RecordedTransport:
+    """A transport with one recorded answer per (index, query), at the key the adapter will ask for.
+
+    The keys come from each adapter's own `request()`, so an adapter that changed its parameters
+    raises `MissingSearchFixture` here instead of quietly passing against a stale recording.
+    """
+    transport = RecordedTransport()
+    for index, body, response in ((EuropePmc(), epmc, epmc_response),
+                                  (OpenAlex(), openalex, openalex_response)):
+        url, params = index.request(QUERY, limit=PER_QUERY)
+        if response is None:
+            response = HttpResponse(url=url, status=200, outcome="ok",
+                                    body=json.dumps(body or {}).encode("utf-8"))
+        transport.record(url, response, params)
+    return transport
+
+
+def serve_pdfs(transport: RecordedTransport, urls) -> RecordedTransport:
+    for url in urls:
+        transport.payloads[fixture_key(url)] = PDF
+    return transport
+
+
+def refuse(transport: RecordedTransport, url: str, *, status: int, outcome: str,
+           error: str = "") -> RecordedTransport:
+    transport.responses[fixture_key(url)] = HttpResponse(
+        url=url, status=status, outcome=outcome, error=error or f"HTTP {status}")
+    return transport
+
+
+def scripted_client(*payloads) -> LLMClient:
+    return LLMClient(provider=FakeProvider(list(payloads)), cache_dir=None)
+
+
+def include_everything(n: int) -> dict:
+    """A screener that wants every record, so the fetch stage gets a full workload.
+
+    Which candidate lands on which `ref` depends on a hash sort, so a payload that included only
+    some of them would make the fetch assertions depend on hashing — the tests would still pass and
+    would no longer mean anything.
+    """
+    return {"decisions": [{"ref": str(i), "decision": "include",
+                           "reason": "a resistance-training trial reporting tremor"}
+                          for i in range(1, n + 1)]}
+
+
+@pytest.fixture(autouse=True)
+def no_contact_email(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No address, so Unpaywall is skipped with its note and no test depends on the developer's
+    own environment. The skip note is asserted below — it is part of the contract."""
+    monkeypatch.delenv("CANOPY_CONTACT_EMAIL", raising=False)
+
+
+@pytest.fixture
+def phase_log() -> list[tuple[str, str, str, float]]:
+    return []
+
+
+# ------------------------------------------------------------------------------- the whole thing
+def test_a_whole_search_end_to_end(tmp_path, phase_log):
+    """queries → index → dedupe → screen → fetch, on real index JSON and a real PDF.
+
+    Six Europe PMC records (four open access) and five OpenAlex works, none of which overlap, all
+    screened in, and then fetched: the four Europe PMC `?pdf=render` copies land, the two OpenAlex
+    `oa_url`s are the NCBI landing pages a live probe returned (`not_a_pdf` — which is exactly how
+    a login wall or a Cloudflare page shows up), and the rest had no open-access route at all.
+    """
+    transport = index_transport(epmc=load("europepmc_search"), openalex=load("openalex_works"))
+    render = [f"https://europepmc.org/articles/{pmcid}?pdf=render" for pmcid in
+              ("PMC13317673", "PMC12941259", "PMC12982457", "PMC13065030")]
+    serve_pdfs(transport, render)
+    for landing in ("https://www.ncbi.nlm.nih.gov/pmc/articles/4366306",
+                    "https://www.ncbi.nlm.nih.gov/pmc/articles/4586021"):
+        refuse(transport, landing, status=200, outcome="not_a_pdf",
+               error="www.ncbi.nlm.nih.gov served text/html, not a PDF")
+
+    record = run_search(
+        question=QUESTION, transport=transport,
+        client=scripted_client(QUERIES_PAYLOAD, include_everything(11)),
+        model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=60,
+        staging_dir=tmp_path / "pdfs", per_query=PER_QUERY, probe=fake_probe,
+        on_phase=lambda *event: phase_log.append(event))
+
+    counts = counts_of(record.candidates, record.possible_duplicates)
+    assert counts["records"] == 11 and counts["after_dedupe"] == 11
+    assert counts["screened"] == 11 and counts["included"] == 11
+    assert counts["fetched"] == 4, "the four Europe PMC OA copies"
+    assert counts["paywalled"] == 7 and counts["wanted"] == 0
+    assert record.query_source == "model" and record.cost_usd > 0
+
+    fetched = [c for c in record.candidates if c.state == "fetched"]
+    assert all(c.pdf_path.endswith(".pdf") and c.pdf_pages == 5 for c in fetched)
+    assert all((tmp_path / "pdfs" / c.pdf_path).exists() for c in fetched)
+    # every attempt is on the record, including the two that proved a landing page is not a paper
+    assert sum(len(c.fetch_attempts) for c in record.candidates) == 6
+    assert {a["outcome"] for c in record.candidates for a in c.fetch_attempts} == {"ok",
+                                                                                  "not_a_pdf"}
+    assert record.stopped_because == ""
+
+
+def test_the_five_phases_report_in_order(tmp_path, phase_log):
+    """The names are shared verbatim with the page; two of these rungs once differed and never lit."""
+    transport = index_transport(epmc=load("europepmc_search"), openalex=load("openalex_works"))
+    run_search(question=QUESTION, transport=transport,
+               client=scripted_client(QUERIES_PAYLOAD, include_everything(11)),
+               model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=0,
+               staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe,
+               on_phase=lambda *event: phase_log.append(event))
+
+    names = [name for name, status, *_ in phase_log if status == "running"]
+    assert names == list(PHASES)
+    finished = [(name, status) for name, status, *_ in phase_log if status != "running"]
+    assert [name for name, _ in finished] == list(PHASES)
+    assert all(status in ("ok", "skipped", "error") for _, status in finished)
+    assert all(seconds >= 0 for *_, seconds in phase_log)
+
+
+def test_a_broken_progress_listener_cannot_kill_a_search(tmp_path):
+    """A closed SSE connection is the caller's problem, not a reason to lose finished work."""
+    transport = index_transport(epmc=load("europepmc_search"), openalex=load("openalex_works"))
+
+    def explode(*_args):
+        raise RuntimeError("the browser went away")
+
+    record = run_search(question=QUESTION, transport=transport,
+                        client=scripted_client(QUERIES_PAYLOAD, include_everything(11)),
+                        model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=0,
+                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe,
+                        on_phase=explode)
+    assert len(record.candidates) == 11 and len(record.phases) == 2 * len(PHASES)
+
+
+# ------------------------------------------------------------------------- the measured ordering
+def test_sources_carry_n_returned_and_unique_contributed(tmp_path):
+    """`unique_contributed` is why the index ordering is a fact and not an assumption (§C4)."""
+    transport = index_transport(epmc=load("europepmc_search"), openalex=load("openalex_works"))
+    record = run_search(question=QUESTION, transport=transport,
+                        client=scripted_client(QUERIES_PAYLOAD, include_everything(11)),
+                        model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=0,
+                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+
+    rows = {row["name"]: row for row in record.sources}
+    assert set(rows) == {"europepmc", "openalex"}
+    assert rows["europepmc"]["n_returned"] == 6 and rows["openalex"]["n_returned"] == 5
+    # these two recordings share no paper, so every row is a unique contribution
+    assert rows["europepmc"]["unique_contributed"] == 6
+    assert rows["openalex"]["unique_contributed"] == 5
+    assert all(row["query"] == QUERY for row in record.sources)
+
+
+def test_a_paper_both_indexes_found_is_counted_once_and_credited_to_neither(tmp_path):
+    """The merge case, and the only one that makes `unique_contributed` mean anything.
+
+    The OpenAlex body is the real recording with ONE work's DOI rewritten to a DOI Europe PMC also
+    returned — the only way to exercise a cross-index merge without a second live recording, and
+    the rewrite is confined to this test.
+    """
+    openalex = load("openalex_works")
+    shared_doi = load("europepmc_search")["resultList"]["result"][0]["doi"]
+    openalex["results"][0]["doi"] = f"https://doi.org/{shared_doi}"
+    transport = index_transport(epmc=load("europepmc_search"), openalex=openalex)
+
+    record = run_search(question=QUESTION, transport=transport,
+                        client=scripted_client(QUERIES_PAYLOAD, include_everything(10)),
+                        model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=0,
+                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+
+    counts = counts_of(record.candidates, record.possible_duplicates)
+    assert counts["records"] == 11 and counts["after_dedupe"] == 10, "eleven rows, ten papers"
+    both = next(c for c in record.candidates if c.doi == shared_doi)
+    assert sorted(both.found_by) == ["europepmc", "openalex"]
+
+    rows = {row["name"]: row for row in record.sources}
+    assert rows["europepmc"]["unique_contributed"] == 5
+    assert rows["openalex"]["unique_contributed"] == 4
+    assert sum(row["unique_contributed"] for row in record.sources) == 9, "the shared one is neither's"
+
+
+# ---------------------------------------------------------------------------- degrading honestly
+def test_openalex_running_out_of_budget_leaves_the_search_alive(tmp_path, phase_log):
+    """OpenAlex is metered at $0.10 a day. Losing Europe PMC's results over that would be absurd."""
+    transport = index_transport(
+        epmc=load("europepmc_search"),
+        openalex_response=HttpResponse(url="https://api.openalex.org/works", status=429,
+                                       outcome="rate_limited",
+                                       error="api.openalex.org asked us to slow down"))
+
+    record = run_search(question=QUESTION, transport=transport,
+                        client=scripted_client(QUERIES_PAYLOAD, include_everything(6)),
+                        model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=0,
+                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe,
+                        on_phase=lambda *event: phase_log.append(event))
+
+    assert len(record.candidates) == 6, "Europe PMC's six survive"
+    dead = next(row for row in record.sources if row["name"] == "openalex")
+    assert dead["n_returned"] == 0 and dead["outcome"] == "rate_limited"
+    assert "$0.10" in dead["note"] and "midnight UTC" in dead["note"]
+    assert any("$0.10" in note for note in record.notes), "the user is told, in words"
+    assert record.stopped_because == "", "one arm failing is not a stopped search"
+    assert ("index", "ok") in [(name, status) for name, status, *_ in phase_log]
+
+
+def test_both_indexes_failing_is_recorded_not_raised(tmp_path, phase_log):
+    """A search that found nothing and says why beats a traceback the user cannot act on."""
+    down = HttpResponse(url="https://example.org", status=503, outcome="http_error",
+                        error="the index answered HTTP 503")
+    transport = index_transport(epmc_response=down, openalex_response=down)
+
+    record = run_search(question=QUESTION, transport=transport,
+                        client=scripted_client(QUERIES_PAYLOAD), model_roles=MODEL_ROLES,
+                        budget_usd=1.0, max_screened=200, max_fetch=0, staging_dir=tmp_path,
+                        per_query=PER_QUERY, probe=fake_probe,
+                        on_phase=lambda *event: phase_log.append(event))
+
+    assert record.candidates == []
+    assert [row["error"] for row in record.sources] == ["the index answered HTTP 503"] * 2
+    assert ("index", "error") in [(name, status) for name, status, *_ in phase_log]
+    assert len(record.phases) == 2 * len(PHASES), "every rung still reported"
+
+
+def test_with_no_model_the_queries_are_the_user_s_own_words_and_nothing_is_screened(tmp_path):
+    """The keyless path is a working feature, not a degraded one.
+
+    Every paper is listed with its abstract and its links for a person to read, and the record says
+    `template` so a reader knows what to expect of the recall.
+    """
+    index = EuropePmc()
+    transport = RecordedTransport()
+    for query_text in ("resistance training reduce tremor parkinson disease",
+                       "resistance training reduce tremor"):
+        url, params = index.request(query_text, limit=PER_QUERY)
+        transport.record(url, HttpResponse(
+            url=url, status=200, outcome="ok",
+            body=json.dumps(load("europepmc_search")).encode()), params)
+    url, params = OpenAlex().request("resistance training reduce tremor parkinson disease",
+                                     limit=PER_QUERY)
+    transport.record(url, HttpResponse(url=url, status=200, outcome="ok",
+                                       body=json.dumps({"results": [], "meta": {}}).encode()),
+                     params)
+    url, params = OpenAlex().request("resistance training reduce tremor", limit=PER_QUERY)
+    transport.record(url, HttpResponse(url=url, status=200, outcome="ok",
+                                       body=json.dumps({"results": [], "meta": {}}).encode()),
+                     params)
+
+    record = run_search(question=QUESTION, transport=transport, client=None,
+                        model_roles=MODEL_ROLES, budget_usd=None, max_screened=200, max_fetch=60,
+                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+
+    counts = counts_of(record.candidates, record.possible_duplicates)
+    assert record.query_source == "template" and record.cost_usd == 0.0
+    assert counts["after_dedupe"] == 6 and counts["screened"] == 0
+    assert counts["not_screened"] == 6 and counts["fetched"] == 0
+    assert all(c.abstract for c in record.candidates), "the abstracts are there to be read"
+    assert all(c.links for c in record.candidates), "and every row has a link out"
+    assert any("no model was available" in note for note in record.notes)
+
+
+def test_unpaywall_is_skipped_with_a_note_when_there_is_no_contact_address(tmp_path):
+    """It rejects placeholders, so there is no honest way to call it. The record says so."""
+    transport = index_transport(epmc=load("europepmc_search"), openalex=load("openalex_works"))
+    record = run_search(question=QUESTION, transport=transport,
+                        client=scripted_client(QUERIES_PAYLOAD, include_everything(11)),
+                        model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=60,
+                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+
+    assert any("CANOPY_CONTACT_EMAIL" in note for note in record.notes)
+    assert not any(row["name"] == "unpaywall" for row in record.sources)
+
+
+# ------------------------------------------------------------------------- stopping, and saying so
+def test_cancelling_between_stages_skips_the_rest_and_names_the_reason(tmp_path, phase_log):
+    """`stopped_because` is what the page's banner keys on — a cancelled search still ends `done`."""
+    transport = index_transport(epmc=load("europepmc_search"), openalex=load("openalex_works"))
+    seen = {"n": 0}
+
+    def cancelled() -> bool:
+        # cancellation is checked BETWEEN stages, so the stage in flight when the user pressed the
+        # button finishes: the screener has already paid for the batch it is in, and a stage that
+        # is half-done and half-recorded is worse than one that finished.
+        seen["n"] += 1
+        return True
+
+    record = run_search(question=QUESTION, transport=transport,
+                        client=scripted_client(QUERIES_PAYLOAD), model_roles=MODEL_ROLES,
+                        budget_usd=1.0, max_screened=200, max_fetch=60, staging_dir=tmp_path,
+                        per_query=PER_QUERY, probe=fake_probe, cancelled=cancelled,
+                        on_phase=lambda *event: phase_log.append(event))
+
+    assert record.stopped_because == "cancelled"
+    assert record.candidates == [] and record.sources == []
+    skipped = [name for name, status, *_ in phase_log if status == "skipped"]
+    assert skipped == ["index", "dedupe", "screen", "fetch"]
+    assert all("you stopped this search" in message
+               for _, status, message, _ in phase_log if status == "skipped")
+    assert transport.calls == [], "nothing went to an index after the cancellation"
+
+
+def test_the_screening_cap_leaves_the_rest_listed_and_unscreened(tmp_path):
+    """Capped is not dropped: the rows stay, with the reason, and the counts are about the list
+    the user is actually looking at."""
+    transport = index_transport(epmc=load("europepmc_search"), openalex=load("openalex_works"))
+    record = run_search(question=QUESTION, transport=transport,
+                        client=scripted_client(QUERIES_PAYLOAD, include_everything(4)),
+                        model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=4, max_fetch=0,
+                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+
+    counts = counts_of(record.candidates, record.possible_duplicates)
+    assert counts["after_dedupe"] == 11, "nothing is dropped by a cap"
+    assert counts["screened"] == 4 and counts["not_screened"] == 7
+    assert any("screening cap of 4" in note for note in record.notes)
+
+
+def test_the_fetch_cap_is_recorded_on_the_candidates_it_stopped(tmp_path):
+    """`over_fetch_cap`, and the papers stay `wanted` — nothing was tried, so nothing is claimed."""
+    transport = index_transport(epmc=load("europepmc_search"), openalex=load("openalex_works"))
+    serve_pdfs(transport, [f"https://europepmc.org/articles/{p}?pdf=render"
+                           for p in ("PMC13317673", "PMC12941259", "PMC12982457", "PMC13065030")])
+
+    record = run_search(question=QUESTION, transport=transport,
+                        client=scripted_client(QUERIES_PAYLOAD, include_everything(11)),
+                        model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=2,
+                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+
+    over = [c for c in record.candidates if c.fetch_outcome == "over_fetch_cap"]
+    assert len(over) == 9 and all(c.state == "wanted" for c in over)
+    assert all(c.fetch_attempts == [] for c in over)
+    assert any("fetch cap of 2" in note for note in record.notes)
+
+
+def test_a_question_that_produces_no_query_says_so_instead_of_searching_nothing(tmp_path,
+                                                                                phase_log):
+    """An empty search that reports "no query" is honest; one that reports "no results" is not."""
+    record = run_search(question="   ", transport=RecordedTransport(), client=None,
+                        model_roles=MODEL_ROLES, budget_usd=None, max_screened=10, max_fetch=0,
+                        staging_dir=tmp_path, probe=fake_probe,
+                        on_phase=lambda *event: phase_log.append(event))
+
+    assert record.queries == [] and record.candidates == []
+    assert ("queries", "error") in [(name, status) for name, status, *_ in phase_log]
+    assert [name for name, status, *_ in phase_log if status == "skipped"] == [
+        "index", "dedupe", "screen", "fetch"]
+
+
+def test_the_record_is_json_serialisable_with_its_counts(tmp_path):
+    """`search.json` is the artefact a reviewer reads without the server running."""
+    transport = index_transport(epmc=load("europepmc_search"), openalex=load("openalex_works"))
+    record = run_search(question=QUESTION, transport=transport,
+                        client=scripted_client(QUERIES_PAYLOAD, include_everything(11)),
+                        model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=0,
+                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+
+    blob = json.loads(json.dumps(record.to_json()))
+    assert blob["counts"]["after_dedupe"] == 11
+    assert blob["search_id"].startswith("s") and blob["created_at"]
+    assert [phase["name"] for phase in blob["phases"]] == [
+        name for name in PHASES for _ in range(2)]
+    assert all(set(row) >= {"name", "query", "n_returned", "error", "unique_contributed"}
+               for row in blob["sources"])
+    assert all(set(candidate) >= {"key", "state", "links", "found_by"}
+               for candidate in blob["candidates"])
