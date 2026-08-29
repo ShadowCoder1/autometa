@@ -28,7 +28,8 @@ VERBATIM_PREFIXES: tuple[str, ...] = ("reported_",)
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 #: packages scanned by `agent_schemas()` for module-level `*_SCHEMA` constants
-AGENT_SCHEMA_PACKAGES: tuple[str, ...] = ("canopy.agents", "canopy.digitize", "canopy.verify")
+AGENT_SCHEMA_PACKAGES: tuple[str, ...] = ("canopy.agents", "canopy.digitize", "canopy.verify",
+                                         "canopy.search")
 
 
 def _normalize(name: str) -> str:

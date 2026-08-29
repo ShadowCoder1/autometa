@@ -84,12 +84,16 @@ TITLE_ONLY_NOTE = "(screened on the title alone: this record had no abstract.)"
 NO_ABSTRACT_MARKER = "[no abstract was available for this record — screen it on its title alone]"
 TRUNCATION_MARKER = " […abstract truncated]"
 
-#: `state` after a verdict, when no PDF is on disk yet. There is no `included` state on purpose
-#: (models.py:35-43): "the screener wanted it" and "we have the file" are the same question asked at
-#: different moments. An `include` is therefore `paywalled` — *wanted, and no open-access PDF is on
-#: disk* — which is literally true the instant screening ends, is what the page should show for a
-#: search that stops before `fetch`, and is what `fetch` overwrites with `fetched` when it succeeds.
-_STATE_FOR: dict[str, str] = {"include": "paywalled", "exclude": "excluded", "unknown": "unsure"}
+#: `state` after a verdict, when no PDF is on disk yet. An `include` becomes `wanted`, NOT
+#: `paywalled`: the fetch stage has not run, so nothing has established that a paywall exists,
+#: and telling a user their paper sits behind one is a claim about a publisher nobody contacted.
+#: `fetch` overwrites this with `fetched`, or with the `paywalled` it actually measured — and a
+#: search that stops before fetching leaves rows reading "wanted", which is what is true.
+#: An included candidate is `wanted`, NOT `paywalled`: the fetch stage has not run, so nothing
+#: has established that a paywall exists. `fetch` overwrites this with `fetched` or with the
+#: `paywalled` it actually measured — and a search that stops before fetching leaves rows that
+#: say "wanted", which is true, instead of blaming a publisher nobody contacted.
+_STATE_FOR: dict[str, str] = {"include": "wanted", "exclude": "excluded", "unknown": "unsure"}
 
 #: `include` and `unknown` default to ON, `exclude` to OFF (design §2.6). Screening is
 #: over-inclusive by construction: the run's own mapper decides eligibility per paper and records
@@ -199,9 +203,21 @@ class ScreenOutcome:
     notes: list[str] = field(default_factory=list)
 
 
-def cap_reason(budget_usd: float) -> str:
-    """The sentence a record gets when the cap stopped the search before anyone read it."""
-    return (f"the search's ${budget_usd:.2f} cost cap was reached before this record was screened")
+def _money(usd: float) -> str:
+    """`$1.00`, but `$0.0010` for a cap small enough that two decimal places would print `$0.00`."""
+    return f"${usd:.2f}" if usd >= 0.01 else f"${usd:.4f}"
+
+
+def cap_reason(budget_usd: float | None) -> str:
+    """The sentence a record gets when the cap stopped the search before anyone read it.
+
+    It names the cap that actually fired — the caller's `budget_usd` when this module's own
+    between-batch check stopped things, the client's when its reservation refused the call — because
+    a reader asking "why was this paper never screened?" needs the number they can change.
+    """
+    if budget_usd is None:
+        return "the search's cost cap was reached before this record was screened"
+    return f"the search's {_money(budget_usd)} cost cap was reached before this record was screened"
 
 
 # --------------------------------------------------------------------------------- small helpers
@@ -318,6 +334,12 @@ def _client_cost(client: Any) -> float:
         return 0.0
 
 
+def _client_budget(client: Any, default: float | None = None) -> float | None:
+    """The client's own USD budget, when it has one — the cap that raised `BudgetExceeded`."""
+    budget = getattr(client, "budget_usd", None)
+    return float(budget) if isinstance(budget, (int, float)) else default
+
+
 def _emit(on_progress: Callable[[Mapping[str, Any]], None] | None, **event: Any) -> None:
     """Progress, straight to the caller's callback.
 
@@ -390,13 +412,15 @@ def screen_candidates(client: Any | None, candidates: Sequence[Candidate], *,
 
     spent = 0.0
     done = 0
-    stopped = False
+    #: set once the cap fires — the exact sentence every remaining record gets, so the whole tail of
+    #: the search names one cap rather than each batch inventing its own wording.
+    stopped_reason = ""
     for index, batch in enumerate(batches_of(records, batch_size)):
         record = ScreenBatch(index=index, keys=[c.key for c in batch])
         outcome.batches.append(record)
-        if stopped:                                  # the cap already fired; nobody reads these
+        if stopped_reason:                           # the cap already fired; nobody reads these
             for candidate in batch:
-                _write_unscreened(candidate, cap_reason(budget_usd or 0.0))
+                _write_unscreened(candidate, stopped_reason)
             continue
 
         messages = [{"role": "user", "content": _prompt_for(batch, question=question,
@@ -406,13 +430,13 @@ def screen_candidates(client: Any | None, candidates: Sequence[Candidate], *,
         # The cap, checked BETWEEN batches: the work already paid for is kept, and the batch that
         # would not fit is never sent.
         if budget_usd is not None and spent + record.estimated_usd > budget_usd:
-            stopped = True
+            stopped_reason = cap_reason(budget_usd)
             outcome.stopped_because = "budget"
             outcome.notes.append(
-                f"the ${budget_usd:.2f} cost cap stopped screening after {done} of {total} "
+                f"the {_money(budget_usd)} cost cap stopped screening after {done} of {total} "
                 f"records; the rest are listed unscreened")
             for candidate in batch:
-                _write_unscreened(candidate, cap_reason(budget_usd))
+                _write_unscreened(candidate, stopped_reason)
             _emit(on_progress, stage="screen", status="skipped", n=done, total=total,
                   cost_so_far=round(spent, 6), message=outcome.notes[-1])
             continue
@@ -424,16 +448,18 @@ def screen_candidates(client: Any | None, candidates: Sequence[Candidate], *,
                 max_tokens=max_tokens, prompt_version=PROMPT_VERSION,
                 cell_key=f"{cell_key_prefix}:{index}", messages=messages)
         except BudgetExceeded as exc:
-            # The client's own reservation refused it. Same clean stop, same wording: the user is
-            # told about the cap, not about an exception.
-            stopped = True
+            # The client's own reservation refused it (client.py:331-340). Same clean stop, same
+            # wording: the user is told about the cap, not about an exception. The cap NAMED is the
+            # client's, because that is the one that fired — it can be lower than `budget_usd`, and
+            # a reason quoting the wrong number sends the user to change the wrong setting.
+            stopped_reason = cap_reason(_client_budget(client, default=budget_usd))
             outcome.stopped_because = "budget"
             record.error = str(exc)
             outcome.notes.append(
                 f"the cost cap stopped screening after {done} of {total} records; the rest are "
                 f"listed unscreened")
             for candidate in batch:
-                _write_unscreened(candidate, cap_reason(budget_usd or 0.0))
+                _write_unscreened(candidate, stopped_reason)
             _emit(on_progress, stage="screen", status="skipped", n=done, total=total,
                   cost_so_far=round(spent, 6), message=outcome.notes[-1])
             continue

@@ -49,6 +49,10 @@ reaches `169.254.169.254` and returns credentials. So:
   accepts the rebinding window and the caller should record which mode applied.
 * **`trust_env=False`.** An `HTTP_PROXY` in the environment would route our carefully-pinned request
   through a proxy that resolves the name all over again.
+* **No connection reuse**, which is a consequence of the pinning: httpcore keys its pool on the
+  request URL's (scheme, host, port), the SNI name is not part of that key, and our host *is* an
+  IP — so two vetted names on one CDN address would otherwise share a TLS session authenticated
+  for only one of them. See the `limits=` comment in `HttpxTransport.__init__`.
 * **No cookies, no auth, no credentials, port 443 only, https only.**
 
 WHAT IT COSTS TO GET THIS WRONG IN THE OTHER DIRECTION

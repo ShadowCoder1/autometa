@@ -35,7 +35,8 @@ __all__ = ["Candidate", "CandidateState", "SearchRecord", "PHASES", "COUNT_KEYS"
 CandidateState = Literal[
     "fetched",       # an open-access PDF is on disk and readable
     "uploaded",      # a human supplied the PDF for this candidate
-    "paywalled",     # wanted, but no open-access copy could be fetched — the user gets links
+    "wanted",        # the screener wants it and the fetch stage has not resolved it yet
+    "paywalled",     # wanted, and no open-access copy could be fetched — the user gets links
     "unsure",        # the screener could not tell from the title and abstract
     "excluded",      # the screener ruled it out, with its reason
     "not_screened",  # nobody read it: no model, or the cap stopped the search first
@@ -57,6 +58,7 @@ COUNT_KEYS: tuple[str, ...] = (
     "excluded",        # …ruled these out
     "not_screened",    # nobody read these (no model, or the cap stopped first)
     "fetched",         # open-access PDFs on disk
+    "wanted",          # the screener wants these; the fetch stage has not answered yet
     "paywalled",       # wanted, no OA copy — listed with links
     "uploaded",        # PDFs a human supplied for a paywalled candidate
     "extra",           # PDFs a human added that no index proposed
@@ -237,6 +239,10 @@ def counts_of(candidates: list[Candidate],
         "excluded": sum(1 for c in screened if c.screen_decision == "exclude"),
         "not_screened": states.count("not_screened"),
         "fetched": states.count("fetched"),
+        # `wanted` and `paywalled` are deliberately separate: telling a user a paper is behind
+        # a paywall when nothing ever tried to fetch it is a claim about a publisher that
+        # nobody checked. Before the fetch stage answers, the honest word is "wanted".
+        "wanted": states.count("wanted"),
         "paywalled": states.count("paywalled"),
         "uploaded": states.count("uploaded"),
         "extra": states.count("extra"),
