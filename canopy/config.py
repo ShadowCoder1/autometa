@@ -17,6 +17,7 @@ MODELS: dict[str, str] = {
     "secondary": "claude-sonnet-5",     # cross-check / second route / verifier
     "adjudicator": "claude-opus-5",     # adjudication of disagreements
     "adjudicator_max": "claude-fable-5",  # optional max-effort adjudicator (server-side fallback)
+    "screener": "claude-sonnet-5",      # reads titles and abstracts when a search finds papers
 }
 
 #: Prompt-cache TTL marker used on document/image blocks.

@@ -1782,15 +1782,26 @@ def test_the_search_ladder_uses_the_servers_own_phase_names():
         assert status in ladder, status
 
 
-def test_the_search_sends_the_two_options_the_server_will_accept():
-    """`SearchOptions` forbids extras, so a third field is a 422 on the very first request."""
+def test_the_search_sends_only_options_the_server_will_accept():
+    """`SearchOptions` forbids extras, so one field it does not have is a 422 on the first request.
+
+    The expected set is READ OFF the model rather than written out here. The hand-written tuple
+    this replaced pinned the two fields of the day and had to be edited the moment a third was
+    added — which is the one moment a mirror test is supposed to be doing its job, not being
+    rewritten. Derived, it now fails for the drift it was written to catch (a field the page sends
+    and the model forbids) and passes for a field both sides gained together.
+    """
+    from canopy.server.searches import SearchOptions
+
     app_js = (STATIC / "app.js").read_text(encoding="utf-8")
     body = app_js.split("function searchOptions(")[1].split("\n  }")[0]
     assert "options.max_usd = " in body and "options.max_screened = " in body
-    assert tuple(sorted(set(re.findall(r"options\.([a-z_]+) =", body)))) == \
-        ("max_screened", "max_usd")
+    sent = set(re.findall(r"options\.([a-z_]+) =", body))
+    assert sent <= set(SearchOptions.model_fields), "the page sends a field the server forbids"
+    assert sent == {"max_usd", "max_screened", "exclude"}
     page = (STATIC / "index.html").read_text(encoding="utf-8")
     assert 'id="f-max-usd"' in page and 'id="f-max-screened"' in page
+    assert 'id="f-exclude"' in page
 
 
 def test_the_paywalled_link_comes_from_the_server_never_from_the_page():
@@ -2185,3 +2196,45 @@ def test_a_run_refused_at_the_starting_line_is_still_on_disk_and_startable(api, 
     assert api.post(f"/api/runs/{run_id}/start",
                     headers=auth(listed["token"])).status_code == 200
     api.post(f"/api/runs/{run_id}/cancel", headers=auth(listed["token"]))
+
+
+# ============================================================ the page's half of an exclusion
+def test_the_page_names_the_user_as_the_one_who_excluded_a_paper():
+    """A paper the USER forbade sits in the same Excluded list as one the screener threw out.
+
+    They must not read alike: the screener's line is a judgement a reviewer may argue with, and
+    this one is an instruction that was obeyed. `project()` sends `excluded_by_you` for exactly
+    this — the page should never have to parse the reason prose to tell whose decision it was.
+    """
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    why = app_js.split("function whyLine(")[1].split("\n  }")[0]
+    assert "candidate.excluded_by_you" in why
+    # the person's branch answers before the screener's words are reached, so a row can never say
+    # both "you excluded this" and "the screener read it and did not want it"
+    assert why.index("excluded_by_you") < why.index('kind === "excluded"')
+    assert "return" in why.split("candidate.excluded_by_you")[1].split("if (")[0], \
+        "the person's branch answers; it does not fall through to the screener's wording"
+
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert "Never include these" in page and 'id="f-exclude"' in page
+    # the field says what it costs and what it does, because "never proposed" is a strong promise
+    panel = page.split('id="find-panel"')[1].split("</div>\n      </section>")[0]
+    for promise in ("never read by", "never fetched", "never charged"):
+        assert promise in panel, promise
+
+
+def test_the_prisma_line_states_what_the_search_was_forbidden_to_find():
+    """A recall measured against a known review is not a number unless the line says what was
+    excluded — and a line the user typed that matched nothing has to be said out loud, or they
+    will read "0 excluded" as "this search found none of that paper"."""
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    flow = app_js.split("function renderFlow(")[1].split("\n  }")[0]
+    assert "counts.excluded_by_user" in flow
+    assert "matched nothing" in flow
+    assert "entry.matched" in flow, "an unmatched line is found by its own count, not guessed"
+    # the count is on the strip too, under the name the server publishes it by
+    from canopy.search.models import COUNT_KEYS
+
+    assert "excluded_by_user" in COUNT_KEYS
+    listed = app_js.split("var COUNT_KEYS = [")[1].split("];")[0]
+    assert "excluded_by_user" in listed

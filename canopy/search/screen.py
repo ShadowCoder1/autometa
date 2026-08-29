@@ -34,8 +34,8 @@ Four rules, each of which is a test:
   full screening bill again** even for byte-identical prompts. The batch map is written into
   `search.json` (`SearchRecord.batches`) as an audit trail, not as a resume key.
 
-**Model role.** The design asks for `MODELS["screener"] = "claude-sonnet-5"`; `canopy/config.py` has
-no such role and this task may not add one, so callers pass `MODELS["secondary"]` — which *is*
+**Model role.** `MODELS["screener"]` (claude-sonnet-5) — a named role so a user can override the
+screener without moving the verifier. Callers may still pass `MODELS["secondary"]`, which *is*
 `claude-sonnet-5`, the same model the design chose. Adding the named role is a follow-up, not a
 behaviour change. Not haiku: it saves ~$0.12 on a 200-record search and it is the one model that
 rejects `output_config.effort` (llm/providers.py:19-24), so the cheap model is also the one that

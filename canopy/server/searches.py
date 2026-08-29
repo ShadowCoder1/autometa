@@ -51,16 +51,17 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ..search.models import (KEY_RE, PHASES, Candidate, SearchRecord, counts_of, new_key,
                              project)
 from .jobs import Job, JobManager
 from .uploads import DEFAULT_INGEST_TIMEOUT, DEFAULT_MAX_TOTAL_MB, safe_filename
 
-__all__ = ["DEFAULT_MAX_SCREENED", "DEFAULT_MAX_USD", "SEARCH_BYTE_BUDGET", "SearchJobs",
-           "SearchOptions", "candidate_from_json", "default_search_runner", "pdf_name",
-           "phase_rows", "record_from_json", "search_options_from", "skipped_of", "state_of"]
+__all__ = ["DEFAULT_MAX_SCREENED", "DEFAULT_MAX_USD", "MAX_EXCLUSIONS", "MAX_EXCLUSION_CHARS",
+           "SEARCH_BYTE_BUDGET", "SearchJobs", "SearchOptions", "candidate_from_json",
+           "default_search_runner", "pdf_name", "phase_rows", "record_from_json",
+           "search_options_from", "skipped_of", "state_of"]
 
 #: what a search costs at most, and how many abstracts it reads at most, when the page does not
 #: say. Both are caps a *person* should be able to raise, so they are environment-tunable like
@@ -71,6 +72,14 @@ __all__ = ["DEFAULT_MAX_SCREENED", "DEFAULT_MAX_USD", "SEARCH_BYTE_BUDGET", "Sea
 #: that must agree is a smell — the pin is `test_the_default_cap_agrees_with_the_pipeline`.
 DEFAULT_MAX_USD = float(os.environ.get("CANOPY_SEARCH_MAX_USD", "2") or 2)
 DEFAULT_MAX_SCREENED = int(os.environ.get("CANOPY_SEARCH_MAX_SCREENED", "200") or 200)
+
+#: how many papers one search may be forbidden, and how long each entry may be.
+#: A person naming their own prior work, a review they are validating against and a handful of
+#: retractions is a short list; 50 lines of 300 characters is ~15 kB, which is a request body and
+#: not a database. Fixed rather than environment-tunable: unlike the caps above, raising this
+#: buys nobody anything a second search would not.
+MAX_EXCLUSIONS = 50
+MAX_EXCLUSION_CHARS = 300
 
 #: how many bytes one search may KEEP on disk, in total, across every PDF it fetches.
 #: Deliberately the SAME number the upload door enforces — same disk, same person, and a search
@@ -93,16 +102,42 @@ def _now() -> str:
 
 # ============================================================================ options
 class SearchOptions(BaseModel):
-    """The two numbers a search takes: what it may spend, and how much it may read.
+    """What a search takes from the page: two numbers, and the papers it may never propose.
 
     `extra="forbid"` for the same reason `RunOptions` forbids it — a typo'd cap is a search that
-    quietly runs under the default and spends more than the user thought they had allowed.
+    quietly runs under the default and spends more than the user thought they had allowed. Which
+    is also why `exclude` had to be added HERE rather than passed beside the options: an
+    exclusion list this model did not know about would have 422'd the whole search.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     max_usd: float | None = Field(default=None, gt=0)
     max_screened: int | None = Field(default=None, ge=1)
+    #: DOIs and title fragments this search may never propose — the user's own decision, recorded
+    #: as theirs. Bounded like every other list this server accepts: a body is not a place to put
+    #: an unbounded amount of anything, and a page that can send 50 lines can send 50,000.
+    exclude: list[str] | None = Field(default=None, max_length=MAX_EXCLUSIONS)
+
+    @field_validator("exclude")
+    @classmethod
+    def _readable_entries(cls, entries: list[str] | None) -> list[str] | None:
+        """Blank lines dropped, each entry length-capped, order and spelling otherwise untouched.
+
+        Untouched on purpose: what the user typed is what `search.json` reports back to them, and
+        a server that tidied an entry would show them a line they never wrote when it matched
+        nothing. A too-long entry is refused rather than truncated for the same reason — a
+        silently shortened DOI is a different DOI.
+        """
+        if entries is None:
+            return None
+        cleaned = [str(entry).strip() for entry in entries]
+        cleaned = [entry for entry in cleaned if entry]
+        for entry in cleaned:
+            if len(entry) > MAX_EXCLUSION_CHARS:
+                raise ValueError(f"one entry is longer than {MAX_EXCLUSION_CHARS} characters — "
+                                 f"a DOI or a distinctive phrase from the title is enough")
+        return cleaned
 
     def resolved(self) -> dict[str, Any]:
         """The caps this search will actually be held to — never `None`.
@@ -110,10 +145,17 @@ class SearchOptions(BaseModel):
         Filled in HERE, at creation, rather than read from the environment at each use: the
         numbers land in `job.json`, so a search records what it was allowed to do even if the
         server's defaults change afterwards.
+
+        `exclude` appears only when there is one. An empty key on every search that excluded
+        nothing would be a fact about nothing, and `job.json` is read by people.
         """
-        return {"max_usd": DEFAULT_MAX_USD if self.max_usd is None else float(self.max_usd),
-                "max_screened": (DEFAULT_MAX_SCREENED if self.max_screened is None
-                                 else int(self.max_screened))}
+        chosen: dict[str, Any] = {
+            "max_usd": DEFAULT_MAX_USD if self.max_usd is None else float(self.max_usd),
+            "max_screened": (DEFAULT_MAX_SCREENED if self.max_screened is None
+                             else int(self.max_screened))}
+        if self.exclude:
+            chosen["exclude"] = list(self.exclude)
+        return chosen
 
 
 def search_options_from(raw: Any) -> SearchOptions:
@@ -247,6 +289,10 @@ def state_of(job: Job, record: SearchRecord) -> dict[str, Any]:
         "notes": list(record.notes),
         "possible_duplicates": [dict(d) for d in record.possible_duplicates
                                 if isinstance(d, Mapping)],
+        # what the USER forbade, one row per entry, including the entries that caught nothing.
+        # Sent on every poll like the counts are: an exclusion the page never mentions is one the
+        # user has to take on faith, and a mistyped DOI they would take on faith wrongly.
+        "exclusions": [dict(x) for x in record.exclusions if isinstance(x, Mapping)],
         # the papers `begin` dropped, with the reason for each. Sent on EVERY poll and not only
         # in `begin`'s own answer: the answer is seen once, by one tab, and then the page
         # navigates to the run — a reload used to lose the fact that 39 of 40 papers never made
@@ -332,6 +378,8 @@ def default_search_runner(record: SearchRecord, *, search_dir: Path, options: Ma
         transport=HttpxTransport(budget=budget), client=client, model_roles=dict(MODELS),
         budget_usd=budget_usd,
         max_screened=int(options.get("max_screened") or DEFAULT_MAX_SCREENED),
+        # already validated and length-capped by `SearchOptions`; absent means nothing was forbidden
+        exclude=[str(entry) for entry in (options.get("exclude") or ())],
         staging_dir=search_dir / "staging", on_phase=on_phase, cancelled=cancel.is_set,
         search_id=record.search_id)
 
@@ -376,7 +424,8 @@ class SearchJobs(JobManager):
 
     * `record`         — the `SearchRecord` to fill in. Mutated in place, or a new one returned.
     * `search_dir`     — the search's own directory; PDFs go in `search_dir / "staging"`.
-    * `options`        — `{"max_usd": float, "max_screened": int}`, already resolved.
+    * `options`        — `{"max_usd": float, "max_screened": int}`, already resolved, plus
+                         `"exclude"` (the papers the user forbade) when they named any.
     * `client_factory` — the same seam runs use; a manager built with a fake never calls a model.
     * `cancel`         — a `threading.Event`; the pipeline checks it and stops.
     * `progress`       — one dict per step, published to the SSE stream (`cost_so_far` is read

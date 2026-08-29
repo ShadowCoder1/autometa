@@ -1019,3 +1019,130 @@ def test_the_name_a_paper_enters_a_run_under_always_ends_in_pdf(api):
         == "smith_2011.pdf"
     assert pdf_name(Candidate(key=KEY_FETCHED, title="Adaptation in older adults",
                               authors=["Bock, O"], year=2005)) == "bock_2005.pdf"
+
+
+# ============================================================ the papers a user forbids
+"""The exclusion list, through the door and back out again.
+
+The pipeline's own half is in `tests/test_search_run.py`; what is pinned here is that the list
+survives the endpoint (`SearchOptions` forbids extras, so an option the model does not know about
+would 422 the whole search), is bounded like every other list this server accepts, is handed to
+the pipeline, and comes back to the page — including the entries that caught nothing, which is
+the fact a user who mistyped a DOI cannot afford to be spared.
+"""
+
+
+def test_an_exclusion_list_reaches_the_search_and_is_recorded_on_it(api, tmp_path):
+    """`extra="forbid"` means an option added on one side only is a 422; this is the round trip."""
+    search_id, token = start_search(api, options={
+        "max_usd": 0.5,
+        "exclude": ["10.1000/the-review-i-am-validating-against", "  ",
+                    "A Distinctive Phrase From A Title"]})
+    wait_done(api, search_id, token)
+
+    job = json.loads((tmp_path / "searches" / search_id / "job.json").read_text(encoding="utf-8"))
+    # blank lines dropped, spelling and order untouched — the page reports these back verbatim
+    assert job["options"]["exclude"] == ["10.1000/the-review-i-am-validating-against",
+                                         "A Distinctive Phrase From A Title"]
+    assert job["options"]["max_usd"] == 0.5
+
+
+def test_a_search_that_forbids_nothing_records_no_exclusion_list(api, tmp_path):
+    """An empty key on every search that excluded nothing is a fact about nothing."""
+    search_id, token = start_search(api)
+    wait_done(api, search_id, token)
+    job = json.loads((tmp_path / "searches" / search_id / "job.json").read_text(encoding="utf-8"))
+    assert "exclude" not in job["options"]
+
+    # …and one whose every line was blank is the same search
+    blank_id, blank_token = start_search(api, options={"exclude": ["", "   "]})
+    wait_done(api, blank_id, blank_token)
+    blank = json.loads(
+        (tmp_path / "searches" / blank_id / "job.json").read_text(encoding="utf-8"))
+    assert "exclude" not in blank["options"]
+
+
+def test_the_exclusion_list_is_bounded_like_every_other_list_here(api):
+    """A request body is not a place to put an unbounded amount of anything."""
+    from canopy.server.searches import MAX_EXCLUSIONS, MAX_EXCLUSION_CHARS
+
+    too_many = [f"10.1000/paper-{i}" for i in range(MAX_EXCLUSIONS + 1)]
+    assert api.post("/api/searches", json={"question": "q",
+                                           "options": {"exclude": too_many}}).status_code == 422
+    # …and a single entry cannot be a novel. Refused, never truncated: a shortened DOI is a
+    # different DOI, and the user would be shown a line they never wrote
+    too_long = ["x" * (MAX_EXCLUSION_CHARS + 1)]
+    assert api.post("/api/searches", json={"question": "q",
+                                           "options": {"exclude": too_long}}).status_code == 422
+    # the cap itself is usable
+    assert api.post("/api/searches",
+                    json={"question": "q",
+                          "options": {"exclude": too_many[:MAX_EXCLUSIONS]}}).status_code == 201
+
+
+def test_the_runner_hands_the_exclusions_to_the_pipeline(tmp_path, monkeypatch):
+    """The one place the server's vocabulary and the search's meet — so the seam is pinned."""
+    pipeline = pytest.importorskip("canopy.search.run")
+    from canopy.server import searches
+
+    seen: dict[str, Any] = {}
+
+    def fake_run_search(**kwargs: Any) -> SearchRecord:
+        seen.update(kwargs)
+        return SearchRecord(search_id="s1", question=kwargs["question"])
+
+    monkeypatch.setattr(pipeline, "run_search", fake_run_search)
+    monkeypatch.setattr("canopy.search.transport.HttpxTransport", lambda **kw: "a transport")
+
+    searches.default_search_runner(
+        SearchRecord(search_id="s1", question="does tDCS help motor learning?"),
+        search_dir=tmp_path, options={"max_usd": 1.0, "exclude": ["10.1000/ab", "a long title"]},
+        client_factory=lambda **kw: "a client", cancel=threading.Event(),
+        progress=lambda event: None, save=lambda current=None: None)
+    assert seen["exclude"] == ["10.1000/ab", "a long title"]
+
+    # …and a search that forbade nothing hands the pipeline an empty list, never `None`
+    searches.default_search_runner(
+        SearchRecord(search_id="s2", question="does tDCS help motor learning?"),
+        search_dir=tmp_path, options={}, client_factory=lambda **kw: "a client",
+        cancel=threading.Event(), progress=lambda event: None, save=lambda current=None: None)
+    assert seen["exclude"] == []
+
+
+def test_the_page_is_told_which_of_its_exclusions_matched_nothing(make_app):
+    """A mistyped DOI must not read to the user as "this search found none of that paper".
+
+    `state_of` sends the exclusions on EVERY poll, beside the counts, and not only in the answer
+    to the request that created the search — a page reloaded after the search finished would
+    otherwise show the excluded rows with no way to see that one of the lines did nothing.
+    """
+    def excluding_search(record: SearchRecord, *, search_dir: Path, options: Any,
+                         client_factory: Any, cancel: Any, progress: Any,
+                         save: Any) -> SearchRecord:
+        record.exclusions = [
+            {"entry": "10.1000/the-review", "kind": "doi", "read_as": "10.1000/the-review",
+             "matched": 1, "note": ""},
+            {"entry": "10.1000/typo", "kind": "doi", "read_as": "10.1000/typo",
+             "matched": 0, "note": ""},
+            {"entry": "PD", "kind": "refused", "read_as": "pd", "matched": 0,
+             "note": "too short to use as a title fragment"}]
+        record.candidates = [Candidate(key=KEY_EXCLUDED, title="The review I am validating against",
+                                       state="excluded", excluded_by_user="10.1000/the-review",
+                                       screen_reason='You excluded this: matched '
+                                                     '"10.1000/the-review"')]
+        return record
+
+    api = make_app(search_runner=excluding_search)
+    search_id, token, body = finished(api)
+
+    assert [row["entry"] for row in body["exclusions"]] == ["10.1000/the-review", "10.1000/typo",
+                                                            "PD"]
+    assert [row["matched"] for row in body["exclusions"]] == [1, 0, 0]
+    assert body["counts"]["excluded_by_user"] == 1
+    # the row itself says the PERSON did it, in words and in a field the page can read
+    row = body["candidates"][0]
+    assert row["excluded_by_you"] is True
+    assert "you excluded this" in row["reason"].lower() and "10.1000/the-review" in row["reason"]
+    # …and a poll after the search finished says the same thing, not less of it
+    again = api.get(f"/api/searches/{search_id}", headers=auth(token)).json()
+    assert again["exclusions"] == body["exclusions"]

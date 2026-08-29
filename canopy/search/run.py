@@ -26,6 +26,13 @@ review asked for (§C4): Europe PMC goes first because it is unmetered, not beca
 this module believes about a research field — and a user who wants to know whether that ordering
 served their question can read the answer instead of trusting it.
 
+**A user's exclusions are obeyed, never judged.** `exclude` is a list of DOIs and title fragments
+a person has forbidden. It is applied between the dedupe and the screener — so a forbidden paper is
+never sent to a model, never fetched and never billed — and every entry gets a row in
+`record.exclusions` saying how it was read and how many papers it caught, including the ones that
+caught none. `Candidate.excluded_by_user` carries the entry that did it, so a reader of
+`search.json` can tell the tool's own verdict from the person's instruction without parsing prose.
+
 WHAT COUNTS AS "SCREENED" AND WHAT COUNTS AS "WANTED"
 -----------------------------------------------------
 The screener sets `include`/`exclude`/`unknown` and, for an included paper, `state = "wanted"`.
@@ -49,7 +56,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from .dedupe import dedupe
+from .dedupe import dedupe, normalise_doi, normalise_title
 from .fetch import default_probe, fetch_candidates
 from .indices import INDEXES, DISCOVERY_INDEXES, Unpaywall, contact_email, source_record
 from .models import PHASES, Candidate, SearchRecord, counts_of, new_key
@@ -58,7 +65,7 @@ from .screen import screen_candidates
 from .transport import SearchTransport
 
 __all__ = ["run_search", "DEFAULT_PER_QUERY", "DEFAULT_MAX_SCREENED", "DEFAULT_MAX_FETCH",
-           "new_search_id"]
+           "MIN_TITLE_FRAGMENT", "EXCLUDED_BY_USER", "exclusion_rules", "new_search_id"]
 
 #: rows asked of each index per query. One request per query per index: the metered index charges
 #: the same for a page of 200 as for a page of 1, and the unmetered one pages 1,000 at a time, so a
@@ -66,6 +73,23 @@ __all__ = ["run_search", "DEFAULT_PER_QUERY", "DEFAULT_MAX_SCREENED", "DEFAULT_M
 DEFAULT_PER_QUERY = 100
 DEFAULT_MAX_SCREENED = 200
 DEFAULT_MAX_FETCH = 60
+
+#: the shortest NORMALISED title fragment that may be used as a substring rule.
+#:
+#: A title fragment matches by containment, which is the only way "the Cisneros review" can be
+#: named without retyping its full title — and containment is also how one careless word deletes
+#: half a search. `tremor` normalises to six characters and would silently forbid every paper with
+#: `tremor` anywhere in its title, in a tool whose whole claim is that nothing disappears without
+#: a reason. Twelve characters is about two ordinary words: long enough that a user has said
+#: something specific, short enough that a distinctive phrase still works. A shorter entry that is
+#: not a DOI is REFUSED and reported, never quietly widened and never quietly dropped.
+MIN_TITLE_FRAGMENT = 12
+
+#: `Candidate.fetch_outcome` on a paper the user forbade. It is set BEFORE the fetch stage runs,
+#: because `fetch._record_skips` writes `not_wanted` ("the screener read it and did not want it")
+#: over every blank outcome in the `excluded` state — a true sentence about a screener's verdict
+#: and a false one about a person's, on the one row where the difference is the whole point.
+EXCLUDED_BY_USER = "excluded_by_you"
 
 
 def new_search_id(now: datetime | None = None) -> str:
@@ -116,6 +140,7 @@ def run_search(*, question: str,
                on_phase: Callable[[str, str, str, float], None] | None = None,
                cancelled: Callable[[], bool] | None = None,
                index_names: Sequence[str] = DISCOVERY_INDEXES,
+               exclude: Sequence[str] = (),
                per_query: int = DEFAULT_PER_QUERY,
                probe: Callable[[Path], Mapping[str, Any]] | None = None,
                search_id: str = "",
@@ -131,6 +156,11 @@ def run_search(*, question: str,
     `cancelled()` is checked BETWEEN stages and inside the fetch stage's per-host loop. Between,
     rather than inside every loop, because a stage that is half-done and half-recorded is worse
     than one that finished: the screener has already paid for the batch it is in.
+
+    `exclude` is a list of DOIs and title fragments the USER has forbidden. It is applied after the
+    dedupe and before the screener, so a forbidden paper is never sent to a model, never fetched
+    and never billed — and it is recorded as the person's decision, in `record.exclusions` and in
+    `Candidate.excluded_by_user`, never as a verdict this tool reached.
     """
     started = time.monotonic()
     record = SearchRecord(search_id=search_id or new_search_id(now), question=question,
@@ -193,9 +223,15 @@ def run_search(*, question: str,
     record.possible_duplicates = pairs
     _count_rows(merged, found)
     _measure_unique(record)
+    # the user's own exclusions, here and nowhere else: after the dedupe, so a paper found twice is
+    # forbidden once, and before the screener, so a forbidden paper never reaches a model. Reported
+    # on the dedupe rung rather than on a sixth one — `PHASES` is the vocabulary the page draws and
+    # this is not a stage the search performs, it is a person's instruction being obeyed.
+    n_forbidden = _apply_exclusions(record, exclude)
     phases.emit("dedupe", "ok",
                 f"{len(merged)} distinct paper(s) from {len(found)} record(s)"
-                + (f"; {len(pairs)} possible duplicate(s) for you to judge" if pairs else ""),
+                + (f"; {len(pairs)} possible duplicate(s) for you to judge" if pairs else "")
+                + (f"; {n_forbidden} you excluded" if n_forbidden else ""),
                 time.monotonic() - stage)
     if stop_requested():
         return skip_rest(3, "cancelled")
@@ -203,7 +239,11 @@ def run_search(*, question: str,
     # ---------------------------------------------------------------- 4. screen
     phases.emit("screen", "running")
     stage = time.monotonic()
-    to_screen, over_cap = _split_at_cap(record.candidates, max_screened)
+    # a paper the user forbade is not offered to the screener AND does not spend the cap on its
+    # way past: it was never going to be read, so counting it against the abstracts that could be
+    # would cost the user a record they had not excluded.
+    screenable = [c for c in record.candidates if not c.excluded_by_user]
+    to_screen, over_cap = _split_at_cap(screenable, max_screened)
     if over_cap:
         record.notes.append(
             f"the screening cap of {max_screened} stopped this search before {len(over_cap)} "
@@ -363,6 +403,99 @@ def _measure_unique(record: SearchRecord) -> None:
         row["unique_contributed"] = unique.get(str(row.get("name") or ""), 0)
 
 
+def exclusion_rules(entries: Sequence[str]) -> list[dict[str, Any]]:
+    """Each entry a person typed, read as a DOI or as a title fragment, with its own audit row.
+
+    `normalise_doi` and `normalise_title` are `dedupe`'s — the same two functions that decide
+    whether two index rows are the same paper. Reusing them is not tidiness: an exclusion written
+    with a different notion of sameness would forbid a paper under one spelling and let the same
+    paper back in under another, which is the exact failure the user asked to be protected from.
+
+    Nothing is guessed. An entry that is a DOI is matched as a DOI; anything else is a title
+    fragment; and a fragment too short to be safe (`MIN_TITLE_FRAGMENT`) is `refused` here rather
+    than run — with the reason on the row, because a rule that silently did not apply is worse
+    than one that never existed.
+    """
+    rules: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in entries or ():
+        entry = str(raw or "").strip()
+        if not entry or entry in seen:
+            continue                    # the same line typed twice is one instruction, not two
+        seen.add(entry)
+        doi = normalise_doi(entry)
+        if doi:
+            rules.append({"entry": entry, "kind": "doi", "read_as": doi, "matched": 0, "note": ""})
+            continue
+        fragment = normalise_title(entry)
+        if len(fragment) < MIN_TITLE_FRAGMENT:
+            rules.append({"entry": entry, "kind": "refused", "read_as": fragment, "matched": 0,
+                          "note": f"too short to use as a title fragment — it needs at least "
+                                  f"{MIN_TITLE_FRAGMENT} letters and digits once punctuation is "
+                                  f"ignored, or write the whole DOI instead"})
+            continue
+        rules.append({"entry": entry, "kind": "title", "read_as": fragment, "matched": 0,
+                      "note": ""})
+    return rules
+
+
+def _rule_hits(rule: Mapping[str, Any], doi: str, title: str) -> bool:
+    """Does this rule catch a candidate whose DOI and title are already normalised?
+
+    A DOI must be EQUAL and a title fragment need only be CONTAINED — the asymmetry is deliberate.
+    A DOI is a whole identifier and a substring of one names a different paper; a title is what a
+    person can be expected to half-remember, and `MIN_TITLE_FRAGMENT` is what stops the containment
+    rule from being a wildcard.
+    """
+    if rule["kind"] == "doi":
+        return bool(doi) and doi == rule["read_as"]
+    if rule["kind"] == "title":
+        return bool(title) and rule["read_as"] in title
+    return False                        # "refused" — a rule that was never allowed to run
+
+
+def _apply_exclusions(record: SearchRecord, entries: Sequence[str]) -> int:
+    """Mark every candidate the USER forbade, and write down what they forbade. Returns the count.
+
+    The papers stay in `record.candidates`. Dropping them would make the funnel unaccountable —
+    the reader could not see that the search DID find the paper and was told not to use it, which
+    is precisely the fact somebody validating a search against a known review needs.
+
+    `screen_decision` is deliberately left empty: nothing read these, so they are not among the
+    abstracts `counts_of` says were read, and no model's verdict is ever invented for them.
+    """
+    rules = exclusion_rules(entries)
+    if not rules:
+        return 0
+    forbidden = 0
+    for candidate in record.candidates:
+        doi, title = normalise_doi(candidate.doi), normalise_title(candidate.title)
+        hits = [rule for rule in rules if _rule_hits(rule, doi, title)]
+        if not hits:
+            continue
+        # every entry that catches this paper is credited, so an entry reported as matching
+        # nothing really matched nothing; the REASON names the first, because a row shows one
+        for rule in hits:
+            rule["matched"] += 1
+        candidate.state = "excluded"
+        candidate.keep = False
+        candidate.excluded_by_user = str(hits[0]["entry"])
+        candidate.screen_reason = f'You excluded this: matched "{hits[0]["entry"]}"'
+        candidate.fetch_outcome = EXCLUDED_BY_USER
+        forbidden += 1
+    record.exclusions = [{k: rule[k] for k in ("entry", "kind", "read_as", "matched", "note")}
+                         for rule in rules]
+    # an entry that did nothing is said out loud. A user who mistypes a DOI would otherwise read
+    # "0 excluded" as "this search found none of that paper" rather than "your line was wrong".
+    for rule in rules:
+        if rule["kind"] == "refused":
+            record.notes.append(f'"{rule["entry"]}" was not used as an exclusion: {rule["note"]}')
+        elif not rule["matched"]:
+            record.notes.append(f'nothing this search found matched the exclusion '
+                                f'"{rule["entry"]}", so nothing was removed for it — check it')
+    return forbidden
+
+
 def _split_at_cap(candidates: Sequence[Candidate],
                   cap: int | None) -> tuple[list[Candidate], list[Candidate]]:
     """The first `cap` candidates and the rest. The rest are NOT dropped — they stay in the record,
@@ -383,7 +516,8 @@ def _screen(client: Any | None, candidates: Sequence[Candidate], record: SearchR
     """
     from .screen import ScreenOutcome
 
-    model = model_roles.get("screen") or model_roles.get("secondary") or "claude-sonnet-5"
+    model = (model_roles.get("screener") or model_roles.get("screen")
+             or model_roles.get("secondary") or "claude-sonnet-5")
     try:
         return screen_candidates(client, candidates, question=record.question,
                                  criteria=record.criteria, model=model, budget_usd=budget_usd,

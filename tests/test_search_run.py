@@ -27,8 +27,8 @@ import pytest
 from canopy.llm.client import LLMClient
 from canopy.llm.providers import FakeProvider
 from canopy.search.indices import EuropePmc, OpenAlex
-from canopy.search.models import PHASES, counts_of
-from canopy.search.run import run_search
+from canopy.search.models import PHASES, counts_of, project
+from canopy.search.run import EXCLUDED_BY_USER, MIN_TITLE_FRAGMENT, run_search
 from canopy.search.transport import HttpResponse, RecordedTransport, fixture_key
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "search"
@@ -513,3 +513,205 @@ def test_the_record_is_json_serialisable_with_its_counts(tmp_path):
                for row in blob["sources"])
     assert all(set(candidate) >= {"key", "state", "links", "found_by"}
                for candidate in blob["candidates"])
+
+
+# ------------------------------------------------------- the papers a USER forbids this search
+"""A user's exclusion list is an instruction, not a judgement.
+
+Somebody validating this search against a meta-analysis they already have must be able to
+guarantee that the meta-analysis itself is never fetched and never read — otherwise the recall
+they measure is measured against a paper the tool was handed. The same door serves excluding your
+own prior work, a review you are not counting, or a retraction.
+
+Four properties, one test each:
+
+* it happens **after the dedupe and before the screener**, so a forbidden paper never reaches a
+  model, never reaches a publisher and never costs a cent;
+* the record says **the person did it**, distinguishably from the screener's own verdict;
+* a fragment too short to be safe is **refused**, not quietly turned into a wildcard;
+* an entry that matched nothing is **reported**, because the alternative is a user certain they
+  excluded something they did not.
+"""
+#: the first Europe PMC record in the fixture — a real DOI and a real title, written here the way
+#: a person would paste them (a resolver prefix, the wrong case, a trailing full stop)
+FORBIDDEN_DOI = "https://doi.org/10.1109/JBHI.2025.3644234"
+FORBIDDEN_TITLE = ("Investigating the Effectiveness of Haptic Resistive Force Feedback to Improve "
+                   "Tremors in Parkinson's Disease")
+#: …and the second, retyped the way somebody remembers it: the wrong case, a comma the title does
+#: not have, and plain spaces where the real title hyphenates ("8-Week", "Aerobic-Resistance")
+FORBIDDEN_FRAGMENT = "EFFECTS of an 8 week, COMBINED aerobic resistance training!"
+
+
+def prompts_of(client) -> str:
+    """Every request the model actually received, as one searchable string.
+
+    The point of an exclusion is that the screener never sees the paper, and "the count went down
+    by one" does not prove that — only the prompts do.
+    """
+    return "\n".join(repr(request) for request in client.provider.requests)
+
+
+def search_excluding(exclude, tmp_path, *, client=None, max_screened=200):
+    transport = index_transport(epmc=load("europepmc_search"), openalex=load("openalex_works"))
+    client = client or scripted_client(QUERIES_PAYLOAD, include_everything(11))
+    record = run_search(question=QUESTION, transport=transport, client=client,
+                        model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=max_screened,
+                        max_fetch=0, staging_dir=tmp_path, per_query=PER_QUERY,
+                        probe=fake_probe, exclude=exclude)
+    return record, client
+
+
+def test_a_doi_the_user_excluded_never_reaches_the_screener(tmp_path):
+    """The whole promise in one test: not screened, not fetched, not billed — and still on record."""
+    record, client = search_excluding([FORBIDDEN_DOI], tmp_path)
+
+    forbidden = [c for c in record.candidates if c.excluded_by_user]
+    assert len(forbidden) == 1
+    paper = forbidden[0]
+    assert paper.doi.lower() == "10.1109/jbhi.2025.3644234"
+    assert paper.state == "excluded" and paper.keep is False
+    assert paper.excluded_by_user == FORBIDDEN_DOI, "the entry the USER typed, verbatim"
+    # never read: no verdict was invented for it, and no prompt ever carried it
+    assert paper.screen_decision == ""
+    assert paper.title[:40] not in prompts_of(client)
+    assert FORBIDDEN_TITLE[:40] not in prompts_of(client)
+    # never fetched, and the reason on the row is the person's, not a screener's "not wanted"
+    assert paper.fetch_attempts == [] and paper.pdf_path == ""
+    assert paper.fetch_outcome == EXCLUDED_BY_USER
+
+    counts = counts_of(record.candidates)
+    assert counts["excluded_by_user"] == 1
+    assert counts["after_dedupe"] == 11, "it is still in the funnel, not deleted from it"
+    assert counts["screened"] == 10, "the other ten, and only the other ten"
+    assert counts["excluded"] == 0, "no screener ruled anything out here"
+
+
+def test_a_title_fragment_ignores_case_and_punctuation(tmp_path):
+    """A person half-remembers a title; they do not retype its hyphens.
+
+    `normalise_title` is `dedupe`'s own — the same function that decides two index rows are the
+    same paper — so an exclusion cannot forbid a paper under one spelling and admit it under
+    another.
+    """
+    record, client = search_excluding([FORBIDDEN_FRAGMENT], tmp_path)
+
+    forbidden = [c for c in record.candidates if c.excluded_by_user]
+    assert len(forbidden) == 1
+    assert forbidden[0].doi == "10.1177/10538135261434253"
+    assert forbidden[0].title[:40] not in prompts_of(client)
+    assert counts_of(record.candidates)["excluded_by_user"] == 1
+    assert record.exclusions == [{"entry": FORBIDDEN_FRAGMENT, "kind": "title",
+                                 "read_as": "effects of an 8 week combined aerobic resistance "
+                                            "training",
+                                 "matched": 1, "note": ""}]
+
+
+def test_a_fragment_too_short_to_be_safe_is_refused_not_widened(tmp_path):
+    """`tremor` would forbid every tremor paper in a tremor search, silently.
+
+    Containment is what makes a title fragment usable at all, and it is also what makes one
+    careless word a wildcard. The refusal is REPORTED — a rule that quietly did not apply is
+    worse than one that was never written.
+    """
+    record, _client = search_excluding(["tremor"], tmp_path)
+
+    assert [c for c in record.candidates if c.excluded_by_user] == []
+    counts = counts_of(record.candidates)
+    assert counts["excluded_by_user"] == 0 and counts["screened"] == 11
+    assert len(record.exclusions) == 1
+    entry = record.exclusions[0]
+    assert entry["entry"] == "tremor" and entry["kind"] == "refused" and entry["matched"] == 0
+    assert str(MIN_TITLE_FRAGMENT) in entry["note"]
+    assert any("tremor" in note and "not used" in note for note in record.notes)
+
+
+def test_an_exclusion_that_matched_nothing_is_never_silent(tmp_path):
+    """A mistyped DOI must not read as "this search found none of that paper"."""
+    record, _client = search_excluding(["10.9999/nothing-here-matches-this",
+                                        FORBIDDEN_DOI], tmp_path)
+
+    rows = {entry["entry"]: entry for entry in record.exclusions}
+    assert rows["10.9999/nothing-here-matches-this"]["kind"] == "doi"
+    assert rows["10.9999/nothing-here-matches-this"]["matched"] == 0
+    assert rows[FORBIDDEN_DOI]["matched"] == 1, "the one that worked still says so"
+    assert any("10.9999/nothing-here-matches-this" in note for note in record.notes)
+    # …and the entry that worked is not reported as a problem
+    assert not any("nothing this search found matched" in note and FORBIDDEN_DOI in note
+                   for note in record.notes)
+
+
+def test_the_user_and_the_screener_are_never_confused_for_each_other(tmp_path):
+    """Both land in the `excluded` state; a reader of `search.json` must still tell them apart."""
+    verdicts = {"decisions": [{"ref": "1", "decision": "exclude",
+                               "reason": "no tremor outcome is reported"}]
+                + [{"ref": str(i), "decision": "include", "reason": "a resistance-training trial"}
+                   for i in range(2, 11)]}
+    record, _client = search_excluding(
+        [FORBIDDEN_DOI], tmp_path,
+        client=scripted_client(QUERIES_PAYLOAD, verdicts))
+
+    by_user = [c for c in record.candidates if c.excluded_by_user]
+    by_model = [c for c in record.candidates if c.screen_decision == "exclude"]
+    assert len(by_user) == 1 and len(by_model) == 1
+    assert by_user[0].state == by_model[0].state == "excluded"
+
+    # the person's row names the person and the entry that caught it
+    assert "you excluded this" in by_user[0].screen_reason.lower()
+    assert FORBIDDEN_DOI in by_user[0].screen_reason
+    assert by_user[0].screen_decision == ""
+    # the screener's row is the screener's own sentence and claims nobody's authority but its own
+    assert by_model[0].screen_reason == "no tremor outcome is reported"
+    assert by_model[0].excluded_by_user == ""
+
+    # …and the page is told which is which without having to read the prose
+    assert project(by_user[0])["excluded_by_you"] is True
+    assert project(by_model[0])["excluded_by_you"] is False
+    # the two counts are separate rungs and cannot double-count: nothing read the user's paper
+    counts = counts_of(record.candidates)
+    assert counts["excluded_by_user"] == 1 and counts["excluded"] == 1
+    assert counts["screened"] == 10
+
+
+def test_the_exclusion_list_survives_the_round_trip_to_json(tmp_path):
+    """A search whose recall is measured must state what it was forbidden to find."""
+    record, _client = search_excluding([FORBIDDEN_DOI, "tremor"], tmp_path)
+
+    blob = json.loads(json.dumps(record.to_json()))
+    assert [row["entry"] for row in blob["exclusions"]] == [FORBIDDEN_DOI, "tremor"]
+    assert blob["counts"]["excluded_by_user"] == 1
+    forbidden = [c for c in blob["candidates"] if c["excluded_by_user"]]
+    assert len(forbidden) == 1 and forbidden[0]["excluded_by_user"] == FORBIDDEN_DOI
+
+
+def test_an_excluded_paper_is_not_fetched_even_when_an_open_copy_is_there(tmp_path):
+    """"Never proposed" has to survive the one stage that would otherwise have downloaded it.
+
+    `fetch._record_skips` writes `not_wanted` — "the screener read it and did not want it" — over
+    every blank outcome in the `excluded` state. True of a screener's verdict and false of a
+    person's, on precisely the row where the difference is the point, so the outcome is set before
+    the fetch stage ever sees it. Nothing else in the fetch stage changes.
+    """
+    transport = index_transport(epmc=load("europepmc_search"), openalex=load("openalex_works"))
+    render = [f"https://europepmc.org/articles/{pmcid}?pdf=render" for pmcid in
+              ("PMC13317673", "PMC12941259", "PMC12982457", "PMC13065030")]
+    serve_pdfs(transport, render)
+    for landing in ("https://www.ncbi.nlm.nih.gov/pmc/articles/4366306",
+                    "https://www.ncbi.nlm.nih.gov/pmc/articles/4586021"):
+        refuse(transport, landing, status=200, outcome="not_a_pdf",
+               error="www.ncbi.nlm.nih.gov served text/html, not a PDF")
+
+    # 10.2196/97507 is PMC13317673 — an open-access copy this search would otherwise have kept
+    record = run_search(question=QUESTION, transport=transport,
+                        client=scripted_client(QUERIES_PAYLOAD, include_everything(10)),
+                        model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=60,
+                        staging_dir=tmp_path / "pdfs", per_query=PER_QUERY, probe=fake_probe,
+                        exclude=["10.2196/97507"])
+
+    forbidden = next(c for c in record.candidates if c.excluded_by_user)
+    assert forbidden.doi == "10.2196/97507"
+    assert forbidden.pdf_path == "" and forbidden.fetch_attempts == []
+    assert forbidden.fetch_outcome == EXCLUDED_BY_USER, "not the screener's 'not wanted'"
+    # four Europe PMC copies were on offer and this search kept three of them
+    assert counts_of(record.candidates)["fetched"] == 3
+    assert not any(attempt["url"].endswith("PMC13317673?pdf=render")
+                   for c in record.candidates for attempt in c.fetch_attempts)

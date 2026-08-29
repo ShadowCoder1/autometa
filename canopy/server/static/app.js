@@ -2264,8 +2264,8 @@
   // COUNT_KEYS, verbatim. The label on screen is the key with its underscores opened out — one
   // word per thing, and a name changed on the server is a name changed here and nowhere else.
   var COUNT_KEYS = ["records", "after_dedupe", "screened", "included", "unsure", "excluded",
-                    "not_screened", "fetched", "wanted", "paywalled", "uploaded", "extra",
-                    "possible_duplicates"];
+                    "excluded_by_user", "not_screened", "fetched", "wanted", "paywalled",
+                    "uploaded", "extra", "possible_duplicates"];
   // …and these five are on the strip even at zero: a ladder that grows rungs as it goes hides
   // from the reader what is still to come.
   var COUNTS_ALWAYS = ["records", "after_dedupe", "screened", "included", "fetched"];
@@ -2376,11 +2376,17 @@
     startSearch();
   });
 
-  // exactly the two fields `SearchOptions` has: it forbids extras, so a third would 422 the search
+  // exactly the fields `SearchOptions` has: it forbids extras, so a fourth would 422 the search
   function searchOptions() {
     var options = {};
     if ($("f-max-usd").value) { options.max_usd = Number($("f-max-usd").value); }
     if ($("f-max-screened").value) { options.max_screened = Number($("f-max-screened").value); }
+    // one entry per line, blanks dropped, spelling untouched: the server reports each line back
+    // verbatim, and a line this page tidied would be a line the user never wrote
+    var exclude = ($("f-exclude").value || "").split("\n").map(function (line) {
+      return line.trim();
+    }).filter(function (line) { return line.length > 0; });
+    if (exclude.length) { options.exclude = exclude; }
     return options;
   }
 
@@ -2546,7 +2552,7 @@
     ]));
   }
 
-  function renderFlow(counts, nSources) {
+  function renderFlow(counts, nSources, exclusions) {
     var text = plural(counts.records || 0, "record") + " from " + plural(nSources, "source")
       + " → " + plural(counts.after_dedupe || 0, "unique paper")
       + " → " + plural(counts.screened || 0, "abstract") + " read"
@@ -2559,6 +2565,20 @@
     if (counts.possible_duplicates) {
       text += " " + plural(counts.possible_duplicates, "pair")
         + " might be the same paper twice; Canopy will not merge those on its own.";
+    }
+    // the user's own exclusions belong IN the ladder, not beside it: a recall read off this line
+    // is not a number until the line says what the search was forbidden to find.
+    if (counts.excluded_by_user) {
+      text += " " + plural(counts.excluded_by_user, "paper")
+        + " you excluded, before anything read or fetched them.";
+    }
+    var idle = (exclusions || []).filter(function (entry) { return !entry.matched; });
+    if (idle.length) {
+      // never silent: a mistyped DOI otherwise reads as "this search found none of that paper"
+      text += " " + plural(idle.length, "line") + " you excluded matched nothing — "
+        + idle.map(function (entry) { return "“" + entry.entry + "”"; }).join(", ")
+        + (idle.some(function (entry) { return entry.kind === "refused"; })
+           ? " (one of them was too short to use as a title; write the whole DOI)." : ".");
     }
     $("search-flow").textContent = text;
   }
@@ -2737,6 +2757,14 @@
     var kind = candidate.state;
     var reason = candidate.reason || "";
     var head = "";
+    /* A paper the USER forbade sits in the same list as one the screener threw out, and the two
+       must never read alike: the screener's line is a judgement to argue with, this one is an
+       instruction that was obeyed. Its own sentence, and no FETCH_WORDS after it — nothing tried
+       to fetch this one, so there is no fetch outcome worth explaining. */
+    if (candidate.excluded_by_you) {
+      return (reason ? reason + ". " : "You excluded this one. ")
+        + "Nothing read it, nothing fetched it, and it cost nothing.";
+    }
     // deliberately not "Kept:" — `keep` is the reviewer's to change, and a paper nobody screened
     // arrives fetched and unticked, which is the whole point of the keyless path
     if (kind === "fetched") { head = "An open-access copy was downloaded."; }
@@ -3147,7 +3175,7 @@
     var counts = search.counts || {};
     renderPhases(search.phases || []);
     renderCounts(counts, search.cost_usd);
-    renderFlow(counts, sourceNames(search.sources).length);
+    renderFlow(counts, sourceNames(search.sources).length, search.exclusions);
     renderQueries(search);
     renderNotes(search);
     renderDuplicates(search);

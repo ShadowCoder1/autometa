@@ -172,6 +172,13 @@
             <label class="field"><span class="label">Abstracts to read at most</span>
               <input type="number" id="f-max-screened" min="1" step="10"></label>
           </div>
+          <label class="field"><span class="label">Never include these (one DOI or title per
+             line)</span>
+            <textarea id="f-exclude" rows="3" spellcheck="false"></textarea></label>
+          <p class="hint">Your decision, recorded as yours. A paper you name here is never read by
+             a model, never fetched and never charged for — and the search still lists it, saying
+             you excluded it, so the count you publish states what it was told not to find. Write
+             a whole DOI, or a distinctive phrase from the title.</p>
           <p class="hint" id="find-key-note" hidden></p>
         </div>
       </section>

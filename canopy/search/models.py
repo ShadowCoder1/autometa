@@ -56,6 +56,7 @@ COUNT_KEYS: tuple[str, ...] = (
     "included",        # the screener wanted these
     "unsure",          # …could not tell about these
     "excluded",        # …ruled these out
+    "excluded_by_user",      # a PERSON forbade these before anything read them — never a model's
     "not_screened",    # nobody read these (no model, or the cap stopped first)
     "fetched",         # open-access PDFs on disk
     "wanted",          # the screener wants these; the fetch stage has not answered yet
@@ -127,6 +128,14 @@ class Candidate:
     screen_reason: str = ""            # the screener's own words
     screened_on_title_only: bool = False   # no abstract was available to read
 
+    #: the exclusion entry a USER typed that caught this paper, verbatim — `""` for every paper a
+    #: user did not forbid. A structured field and not just a sentence in `screen_reason`, because
+    #: "the tool judged this" and "the person forbade this" are different claims about a search and
+    #: a reader of `search.json` must be able to tell them apart without parsing prose. It is also
+    #: what keeps the arithmetic honest: `screen_decision` stays EMPTY on these rows, so a paper
+    #: nobody read is never counted among the abstracts that were read.
+    excluded_by_user: str = ""
+
     #: whether this paper goes into the run. Starts as the screener's verdict and is a human's
     #: to change; `state` never changes when this does, so a dropped paper keeps showing why it
     #: was found in the first place.
@@ -182,6 +191,10 @@ def project(candidate: Candidate) -> dict[str, Any]:
         "state": candidate.state,
         "fetch": candidate.fetch_outcome,
         "reason": candidate.screen_reason,
+        # the page shows an excluded row the same way whoever excluded it — so it has to be told
+        # WHO did. A boolean and not the entry itself: the entry is already inside `reason`, and
+        # one fact does not travel twice.
+        "excluded_by_you": bool(candidate.excluded_by_user),
         "title_only": candidate.screened_on_title_only,
         "source": ", ".join(candidate.found_by),
         "keep": bool(candidate.keep),
@@ -225,6 +238,16 @@ class SearchRecord:
     #: merge deletes a study from a meta-analysis and nobody ever sees it, while a false split
     #: costs one click. Measured, not argued — see tests/test_search_dedupe.py.
     possible_duplicates: list[dict[str, Any]] = field(default_factory=list)
+    #: what the USER forbade this search to propose, one row per entry they typed:
+    #: `{"entry", "kind", "matched", "note"}`. `kind` is how the entry was read — `doi`, `title`,
+    #: or `refused` for one too short to be safe as a title fragment — and `matched` is how many
+    #: papers it actually caught.
+    #:
+    #: Every entry is listed, including the ones that caught nothing. A mistyped DOI that silently
+    #: matched no paper would leave a user certain they had excluded something they had not, and
+    #: a recall measured against a known review is only a number if the search says what it was
+    #: forbidden to find. Empty for every search nobody excluded anything from.
+    exclusions: list[dict[str, Any]] = field(default_factory=list)
     candidates: list[Candidate] = field(default_factory=list)
     #: one row per screening batch — `{index, keys, sent, estimated_usd, cost_usd, n_verdicts,
     #: error}`. It is what lets a reader price screening per batch and see which twenty records a
@@ -268,6 +291,12 @@ def counts_of(candidates: list[Candidate],
         "included": sum(1 for c in screened if c.screen_decision == "include"),
         "unsure": sum(1 for c in screened if c.screen_decision == "unknown"),
         "excluded": sum(1 for c in screened if c.screen_decision == "exclude"),
+        # a separate rung from `excluded`, and it can never overlap with it: a user's exclusion is
+        # applied before screening and leaves `screen_decision` empty, so these papers are not
+        # among the abstracts that were read. Reported even when it is the same list a screener
+        # would have thrown out anyway — a recall a reviewer publishes means nothing unless the
+        # search states what it was forbidden to look at.
+        "excluded_by_user": sum(1 for c in candidates if c.excluded_by_user),
         "not_screened": states.count("not_screened"),
         "fetched": states.count("fetched"),
         # `wanted` and `paywalled` are deliberately separate: telling a user a paper is behind
