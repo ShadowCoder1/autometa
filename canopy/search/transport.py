@@ -422,20 +422,27 @@ class Reservation:
     budget: ByteBudget
     granted: float
     _closed: bool = field(default=False, repr=False)
+    #: the close is a check-then-set, and `settle` racing `refund` on two threads would release the
+    #: allowance twice and inflate the budget above its own total. Its own lock, not the budget's:
+    #: `_release` takes that one, and `threading.Lock` does not nest.
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    def _close(self) -> bool:
+        with self._lock:
+            if self._closed:
+                return False
+            self._closed = True
+            return True
 
     def settle(self, used: float) -> None:
         """Keep `used` bytes and hand the rest back."""
-        if self._closed:
-            return
-        self._closed = True
-        self.budget._release(max(0.0, self.granted - max(0.0, float(used))))
+        if self._close():
+            self.budget._release(max(0.0, self.granted - max(0.0, float(used))))
 
     def refund(self) -> None:
         """Nothing was written: give it all back."""
-        if self._closed:
-            return
-        self._closed = True
-        self.budget._release(self.granted)
+        if self._close():
+            self.budget._release(self.granted)
 
     def __enter__(self) -> Reservation:
         return self
@@ -452,6 +459,12 @@ class ByteBudget:
     snapshot and jointly write up to three times the allowance. Making the arithmetic atomic is the
     fix, and holding a RESERVATION rather than a number is what makes it impossible for a worker to
     forget: the allowance is gone the moment it is handed out, and comes back on the way out.
+
+    It bounds the bytes KEPT, not the bytes fetched: a download that is refused part-way (too big,
+    not a PDF, unreadable) hands its whole reservation back, because nothing of it survives on
+    disk. A host that answers "too big" forever is therefore bounded by the per-file cap and the
+    job deadline, not by this — which is the right division of labour, but is worth saying out
+    loud so nobody reads `total` as a transfer quota.
 
     `ByteBudget(None)` is unlimited, so callers have one code path rather than two.
     """
@@ -694,7 +707,13 @@ def _store(reader: _ChunkReader, dest_dir: str | Path, filename: str, *,
             raise _Rejected(str(exc),
                             "too_large" if exc.status_code == 413 else "not_a_pdf") from None
         if probe is not None:
-            result = probe(staged)
+            # the probe parses bytes an attacker chose, so it RAISING is an ordinary outcome, not a
+            # bug: a decompression bomb or a broken xref table takes the parser with it. Letting
+            # that escape would end the whole search over one bad paper.
+            try:
+                result = probe(staged)
+            except Exception as exc:
+                raise _Rejected(f"the PDF could not be read: {exc}"[:300], "unreadable") from exc
             if not (result or {}).get("ok"):
                 raise _Rejected(str((result or {}).get("error") or "the PDF could not be read"),
                                 "unreadable")
