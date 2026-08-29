@@ -104,6 +104,10 @@ class Candidate:
     found_by: list[str] = field(default_factory=list)
     #: ids the indexes gave it, for the audit trail and for re-finding the record later
     ids: dict[str, str] = field(default_factory=dict)
+    #: the keys of rows this candidate absorbed when two indexes proposed the same paper. A
+    #: merge is the one operation here that makes a row disappear, so it leaves a receipt: a
+    #: reader of the record can account for every row an index returned.
+    merged_from: list[str] = field(default_factory=list)
 
     state: CandidateState = "not_screened"
     screen_decision: str = ""          # include | exclude | unknown | "" (never read)
