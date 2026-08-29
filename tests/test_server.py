@@ -1704,3 +1704,248 @@ def test_an_old_job_json_without_a_kind_still_loads(tmp_path):
         encoding="utf-8")
     job = Job.load(run_dir)
     assert job is not None and job.kind == "run" and job.title == "an older review"
+
+
+# ==================================================== the paper search, as the browser reads it
+# Every pin below is a static one, in the style of the SPA tests above: the search screen is
+# vanilla JS with no build step, so the file itself is the artefact under test. What they protect
+# is the one thing this feature can most easily get wrong — the page and the server drifting into
+# two different APIs, which is exactly what the design review found the first time.
+def test_the_new_run_screen_still_starts_on_the_upload_flow():
+    """Mode 2 is optional: the page a user loads is the page they had before it existed."""
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert 'data-source="upload"' in page and 'data-source="find"' in page
+    assert '<div class="drop" id="drop">' in page          # unchanged, and never ships hidden
+    assert 'class="src-btn is-on" data-source="upload"' in page
+    for needle in ('id="find-panel"', 'id="find-btn"', 'id="step-search"'):
+        opening = page.split(needle)[1].split(">")[0]
+        assert "hidden" in opening, needle                 # …and all three ship hidden
+    assert 'papersFrom: "upload"' in app_js                # …and the JS agrees
+
+
+def test_the_papers_source_toggle_cannot_hijack_the_protocol_toggle():
+    """`.seg-btn`'s handler is global and sets state.mode — a second control built from that class
+    would silently hide the protocol editor. The source toggle uses `.src-btn`, the same dodge the
+    results line toggle already uses."""
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert app_js.count('state.mode = button.getAttribute("data-mode")') == 1
+    assert 'querySelectorAll(".src-btn")' in app_js
+    assert 'class="src-btn' in page and 'class="seg-btn' in page
+    assert 'setPapersFrom(button.getAttribute("data-source"))' in app_js
+    assert 'showPane($("guided"), state.mode === "guided")' in app_js   # still the one pane switch
+
+
+def test_the_find_panel_cannot_start_a_run_by_pressing_enter():
+    """#f-max-usd is a number input inside #run-form, so Enter fires the form's default button —
+    #run-btn, hidden or not. Only a DISABLED default button suppresses implicit submission; without
+    this, Enter in the search budget would post a run with no PDFs."""
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    body = app_js.split("function setPapersFrom(")[1].split("\n  }")[0]
+    assert 'var finding = state.papersFrom === "find";' in body
+    assert '$("run-btn").disabled = finding;' in body
+    assert 'show($("find-btn"), finding);' in body
+
+
+def test_the_search_screen_is_registered_and_stays_out_of_the_way():
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert 'SCREENS = ["new", "search", "monitor", "results", "runs"]' in app_js
+    assert 'id="screen-search"' in page and 'data-screen="search"' in page
+    assert 'id="step-search"' in page
+    assert 'show($("step-search"), true)' in app_js
+
+
+def test_the_search_counts_are_the_servers_own_vocabulary():
+    """Five of ten count names differed between the two sides in the first draft of this feature,
+    which renders `undefined` on screen. The page now reads COUNT_KEYS and nothing else."""
+    from canopy.search.models import COUNT_KEYS
+
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    listed = app_js.split("var COUNT_KEYS = [")[1].split("];")[0]
+    assert tuple(re.findall(r'"([a-z_]+)"', listed)) == COUNT_KEYS
+    for name in sorted(set(re.findall(r"counts\.([a-z_]+)", app_js))):
+        assert name in COUNT_KEYS, name
+
+
+def test_the_search_ladder_uses_the_servers_own_phase_names():
+    """`query` ≠ `queries` and `oa` ≠ `fetch`: two rungs that never lit, in the first draft."""
+    from canopy.search.models import PHASES
+
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    listed = app_js.split("var SEARCH_PHASES = [")[1].split("];")[0]
+    assert tuple(re.findall(r'\["([a-z]+)"', listed)) == PHASES
+    # the pipeline's own status words, drawn with the monitor's glyphs — no new vocabulary
+    ladder = app_js.split("function phaseClass(")[1].split("\n  }")[0]
+    for status in ('"ok"', '"running"', '"skipped"', '"error"'):
+        assert status in ladder, status
+
+
+def test_the_search_sends_the_two_options_the_server_will_accept():
+    """`SearchOptions` forbids extras, so a third field is a 422 on the very first request."""
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    body = app_js.split("function searchOptions(")[1].split("\n  }")[0]
+    assert "options.max_usd = " in body and "options.max_screened = " in body
+    assert tuple(sorted(set(re.findall(r"options\.([a-z_]+) =", body)))) == \
+        ("max_screened", "max_usd")
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'id="f-max-usd"' in page and 'id="f-max-screened"' in page
+
+
+def test_the_paywalled_link_comes_from_the_server_never_from_the_page():
+    """test_the_spa_makes_no_external_requests forbids the literal; this says why it must stay
+    forbidden — a publisher URL the page built out of a DOI would be a URL nobody audited."""
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "doi.org" not in app_js and "openalex" not in app_js
+    assert "var elsewhere = link.url;" in app_js          # the whole URL, as the server sent it
+    assert 'protocol === "https:"' in app_js              # …and it must be one, before it is drawn
+    assert 'rel: "noopener noreferrer"' in app_js and 'target: "_blank"' in app_js
+    # every outbound href in the whole file is either a run file carrying its token or a whole
+    # URL the server sent — there is no third way to make one, and no doi is ever concatenated
+    for value in re.findall(r"href:\s*([^,}\n]+)", app_js):
+        assert "withToken" in value or value.strip() in ("elsewhere", "imageUrl"), value
+
+
+def test_every_string_the_search_shows_is_written_as_text():
+    """A title, a venue and a screener's sentence all come from a publisher or a model. They are
+    written with h({text: …}), which is textContent — the same rule as everywhere else."""
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    row = app_js.split("function candRow(")[1].split("\n  }")[0]
+    for field in ("candidate.title", "metaLine(candidate)", "whyLine(candidate)"):
+        assert f"text: {field}" in row or f'text: {field} || ""' in row, field
+    assert "innerHTML" not in app_js                      # …and never the other way
+
+
+def test_the_search_streams_and_polls_exactly_like_a_run():
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert 'new EventSource(withSearchToken(searchPath("/events")))' in app_js
+    assert "function pollSearchWhileRunning(" in app_js and "state.searchPoll" in app_js
+    assert "function withSearchToken(" in app_js
+    # `budget` is not a job status and never will be: a capped search still finishes `done`
+    assert "SEARCH_TERMINAL" not in app_js
+    assert 'search.stopped_because === "budget"' in app_js
+
+
+def test_the_search_token_never_rides_on_the_run_header():
+    """api() attaches Authorization only for /api/runs — the path prefix is the whole protection —
+    so the search passes its own bearer and the two can never be swapped."""
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert 'path.indexOf("/api/runs") === 0' in app_js     # api() itself is untouched
+    assert 'Authorization: "Bearer " + state.searchToken' in app_js
+
+
+def test_the_search_survives_a_reload_the_way_a_run_does():
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "canopy.searches" in app_js and "canopy.search" in app_js
+    assert "function rememberSearch(" in app_js and "function forgetCurrentSearch(" in app_js
+    assert "attachSearch(savedSearch, savedSearchToken)" in app_js
+    assert "forgetCurrentSearch(); });" in app_js          # a dead id is forgotten, not shouted
+
+
+def test_beginning_a_review_hands_over_to_the_ordinary_monitor():
+    """The search must not grow a second monitor: begin calls attach(), which is the one that
+    remembers the token, paints the manifest, opens the stream and navigates."""
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert 'searchPath("/begin")' in app_js and "attach(body.run_id, body.token)" in app_js
+    assert "runOptions()" in app_js                        # one options row, mirrored not copied
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    for one in ('id="o-budget"', 'id="o-per-paper"', 'id="o-concurrency"', 'id="o-max-papers"'):
+        assert page.count(one) == 1, one                   # …and never duplicated on a second screen
+
+
+def test_the_begin_button_checks_the_protocol_itself_and_locks_while_it_works():
+    """demandFields exists because a required control on a hidden pane cannot be focused, so
+    #begin-btn is not a submit and never asks a form on another screen to validate. And begin
+    re-reads every staged PDF: without the lock, a double click is two runs."""
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "reportValidity" not in app_js
+    body = app_js.split("function beginRun(")[1].split("\n  }\n")[0]
+    assert "protocolWritten()" in body and 'goto("new")' in body
+    assert "beginning = true;" in body and "button.disabled = true;" in body
+    # the gate asks whichever editor is in front of the user: #p-title is empty for pasted YAML
+    gate = app_js.split("function protocolWritten(")[1].split("\n  }")[0]
+    assert 'state.mode === "yaml" ? $("p-yaml").value : $("p-title").value' in gate
+
+
+def test_a_paywalled_paper_can_be_opened_uploaded_or_skipped():
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    for needle in ('"Upload the PDF"', '"Skip"', "function uploadCandidate(",
+                   "function decideCandidate(", '"/upload"', '"/decide"', "function uploadExtras("):
+        assert needle in app_js, needle
+    # a poll must never revert a tick whose POST is still in flight
+    assert "state.pendingDecisions" in app_js and "function pendingKeep(" in app_js
+
+
+def test_no_candidate_ever_falls_off_the_search_screen():
+    """Every `CandidateState` the server can write lands in a list that exists in the markup, and
+    the reason it is in that list is in the row, not in a tooltip."""
+    from canopy.search.models import CandidateState
+    from typing import get_args
+
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    buckets = re.findall(r'"([a-z]+)"', app_js.split("var BUCKETS = [")[1].split("];")[0])
+    for name in buckets:
+        assert f'id="list-{name}"' in page, name
+        assert f'id="{name}-count"' in page, name
+    sorted_by = app_js.split("function bucketOf(")[1].split("\n  }")[0]
+    for kind in get_args(CandidateState):
+        assert f'"{kind}"' in sorted_by or kind == "not_screened", kind
+    why = app_js.split("function whyLine(")[1].split("\n  }")[0]
+    for kind in get_args(CandidateState):
+        assert f'"{kind}"' in why or kind == "not_screened", kind
+
+
+def test_every_search_failure_says_what_happened():
+    """An index that fell over, a cap that ran out, a search the server forgot — each one named,
+    and none of them empties a list."""
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    for needle in ("No records matched",
+                   "Nothing found was open access",
+                   "This search stopped when the server did",
+                   "nothing was thrown away",
+                   "Finding papers needs a model",
+                   "That file is not a PDF",
+                   "Upload at least one PDF to begin",
+                   "Search stopped.",
+                   "did not. The papers below are from the indexes that ",
+                   "Describe your review in a sentence first."):
+        assert needle in app_js, needle
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'id="card-unscreened"' in page and "Not screened" in page
+
+
+def test_the_search_counts_are_written_in_real_plurals():
+    """"1 paper", "3 papers" — the PRISMA line and every banner go through plural()."""
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    search = app_js.split("function renderFlow(")[1]
+    assert "plural(" in search.split("\n  }")[0]
+    banner = app_js.split("function searchBanner(")[1].split("\n  }\n")[0]
+    assert banner.count("plural(") >= 3
+    # …and no count is written with a bare " s" escape hatch anywhere in the search screen
+    assert "paper(s)" not in search and "record(s)" not in search
+
+
+def test_the_search_screen_is_operable_without_a_mouse():
+    page = (STATIC / "index.html").read_text(encoding="utf-8")
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert 'id="search-title" tabindex="-1"' in page
+    assert '$("search-title").focus()' in app_js
+    assert 'aria-live="polite"' in page.split('id="search-live"')[1].split(">")[0]
+    assert 'id="search-log" aria-live="off"' in page       # the log does not speak
+    assert "function announce(" in app_js and "state.announced" in app_js
+    # the file input a keyboard has to reach is visually hidden, not `hidden`
+    assert 'cls: "sr-only"' in app_js and ".sr-only {" in \
+        (STATIC / "styles.css").read_text(encoding="utf-8")
+
+
+def test_the_search_ui_adds_no_new_colour():
+    """Offprint: one chromatic accent, and it lives where data lives."""
+    css = (STATIC / "styles.css").read_text(encoding="utf-8")
+    block = css.split("/* ─────────────────────────────────────────────────────────── paper search")[1]
+    block = block.split("mobile */")[0]
+    assert not re.search(r"#[0-9a-fA-F]{3,8}\b", block), "new colours entered the palette"
+    for reused in (".cand", ".counts", ".begin-bar", ".phases", ".sr-only", ".find-panel"):
+        assert reused in block, reused
+    assert ".src-btn" in css                               # appended to the existing selector list

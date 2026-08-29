@@ -30,6 +30,10 @@
   <button type="button" class="step is-current" data-screen="new" aria-current="step">
     <span class="step-n">1</span><span class="step-name">New run</span>
   </button>
+  <!-- only a search puts this step on the bar: a page nobody searched from never shows it -->
+  <button type="button" class="step" data-screen="search" id="step-search" hidden>
+    <span class="step-n">·</span><span class="step-name">Paper search</span>
+  </button>
   <button type="button" class="step" data-screen="monitor">
     <span class="step-n">2</span><span class="step-name">Monitor</span>
   </button>
@@ -132,7 +136,17 @@
       </section>
 
       <section class="card" aria-labelledby="h-papers">
-        <div class="card-head"><h2 id="h-papers">Papers</h2></div>
+        <div class="card-head">
+          <h2 id="h-papers">Papers</h2>
+          <!-- the same shell the results line toggle uses, and deliberately NOT `.seg-btn`:
+               that class has a global handler that switches the protocol editor. -->
+          <div class="seg" id="source-toggle" role="group" aria-label="Where the papers come from">
+            <button type="button" class="src-btn is-on" data-source="upload"
+                    aria-pressed="true">Upload PDFs</button>
+            <button type="button" class="src-btn" data-source="find"
+                    aria-pressed="false">Find papers</button>
+          </div>
+        </div>
         <div class="drop" id="drop">
           <label class="btn">
             Choose a folder
@@ -145,6 +159,21 @@
           <p class="hint" id="files-note">Nothing is uploaded until you press Run. PDFs only.</p>
         </div>
         <ul class="file-list" id="file-list"></ul>
+
+        <!-- ships hidden: the page a user loads is the page they had before this existed -->
+        <div class="drop find-panel" id="find-panel" hidden>
+          <p class="hint" id="find-note">Canopy will ask open scholarly indexes for papers that
+             answer the sentence above, read each title and abstract against it, and fetch the ones
+             that are open access. Papers behind a paywall are listed with their links, so you can
+             upload the ones you have. Nothing starts a review until you say so.</p>
+          <div class="grid-2">
+            <label class="field"><span class="label">Most it may spend (USD)</span>
+              <input type="number" id="f-max-usd" min="0" step="0.25"></label>
+            <label class="field"><span class="label">Abstracts to read at most</span>
+              <input type="number" id="f-max-screened" min="1" step="10"></label>
+          </div>
+          <p class="hint" id="find-key-note" hidden></p>
+        </div>
       </section>
 
       <details class="card advanced">
@@ -168,11 +197,120 @@
       <div class="actions">
         <button type="button" class="btn" id="dry-run-btn">Dry run on 3 papers</button>
         <button type="submit" class="btn primary" id="run-btn">Run the review</button>
+        <button type="button" class="btn primary" id="find-btn" hidden>Find papers</button>
       </div>
       <p class="hint" id="upload-progress" role="status" aria-live="polite" hidden></p>
       <p class="error" id="form-error" hidden></p>
       <div id="dry-run-out"></div>
     </form>
+  </section>
+
+  <!-- ───────────────────────────────── paper search ───────────────────────────────── -->
+  <!-- One screen, two states: the ladder while it runs, the lists when it has stopped. Nothing is
+       torn down between them, so the log of what the search did stays readable for ever. -->
+  <section id="screen-search" class="screen" hidden>
+    <div class="lede row">
+      <div>
+        <h1 id="search-title" tabindex="-1">Paper search</h1>
+        <p id="search-sub">Canopy asks open indexes your question, reads each title and abstract
+           against it, and records why every paper is in or out. Only openly licensed copies are
+           downloaded; nothing here is a review until you begin one.</p>
+      </div>
+      <button type="button" class="btn danger" id="search-cancel-btn">Stop the search</button>
+    </div>
+
+    <!-- one sentence per stage, throttled: a counter that speaks on every event is unusable -->
+    <p class="sr-only" id="search-live" role="status" aria-live="polite" aria-atomic="true"></p>
+    <p class="banner" id="search-banner" hidden></p>
+
+    <ol class="phases" id="search-phases" aria-label="Search stages"></ol>
+    <div class="counts" id="search-counts"></div>
+    <p class="flow" id="search-flow"></p>
+
+    <details class="card advanced" id="search-log-card" open>
+      <summary><h2>What the search did</h2><span class="hint" id="search-log-count"></span></summary>
+      <div class="card-head"><h2 id="h-queries">Queries</h2>
+        <span class="hint" id="query-source-note"></span></div>
+      <ul class="cand-list" id="search-queries" aria-labelledby="h-queries"></ul>
+      <div class="card-head"><h2 id="h-sources">Indexes</h2></div>
+      <ul class="cand-list" id="search-sources" aria-labelledby="h-sources"></ul>
+      <div class="card-head"><h2 id="h-log">Log</h2></div>
+      <ol class="log" id="search-log" aria-live="off" aria-labelledby="h-log"></ol>
+    </details>
+
+    <div id="search-results" hidden>
+      <section class="card" aria-labelledby="h-fetched">
+        <div class="card-head"><h2 id="h-fetched">Fetched</h2>
+          <span class="hint" id="fetched-count"></span></div>
+        <p class="hint">Open-access PDFs, already downloaded and readable, plus any you supplied.
+           Untick one to leave it out of the review; it stays on this page with its reason.</p>
+        <ul class="cand-list" id="list-fetched" aria-labelledby="h-fetched"></ul>
+      </section>
+
+      <section class="card" aria-labelledby="h-locked">
+        <div class="card-head"><h2 id="h-locked">Behind a paywall</h2>
+          <span class="hint" id="locked-count"></span></div>
+        <p class="hint">Canopy will not download these. Open one; if you have access, upload the PDF
+           and it joins the review. Skip the rest — the review will say they were unavailable.</p>
+        <ul class="cand-list" id="list-locked" aria-labelledby="h-locked"></ul>
+      </section>
+
+      <section class="card" id="card-wanted" aria-labelledby="h-wanted" hidden>
+        <div class="card-head"><h2 id="h-wanted">Wanted, not answered</h2>
+          <span class="hint" id="wanted-count"></span></div>
+        <p class="hint">The screener wanted these and the search stopped before it tried for an open
+           copy. Nobody checked a publisher, so nobody may call them paywalled — upload one if you
+           have it, or search again.</p>
+        <ul class="cand-list" id="list-wanted" aria-labelledby="h-wanted"></ul>
+      </section>
+
+      <details class="card advanced" id="card-unsure">
+        <summary><h2>Unsure</h2><span class="hint" id="unsure-count"></span></summary>
+        <p class="hint">The screener could not tell from the title and abstract alone. Nothing was
+           decided for you: tick any you want in the review.</p>
+        <ul class="cand-list" id="list-unsure"></ul>
+      </details>
+
+      <details class="card advanced" id="card-excluded">
+        <summary><h2>Excluded</h2><span class="hint" id="excluded-count"></span></summary>
+        <p class="hint">Each one with the reason it was ruled out. Tick any the screener got wrong.</p>
+        <ul class="cand-list" id="list-excluded"></ul>
+      </details>
+
+      <details class="card advanced" id="card-unscreened" hidden>
+        <summary><h2>Not screened</h2><span class="hint" id="unscreened-count"></span></summary>
+        <p class="hint">Nobody read these — there was no model, or the search stopped first. They
+           are listed rather than forgotten.</p>
+        <ul class="cand-list" id="list-unscreened"></ul>
+      </details>
+
+      <section class="card" aria-labelledby="h-extra">
+        <div class="card-head"><h2 id="h-extra">Papers the search missed</h2>
+          <span class="hint" id="extra-count"></span></div>
+        <div class="drop" id="search-drop">
+          <label class="btn">Add PDFs
+            <input type="file" id="search-extra-input" accept="application/pdf,.pdf" multiple
+                   class="sr-only"></label>
+          <p class="hint" id="search-extra-note">Dropped here or picked, they join the review like
+             any other paper. PDFs only.</p>
+        </div>
+        <ul class="cand-list" id="list-extra" aria-labelledby="h-extra"></ul>
+      </section>
+    </div>
+
+    <!-- the options are MIRRORED here, never duplicated: the New-run screen owns those inputs -->
+    <div class="begin-bar" id="begin-bar" hidden>
+      <div class="begin-facts">
+        <p class="hint" id="begin-papers"></p>
+        <p class="hint" id="begin-protocol"></p>
+        <p class="hint" id="begin-options"></p>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn ghost" id="begin-edit-btn">Edit the protocol</button>
+        <button type="button" class="btn ghost" id="search-again-btn">Search again</button>
+        <button type="button" class="btn primary" id="begin-btn">Run the review</button>
+      </div>
+    </div>
   </section>
 
   <!-- ───────────────────────────────── 2. monitor ───────────────────────────────── -->

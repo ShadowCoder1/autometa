@@ -231,12 +231,13 @@ fieldset.sub legend { margin-bottom: .5rem; }
 /* segmented controls: rectangular, divided by rules; active = solid ink */
 .seg { display: inline-flex; border: 1px solid var(--rule-strong); border-radius: var(--r);
        overflow: hidden; }
-.seg-btn, .line-btn { appearance: none; border: 1px solid transparent; background: none;
+.seg-btn, .line-btn, .src-btn { appearance: none; border: 1px solid transparent; background: none;
   font: inherit; font-size: .82rem; padding: .3rem .85rem; cursor: pointer;
   color: var(--muted); border-radius: 0; }
-.seg-btn + .seg-btn, .line-btn + .line-btn { border-left-color: var(--rule-strong); }
-.seg-btn.is-on, .line-btn.is-on { background: var(--ink); color: var(--paper);
-                                  border-color: var(--ink); }
+.seg-btn + .seg-btn, .line-btn + .line-btn, .src-btn + .src-btn {
+  border-left-color: var(--rule-strong); }
+.seg-btn.is-on, .line-btn.is-on, .src-btn.is-on { background: var(--ink); color: var(--paper);
+                                                  border-color: var(--ink); }
 /* the second analysis line should look like a caveat, not a victory */
 .line-btn.is-on[data-line="best_guess"] { background: var(--warn-wash); color: var(--warn);
                                           border-color: var(--warn); }
@@ -498,6 +499,43 @@ table.grid td.paper .hint { font-family: var(--mono); font-size: .72rem; margin:
          border-radius: var(--r); font-size: .87rem; box-shadow: var(--shadow-float);
          max-width: 90vw; }
 
+/* ─────────────────────────────────────────────────────────── paper search */
+/* Not one new colour: the ladder is the monitor's `.dot`, a fetched paper is `.badge.ok`, an index
+   that fell over is `.pill.stop`, and everything else is ink, rule and muted. */
+.find-panel { flex-direction: column; align-items: stretch; }
+
+.counts { display: flex; gap: 1rem 2rem; flex-wrap: wrap; margin-bottom: .6rem; }
+.flow { font: 1rem/1.6 var(--serif); color: var(--ink-soft); margin: 0 0 1.2rem; }
+.phases { display: flex; gap: 1.1rem; list-style: none; padding: 0; margin: 0 0 1.2rem;
+          flex-wrap: wrap; }
+
+.cand-list { list-style: none; margin: 0; padding: 0; }
+.cand { display: flex; gap: 1rem; justify-content: space-between; align-items: flex-start;
+        padding: .6rem 0; border-bottom: 1px solid var(--rule); }
+.cand-keep { display: flex; gap: .6rem; align-items: flex-start; cursor: pointer;
+             min-width: 0; flex: 1; }
+.cand-main { display: flex; flex-direction: column; gap: .1rem; min-width: 0; flex: 1; }
+.cand strong { font: 600 1.05rem/1.3 var(--serif); }
+.cand-title { font: .92rem/1.4 var(--serif); color: var(--ink-soft); }
+.cand-meta { font-family: var(--mono); font-size: .75rem; color: var(--muted);
+             overflow-wrap: anywhere; }
+/* the reason a paper is in this list is READABLE, never a tooltip */
+.cand-why { font-size: .8rem; color: var(--muted); border-left: 2px solid var(--rule-strong);
+            padding-left: .55rem; margin-top: .15rem; }
+.cand-actions { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
+/* a dropped paper fades; it never disappears, and it keeps its reason */
+.cand.is-dropped { opacity: .55; }
+
+.begin-bar { position: sticky; bottom: 0; background: var(--paper);
+             border-top: 2px solid var(--ink); padding: .7rem 0; display: flex; gap: 1rem;
+             justify-content: space-between; align-items: center; flex-wrap: wrap; z-index: 18; }
+.begin-bar .actions { margin: 0; }
+.begin-facts p { margin: 0; }
+
+/* visually gone, still in the tab order and still announced */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%);
+           white-space: nowrap; }
+
 /* ─────────────────────────────────────────────────────────── mobile */
 @media (max-width: 60rem) {
   .grid-stage { grid-template-columns: 1fr; }
@@ -513,13 +551,14 @@ table.grid td.paper .hint { font-family: var(--mono); font-size: .72rem; margin:
             border-top: 2px solid var(--ink); border-radius: 0; }
   @keyframes slide-in { from { transform: translateY(18px); opacity: .5; } }
   .draft-row { flex-direction: column; align-items: stretch; }
+  .cand, .begin-bar { flex-direction: column; align-items: stretch; }
   .ev-kv { grid-template-columns: 1fr; }
   .ev-kv dt { margin-top: .4rem; }
 }
 
 /* it should print like the offprint it is: heads and rules stay, controls go */
 @media print {
-  .steps, .topbar-right, .actions, .tabs, .drawer, .scrim, .line-row { display: none; }
+  .steps, .topbar-right, .actions, .tabs, .drawer, .scrim, .line-row, .begin-bar { display: none; }
   body { background: #fff; }
   .card { break-inside: avoid; border-top-color: #999; }
   .card-head, .headline, details.advanced summary { border-top-color: #000; }

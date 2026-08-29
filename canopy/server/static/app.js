@@ -90,7 +90,17 @@
     // the primary analysis; "best_guess" is the second line and the one the results page lands
     // on when the run has it (see `storedLine`). The two are never on screen at the same time
     // (DECISION A).
-    line: "strict"
+    line: "strict",
+
+    // ── the paper search. Deliberately none of these is called `mode` (that is the protocol
+    // editor's) or `source` (that is the run's EventSource): two screens sharing one word is how
+    // a toggle on one of them starts hiding a pane on the other.
+    papersFrom: "upload",
+    searchId: "", searchToken: "", search: null, searchSource: null, searchPoll: null,
+    searchEvents: [], announced: 0,
+    // a keep/drop whose POST is still in flight. The 5-second poll is authoritative about
+    // everything EXCEPT these, or a tick would visibly flip back while the server agrees with it.
+    pendingDecisions: {}
   };
 
   /* The run a reload must not lose. Tokens are kept per run id (so any run this browser
@@ -185,7 +195,7 @@
   }
 
   /* ───────────────────────────────────────────────────────── screens */
-  var SCREENS = ["new", "monitor", "results", "runs"];
+  var SCREENS = ["new", "search", "monitor", "results", "runs"];
 
   function goto(name) {
     SCREENS.forEach(function (key) { show($("screen-" + key), key === name); });
@@ -222,6 +232,18 @@
       $("o-model-secondary").value = (settings.models || {}).secondary || "";
       $("files-note").textContent = "Nothing is uploaded until you press Run. PDFs only, up to "
         + settings.max_upload_mb + " MB each.";
+
+      // the search's two caps are pre-filled with the numbers this server will actually hold it
+      // to, so the form shows the truth rather than a hopeful default of its own
+      $("f-max-usd").value = settings.search_max_usd;
+      $("f-max-screened").value = settings.search_max_screened;
+      // A search with no model still runs — template queries, nothing screened — so this is a
+      // warning about what it will be, never a locked door.
+      var keyNote = $("find-key-note");
+      keyNote.textContent = "Finding papers needs a model. Without one the search still runs: the "
+        + "queries come from your own words and no abstract is read, so nothing is sorted for you. "
+        + "Canopy reads ANTHROPIC_API_KEY from .env; nothing on this page ever shows it.";
+      show(keyNote, !!settings.search_key_required);
     });
   }
 
@@ -2226,6 +2248,908 @@
     }).catch(function (error) { toast(error.message); });
   }
 
+  /* ───────────────────────────────────────────────────────── paper search
+   *
+   * The other door into a run: a question instead of a folder. Every shape below is the SERVER's —
+   * `canopy/search/models.py` is the contract — because a count this page renamed on its own would
+   * render `undefined`, and a phase name it invented would be a rung that never lights.
+   *
+   * Two rules carried over from the monitor, unchanged: the GET is the truth and the events are an
+   * overlay on top of it, and a failure changes what the page SAYS, never what it shows. No list
+   * on this screen is ever emptied by an error.
+   */
+
+  // COUNT_KEYS, verbatim. The label on screen is the key with its underscores opened out — one
+  // word per thing, and a name changed on the server is a name changed here and nowhere else.
+  var COUNT_KEYS = ["records", "after_dedupe", "screened", "included", "unsure", "excluded",
+                    "not_screened", "fetched", "wanted", "paywalled", "uploaded", "extra",
+                    "possible_duplicates"];
+  // …and these five are on the strip even at zero: a ladder that grows rungs as it goes hides
+  // from the reader what is still to come.
+  var COUNTS_ALWAYS = ["records", "after_dedupe", "screened", "included", "fetched"];
+
+  // PHASES, verbatim, with the word each rung is called on screen
+  var SEARCH_PHASES = [["queries", "queries"],
+                       ["index", "indexes"],
+                       ["dedupe", "duplicates"],
+                       ["screen", "screening"],
+                       ["fetch", "open copies"]];
+
+  // every `CandidateState` lands in exactly one of these. `unscreened` is last on purpose: it is
+  // also where a state a newer server invents goes, so a paper can never fall off this page.
+  var BUCKETS = ["fetched", "locked", "wanted", "unsure", "excluded", "unscreened", "extra"];
+
+  var STORE_SEARCHES = "canopy.searches";   // { searchId: token }  ← mirrors "canopy.tokens"
+  var STORE_SEARCH = "canopy.search";       // the current search id ← mirrors "canopy.current"
+
+  // files this server refused, kept on screen with their reason rather than silently dropped
+  var refusedFiles = [];
+  var beginning = false;        // a `begin` request is in flight: nothing may re-enable the button
+  var settledShown = false;     // focus is handed to the title once per search, not on every poll
+
+  function searchOver(search) { return TERMINAL.indexOf((search || {}).status) >= 0; }
+
+  function withSearchToken(url) {
+    if (!url) { return ""; }
+    return url + (url.indexOf("?") >= 0 ? "&" : "?") + "token="
+      + encodeURIComponent(state.searchToken);
+  }
+
+  /* api() adds the RUN's bearer only to paths that start "/api/runs" — the path prefix is the
+     whole protection — so a search carries its own token and the two can never be swapped. */
+  function searchApi(path, opts) {
+    opts = opts || {};
+    var headers = { Authorization: "Bearer " + state.searchToken };
+    Object.keys(opts.headers || {}).forEach(function (k) { headers[k] = opts.headers[k]; });
+    return api(path, { method: opts.method, json: opts.json, body: opts.body, headers: headers });
+  }
+
+  function searchPath(suffix) {
+    return "/api/searches/" + encodeURIComponent(state.searchId) + (suffix || "");
+  }
+
+  function paperPath(key, suffix) {
+    return searchPath("/papers/" + encodeURIComponent(key) + suffix);
+  }
+
+  function rememberSearch(id, token) {
+    var tokens = stored(STORE_SEARCHES, {}) || {};
+    tokens[id] = token;
+    store(STORE_SEARCHES, tokens);
+    store(STORE_SEARCH, id);
+  }
+
+  function forgetCurrentSearch() { store(STORE_SEARCH, null); }
+
+  function searchTokenFor(id) { return (stored(STORE_SEARCHES, {}) || {})[id] || ""; }
+
+  /* The protocol that is sent is read from the New-run screen at the moment Begin is pressed, so
+     an edit made in between is the one that counts. There is no snapshot here to go stale. */
+  function protocolText() {
+    return state.mode === "yaml" ? $("p-yaml").value : JSON.stringify(guidedProtocol());
+  }
+
+  // "is there a protocol at all", asked of whichever editor is in front of the user: #p-title is
+  // empty for a pasted YAML that has a perfectly good title of its own.
+  function protocolWritten() {
+    return (state.mode === "yaml" ? $("p-yaml").value : $("p-title").value).trim() !== "";
+  }
+
+  /* ── the mode toggle on the New-run screen ─────────────────────────────── */
+  function setPapersFrom(which) {
+    state.papersFrom = which === "find" ? "find" : "upload";
+    var finding = state.papersFrom === "find";
+    Array.prototype.forEach.call(document.querySelectorAll(".src-btn"), function (button) {
+      var on = button.getAttribute("data-source") === state.papersFrom;
+      button.classList.toggle("is-on", on);
+      button.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    show($("drop"), !finding);
+    show($("file-list"), !finding);
+    show($("find-panel"), finding);
+    show($("dry-run-btn"), !finding);
+    show($("run-btn"), !finding);
+    show($("find-btn"), finding);
+    // #f-max-usd is a number input inside #run-form, so Enter in it fires the form's default
+    // button — which is #run-btn, hidden or not. A DISABLED default button is what actually
+    // suppresses implicit submission, so mode 2's fields cannot start mode 1 with no files.
+    $("run-btn").disabled = finding;
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll(".src-btn"), function (button) {
+    button.addEventListener("click", function () {
+      setPapersFrom(button.getAttribute("data-source"));
+    });
+  });
+
+  $("find-btn").addEventListener("click", function () {
+    if (state.searchId) { gotoSearch(); return; }   // a second search is started deliberately
+    startSearch();
+  });
+
+  // exactly the two fields `SearchOptions` has: it forbids extras, so a third would 422 the search
+  function searchOptions() {
+    var options = {};
+    if ($("f-max-usd").value) { options.max_usd = Number($("f-max-usd").value); }
+    if ($("f-max-screened").value) { options.max_screened = Number($("f-max-screened").value); }
+    return options;
+  }
+
+  function startSearch() {
+    var question = $("draft-sentence").value.trim();
+    if (!question) {
+      toast("Describe your review in a sentence first.");
+      $("draft-sentence").focus();
+      return;
+    }
+    var button = $("find-btn");
+    button.disabled = true;
+    var body = { question: question, options: searchOptions() };
+    // a search needs only the question; beginning the review needs the protocol
+    if (protocolWritten()) { body.protocol_text = protocolText(); }
+    api("/api/searches", { method: "POST", json: body }).then(function (answer) {
+      newSearch(answer.search_id, answer.token);
+      rememberSearch(answer.search_id, answer.token);
+      gotoSearch();
+      listenSearch();
+      return refreshSearch();
+    }).catch(function (error) { toast(error.message); })
+      .then(function () { button.disabled = false; });
+  }
+
+  function newSearch(id, token) {
+    state.searchId = id;
+    state.searchToken = token;
+    state.search = null;
+    state.searchEvents = [];
+    state.pendingDecisions = {};
+    refusedFiles = [];
+    beginning = false;
+    settledShown = false;
+    clear($("search-log"));
+    $("find-btn").textContent = "Back to the papers found";
+  }
+
+  function gotoSearch() {
+    show($("step-search"), true);
+    goto("search");
+    $("search-title").focus();
+  }
+
+  function attachSearch(id, token) {
+    newSearch(id, token);
+    return refreshSearch().then(function (search) {
+      rememberSearch(id, token);
+      gotoSearch();
+      if (!searchOver(search)) { listenSearch(); }
+      return search;
+    });
+  }
+
+  function refreshSearch() {
+    if (!state.searchId) { return Promise.resolve(null); }
+    return searchApi(searchPath()).then(function (search) {
+      state.search = search;
+      renderSearch(search);
+      showSearchState(search);
+      return search;
+    });
+  }
+
+  function stopSearchWatchers() {
+    if (state.searchSource) { state.searchSource.close(); state.searchSource = null; }
+    if (state.searchPoll) { window.clearInterval(state.searchPoll); state.searchPoll = null; }
+  }
+
+  function listenSearch() {
+    if (state.searchSource) { state.searchSource.close(); }
+    var source = new EventSource(withSearchToken(searchPath("/events")));
+    state.searchSource = source;
+    source.addEventListener("progress", function (message) {
+      try { onSearchEvent(JSON.parse(message.data)); } catch (err) { /* a frame we cannot read */ }
+    });
+    source.addEventListener("end", function (message) {
+      var event = {};
+      try { event = JSON.parse(message.data); } catch (err) { event = {}; }
+      onSearchEvent(event);
+      source.close();
+      state.searchSource = null;
+      refreshSearch().catch(function (error) { toast(error.message); });
+    });
+    source.onerror = function () { source.close(); state.searchSource = null; };
+  }
+
+  function onSearchEvent(event) {
+    state.searchEvents.push(event);
+    if (event.cost_so_far !== undefined) {
+      $("cost-value").textContent = money(event.cost_so_far);
+      show($("cost-meter"), true);
+    }
+    var log = $("search-log");
+    log.appendChild(h("li", {}, [
+      h("b", { text: phaseLabel(event.stage || "search") }),
+      h("span", { cls: "who", text: event.status || "" }),
+      h("span", { cls: "msg", text: event.message || "" })
+    ]));
+    while (log.children.length > 400) { log.removeChild(log.firstChild); }
+    log.scrollTop = log.scrollHeight;
+    $("search-log-count").textContent = plural(state.searchEvents.length, "event");
+    if (event.stage) {
+      announce(phaseLabel(event.stage) + ", " + (event.status || "")
+               + (event.message ? ". " + event.message : ""));
+    }
+  }
+
+  /* One sentence per stage at most, and at most one every two seconds: a live region that speaks
+     on every event is a screen reader nobody can use. The counts strip is deliberately NOT live —
+     it is read on demand — and neither is the log. */
+  function announce(text) {
+    if (Date.now() - state.announced < 2000) { return; }
+    state.announced = Date.now();
+    $("search-live").textContent = text;
+  }
+
+  function phaseLabel(name) {
+    for (var i = 0; i < SEARCH_PHASES.length; i += 1) {
+      if (SEARCH_PHASES[i][0] === name) { return SEARCH_PHASES[i][1]; }
+    }
+    return String(name || "");
+  }
+
+  // the pipeline's own words: pending | running | ok | skipped | error — drawn with the monitor's
+  // glyphs, so one ladder is one idea across the whole app
+  function phaseClass(status) {
+    if (status === "ok") { return "dot done"; }
+    if (status === "running") { return "dot run"; }
+    if (status === "skipped") { return "dot skip"; }
+    if (status === "error") { return "dot error"; }
+    return "dot";
+  }
+
+  /* ── the three progress registers ──────────────────────────────────────── */
+  function renderPhases(phases) {
+    var list = $("search-phases");
+    clear(list);
+    (phases || []).forEach(function (phase) {
+      var status = phase.status || "pending";
+      list.appendChild(h("li", {}, [
+        h("span", { cls: phaseClass(status), text: phaseLabel(phase.name) + " — " + status,
+                    attrs: { title: phase.message || "" } })
+      ]));
+    });
+  }
+
+  function renderCounts(counts, cost) {
+    var strip = $("search-counts");
+    clear(strip);
+    COUNT_KEYS.forEach(function (key) {
+      var value = Number(counts[key] || 0);
+      if (!value && COUNTS_ALWAYS.indexOf(key) < 0) { return; }
+      strip.appendChild(h("div", { cls: "stat" }, [
+        h("span", { cls: "k hint", text: key.replace(/_/g, " ") }),
+        h("span", { cls: "v", text: String(value) })
+      ]));
+    });
+    strip.appendChild(h("div", { cls: "stat" }, [
+      h("span", { cls: "k hint", text: "spent" }),
+      h("span", { cls: "v", text: money(cost) })
+    ]));
+  }
+
+  function renderFlow(counts, nSources) {
+    var text = plural(counts.records || 0, "record") + " from " + plural(nSources, "source")
+      + " → " + plural(counts.after_dedupe || 0, "unique paper")
+      + " → " + plural(counts.screened || 0, "abstract") + " read"
+      + " → " + plural(counts.included || 0, "paper") + " wanted"
+      + " → " + plural(counts.fetched || 0, "PDF") + " fetched, "
+      + plural(counts.paywalled || 0, "paper") + " behind a paywall.";
+    if (counts.not_screened) {
+      text += " " + plural(counts.not_screened, "record") + " nobody read.";
+    }
+    if (counts.possible_duplicates) {
+      text += " " + plural(counts.possible_duplicates, "pair")
+        + " might be the same paper twice; Canopy will not merge those on its own.";
+    }
+    $("search-flow").textContent = text;
+  }
+
+  function sourceNames(sources) {
+    var names = [];
+    (sources || []).forEach(function (row) {
+      var name = String(row.name || "");
+      if (name && names.indexOf(name) < 0) { names.push(name); }
+    });
+    return names;
+  }
+
+  function renderQueries(search) {
+    $("query-source-note").textContent = search.query_source === "model"
+      ? "written by a model from your question"
+      : "built from your own words — no model was used to write them";
+    var list = $("search-queries");
+    clear(list);
+    (search.queries || []).forEach(function (query) {
+      list.appendChild(h("li", { cls: "cand" }, [
+        h("span", { cls: "cand-main" }, [
+          h("span", { cls: "cand-meta", text: query.text || "" }),
+          h("span", { cls: "cand-why", text: query.why || "" })
+        ])
+      ]));
+    });
+    if (!list.children.length) {
+      list.appendChild(h("li", { cls: "cand" }, [h("span", { cls: "hint", text: "No query yet." })]));
+    }
+    var sources = $("search-sources");
+    clear(sources);
+    (search.sources || []).forEach(function (row) {
+      var badge = row.error
+        ? h("span", { cls: "pill stop", text: "no answer" })
+        : h("span", { cls: "badge", text: plural(Number(row.n_returned || 0), "record") });
+      sources.appendChild(h("li", { cls: "cand" }, [
+        h("span", { cls: "cand-main" }, [
+          h("strong", { text: row.name || "an index" }),
+          h("span", { cls: "cand-meta", text: row.query || row.text || "" }),
+          h("span", { cls: "cand-why", text: row.error
+            ? String(row.error) : (row.note || "answered") })
+        ]),
+        h("span", { cls: "cand-actions" }, [badge])
+      ]));
+    });
+  }
+
+  /* ── the lists ─────────────────────────────────────────────────────────── */
+  function bucketOf(candidate) {
+    var kind = candidate.state;
+    if (kind === "fetched" || kind === "uploaded") { return "fetched"; }
+    if (kind === "paywalled") { return "locked"; }
+    if (kind === "wanted") { return "wanted"; }
+    if (kind === "unsure") { return "unsure"; }
+    if (kind === "excluded") { return "excluded"; }
+    if (kind === "extra") { return "extra"; }
+    return "unscreened";
+  }
+
+  // a keep/drop whose POST has not answered yet beats the poll, or the tick a person just made
+  // flips back under their hand while the server is busy agreeing with it
+  function pendingKeep(candidate) {
+    var pending = state.pendingDecisions[candidate.key];
+    return pending === undefined ? !!candidate.keep : !!pending;
+  }
+
+  function metaLine(candidate) {
+    var bits = [];
+    if (candidate.authors) { bits.push(candidate.authors); }
+    if (candidate.venue) { bits.push(candidate.venue); }
+    if (candidate.year) { bits.push(String(candidate.year)); }
+    if (candidate.doi) { bits.push("doi:" + candidate.doi); }
+    return bits.join(" · ");
+  }
+
+  // every row says why it is in the list it is in — readable, never a tooltip
+  function whyLine(candidate) {
+    var kind = candidate.state;
+    var reason = candidate.reason || "";
+    var head = "";
+    if (kind === "fetched") { head = "Kept: an open-access copy was downloaded."; }
+    else if (kind === "uploaded") { head = "Kept: you supplied this PDF."; }
+    else if (kind === "paywalled") { head = "No open copy could be fetched, so nothing was."; }
+    else if (kind === "wanted") { head = "Wanted. Nothing has tried a publisher yet, so nobody "
+      + "may call this one paywalled."; }
+    else if (kind === "unsure") { head = "The screener could not tell from the title and abstract."; }
+    else if (kind === "excluded") { head = "Ruled out."; }
+    else if (kind === "extra") { head = "You added this one; no index proposed it."; }
+    else { head = "Nobody read this one: there was no model, or the search stopped first."; }
+    if (candidate.title_only) { head += " Only the title was available to read."; }
+    return reason ? head + " " + reason : head;
+  }
+
+  function pdfNote(pdf) {
+    var bits = [];
+    if (pdf.pages) { bits.push(plural(pdf.pages, "page")); }
+    if (pdf.bytes) { bits.push((pdf.bytes / 1e6).toFixed(1) + " MB"); }
+    return bits.join(" · ");
+  }
+
+  /* Every outbound URL is one the SERVER sent. This page cannot build a publisher address or a
+     DOI resolver's — its own test forbids the literal — and that is the right rule anyway: a link
+     the page invented out of a DOI would be a link nobody audited. */
+  function safeLink(link) {
+    if (!link || !link.url) { return false; }
+    try { return new URL(link.url).protocol === "https:"; } catch (err) { return false; }
+  }
+
+  function linkNodes(candidate) {
+    return (candidate.links || []).filter(safeLink).slice(0, 2).map(function (link) {
+      // deliberately NOT withToken(): this address is a publisher's, not this server's, and a run
+      // token on an outbound link would hand a stranger the key to the review. The page's own
+      // <meta name="referrer" content="no-referrer"> and rel="noopener noreferrer" do the rest.
+      var elsewhere = link.url;
+      return h("a", { cls: "btn ghost small", text: link.label || "open",
+        attrs: { href: elsewhere, target: "_blank", rel: "noopener noreferrer",
+                 "aria-label": "Open " + (link.label || "this paper") + " (new tab)" } });
+    });
+  }
+
+  function candRow(candidate) {
+    var kind = bucketOf(candidate);
+    var keep = pendingKeep(candidate);
+    var name = candidate.study_label || candidate.title || candidate.key;
+    var row = h("li", { cls: "cand" + (keep ? "" : " is-dropped"),
+                        attrs: { "data-key": candidate.key } });
+    var problem = h("span", { cls: "error", attrs: { role: "alert", hidden: true } });
+    var main = h("span", { cls: "cand-main" }, [
+      h("strong", { text: name }),
+      h("span", { cls: "cand-title", text: candidate.title || "" }),
+      h("span", { cls: "cand-meta", text: metaLine(candidate) }),
+      h("span", { cls: "cand-why", text: whyLine(candidate) }),
+      problem
+    ]);
+    var box = h("input", { attrs: { type: "checkbox", "aria-label": "Keep: " + name } });
+    box.checked = keep;
+    box.addEventListener("change", function () {
+      decideCandidate(candidate, box.checked, row, box);
+    });
+    row.appendChild(h("label", { cls: "cand-keep" }, [box, main]));
+
+    var actions = h("span", { cls: "cand-actions" });
+    if (candidate.source) {
+      // provenance gets a word, not a hue
+      actions.appendChild(h("span", { cls: "badge", text: candidate.source }));
+    }
+    if (candidate.state === "fetched" || candidate.state === "uploaded") {
+      actions.appendChild(h("span", { cls: "badge ok", text: candidate.state }));
+    }
+    if (candidate.pdf) { actions.appendChild(h("span", { cls: "hint", text: pdfNote(candidate.pdf) })); }
+    if (kind === "locked" || kind === "wanted") {
+      linkNodes(candidate).forEach(function (node) { actions.appendChild(node); });
+      actions.appendChild(uploadSlot(candidate, row, problem));
+      if (keep) {
+        actions.appendChild(h("button", {
+          cls: "btn ghost small", text: "Skip", attrs: { type: "button" },
+          on: { click: function () { decideCandidate(candidate, false, row, null); } }
+        }));
+      }
+    }
+    row.appendChild(actions);
+    return row;
+  }
+
+  // the input is visually hidden rather than `hidden`, so it keeps its place in the tab order and
+  // answers the space bar — a real improvement over the two file inputs on the New-run screen
+  function uploadSlot(candidate, row, problem) {
+    var input = h("input", { cls: "sr-only", attrs: {
+      type: "file", accept: "application/pdf,.pdf",
+      "aria-label": "Upload the PDF for " + (candidate.study_label || candidate.key) } });
+    input.addEventListener("change", function () {
+      if (input.files && input.files.length) {
+        uploadCandidate(candidate, input.files[0], row, problem, input);
+      }
+    });
+    return h("label", { cls: "btn small", text: "Upload the PDF" }, [input]);
+  }
+
+  function emptyWord(name, search) {
+    var counts = search.counts || {};
+    if (name === "fetched") {
+      return counts.paywalled
+        ? "Nothing found was open access. Every paper below is behind a paywall: open each link "
+          + "and upload the PDF if you have access."
+        : "Nothing has been fetched.";
+    }
+    if (name === "locked") { return "Nothing was behind a paywall."; }
+    if (name === "unsure") { return "The screener was sure about every abstract it read."; }
+    if (name === "excluded") { return "Nothing was ruled out."; }
+    if (name === "unscreened") { return "Every record was read."; }
+    if (name === "extra") { return "Nothing added by hand."; }
+    return "";
+  }
+
+  function renderCandidates(search) {
+    var groups = {};
+    BUCKETS.forEach(function (name) { groups[name] = []; });
+    (search.candidates || []).forEach(function (candidate) {
+      groups[bucketOf(candidate)].push(candidate);
+    });
+    BUCKETS.forEach(function (name) {
+      var list = $("list-" + name);
+      clear(list);
+      groups[name].forEach(function (candidate) { list.appendChild(candRow(candidate)); });
+      $(name + "-count").textContent = plural(groups[name].length, "paper");
+      if (!groups[name].length) {
+        list.appendChild(h("li", { cls: "cand" },
+                            [h("span", { cls: "hint", text: emptyWord(name, search) })]));
+      }
+    });
+    // a file this server refused is a fact on the page, not a message that scrolled past
+    refusedFiles.forEach(function (bad) {
+      $("list-extra").appendChild(h("li", { cls: "cand" }, [
+        h("span", { cls: "cand-main" }, [
+          h("strong", { text: bad.filename || "a file" }),
+          h("span", { cls: "error", text: bad.reason || "this server refused it" })
+        ])
+      ]));
+    });
+    show($("card-wanted"), groups.wanted.length > 0);
+    show($("card-unscreened"), groups.unscreened.length > 0);
+  }
+
+  /* ── keep, drop, upload ────────────────────────────────────────────────── */
+  function decideCandidate(candidate, keep, row, box) {
+    var key = candidate.key;
+    state.pendingDecisions[key] = keep;
+    row.classList.toggle("is-dropped", !keep);
+    searchApi(paperPath(key, "/decide"), { method: "POST", json: { keep: keep } })
+      .then(function (answer) {
+        candidate.keep = !!answer.keep;
+        delete state.pendingDecisions[key];
+        if (state.search) { renderBeginBar(state.search); }
+      })
+      .catch(function (error) {
+        delete state.pendingDecisions[key];
+        row.classList.toggle("is-dropped", !candidate.keep);
+        if (box) { box.checked = !!candidate.keep; }
+        toast(error.message);
+      });
+  }
+
+  // what the browser can know before a round trip; everything else is the server's to refuse, and
+  // its own words are shown verbatim rather than paraphrased
+  function badPdf(file) {
+    if (!/\.pdf$/i.test(file.name)) { return "That file is not a PDF. Canopy only reads PDFs."; }
+    var cap = (state.settings || {}).max_upload_mb;
+    if (cap && file.size > cap * 1e6) {
+      return "That PDF is " + (file.size / 1e6).toFixed(1) + " MB; this server accepts up to "
+        + cap + " MB.";
+    }
+    return "";
+  }
+
+  function showRowError(problem, message, input) {
+    problem.textContent = message;
+    show(problem, true);
+    if (input) { input.focus(); }
+  }
+
+  function uploadCandidate(candidate, file, row, problem, input) {
+    var refuse = badPdf(file);
+    if (refuse) { showRowError(problem, refuse, input); return; }
+    show(problem, false);
+    input.disabled = true;
+    var was = row.querySelector(".cand-actions");
+    if (was) { was.appendChild(h("span", { cls: "dot run", text: "uploading…" })); }
+    var form = new FormData();
+    form.append("file", file, file.name);
+    searchApi(paperPath(candidate.key, "/upload"), { method: "POST", body: form })
+      .then(function (updated) {
+        mergeCandidate(updated);
+        redrawCandidates();
+        toast("Matched to " + (updated.study_label || file.name)
+              + ". It joins the review as an uploaded PDF.");
+      })
+      .catch(function (error) {
+        input.disabled = false;
+        showRowError(problem, error.message, input);
+      });
+  }
+
+  function mergeCandidate(updated) {
+    if (!state.search) { return; }
+    var rows = state.search.candidates || [];
+    var found = false;
+    for (var i = 0; i < rows.length; i += 1) {
+      if (rows[i].key === updated.key) { rows[i] = updated; found = true; }
+    }
+    if (!found) { rows.push(updated); }
+    state.search.candidates = rows;
+  }
+
+  function redrawCandidates() {
+    if (!state.search) { return; }
+    renderCandidates(state.search);
+    renderBeginBar(state.search);
+    // the counts are the server's to state, so they are re-read rather than incremented here
+    refreshSearch().catch(function () { /* the rows are already right; the counts follow */ });
+  }
+
+  function uploadExtras(fileList) {
+    var files = Array.prototype.filter.call(fileList || [], function (file) {
+      return /\.pdf$/i.test(file.name);
+    });
+    var note = $("search-extra-note");
+    if (!files.length) {
+      note.textContent = "That file is not a PDF. Canopy only reads PDFs.";
+      return;
+    }
+    var form = new FormData();
+    files.forEach(function (file) { form.append("files", file, file.name); });
+    note.textContent = "Uploading " + plural(files.length, "PDF") + "…";
+    searchApi(searchPath("/papers"), { method: "POST", body: form })
+      .then(function (answer) {
+        var added = answer.added || [];
+        var refused = answer.rejected || [];
+        added.forEach(function (candidate) { mergeCandidate(candidate); });
+        refused.forEach(function (bad) { refusedFiles.push(bad); });
+        note.textContent = plural(added.length, "paper") + " added"
+          + (refused.length ? " · " + plural(refused.length, "file") + " refused, each with its "
+             + "reason below" : "") + ".";
+        redrawCandidates();
+      })
+      .catch(function (error) { note.textContent = error.message; });
+  }
+
+  $("search-extra-input").addEventListener("change", function (event) {
+    uploadExtras(event.target.files);
+  });
+
+  var searchDrop = $("search-drop");
+  ["dragenter", "dragover"].forEach(function (name) {
+    searchDrop.addEventListener(name, function (event) {
+      event.preventDefault(); searchDrop.classList.add("is-over");
+    });
+  });
+  ["dragleave", "drop"].forEach(function (name) {
+    searchDrop.addEventListener(name, function (event) {
+      event.preventDefault(); searchDrop.classList.remove("is-over");
+    });
+  });
+  searchDrop.addEventListener("drop", function (event) {
+    if (event.dataTransfer && event.dataTransfer.files) { uploadExtras(event.dataTransfer.files); }
+  });
+
+  /* ── what the page says when something went wrong ──────────────────────── */
+  function searchBanner(search, over) {
+    var counts = search.counts || {};
+    var out = [];
+    // the cap is keyed on `stopped_because`, NOT on the status: a capped search still finishes
+    // `done`, and a user told only "done" would never learn their search was cut short
+    if (search.stopped_because === "budget") {
+      out.push("The search reached its spending cap after reading "
+        + plural(counts.screened || 0, "abstract") + " of " + (counts.after_dedupe || 0)
+        + ". The rest are under Not screened — nothing was thrown away.");
+    } else if (search.stopped_because === "deadline") {
+      out.push("The search ran out of time. What it had already found is here, and the records it "
+        + "never read are under Not screened — nothing was thrown away.");
+    } else if (search.stopped_because === "cancelled" || search.status === "cancelled") {
+      out.push("Search stopped. " + plural(counts.fetched || 0, "PDF")
+        + " had already been fetched and are still here.");
+    }
+    if (search.status === "interrupted") {
+      out.push("This search stopped when the server did. Nothing was lost — "
+        + plural(counts.fetched || 0, "paper") + " are staged. Search again to look for the rest.");
+    }
+    if (search.status === "error" && search.error) { out.push(String(search.error)); }
+    var dead = (search.sources || []).filter(function (row) { return row.error; });
+    if (dead.length) {
+      var live = sourceNames((search.sources || []).filter(function (row) { return !row.error; }));
+      out.push((live.length ? live.join(", ") + " answered. " : "")
+        + sourceNames(dead).join(", ") + " did not. The papers below are from the indexes that "
+        + "answered, so this search is narrower than it looks.");
+    }
+    if (over && !(search.candidates || []).length) {
+      out.push("No records matched. The queries and what each index answered are under “What the "
+        + "search did” — try naming the population or the outcome you want.");
+    } else if (over && !counts.fetched && !counts.uploaded && counts.paywalled) {
+      out.push("Nothing found was open access. Every paper below is behind a paywall: open each "
+        + "link and upload the PDF if you have access.");
+    }
+    if (search.run_id) {
+      out.push("This search has already become a review, so its papers are fixed.");
+    }
+    return out;
+  }
+
+  function bannerActions(search, over) {
+    var buttons = [];
+    if (!over) { return buttons; }
+    if (search.stopped_because === "budget") {
+      buttons.push(["Search again with a higher cap", function () { searchAgain(true); }]);
+    }
+    if (!(search.candidates || []).length) {
+      buttons.push(["Edit the question", function () {
+        goto("new"); setPapersFrom("find"); $("draft-sentence").focus();
+      }]);
+    }
+    if (!buttons.length && (search.status === "interrupted" || search.stopped_because)) {
+      buttons.push(["Search again", function () { searchAgain(false); }]);
+    }
+    return buttons;
+  }
+
+  function showSearchState(search) {
+    var over = searchOver(search);
+    var stop = $("search-cancel-btn");
+    stop.disabled = over;
+    stop.textContent = over ? "Search " + search.status : "Stop the search";
+    if (over) { stop.setAttribute("title", "this search has already finished"); }
+    else { stop.removeAttribute("title"); }
+
+    show($("search-results"), over);
+    $("search-log-card").open = !over;
+
+    var banner = $("search-banner");
+    clear(banner);
+    var words = searchBanner(search, over);
+    show(banner, words.length > 0);
+    words.forEach(function (word) { banner.appendChild(h("span", { text: word + " " })); });
+    bannerActions(search, over).forEach(function (pair) {
+      banner.appendChild(h("button", { cls: "btn ghost small", text: pair[0],
+        attrs: { type: "button" }, on: { click: pair[1] } }));
+    });
+
+    // focus moves to the title once, and only if the reviewer is still on this screen: a person
+    // typing somewhere else must never have the caret taken off them
+    if (over && !settledShown) {
+      settledShown = true;
+      if ($("screen-search").contains(document.activeElement)) { $("search-title").focus(); }
+    }
+    pollSearchWhileRunning(search);
+  }
+
+  /* A search outlives the page that started it: while one is going the screen asks the server for
+     the whole record every few seconds, so a dropped stream or a sleeping tab costs nothing. */
+  function pollSearchWhileRunning(search) {
+    var going = !searchOver(search);
+    if (going && !state.searchPoll) {
+      state.searchPoll = window.setInterval(function () {
+        refreshSearch().catch(function () { /* a transient failure is not worth a toast */ });
+      }, 5000);
+    }
+    if (!going && state.searchPoll) {
+      window.clearInterval(state.searchPoll);
+      state.searchPoll = null;
+    }
+  }
+
+  function renderSearch(search) {
+    var counts = search.counts || {};
+    renderPhases(search.phases || []);
+    renderCounts(counts, search.cost_usd);
+    renderFlow(counts, sourceNames(search.sources).length);
+    renderQueries(search);
+    renderCandidates(search);
+    renderBeginBar(search);
+    $("run-title").textContent = "Paper search · " + (search.search_id || "");
+    if (search.cost_usd) {
+      $("cost-value").textContent = money(search.cost_usd);
+      show($("cost-meter"), true);
+    }
+  }
+
+  /* ── the begin bar ─────────────────────────────────────────────────────── */
+  function keptPapers(search) {
+    return (search.candidates || []).filter(function (candidate) {
+      return pendingKeep(candidate) && candidate.pdf;
+    });
+  }
+
+  function renderBeginBar(search) {
+    var over = searchOver(search);
+    var kept = keptPapers(search);
+    var byState = function (name) {
+      return kept.filter(function (c) { return c.state === name; }).length;
+    };
+    show($("begin-bar"), over);
+
+    $("begin-papers").textContent = kept.length
+      ? plural(kept.length, "paper") + " ticked and readable · " + byState("uploaded")
+        + " you uploaded, " + byState("extra") + " you added · this creates the run and starts it."
+      : "Upload at least one PDF to begin. A run needs a paper it can actually read.";
+    $("begin-protocol").textContent = protocolWritten()
+      ? (state.mode === "yaml"
+         ? "Protocol: the YAML on the New run screen."
+         : "Protocol: " + $("p-title").value.trim() + " · "
+           + plural((guidedProtocol().outcomes || []).length, "outcome")
+           + " · profile " + $("p-profile").value)
+      : "No protocol yet. A review needs one — write it on the New run screen.";
+    // MIRRORED from the one Advanced block, never copied: two sets of inputs is two truths
+    var options = runOptions();
+    $("begin-options").textContent =
+      (options.budget_usd ? money(options.budget_usd) + " budget" : "No budget cap")
+      + " · " + (options.max_usd_per_paper ? money(options.max_usd_per_paper) + " per paper"
+                 : "no per-paper cap")
+      + " · " + plural(options.concurrency, "paper") + " at a time"
+      + (options.max_papers ? " · the first " + plural(options.max_papers, "paper") + " only" : "");
+
+    var button = $("begin-btn");
+    if (beginning) { button.disabled = true; return; }
+    if (search.run_id) {
+      button.disabled = true;
+      button.textContent = "Already a review";
+      button.setAttribute("title", "this search became a review; start another to look again");
+      return;
+    }
+    button.removeAttribute("title");
+    if (!over) {
+      button.disabled = true;
+      button.setAttribute("title",
+        "Still searching. The button opens when the search is done or you stop it.");
+    } else if (!kept.length) {
+      button.disabled = true;
+      button.setAttribute("title", "Upload at least one PDF to begin.");
+    } else if (!protocolWritten()) {
+      button.disabled = false;
+      button.textContent = "Write the protocol";
+      button.classList.add("pending");
+    } else {
+      button.disabled = false;
+      button.textContent = "Run the review";
+      button.classList.remove("pending");
+    }
+  }
+
+  /* #begin-btn is not a submit, so browser validation never fires here — and asking #run-form to
+     validate itself would try to focus a control on a screen nobody can see, which is the exact
+     failure `demandFields` exists for. The protocol is checked in JS instead. */
+  function beginRun() {
+    var button = $("begin-btn");
+    if (!protocolWritten()) {
+      toast("A protocol needs a title. Write the protocol, then begin.");
+      goto("new");
+      $("p-title").focus();
+      button.classList.add("pending");
+      return;
+    }
+    button.classList.remove("pending");
+    beginning = true;
+    button.disabled = true;      // begin re-reads every staged PDF; two clicks would be two runs
+    var options = runOptions();
+    options.start = true;
+    searchApi(searchPath("/begin"),
+              { method: "POST", json: { protocol_text: protocolText(), options: options } })
+      .then(function (body) {
+        if ((body.skipped || []).length) {
+          toast(plural(body.skipped.length, "paper")
+                + " could not be read at the last moment and was left out of the run.");
+        }
+        stopSearchWatchers();
+        forgetCurrentSearch();      // the run claims the page now; the search stays openable
+        // …and from here it is an ordinary run: attach() remembers the token, paints the
+        // manifest, opens the stream and navigates. There is no second monitor.
+        return attach(body.run_id, body.token);
+      })
+      .catch(function (error) {
+        beginning = false;
+        button.disabled = false;
+        toast(error.message);
+      });
+  }
+
+  function searchAgain(higher) {
+    stopSearchWatchers();
+    if (higher) {
+      var was = Number($("f-max-usd").value) || 0;
+      $("f-max-usd").value = (was ? was * 2 : 2).toFixed(2);
+    }
+    state.searchId = "";
+    state.searchToken = "";
+    state.search = null;
+    forgetCurrentSearch();
+    $("find-btn").textContent = "Find papers";
+    goto("new");
+    setPapersFrom("find");
+    $("f-max-usd").focus();
+  }
+
+  $("begin-btn").addEventListener("click", beginRun);
+  $("search-again-btn").addEventListener("click", function () { searchAgain(false); });
+  $("begin-edit-btn").addEventListener("click", function () {
+    goto("new");
+    $("p-title").focus();
+  });
+
+  $("search-cancel-btn").addEventListener("click", function () {
+    if (!state.searchId) {
+      toast("There is no search to stop yet.");
+      return;
+    }
+    searchApi(searchPath("/cancel"), { method: "POST" })
+      .then(function (body) {
+        toast("Search " + body.status + ". Finished work is saved.");
+        return refreshSearch();
+      })
+      .catch(function (error) { toast(error.message); });
+  });
+
   /* ───────────────────────────────────────────────────────── boot */
   addOutcome(null);
   loadSettings().catch(function (error) { toast(error.message); });
@@ -2238,6 +3162,17 @@
     var savedToken = tokenFor(saved);
     if (savedToken) {
       attach(saved, savedToken).catch(function () { forgetCurrentRun(); });
+    }
+  }
+
+  // …and the same for a search, but only when no run claims the page: a run is further along than
+  // the search that made it. A search id the server no longer has is forgotten in silence — a
+  // dead id is not news, and it is exactly what a run does today.
+  if (!saved || !tokenFor(saved)) {
+    var savedSearch = stored(STORE_SEARCH, "");
+    var savedSearchToken = savedSearch ? searchTokenFor(savedSearch) : "";
+    if (savedSearchToken) {
+      attachSearch(savedSearch, savedSearchToken).catch(function () { forgetCurrentSearch(); });
     }
   }
 })();
