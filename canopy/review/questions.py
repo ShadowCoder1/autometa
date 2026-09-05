@@ -25,6 +25,7 @@ import hashlib
 import json
 import re
 from collections import OrderedDict
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Collection, Iterable, Mapping, Sequence
 
@@ -36,7 +37,8 @@ from ..models import (HUMAN_DECIDER_NAME, MAP_ADJUDICATOR_NAME, UNREADABLE_SAMPL
 from ..pipeline.rows import converted_route
 from ..pipeline.state import paper_dir, read_json, sha12
 
-__all__ = ["Question", "questions_for_run", "write_questions", "answer_to_override",
+__all__ = ["CellRetirement", "Question", "cell_retirements", "questions_for_run",
+           "retirements_for_run", "write_questions", "answer_to_override",
            "answers_to_overrides", "QUESTION_KINDS", "PAIRABLE", "fingerprint"]
 
 #: what a question is about; the UI groups and phrases by kind
@@ -307,52 +309,19 @@ def questions_for_run(run_dir: str | Path, *,
         verdict = _verdict(run, paper_id, dataset_id, outcome_key, group)
         candidates = _candidates(run, paper_id, dataset_id, outcome_key, group)
         study, dataset = _dataset(run, paper_id, dataset_id)
-        already = [o for o in overrides if o.get("dataset_id") == dataset_id
-                   and o.get("outcome_key") in ("", outcome_key)
-                   # an override that names a group answers THAT group and no other: a hint given
-                   # for group A is not an answer about group B. The kinds that carry no group
-                   # (a direction, a map decision, a whole-cell exclusion) match both, which is
-                   # what `group is None` already says — reading "not a value override" as
-                   # "group-less" made one decision tick off two cells.
-                   and o.get("group") in (None, group)
-                   # a decision taken at the MAP stage is not an answer to a cell that was READ:
-                   # "this dataset belongs in the review" says nothing about what its error bars
-                   # are. The one exception is an exclusion, which takes the cell out entirely.
-                   and (o.get("kind") not in MAP_KINDS or o.get("decision") == "exclude")]
-        # what the log has already settled is not still to be asked: the cell moves on to whatever
-        # else is holding it, instead of being asked the same question again. The stage files a
-        # re-pool reads are never rewritten, so the log is the only record of it — and the codes a
-        # value answer retires come from `codes_cleared_by_value`, the same rule the re-pool
-        # applies, so the page and the analysis can never disagree about what is still open.
+        # what the log has already retired on this cell — settled codes, overruled findings, the
+        # holds the record itself has answered — is ONE computation, `cell_retirements`, shared
+        # with the best-guess engine (DECISION B, G6): the page and the analysis reading the log
+        # through two implementations of the same rule is exactly the drift this project's own
+        # history warns about, three times over.
         settled = _answered_orientation(overrides, entry, dataset, outcome_key)
-        retired = _codes_answered(already)
-        # what the log has already overruled: a refutation or an adjudication a reviewer has
-        # addressed on the record is not a reason to ask them again, exactly as a recorded
-        # direction is not. Without this the refutation question is asked for ever, because the
-        # verify stage file a re-pool reads still says "refuted" and always will.
-        # a recorded overrule of `verifier_refuted` retires the refutation it was SHOWN: a
-        # record keyed to other evidence (T4's `evidence_key`) must not retire an objection the
-        # reviewer has never seen, or one old answer silences every future refutation on the
-        # cell. A keyless record — every answer from before the key existed, and every confirm
-        # card's "yes" — retires unconditionally, exactly as it always did.
-        current_evidence = _evidence_key(verdict or {})
-        overruled = set()
-        for o in already:
-            for name in (o.get("overrules") or []):
-                recorded = str(o.get("evidence_key") or "")
-                if str(name) == "verifier_refuted" and recorded \
-                        and recorded != current_evidence:
-                    continue
-                overruled.add(str(name))
-        # T4: …and what the record itself has already answered. A refutation whose subject a
-        # human's LANDED value has displaced (or adopted) is retired here exactly as if the
-        # reviewer had overruled it — the rule is `overrides.stale_hold_names`, which the apply
-        # loop reads too, so the page never suppresses a card the analysis still holds. Never a
-        # card drop: the retirement feeds `_kind`, and the cell asks its next open question or
-        # leaves the queue because the repool releases it.
-        auto = _resolved_by_record(landed, verdict or {}, dataset_id, outcome_key, group)
-        overruled |= {a["name"] for a in auto}
-        answered_value = any(o.get("kind") == "value" for o in already)
+        ret = cell_retirements(overrides, landed, verdict or {}, dataset_id=dataset_id,
+                               outcome_key=outcome_key, group=group)
+        already = ret.already
+        retired = ret.retired_codes
+        auto = ret.auto
+        overruled = ret.overruled | ret.auto_stale
+        answered_value = ret.answered_value
         if verdict and (settled is not None or retired):
             flags = [f for f in verdict.get("flags") or []
                      if str(f.get("code") or "") not in retired
@@ -402,6 +371,41 @@ def questions_for_run(run_dir: str | Path, *,
     row_map = _rows_of(run)
     cards = _consolidate(out, run, overrides, pending, consumed, row_map) if fold else \
         [_as_cell_card(q, run, overrides, row_map) for q in out]
+    # DECISION B (fire-gated): a cell the answer tier ENTERED values on says so on its card —
+    # the entered values, the crossed codes, and the one fixed sentence — read off the queue
+    # rows the pipeline decorated. The question itself is untouched: membership, status,
+    # wording, ordering and impact rank are computed above with zero reference to guesses (G5),
+    # and with no fire anywhere this loop changes nothing, byte for byte.
+    guessed: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    for e in queue:
+        if e.get("best_guess_entered"):
+            guessed.setdefault((str(e.get("dataset_id") or ""),
+                                str(e.get("outcome_key") or "")), []).append(e)
+    for card in cards:
+        entries = guessed.get((str(card.get("dataset_id") or ""),
+                               str(card.get("outcome_key") or "")))
+        if not entries:
+            continue
+        entries = sorted(entries, key=lambda e: str(e.get("group") or ""))
+        entered = " · ".join(str(e["best_guess_entered"]) for e in entries)
+        rules = " + ".join(dict.fromkeys(str(e.get("best_guess_rule") or "")
+                                         for e in entries))
+        blocked = next((str(e["best_guess_blocked_by"]) for e in entries
+                        if e.get("best_guess_blocked_by")), "")
+        block = dict(card.get("best_guess") or {})
+        block["entered"] = entered
+        block["stepped_past"] = sorted({code for e in entries
+                                        for code in e.get("best_guess_stepped_past") or []})
+        # two truths, two sentences (review F1): a guess that ENTERED the line is temporary
+        # and replaced by an answer; a fire whose row could not enter is an available answer,
+        # not an entered one — saying "temporarily entered" about it would be false
+        block["note"] = (
+            f"a rule-answer is available ({entered} by {rules}) but the row cannot enter: "
+            f"{blocked} — this question is still open"
+            if blocked else
+            f"temporarily entered at {entered} by {rules} — this question is still open and "
+            f"your answer replaces the guess")
+        card["best_guess"] = block
     cards.sort(key=_rank)
     for i, q in enumerate(cards, 1):
         q["number"] = i
@@ -600,6 +604,128 @@ def _codes_answered(already: Sequence[Mapping[str, Any]]) -> set[str]:
         elif override.get("kind") == "mark_reviewed":
             codes |= {str(code) for code in override.get("clears") or []}
     return codes
+
+
+@dataclass(frozen=True)
+class CellRetirement:
+    """What the override log has already settled on ONE cell-group — the page's and the
+    best-guess engine's shared view of it (DECISION B, G6).
+
+    Retirement is invisible on the live `Verdict`: overrules and landed values live in the log,
+    and the stage files a re-pool reads are never rewritten. So anything that must know what
+    still STANDS on a cell — the questions page deciding what to ask next, the engine deciding
+    what an authority may cross — reads this record, built by `cell_retirements` and by nothing
+    else. Two implementations of the same log-reading rule would drift, and the page would
+    suppress a card the analysis still holds (or the engine would guess past an answer).
+    """
+
+    #: the log entries that are ABOUT this cell-group (the group-scoped filter, with the
+    #: MAP-kinds exception and the exclusion carve-out)
+    already: list[dict[str, Any]]
+    #: any recorded answer at all — a value, a mark_reviewed, an exclusion. The engine's F7:
+    #: a human has acted on this cell, and nothing is guessed there again.
+    answered: bool
+    #: a `value` answer specifically — what arms the page's confirm-loop terminus
+    answered_value: bool
+    #: finding names the log overruled, with the `evidence_key` freshness rule applied
+    overruled: set[str]
+    #: check codes the log's answers cleared (`clears` + `codes_cleared_by_value`)
+    retired_codes: set[str]
+    #: hold names the record itself has answered (T4, `overrides.stale_hold_names`)
+    auto_stale: set[str]
+    #: …and the full auto-retirement entries, each with its trace — the card's audit trail
+    auto: list[dict[str, Any]] = field(default_factory=list)
+    #: this cell-group as the log last stated it (`HumanLanded.for_cell`), or None
+    landed: dict[str, Any] | None = None
+
+
+def cell_retirements(overrides: Sequence[Mapping[str, Any]], landed: HumanLanded,
+                     verdict: Mapping[str, Any], *, dataset_id: str, outcome_key: str,
+                     group: str | None) -> CellRetirement:
+    """One cell-group's `CellRetirement`, from the log and the live verdict mapping.
+
+    A behavior-identical extraction of what `questions_for_run` computed inline, pinned by the
+    questions suite running unchanged. `verdict` is the cell's verdict AS A MAPPING — the page
+    passes its stage-file read, the engine passes `model_dump(mode="json")` of the LIVE verdict,
+    which is what makes the `_evidence_key` freshness check compute against current evidence.
+    """
+    already = [o for o in overrides if o.get("dataset_id") == dataset_id
+               and o.get("outcome_key") in ("", outcome_key)
+               # an override that names a group answers THAT group and no other: a hint given
+               # for group A is not an answer about group B. The kinds that carry no group
+               # (a direction, a map decision, a whole-cell exclusion) match both, which is
+               # what `group is None` already says — reading "not a value override" as
+               # "group-less" made one decision tick off two cells.
+               and o.get("group") in (None, group)
+               # a decision taken at the MAP stage is not an answer to a cell that was READ:
+               # "this dataset belongs in the review" says nothing about what its error bars
+               # are. The one exception is an exclusion, which takes the cell out entirely.
+               and (o.get("kind") not in MAP_KINDS or o.get("decision") == "exclude")]
+    # what the log has already settled is not still to be asked: the cell moves on to whatever
+    # else is holding it, instead of being asked the same question again. The stage files a
+    # re-pool reads are never rewritten, so the log is the only record of it — and the codes a
+    # value answer retires come from `codes_cleared_by_value`, the same rule the re-pool
+    # applies, so the page and the analysis can never disagree about what is still open.
+    retired = _codes_answered(already)
+    # what the log has already overruled: a refutation or an adjudication a reviewer has
+    # addressed on the record is not a reason to ask them again, exactly as a recorded
+    # direction is not. Without this the refutation question is asked for ever, because the
+    # verify stage file a re-pool reads still says "refuted" and always will.
+    # a recorded overrule of `verifier_refuted` retires the refutation it was SHOWN: a
+    # record keyed to other evidence (T4's `evidence_key`) must not retire an objection the
+    # reviewer has never seen, or one old answer silences every future refutation on the
+    # cell. A keyless record — every answer from before the key existed, and every confirm
+    # card's "yes" — retires unconditionally, exactly as it always did.
+    current_evidence = _evidence_key(verdict or {})
+    overruled: set[str] = set()
+    for o in already:
+        for name in (o.get("overrules") or []):
+            recorded = str(o.get("evidence_key") or "")
+            if str(name) == "verifier_refuted" and recorded \
+                    and recorded != current_evidence:
+                continue
+            overruled.add(str(name))
+    # T4: …and what the record itself has already answered. A refutation whose subject a
+    # human's LANDED value has displaced (or adopted) is retired here exactly as if the
+    # reviewer had overruled it — the rule is `overrides.stale_hold_names`, which the apply
+    # loop reads too, so the page never suppresses a card the analysis still holds. Never a
+    # card drop: the retirement feeds `_kind`, and the cell asks its next open question or
+    # leaves the queue because the repool releases it.
+    auto = _resolved_by_record(landed, verdict or {}, dataset_id, outcome_key, group)
+    return CellRetirement(
+        already=already,
+        answered=bool(already),
+        answered_value=any(o.get("kind") == "value" for o in already),
+        overruled=overruled,
+        retired_codes=retired,
+        auto_stale={a["name"] for a in auto},
+        auto=auto,
+        landed=landed.for_cell(dataset_id, outcome_key, group) if group in ("A", "B") else None)
+
+
+def retirements_for_run(run_dir: str | Path, verdicts: Sequence[Any],
+                        ) -> dict[tuple[str, str, str], CellRetirement]:
+    """`(dataset_id, outcome_key, group) -> CellRetirement` for the given LIVE verdicts.
+
+    The engine's entry (DECISION B, G6): the log is read once, the landed-value registry built
+    once, and each verdict's retirement computed with the SAME helper the questions page calls —
+    never a re-implementation. `verdicts` are pydantic `Verdict`s; each is dumped to the mapping
+    form the helper (and `_evidence_key`) reads, so on the repool path — where `_apply_value`
+    has already mutated them — freshness is judged against CURRENT evidence.
+    """
+    run = Path(run_dir)
+    overrides = _overrides(run)
+    landed = human_landed_values(run)
+    out: dict[tuple[str, str, str], CellRetirement] = {}
+    for verdict in verdicts:
+        group = verdict.group if verdict.group in ("A", "B") else None
+        if group is None:
+            continue
+        key = (verdict.dataset_id, verdict.outcome_key, group)
+        out[key] = cell_retirements(overrides, landed, verdict.model_dump(mode="json"),
+                                    dataset_id=verdict.dataset_id,
+                                    outcome_key=verdict.outcome_key, group=group)
+    return out
 
 
 def _with_ballots(why: str, run: Path, paper_id: str, outcome_key: str, measure: str) -> str:

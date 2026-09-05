@@ -2894,3 +2894,106 @@ def test_a_keyless_legacy_overrule_still_settles_outright(tmp_path):
     after = {q["id"]: q for q in questions_for_run(run, fold=False)}
     assert after.get(card["id"]) is None or after[card["id"]]["answered"], \
         "records from before the key existed settle exactly as they did the day they were written"
+
+
+# ------------------------------------------------------------------ the retirement extraction
+# DECISION B, G6: `cell_retirements` is the questions page's own inline computation lifted out so
+# the best-guess engine can read the SAME log-derived sets. The pin below is the frozen original —
+# the inline logic as it stood before the extraction, copied verbatim — evaluated beside the
+# helper on every cell of a real log. If the refactor drifts by one carve-out (the group scoping,
+# the MAP-kinds exception, the `evidence_key` freshness rule, T4's auto-stale), the page and the
+# engine disagree about what is retired, which is exactly what G6 exists to make impossible.
+def _frozen_retirement_reference(overrides, landed, verdict, dataset_id, outcome_key, group):
+    """The pre-extraction inline logic of `questions_for_run`, verbatim (the behavior pin)."""
+    from canopy.pipeline.overrides import MAP_KINDS
+    from canopy.review.questions import _codes_answered, _evidence_key, _resolved_by_record
+
+    already = [o for o in overrides if o.get("dataset_id") == dataset_id
+               and o.get("outcome_key") in ("", outcome_key)
+               and o.get("group") in (None, group)
+               and (o.get("kind") not in MAP_KINDS or o.get("decision") == "exclude")]
+    retired = _codes_answered(already)
+    current_evidence = _evidence_key(verdict or {})
+    overruled = set()
+    for o in already:
+        for name in (o.get("overrules") or []):
+            recorded = str(o.get("evidence_key") or "")
+            if str(name) == "verifier_refuted" and recorded and recorded != current_evidence:
+                continue
+            overruled.add(str(name))
+    auto = _resolved_by_record(landed, verdict or {}, dataset_id, outcome_key, group)
+    answered_value = any(o.get("kind") == "value" for o in already)
+    return (already, retired, overruled | {a["name"] for a in auto}, auto, answered_value)
+
+
+def _pin_retirements_against_frozen_reference(run):
+    from canopy.pipeline.overrides import human_landed_values
+    from canopy.review.questions import _overrides, cell_retirements, retirements_for_run
+
+    overrides = _overrides(run)
+    landed = human_landed_values(run)
+    checked = 0
+    for path in sorted((run / "papers").glob("*/verify.json")):
+        for raw in json.loads(path.read_text())["verdicts"]:
+            group = raw.get("group")
+            if group not in ("A", "B"):
+                continue
+            ds, ok = str(raw.get("dataset_id")), str(raw.get("outcome_key"))
+            ret = cell_retirements(overrides, landed, raw, dataset_id=ds, outcome_key=ok,
+                                   group=group)
+            already, retired, overruled, auto, answered_value = \
+                _frozen_retirement_reference(overrides, landed, raw, ds, ok, group)
+            assert ret.already == already
+            assert ret.retired_codes == retired
+            assert (ret.overruled | ret.auto_stale) == overruled
+            assert ret.auto == auto
+            assert ret.answered_value is answered_value
+            assert ret.answered is bool(already)
+            checked += 1
+    assert checked, "the run under test has verdict cells to pin"
+    # …and the run-wide wrapper agrees with the per-cell helper on live models
+    from canopy.models import Verdict
+    live = [Verdict.model_validate(v)
+            for path in sorted((run / "papers").glob("*/verify.json"))
+            for v in json.loads(path.read_text())["verdicts"]]
+    wrapped = retirements_for_run(run, live)
+    for v in live:
+        if v.group not in ("A", "B"):
+            continue
+        ret = wrapped[(v.dataset_id, v.outcome_key, v.group)]
+        ref = _frozen_retirement_reference(overrides, landed, v.model_dump(mode="json"),
+                                           v.dataset_id, v.outcome_key, v.group)
+        assert (ret.already, ret.retired_codes) == (ref[0], ref[1])
+        assert (ret.overruled | ret.auto_stale) == ref[2]
+
+
+def test_cell_retirements_is_behavior_identical_on_an_empty_and_a_written_log(tmp_path):
+    from canopy.pipeline.overrides import append_override
+    from canopy.review.questions import answers_to_overrides, questions_for_run
+    from tests.helpers import nine
+
+    run = nine.copy_to(tmp_path)
+    _pin_retirements_against_frozen_reference(run)      # the empty-log half
+    # …then a log with a value answer, a keyed overrule and a mark_reviewed on real cells
+    cards = questions_for_run(run, fold=False)
+    valued = next(q for q in cards if q["kind"] in ("which_value", "confirm_value"))
+    append_override(run, {"kind": "value", "dataset_id": valued["dataset_id"],
+                          "outcome_key": valued["outcome_key"], "group": valued["group"] or "A",
+                          "mean": 1.23, "dispersion_value": 0.4, "dispersion_type": "SE",
+                          "n": 10, "justification": "pin fixture"})
+    refuted = next((q for q in cards if q["kind"] == "verifier_refuted"), None)
+    if refuted is not None:
+        append_override(run, answers_to_overrides(refuted, {"option": "stands",
+                                                            "note": "pin fixture"})[0])
+    _pin_retirements_against_frozen_reference(run)
+
+
+CASE_STUDY = REPO / "runs" / "20260827-080330-handdominanceandupper-limbsensorimotorad"
+
+
+@pytest.mark.skipif(not (CASE_STUDY / "manifest.json").exists(),
+                    reason="the case-study run is not on this machine")
+def test_cell_retirements_is_behavior_identical_over_the_case_study_log():
+    # the 302-line log of the mapped run: every carve-out the extraction embeds is exercised
+    # somewhere in it (keyed overrules, clears, mark_reviewed, exclusions, landed values)
+    _pin_retirements_against_frozen_reference(CASE_STUDY)
