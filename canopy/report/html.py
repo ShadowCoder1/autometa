@@ -159,8 +159,20 @@ def human_review_table(queue: Sequence[Mapping[str, Any]]) -> str:
                      "—" if margin is None
                      else f"{_num(margin, 4)}{' from ' + boundary if boundary else ''}",
                      "—" if value is None else _num(value, 3)])
-    return _table(["Paper", "Dataset", "Outcome", "Group", "Why", "Candidates", "Margin",
-                   "|Δ pooled|"], rows, numeric=(7,))
+    table = _table(["Paper", "Dataset", "Outcome", "Group", "Why", "Candidates", "Margin",
+                    "|Δ pooled|"], rows, numeric=(7,))
+    # DECISION B's disclosure beside the queue (reviewer N2 + A7), only when a guess was
+    # actually ENTERED on a queued cell: the queue sorts by |Δ pooled|, a valueless held cell
+    # has none, so guessed cells sort last — the tool's own guesses wait longest for a human.
+    # The CSV's two trailing guess columns are permanent schema; they are empty on a run where
+    # nothing fired.
+    if any(entry.get("best_guess_entered") for entry in ordered):
+        table += ("<p class=\"note\">Some cells below carry a rule-entered best guess "
+                  "(the two trailing columns of <code>human_review_queue.csv</code>; empty "
+                  "when no rule fired). Guessed cells sort last — the tool's guesses wait "
+                  "longest for a human — and every guess is replaced by your answer on the "
+                  "next repool.</p>")
+    return table
 
 
 def _links(outputs: Mapping[str, Any], run_dir: Path, keys: Sequence[str]) -> str:
@@ -175,7 +187,8 @@ def _links(outputs: Mapping[str, Any], run_dir: Path, keys: Sequence[str]) -> st
 
 # ----------------------------------------------------------------------------- methods paragraph
 def methods_paragraph(manifest: RunManifest, protocol: Protocol,
-                      results: Mapping[str, Mapping[str, Any]] | None = None) -> str:
+                      results: Mapping[str, Mapping[str, Any]] | None = None,
+                      review_queue: Sequence[Mapping[str, Any]] = ()) -> str:
     """A Methods section a reader could paste into a paper — every number from the manifest."""
     settings = manifest.settings
     results = results or {}
@@ -244,7 +257,12 @@ def methods_paragraph(manifest: RunManifest, protocol: Protocol,
         f"{' or '.join(settings.primary_analysis_includes)} were held for human review and "
         f"excluded from the "
         f"primary analysis; they appear hollow on the forest plots and are listed in "
-        f"`human_review_queue.csv`.",
+        f"`human_review_queue.csv`."
+        + (f" Where a named rule entered a best-guess value on a held cell "
+           f"(`best_guess_rules`), the guess is recorded in the queue's two trailing columns "
+           f"and on the question card; the question stays open, guessed cells sort last in "
+           f"the queue, and a human answer replaces the guess on the next repool."
+           if any(e.get("best_guess_entered") for e in review_queue) else ""),
         "",
     ]
     # DECISION F: which renderer actually drew the figures, and the version of everything in it
@@ -537,7 +555,7 @@ def write_html_report(run_dir: str | Path, manifest: RunManifest, protocol: Prot
     run_outputs = dict(run_outputs or {})
     settings = manifest.settings
 
-    methods = methods_paragraph(manifest, protocol, results)
+    methods = methods_paragraph(manifest, protocol, results, review_queue=review_queue)
     methods_path = directory / "methods.md"
     methods_path.write_text(methods, encoding="utf-8")
 

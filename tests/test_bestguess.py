@@ -94,10 +94,20 @@ def test_a_refused_row_is_vetoed_by_the_resolvers_own_code():
 
 
 def test_every_held_row_has_a_reason_and_a_closed_enum_code():
+    # extended deliberately for DECISION B: an admitted rule name is either one of DECISION A's
+    # or a catalogue-ordered join of answer-tier names (the tier cannot fire here — no cell data
+    # is threaded — but the enum this test closes is the module's, not this fixture's)
+    from canopy.pipeline.bestguess import ANSWER_RULES
+
+    allowed = set(RULES) | set(ANSWER_RULES)
     for key in ("late_adaptation", "aftereffect"):
         _, _, d = _lines(key)
         for x in d.values():
-            assert x.reason and ((x.rule in RULES) if x.admitted else (x.veto in VETOES))
+            assert x.reason
+            if x.admitted:
+                assert all(part in allowed for part in x.rule.split(";"))
+            else:
+                assert x.veto in VETOES
 
 
 def test_a_row_with_no_group_statistics_is_vetoed_one_group_only():

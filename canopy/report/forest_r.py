@@ -274,7 +274,8 @@ def _left_ch(columns: labels_mod.ForestColumns, cells: Sequence[Sequence[str]]) 
     return total
 
 
-def _addlines(is_guess_line: bool, pi_text: str, width_ch: int) -> tuple[str, str]:
+def _addlines(is_guess_line: bool, pi_text: str, width_ch: int,
+              caveat: str | None = None) -> tuple[str, str]:
     """The two lines meta prints under the plot: the best-guess caveat, our own PI, or neither.
 
     Wrapped to the width of the left-hand TABLE, not to the figure. `forest.meta` puts an addline
@@ -283,11 +284,12 @@ def _addlines(is_guess_line: bool, pi_text: str, width_ch: int) -> tuple[str, st
     at the table's edge sits harmlessly beside it.
     """
     width_ch = max(MIN_ADDLINE_CH, int(width_ch))
+    text = BEST_GUESS_CAVEAT if caveat is None else caveat
     if not is_guess_line:
         return "", labels_mod.elide(pi_text, width_ch) if pi_text else ""
     if pi_text:                                            # both wanted; the caveat gets one line
-        return labels_mod.elide(BEST_GUESS_CAVEAT, width_ch), labels_mod.elide(pi_text, width_ch)
-    wrapped = textwrap.wrap(BEST_GUESS_CAVEAT, width_ch) or [""]
+        return labels_mod.elide(text, width_ch), labels_mod.elide(pi_text, width_ch)
+    wrapped = textwrap.wrap(text, width_ch) or [""]
     return wrapped[0], labels_mod.elide(" ".join(wrapped[1:]), width_ch)
 
 
@@ -312,7 +314,7 @@ def _size(columns: labels_mod.ForestColumns, cells: Sequence[Sequence[str]],
 def write_forest_inputs(rows: Sequence[EffectSizeRecord], pooled: MetaResult,
                         outcome: OutcomeDef, settings: StatsSettings, protocol: Protocol, *,
                         line: str = "strict", best_guess_ids: Sequence[str] = (),
-                        out_dir: str | Path) -> tuple[Path, Path]:
+                        out_dir: str | Path, caveat: str | None = None) -> tuple[Path, Path]:
     """Write `rows.csv` and `options.json` for `forest_meta.R`; returns both paths.
 
     Separate from the call so the exact inputs of a published figure can be pinned by a test and
@@ -340,7 +342,7 @@ def write_forest_inputs(rows: Sequence[EffectSizeRecord], pooled: MetaResult,
         pi_text = (f"{settings.ci_level * 100:g}% prediction interval "
                    f"({pi_label(settings, pooled)}), computed by canopy: "
                    f"[{our_low:.2f}, {our_high:.2f}]")
-    addline1, addline2 = _addlines(is_guess_line, pi_text, _left_ch(columns, cells))
+    addline1, addline2 = _addlines(is_guess_line, pi_text, _left_ch(columns, cells), caveat)
     # header, blank, the pooled row, heterogeneity, the axis and its labels; a subgroup adds a
     # heading and a summary per level plus the between-subgroup test; an addline pushes the
     # direction labels onto a row of their own
@@ -506,7 +508,8 @@ def _phrase(check: Mapping[str, Any]) -> str:
 def render_forest_r(rows: Sequence[EffectSizeRecord], pooled: MetaResult, outcome: OutcomeDef,
                     settings: StatsSettings, protocol: Protocol, out_stem: str | Path, *,
                     line: str = "strict", best_guess_ids: Sequence[str] = (),
-                    strict_pooled: MetaResult | None = None) -> RenderResult:
+                    strict_pooled: MetaResult | None = None,
+                    caveat: str | None = None) -> RenderResult:
     """Draw one forest with `meta::forest.meta` and cross-check it. Raises on either failure.
 
     `ForestRenderError` means R could not draw it (no R, a dead script, a timeout, no device);
@@ -523,7 +526,7 @@ def render_forest_r(rows: Sequence[EffectSizeRecord], pooled: MetaResult, outcom
     with tempfile.TemporaryDirectory(prefix="canopy-forest-") as scratch:
         csv_path, options_path = write_forest_inputs(
             rows, pooled, outcome, settings, protocol, line=line,
-            best_guess_ids=best_guess_ids, out_dir=scratch)
+            best_guess_ids=best_guess_ids, out_dir=scratch, caveat=caveat)
         command = [info.rscript, "--vanilla", str(R_SCRIPT), str(csv_path), str(options_path),
                    str(stem)]
         try:

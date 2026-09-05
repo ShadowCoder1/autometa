@@ -71,23 +71,41 @@ def _pooled_payload(pooled: MetaResult | None, rows: Sequence[EffectSizeRecord],
 
 def _best_guess_line(primary_pre_agg: Sequence[EffectSizeRecord],
                      needs_human_rows: Sequence[EffectSizeRecord], outcome: OutcomeDef,
-                     settings: StatsSettings):
-    """`(rows, decisions, added, cells)` for the second line — aggregated once, over its own rows.
+                     settings: StatsSettings, *, run_dir: str | Path | None = None,
+                     verdicts: Sequence[Verdict] = (), candidates: Sequence[Candidate] = (),
+                     datasets=None, retirements=None, cell_rules_enabled: bool = True):
+    """`(rows, decisions, added, cells, cell_guesses, fired)` for the second line.
 
     Imported here rather than at module scope: the analysis package must not be pulled in just to
     import the report's writers, and `canopy.pipeline` imports this module.
-    """
-    from ..pipeline.bestguess import (BEST_GUESS_FLAG, best_guess_cells, best_guess_rows,
-                                      mark_composites)
 
+    DECISION B evaluates HERE — the one evaluation point both paths share — with the cell data
+    the callers thread: live verdicts and candidates, the dataset specs, the G6 retirement sets,
+    and (order/provenance only, never a number) the adjudication metadata read lazily off the
+    run's own stage files. `cell_rules_enabled=False` is the run path's log gate (integration
+    §B): the disabled pass is byte-identical to a zero-fire pass, and the repool that follows
+    immediately evaluates the tier for real, strictly post-log.
+    """
+    from ..pipeline.bestguess import (BEST_GUESS_FLAG, adjudication_index, best_guess_cells,
+                                      best_guess_rows, decision_b_fired, mark_composites)
+
+    adjudications = adjudication_index(
+        run_dir, {r.paper_id for r in needs_human_rows if r.paper_id}) \
+        if cell_rules_enabled and needs_human_rows else {}
+    cell_guesses: list[dict] = []
     rows, decisions = best_guess_rows(primary_pre_agg, needs_human_rows, outcome=outcome,
-                                      settings=settings)
+                                      settings=settings, verdicts=verdicts,
+                                      candidates=candidates, datasets=datasets,
+                                      retirements=retirements, adjudications=adjudications,
+                                      cell_rules_enabled=cell_rules_enabled,
+                                      cell_guesses=cell_guesses)
     if settings.one_row_per_paper and rows:
         from ..pipeline.aggregate import aggregate_one_row_per_paper
 
         rows = mark_composites(aggregate_one_row_per_paper(rows, settings).rows, decisions)
     return (rows, decisions, [r for r in rows if BEST_GUESS_FLAG in r.flags],
-            best_guess_cells(rows, decisions, primary_pre_agg))
+            best_guess_cells(rows, decisions, primary_pre_agg, cell_guesses),
+            cell_guesses, decision_b_fired(decisions, cell_guesses))
 
 
 def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
@@ -101,7 +119,9 @@ def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
                           primary_pre_agg: Sequence[EffectSizeRecord] | None = None,
                           best_guess_cells: dict[tuple[str, str], dict] | None = None,
                           protocol: Protocol | None = None,
-                          warnings: list[str] | None = None) -> dict[str, Path]:
+                          warnings: list[str] | None = None,
+                          datasets=None, retirements=None,
+                          cell_rules_enabled: bool = True) -> dict[str, Path]:
     """Write one outcome's artefacts under `<run_dir>/results/<outcome.key>/`.
 
     `rows` are the rows that were pooled and `needs_human_rows` the ones held for review.
@@ -133,12 +153,14 @@ def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
                                               warnings=warnings)
         out.update({f"forest_{k}": v for k, v in forest.items()})
 
-    # --- the second line (DECISION A): strict, plus the held rows a named rule admits
+    # --- the second line (DECISION A + B): strict, plus the held rows a named rule admits
     from ..pipeline.bestguess import best_guess_payload
 
-    bg_rows, decisions, added, cells = _best_guess_line(
+    bg_rows, decisions, added, cells, cell_guesses, fired = _best_guess_line(
         list(primary_pre_agg) if primary_pre_agg is not None else list(rows),
-        needs_human_rows, outcome, settings)
+        needs_human_rows, outcome, settings, run_dir=run_dir, verdicts=verdicts,
+        candidates=candidates, datasets=datasets, retirements=retirements,
+        cell_rules_enabled=cell_rules_enabled)
     bg_pooled = pool_rows(bg_rows, settings)
     bg_loo = leave_one_out_rows(bg_rows, settings)
     if best_guess_cells is not None:
@@ -150,7 +172,21 @@ def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
         for row, weight in zip(poolable_rows(bg_rows), bg_pooled.weights_pct)}
     bg_payload = best_guess_payload(pooled, bg_pooled, decisions, added_rows=added,
                                     loo_bg=bg_loo, rows=bg_rows, weights=bg_weights,
-                                    settings=settings)
+                                    settings=settings, cell_guesses=cell_guesses, fired=fired)
+    # DECISION B's caveat is assembled only when this OUTCOME fired; otherwise it is the exact
+    # pre-tier constant, byte for byte (rules §7/M3 — a fired run's unfired outcome included)
+    bg_caveat = None
+    if fired:
+        from .theme import best_guess_caveat
+
+        entered = [slots for d in decisions for slots in d.entered.values()] \
+            + [g.get("entered") or {} for g in cell_guesses]
+        bg_caveat = best_guess_caveat(
+            fired=True,
+            crossings=any(d.stepped_past for d in decisions)
+            or any(g.get("stepped_past") for g in cell_guesses),
+            borrowed=any((slots.get("dispersion") or {}).get("note") for slots in entered),
+            by_rule_totals=bg_payload.get("by_rule_totals"))
 
     table = extraction_table(list(all_rows) if all_rows is not None
                              else [*rows, *needs_human_rows],
@@ -183,7 +219,7 @@ def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
             needs_human_rows=[r for r in needs_human_rows
                               if not cells.get((r.dataset_id, r.outcome_key),
                                                {}).get("in_best_guess")],
-            warnings=warnings)
+            warnings=warnings, caveat=bg_caveat)
         out.update({f"forest_best_guess_{k}": v for k, v in bg_forest.items()})
     # …and no second leave-one-out table unless the line is a different set of rows: the same
     # table under a second name is how two artefacts of one run start being read as two findings.

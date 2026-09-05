@@ -2175,7 +2175,38 @@ REVIEW_QUEUE_COLUMNS: tuple[str, ...] = (
     #: C11: the score, how far it was from the line that decided the bucket, and which line —
     #: empty on a cell whose bucket the score did not decide (M3)
     "confidence_score", "confidence_margin", "nearest_boundary",
-    "route", "reason", "impact_abs_delta_pooled", "candidates")
+    "route", "reason", "impact_abs_delta_pooled", "candidates",
+    #: DECISION B (A7): the two guess columns are ALWAYS present — a one-time, stable schema —
+    #: with EMPTY values whenever no answer-tier rule fired (`best_guess_rules: []` included),
+    #: because a consumer script must see one schema forever, not one that flaps with the data
+    "best_guess_rule", "best_guess_entered")
+
+
+def decorate_review_queue(review: list[dict[str, Any]],
+                          best_guess_cells: Mapping[tuple[str, str], Mapping[str, Any]]) -> None:
+    """Fill the two DECISION B queue columns, in place — empty strings when nothing fired.
+
+    Decoration at the two call sites (here and `overrides._rewrite`) keeps `review_entry` and
+    `state.py` out of the diff and the run and repool paths symmetrical. A queue row shows a
+    rule and an entered summary only when the answer tier actually ENTERED values on THAT
+    GROUP's cell (review F1: the sibling of a guessed cell was never guessed and stays
+    blank) — a DECISION A admission is not a guess about a cell and leaves both columns empty.
+    """
+    for entry in review:
+        cell = best_guess_cells.get((str(entry.get("dataset_id") or ""),
+                                     str(entry.get("outcome_key") or ""))) or {}
+        mine = (cell.get("best_guess_cell_guesses") or {}).get(
+            str(entry.get("group") or "")) or {}
+        entry["best_guess_rule"] = str(mine.get("rule") or "")
+        entry["best_guess_entered"] = str(mine.get("entered") or "")
+        # the crossed codes — and, for a fire whose row could not enter, the reason why —
+        # ride the queue's JSON (never the CSV: A7's schema is two columns) so the question
+        # card can print them; absent whenever nothing fired (fire-gating)
+        if entry["best_guess_entered"]:
+            if mine.get("stepped_past"):
+                entry["best_guess_stepped_past"] = list(mine["stepped_past"])
+            if mine.get("blocked_by"):
+                entry["best_guess_blocked_by"] = str(mine["blocked_by"])
 
 def cells_for_review(verdicts: Sequence[Verdict], held: Sequence[EffectSizeRecord],
                      exclusions: Sequence[Mapping[str, Any]] = ()) -> list[Verdict]:
@@ -2697,6 +2728,18 @@ def _write_outputs(ctx: RunContext, manifest: RunManifest, results: Sequence[Pap
     #: filled per outcome by `write_outcome_outputs`, so the run-wide extraction table below
     #: shows the SAME best-guess decision the per-outcome one does rather than a second opinion
     best_guess_cells: dict[tuple[str, str], dict] = {}
+    # DECISION B's inputs, and its run-path log gate (integration §B): when a log already
+    # exists, this first pass runs the answer tier DISABLED — the immediately following
+    # `apply_overrides_and_repool` evaluates it for real, strictly post-log-application, so a
+    # guess is only ever computed AFTER the log is applied, or when no log exists. A crash in
+    # the window leaves artefacts carrying NO guesses — the safe direction. The retirement
+    # sets are the questions page's own helpers, computed once (G6).
+    has_log = bool(read_overrides(out))
+    datasets = {d.dataset_id: d for result in results if result.study
+                for d in result.study.datasets}
+    from ..review.questions import retirements_for_run
+
+    retirements = {} if has_log else retirements_for_run(out, verdicts)
     for outcome in ctx.protocol.outcomes:
         mine = [r for r in records if r.outcome_key == outcome.key]
         split = _split_rows(mine, settings)
@@ -2716,7 +2759,9 @@ def _write_outputs(ctx: RunContext, manifest: RunManifest, results: Sequence[Pap
                                           primary_pre_agg=split.primary_pre_agg,
                                           best_guess_cells=best_guess_cells,
                                           protocol=ctx.protocol,
-                                          warnings=manifest.warnings)
+                                          warnings=manifest.warnings,
+                                          datasets=datasets, retirements=retirements,
+                                          cell_rules_enabled=not has_log)
         outputs.update({f"{outcome.key}.{k}": v for k, v in artefacts.items()})
         per_outcome[outcome.key] = {"pooled": pooled, "outputs": artefacts, "rows": primary,
                                     "needs_human_rows": held}
@@ -2740,6 +2785,7 @@ def _write_outputs(ctx: RunContext, manifest: RunManifest, results: Sequence[Pap
         every_row, out / "results" / "extraction_table_all", verdicts=verdicts,
         candidates=candidates, primary=primary_rows, best_guess=best_guess_cells).items()})
 
+    decorate_review_queue(review, best_guess_cells)
     manifest.human_review_queue = sort_review_queue(review)
     if manifest.human_review_queue:
         outputs.update({f"human_review_queue.{k}": v for k, v in write_rows(

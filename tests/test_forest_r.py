@@ -44,8 +44,8 @@ def _best_guess_late():
     protocol = nine.protocol()
     outcome = protocol.outcome("late_adaptation")
     split = _split_rows(nine.records("late_adaptation"), protocol.stats)
-    rows, _decisions, added, _cells = _best_guess_line(split.primary_pre_agg, split.held, outcome,
-                                                      protocol.stats)
+    rows, _decisions, added, _cells, _cell_guesses, _fired = _best_guess_line(
+        split.primary_pre_agg, split.held, outcome, protocol.stats)
     return (rows, pool_rows(rows, protocol.stats), [r.dataset_id for r in added], outcome,
             protocol.stats, protocol)
 

@@ -329,6 +329,39 @@ def outcome_conclusion(outcome: OutcomeDef, settings: StatsSettings, *,
                       best_guess_sentences=second_line)
 
 
+def _rule_answer_clause(bg: Mapping[str, Any]) -> str:
+    """DECISION B's parenthetical: how many added rows ANSWER open questions, by which rule.
+
+    `by_rule` counts each row once under its joined name; a row whose joined name contains an
+    answer-tier rule is one that answered a question by rule, crossing what its record shows.
+    """
+    from ..pipeline.bestguess import ANSWER_RULES
+
+    by_rule = dict(bg.get("by_rule") or {})
+    totals = dict(bg.get("by_rule_totals") or {})
+    answering = sum(count for name, count in by_rule.items()
+                    if any(part in ANSWER_RULES for part in name.split(";")))
+    if not answering:
+        return ""
+    named = ", ".join(f"{rule} ×{totals[rule]}" for rule in ANSWER_RULES if totals.get(rule))
+    rest = ", ".join(f"{rule} ×{count}" for rule, count in sorted(totals.items())
+                     if rule not in ANSWER_RULES)
+    clause = (f" ({answering} by answering open review questions by rule: {named} — crossing "
+              f"standing objections recorded per row")
+    if rest:
+        clause += f"; the rest at values the resolver had already built: {rest}"
+    return clause + ")"
+
+
+def _cell_fire_sentence(bg: Mapping[str, Any]) -> str:
+    """Kumar's shape: fires with no completable row appear only when there are any."""
+    cells = list(bg.get("cell_guesses") or [])
+    if not cells:
+        return ""
+    return (f"{len(cells)} further cell(s) have a rule-answer on their question cards but no "
+            f"completable row.")
+
+
 def _best_guess_sentences(facts: dict[str, Any], bg: Mapping[str, Any], *,
                           estimable: bool) -> list[str]:
     """What the second line did with the held rows — counts always, numbers only if there is one.
@@ -342,19 +375,25 @@ def _best_guess_sentences(facts: dict[str, Any], bg: Mapping[str, Any], *,
     reasons = _veto_reasons(bg)
     facts["best_guess_n_added"] = n_added
     facts["best_guess_n_still_held"] = n_still
+    # DECISION B, fire-gated: `rules_applied` exists on the block only when an answer-tier rule
+    # fired, so an unfired outcome's sentence is byte-identical to the pre-tier one
+    by_rule = _rule_answer_clause(bg) if "rules_applied" in bg else ""
+    cell_fires = _cell_fire_sentence(bg) if "rules_applied" in bg else ""
     if n_added == 0:
         return ["No held row could be given a value by any rule"
-                + (f" ({reasons})." if reasons else ".")]
+                + (f" ({reasons})." if reasons else ".")] \
+            + ([cell_fires] if cell_fires else [])
 
     tail = (f"; {n_still} row(s) could not be given a value by any rule"
             + (f" ({reasons})" if reasons else "")) if n_still else ""
     if not (estimable and _finite(bg.get("estimate")) and _finite(bg.get("ci_low"))
             and _finite(bg.get("ci_high"))):
-        return [f"The best-guess line adds {n_added} of them{tail}."]
+        return [f"The best-guess line adds {n_added} of them{by_rule}{tail}."] \
+            + ([cell_fires] if cell_fires else [])
 
     facts["best_guess_k"] = int(bg.get("k") or 0)
     sentence = (
-        f"The best-guess line adds {n_added} of them and gives "
+        f"The best-guess line adds {n_added} of them{by_rule} and gives "
         f"{_fact(facts, 'best_guess_estimate', bg['estimate'])} "
         f"({facts['ci_level_pct']:.0f}% CI {_fact(facts, 'best_guess_ci_low', bg['ci_low'])} to "
         f"{_fact(facts, 'best_guess_ci_high', bg['ci_high'])}, k = {facts['best_guess_k']})")
@@ -364,6 +403,8 @@ def _best_guess_sentences(facts: dict[str, Any], bg: Mapping[str, Any], *,
         facts["best_guess_delta_text"] = delta
         sentence += f", a change of {delta} from the primary estimate"
     sentences = [sentence + tail + "."]
+    if cell_fires:
+        sentences.append(cell_fires)
     agrees = bg.get("sign_agrees_with_strict")
     if agrees is not None:
         facts["best_guess_sign_agrees_with_strict"] = "yes" if agrees else "no"

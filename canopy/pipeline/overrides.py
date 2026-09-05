@@ -2208,9 +2208,16 @@ def _rewrite(out: Path, manifest: RunManifest, protocol: Protocol,
     # forgets in silence — which is how C11's three columns survived a re-pool in the JSON and
     # vanished from the CSV a reviewer opens.
     from ..agents.mapper import HUMAN_DECIDER
-    from .run import REVIEW_QUEUE_COLUMNS, _split_rows, cells_for_review
+    from ..review.questions import retirements_for_run
+    from .run import (REVIEW_QUEUE_COLUMNS, _split_rows, cells_for_review,
+                      decorate_review_queue)
 
     live = list(verdicts.values())
+    # DECISION B's G6 inputs, computed ONCE with the questions page's own helpers over the LIVE
+    # (post-apply) verdicts — "holds and objections are evaluated AFTER these retirements" is
+    # then literal, and this path is the authoritative one: the run path re-applies the log and
+    # lands here, so every guess a reader sees was computed strictly post-log.
+    retirements = retirements_for_run(out, live)
     outcomes: dict[str, Any] = {}
     per_outcome: dict[str, dict[str, Any]] = {}
     review: list[dict[str, Any]] = []
@@ -2244,7 +2251,8 @@ def _rewrite(out: Path, manifest: RunManifest, protocol: Protocol,
                                           primary_pre_agg=split.primary_pre_agg,
                                           best_guess_cells=best_guess_cells,
                                           protocol=protocol,
-                                          warnings=manifest.warnings)
+                                          warnings=manifest.warnings,
+                                          datasets=state.datasets, retirements=retirements)
         _drop_stale_forest(out, outcome.key, artefacts, manifest)
         manifest.outputs.update({f"{outcome.key}.{k}": str(Path(v).relative_to(out))
                                  for k, v in artefacts.items()})
@@ -2275,6 +2283,7 @@ def _rewrite(out: Path, manifest: RunManifest, protocol: Protocol,
                                  primary=primary_rows,
                                  best_guess=best_guess_cells).items()})
 
+    decorate_review_queue(review, best_guess_cells)
     manifest.human_review_queue = sort_review_queue(review)
     write_rows(manifest.human_review_queue, out / "human_review_queue",
                REVIEW_QUEUE_COLUMNS, formats=("csv", "json"))

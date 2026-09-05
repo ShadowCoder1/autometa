@@ -118,6 +118,14 @@ class OutcomeDef(CanopyModel):
     units_hint: str = ""
 
 
+#: DECISION B's closed catalogue of cell-level answer rules, in match order. It lives HERE —
+#: not in `pipeline.bestguess`, which imports this module and must not be imported back — and
+#: the engine asserts at import that its own catalogue equals it, so a rename fails on the
+#: same commit. `StatsSettings.best_guess_rules` validates against it.
+BEST_GUESS_RULE_NAMES: tuple[str, ...] = ("adjudicated_value", "route_precedence",
+                                          "agreed_solo_read")
+
+
 class StatsSettings(CanopyModel):
     """Statistical conventions. Field defaults follow the plan amendments (section A)."""
 
@@ -142,6 +150,11 @@ class StatsSettings(CanopyModel):
     pi_method: PIMethod = "V"
     route_precedence: list[str] = Field(default_factory=lambda: [
         "text_mean_sd", "table", "text_mean_se_ci", "figure", "test_statistic", "p_value", "reported_d"])
+    #: DECISION B: the cell-level rules the best-guess line may ANSWER an open question with —
+    #: a named authority's value entered over a held cell, recorded and superseded by any human
+    #: answer. `[]` turns the tier off and reproduces the pre-feature line byte-for-byte (every
+    #: surface it owns is fire-gated); a protocol pins behaviour by pinning the list.
+    best_guess_rules: list[str] = Field(default_factory=lambda: list(BEST_GUESS_RULE_NAMES))
     late_window_sd: Literal["paper_reported_block", "block_closest_to_end", "mean_of_block_sd"] = "paper_reported_block"
     ci_to_sd_dist: Literal["auto", "z", "t"] = "auto"          # t(n-1) when n < 100
     primary_analysis_includes: list[ConfidenceBucket] = Field(
@@ -181,6 +194,15 @@ class StatsSettings(CanopyModel):
                     "silently be a plain random-effects pool. Set one_row_per_paper: false.")
             if not 0.0 <= self.rve_rho <= 1.0:
                 raise ValueError("rve_rho must be between 0 and 1 inclusive")
+        unknown = [name for name in self.best_guess_rules if name not in BEST_GUESS_RULE_NAMES]
+        if unknown:
+            raise ValueError(
+                f"best_guess_rules names no rule this build has: {', '.join(unknown)}. "
+                f"The closed set is {', '.join(BEST_GUESS_RULE_NAMES)} (or [] for off).")
+        if len(self.best_guess_rules) != len(set(self.best_guess_rules)):
+            raise ValueError(
+                "best_guess_rules repeats a rule name; the applied list is recorded on the "
+                "run's own payload (`rules_applied`) and must be deterministic.")
         return self
 
 

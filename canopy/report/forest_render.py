@@ -34,7 +34,8 @@ def render_forest(rows: Sequence[EffectSizeRecord], pooled: MetaResult, outcome:
                   strict_pooled: MetaResult | None = None,
                   moderators: Sequence[str] | None = None,
                   needs_human_rows: Sequence[EffectSizeRecord] = (),
-                  warnings: list[str] | None = None) -> tuple[dict[str, Path], RenderInfo]:
+                  warnings: list[str] | None = None,
+                  caveat: str | None = None) -> tuple[dict[str, Path], RenderInfo]:
     """Draw one forest with the best renderer available; returns `({format: path}, RenderInfo)`.
 
     `protocol` is what makes the R renderer possible at all — every column, label and axis on that
@@ -64,7 +65,8 @@ def render_forest(rows: Sequence[EffectSizeRecord], pooled: MetaResult, outcome:
     else:
         try:
             result = render_forest_r(rows, pooled, outcome, settings, protocol, stem, line=line,
-                                     best_guess_ids=best_guess_ids, strict_pooled=strict_pooled)
+                                     best_guess_ids=best_guess_ids, strict_pooled=strict_pooled,
+                                     caveat=caveat)
             missing = [fmt for fmt in FORMATS if fmt not in result.paths]
             if not missing:
                 return dict(result.paths), result.info
@@ -95,7 +97,8 @@ def render_forest(rows: Sequence[EffectSizeRecord], pooled: MetaResult, outcome:
     paths = forest_plot(rows, pooled, outcome, settings, stem,
                         needs_human_rows=needs_human_rows, moderators=moderators,
                         columns=columns, best_guess_ids=best_guess_ids,
-                        subtitle=BEST_GUESS_CAVEAT if line != "strict" else "")
+                        subtitle=((BEST_GUESS_CAVEAT if caveat is None else caveat)
+                                  if line != "strict" else ""))
     return paths, RenderInfo(renderer=RENDERER_MATPLOTLIB, reason=reason, crosscheck=crosscheck,
                              pi_drawn_by="canopy")
 
