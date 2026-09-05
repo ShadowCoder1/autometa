@@ -400,3 +400,30 @@ def test_protocol_hash_change_is_deliberate():   # Major 9: the consequence is p
     """
     from canopy.models import Protocol
     assert nine.protocol().hash() != json.load(open(nine.NINE / "manifest.json"))["protocol_hash"]
+
+
+def test_stats_settings_dependency_defaults_and_validation():
+    """The dependency treatment defaults off; contradictory requests fail at settings load —
+    before any spend — with messages that say the fix (RVE design synthesis, C2/M7)."""
+    import pytest
+    from canopy.models import StatsSettings
+
+    s = StatsSettings()
+    assert s.dependency == "independent"
+    assert s.rve_rho == 0.8
+
+    ok = StatsSettings(dependency="cluster_robust", hakn=False, one_row_per_paper=False)
+    assert ok.dependency == "cluster_robust"
+
+    with pytest.raises(ValueError, match="hakn: false"):
+        StatsSettings(dependency="cluster_robust", hakn=True, one_row_per_paper=False)
+    with pytest.raises(ValueError, match="one_row_per_paper: false"):
+        StatsSettings(dependency="cluster_robust", hakn=False, one_row_per_paper=True)
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        StatsSettings(dependency="cluster_robust", hakn=False, one_row_per_paper=False,
+                      rve_rho=1.5)
+    # rho = 1.0 inclusive is legal (the golden fixture F4c is pinned AT 1.0 — review M7)
+    assert StatsSettings(dependency="cluster_robust", hakn=False, one_row_per_paper=False,
+                         rve_rho=1.0).rve_rho == 1.0
+    # the bounds do not bite when the feature is off (nothing reads the knob then)
+    assert StatsSettings(rve_rho=1.5).dependency == "independent"

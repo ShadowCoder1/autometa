@@ -167,3 +167,183 @@ def test_an_ordinary_hartung_knapp_pool_carries_no_fallback_note():
     assert adjusted.hakn_fallback == ""
     assert plain.hakn_fallback == ""
     assert adjusted.se != pytest.approx(plain.se)     # the adjustment really was applied
+
+
+# --------------------------------------------------------------------- cluster-robust (RVE)
+# Golden numbers: authentic robumeta 2.1 outputs, computed once by sourcing the CRAN tarball's
+# R/robu.R under R 4.4.0 (no package install; robumeta has no dependencies beyond base R):
+#   robu(y ~ 1, data=d, studynum=cl, var.eff.size=v, modelweights="CORR", rho=<rho>, small=TRUE)
+# and independently reproduced to <= 1e-13 by a from-scratch numpy transcription of the design
+# formulas (design docs: scratchpad rve_design/, adversarial-review verified). Tests need no R.
+
+F1_Y = [0.10, 0.30, 0.50, 0.20, 0.40, 0.60, -0.10, 0.15, 0.45]
+F1_V = [0.04, 0.05, 0.06, 0.08, 0.10, 0.05, 0.07, 0.03, 0.09]
+F1_C = ["A", "A", "A", "B", "B", "C", "D", "D", "E"]          # 5 clusters, sizes 3/2/1/2/1
+
+
+def test_cluster_robust_matches_robumeta_f1():
+    """Fixture F1 at rho=0.8: every reported quantity equals robumeta 2.1's own output."""
+    from canopy.stats.meta import cluster_robust
+
+    r = cluster_robust(F1_Y, F1_V, F1_C, rho=0.8)
+    assert r.estimate == pytest.approx(0.327006697455228, abs=1e-12)
+    assert r.se == pytest.approx(0.113902213196822, abs=1e-12)
+    assert r.z == pytest.approx(2.87094243629984, rel=1e-10)
+    assert r.df_robust == pytest.approx(3.72857069735625, rel=1e-10)
+    assert r.p == pytest.approx(0.0493825783827924, abs=1e-8)
+    assert r.ci_low == pytest.approx(0.00147395971467, abs=1e-10)
+    assert r.ci_high == pytest.approx(0.652539435195791, abs=1e-10)
+    assert r.tau2 == pytest.approx(0.00606703066914499, abs=1e-12)
+    assert 100 * r.I2 == pytest.approx(8.78639265795739, rel=1e-10)
+    assert r.Q == pytest.approx(4.46234984984985, rel=1e-10)
+    assert r.Q_df == pytest.approx(4.07027027027027, rel=1e-10)   # NON-integer by design
+    assert np.isnan(r.Q_p) and np.isnan(r.I2_tau) and np.isnan(r.H2)   # robumeta defines none
+    assert r.robust and r.robust_requested and r.n_clusters == 5 and r.k == 9
+    assert r.robust_small_sample                                  # df 3.73 < 4 fires the warning
+    assert sum(r.weights_pct) == pytest.approx(100.0)
+
+
+def test_cluster_robust_rho_enters_only_additively():
+    """The rho sweep of fixture F4, plus the df_Q = N−1 identity at rho = 1 (termA+termB = 1)."""
+    from canopy.stats.meta import cluster_robust
+
+    for rho, b, tau2 in ((0.0, 0.326547538498597, 0.00171758828996284),
+                         (0.5, 0.326840480348116, 0.00443598977695168),
+                         (1.0, 0.327113797047426, 0.00715439126394053)):
+        r = cluster_robust(F1_Y, F1_V, F1_C, rho=rho)
+        assert r.estimate == pytest.approx(b, abs=1e-12), rho
+        assert r.tau2 == pytest.approx(tau2, abs=1e-12), rho
+    assert cluster_robust(F1_Y, F1_V, F1_C, rho=1.0).Q_df == pytest.approx(4.0, abs=1e-12)
+
+
+def test_cluster_robust_two_clusters_df_is_exactly_one():
+    """Fixture F2: with N = 2 clusters the Satterthwaite df is 1 for ANY weights (identity F6a),
+    and every golden quantity still matches robumeta."""
+    from canopy.stats.meta import cluster_robust
+
+    r = cluster_robust([0.20, 0.50, 0.10, 0.30, 0.60], [0.05, 0.04, 0.06, 0.05, 0.08],
+                       ["A", "A", "B", "B", "B"], rho=0.8)
+    assert r.df_robust == 1.0                                      # exact, not approx
+    assert r.estimate == pytest.approx(0.343002915451895, abs=1e-12)
+    assert r.se == pytest.approx(0.00822550202895972, abs=1e-12)
+    assert r.p == pytest.approx(0.0152637587963100, abs=1e-8)
+    assert r.tau2 == pytest.approx(0.003, abs=1e-14)
+    assert r.ci_low == pytest.approx(0.238488002614113, abs=1e-10)
+    assert r.ci_high == pytest.approx(0.447517828289677, abs=1e-10)
+    assert r.robust_small_sample
+
+
+def test_cluster_robust_singletons_collapse_to_dl_exactly():
+    """Fixture F3b: all-singleton clusters make the CORR MoM tau² EXACTLY DerSimonian–Laird and
+    the estimate exactly the DL random-effects estimate — while the SE stays the CR2 robust one
+    (assert it DIFFERS, to catch an implementation that quietly falls through to the model SE).
+    rho must vanish entirely on singletons."""
+    from canopy.stats.meta import cluster_robust, random_effects, tau2_DL
+
+    y = [0.05, 0.60, -0.20, 0.45, 0.90, 0.10]
+    v = [0.03, 0.04, 0.05, 0.02, 0.06, 0.035]
+    labels = [f"s{i}" for i in range(6)]
+    r = cluster_robust(y, v, labels, rho=0.8)
+    dl = random_effects(y, v, method="DL")
+    assert r.tau2 == pytest.approx(tau2_DL(np.asarray(y), np.asarray(v)), abs=1e-12)
+    assert r.tau2 == pytest.approx(0.0896141021470397, abs=1e-12)
+    assert r.estimate == pytest.approx(dl.estimate, abs=1e-12)
+    assert r.estimate == pytest.approx(0.308859389164304, abs=1e-12)
+    assert r.se == pytest.approx(0.151774172311562, abs=1e-12)
+    assert abs(r.se - dl.se) > 1e-3
+    assert r.df_robust == pytest.approx(4.94195533407425, rel=1e-10)
+    assert not r.robust_small_sample                               # df 4.94 — no warning
+    r0 = cluster_robust(y, v, labels, rho=0.0)
+    assert (r0.estimate, r0.se, r0.df_robust) == (r.estimate, r.se, r.df_robust)
+
+
+def test_cluster_robust_estimate_differs_from_the_independent_pool():
+    """The full CORR fit is a DIFFERENT estimator, not a corrected SE on the same estimate:
+    on F1 the two point estimates differ in the second decimal (adversarial review B1)."""
+    from canopy.stats.meta import cluster_robust, random_effects
+
+    robust = cluster_robust(F1_Y, F1_V, F1_C, rho=0.8)
+    independent = random_effects(F1_Y, F1_V, method="REML")
+    assert abs(robust.estimate - independent.estimate) > 0.05
+
+
+def test_cluster_robust_invariant_to_row_order_and_relabeling():
+    from canopy.stats.meta import cluster_robust
+
+    base = cluster_robust(F1_Y, F1_V, F1_C, rho=0.8)
+    order = [8, 2, 5, 0, 7, 1, 4, 3, 6]
+    shuffled = cluster_robust([F1_Y[i] for i in order], [F1_V[i] for i in order],
+                              [F1_C[i] + "_renamed" for i in order], rho=0.8)
+    for name in ("estimate", "se", "df_robust", "tau2", "p", "ci_low", "ci_high"):
+        assert getattr(shuffled, name) == pytest.approx(getattr(base, name), abs=1e-12), name
+
+
+def test_cluster_robust_refuses_a_single_cluster_and_bad_rho():
+    from canopy.stats.meta import cluster_robust
+
+    with pytest.raises(ValueError, match="at least 2 clusters"):
+        cluster_robust([0.1, 0.2], [0.05, 0.05], ["A", "A"])
+    with pytest.raises(ValueError, match="between 0 and 1"):
+        cluster_robust(F1_Y, F1_V, F1_C, rho=1.5)
+
+
+def test_random_effects_records_the_single_cluster_fallback_instead_of_raising():
+    """The hakn_fallback precedent: a paid run must not die at the pooling step. One cluster →
+    the ordinary independent pool, with the reason on the record for every report surface."""
+    from canopy.stats.meta import random_effects
+
+    result = random_effects([0.1, 0.2], [0.05, 0.05], clusters=["A", "A"], rho=0.8)
+    plain = random_effects([0.1, 0.2], [0.05, 0.05])
+    assert result.robust_requested and not result.robust
+    assert "fewer than 2 clusters" in result.robust_fallback
+    assert result.estimate == pytest.approx(plain.estimate)
+    assert result.se == pytest.approx(plain.se)
+    assert result.as_dict()["robust_fallback"] == result.robust_fallback
+
+
+def test_random_effects_without_clusters_is_bit_identical_to_before():
+    """clusters=None is contractually a no-op: the whole as_dict must match a no-arg call."""
+    from canopy.stats.meta import random_effects
+
+    a = random_effects(F1_Y, F1_V, method="REML", hakn=True).as_dict()
+    b = random_effects(F1_Y, F1_V, method="REML", hakn=True, clusters=None).as_dict()
+    assert a == b
+    assert a["robust"] is False and a["robust_requested"] is False
+
+
+def test_random_effects_refuses_hakn_with_clusters():
+    from canopy.stats.meta import random_effects
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        random_effects(F1_Y, F1_V, hakn=True, clusters=F1_C)
+
+
+def test_cluster_robust_leave_one_out_drops_clusters():
+    from canopy.stats.meta import leave_one_out
+
+    rows = leave_one_out(F1_Y, F1_V, clusters=F1_C, rho=0.8)
+    assert len(rows) == 5                                          # one per cluster, not per row
+    assert {r.m for r in rows} == {4}                              # 4 clusters remain each time
+    assert rows[0].k == 6                                          # cluster A had 3 of 9 rows
+    with pytest.raises(ValueError, match="at least 3 clusters"):
+        leave_one_out([0.1, 0.2, 0.3], [0.04, 0.04, 0.04], clusters=["A", "A", "B"])
+
+
+def test_cluster_robust_prediction_interval_counts_clusters():
+    from canopy.stats.meta import cluster_robust, prediction_interval
+
+    r = cluster_robust(F1_Y, F1_V, F1_C, rho=0.8)
+    low, high, df = prediction_interval(r, "HTS")
+    assert df == 3                                                 # m−2 over clusters, not k−2=7
+    assert (low, high) == (r.pi_low, r.pi_high)
+    _, _, df_v = prediction_interval(r, "V")
+    assert df_v == 4
+
+
+def test_funnel_data_center_overrides_the_internal_pool():
+    from canopy.stats.meta import funnel_data
+
+    data = funnel_data(F1_Y, F1_V, center=0.327006697455228)
+    assert data["estimate"] == pytest.approx(0.327006697455228)
+    default = funnel_data(F1_Y, F1_V)
+    assert abs(default["estimate"] - data["estimate"]) > 0.05      # the override really bites

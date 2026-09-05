@@ -120,6 +120,14 @@ def forest_layout(rows: Sequence[EffectSizeRecord], pooled: MetaResult, settings
     layout = ForestLayout(pooled=pooled,
                           moderators=_moderator_names([*rows, *needs_human_rows], moderators))
 
+    # the printed weight is the POOLER'S weight, keyed by dataset_id over the same predicate the
+    # pooler used (`poolable_rows`) — never a formula recomputed here. Under the ordinary pool
+    # `weights_raw` IS 1/(vᵢ + τ²), so nothing changes; under a cluster-robust pool it is the
+    # CORR working weight, and recomputing 1/(v+τ²) would print weights the estimator never used.
+    from .tables import poolable_rows
+
+    weight_of = {record.dataset_id: float(weight)
+                 for record, weight in zip(poolable_rows(rows), pooled.weights_raw)}
     prepared: list[ForestRow] = []
     for record in rows:
         if record.es is None or not record.var or record.var <= 0:
@@ -128,7 +136,9 @@ def forest_layout(rows: Sequence[EffectSizeRecord], pooled: MetaResult, settings
                 f"cannot have been pooled — pass it in `needs_human_rows` instead")
         low, high = _ci(record, level)
         prepared.append(ForestRow(record=record, es=record.es, ci_low=low, ci_high=high,
-                                  weight=1.0 / (record.var + tau2), glyph=route_glyph(record.route),
+                                  weight=weight_of.get(record.dataset_id,
+                                                       1.0 / (record.var + tau2)),
+                                  glyph=route_glyph(record.route),
                                   overridden=is_overridden(record)))
     total = sum(row.weight for row in prepared) or 1.0
     for row in prepared:
@@ -142,7 +152,9 @@ def forest_layout(rows: Sequence[EffectSizeRecord], pooled: MetaResult, settings
     y = -(len(prepared) + 0.8)
     layout.pooled_y = y
     method = pi if pi is not None else settings.pi_method
-    if method and pooled.k >= 3:
+    # under a cluster-robust pool the PI exists from 3 CLUSTERS, not 3 rows
+    pi_units = pooled.n_clusters if getattr(pooled, "robust", False) else pooled.k
+    if method and pi_units >= 3:
         try:
             low, high, df = prediction_interval(pooled, str(method))
         except ValueError:

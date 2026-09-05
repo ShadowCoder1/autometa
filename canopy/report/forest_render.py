@@ -45,7 +45,13 @@ def render_forest(rows: Sequence[EffectSizeRecord], pooled: MetaResult, outcome:
     reason = ""
     crosscheck = None
     info = r_available()
-    if protocol is None:
+    if getattr(settings, "dependency", "independent") == "cluster_robust":
+        # not a defect and not warned: meta::forest.meta has no robumeta-style model, so an R
+        # render would draw a classic/HK interval under our robust diamond — two analyses in
+        # one picture, the exact failure the cross-check exists to prevent. Recorded, not tried.
+        reason = ("cluster-robust variance (RVE): meta::forest.meta has no robumeta-style "
+                  "model, so the plot is drawn from canopy's own pooled result")
+    elif protocol is None:
         reason = "no protocol was passed, so the R renderer's labels cannot be read"
     elif info is not None and info.formats and set(FORMATS) - set(info.formats):
         # asked and answered once per process: this R has no device for one of the formats the

@@ -60,7 +60,8 @@ _REASON_ALIASES: dict[str, str] = {"aggregated_into": "aggregated"}
 SENSITIVITY_ANALYSES: tuple[str, ...] = (
     "primary", "exclude_figure_derived", "exclude_test_statistic_derived", "include_needs_human",
     "best_guess", "hartung_knapp", "normal_z", "with_digitization_variance",
-    "without_digitization_variance", "by_analysis_metric", "one_row_per_paper", "all_rows")
+    "without_digitization_variance", "by_analysis_metric", "one_row_per_paper", "all_rows",
+    "dependency")
 
 #: `(start, removals, end)` — every step must satisfy `start − Σ removals = end`. `not_processed`
 #: is what `--max-papers` left out: a partial run still has to add up, so the papers it never
@@ -388,11 +389,24 @@ def poolable_rows(rows: Sequence[EffectSizeRecord], *,
 
 
 def pool_rows(rows: Sequence[EffectSizeRecord], settings: StatsSettings, *,
-              hakn: bool | None = None, digitization: bool = False) -> MetaResult | None:
-    """Random-effects pooling of whatever in `rows` can be pooled; `None` below k = 2."""
-    _, yi, vi = _poolable(rows, digitization=digitization)
+              hakn: bool | None = None, digitization: bool = False,
+              dependency: str | None = None) -> MetaResult | None:
+    """Random-effects pooling of whatever in `rows` can be pooled; `None` below k = 2.
+
+    `dependency` overrides `settings.dependency` for one pool — the sensitivity set uses it the
+    way it already uses `hakn`, to show what a treatment costs. Under `cluster_robust` the rows
+    are clustered by the same label chain `k_papers` counts (`cluster_id or paper_id or
+    dataset_id`), and the pool is the full robumeta CORR fit (see `canopy.stats.meta`).
+    """
+    keep, yi, vi = _poolable(rows, digitization=digitization)
     if len(yi) < 2:
         return None
+    dep = getattr(settings, "dependency", "independent") if dependency is None else dependency
+    if dep == "cluster_robust":
+        return random_effects(yi, vi, method=settings.tau2_method, hakn=False,
+                              level=settings.ci_level,
+                              clusters=[r.cluster_id or r.paper_id or r.dataset_id for r in keep],
+                              rho=getattr(settings, "rve_rho", 0.8))
     return random_effects(yi, vi, method=settings.tau2_method,
                           hakn=settings.hakn if hakn is None else hakn,
                           level=settings.ci_level)
@@ -411,8 +425,34 @@ def leave_one_out_rows(rows: Sequence[EffectSizeRecord],
     `pooled.json` (how far one guessed row moves the line) as it writes to
     `leave_one_out_best_guess.csv`, and computing them twice is how two artefacts of one run
     start to disagree.
+
+    Under `dependency: cluster_robust` the unit omitted is the CLUSTER — dropping one of a
+    paper's five rows is not a meaningful "without this study" when the analysis treats the
+    paper as the unit. One table row per cluster; `omitted_dataset_id` then joins the cluster's
+    dataset ids; needs >= 3 clusters.
     """
     keep, yi, vi = _poolable(rows)
+    if getattr(settings, "dependency", "independent") == "cluster_robust":
+        clusters = [r.cluster_id or r.paper_id or r.dataset_id for r in keep]
+        distinct = list(dict.fromkeys(clusters))
+        if len(distinct) < 3:
+            return []
+        label_of: dict[str, str] = {}
+        paper_of: dict[str, str] = {}
+        ids_of: dict[str, list[str]] = {}
+        for record, cluster in zip(keep, clusters):
+            label_of.setdefault(cluster, _label(record))
+            paper_of.setdefault(cluster, record.paper_id)
+            ids_of.setdefault(cluster, []).append(record.dataset_id)
+        results = leave_one_out(yi, vi, method=settings.tau2_method, level=settings.ci_level,
+                                labels=[label_of[c] for c in distinct],
+                                clusters=clusters, rho=getattr(settings, "rve_rho", 0.8))
+        return [{"omitted_label": r.label,
+                 "omitted_dataset_id": ids_of[distinct[r.omitted]],
+                 "omitted_paper_id": paper_of[distinct[r.omitted]], "k": r.k,
+                 "estimate": r.estimate, "se": r.se, "ci_low": r.ci_low, "ci_high": r.ci_high,
+                 "tau2": r.tau2, "I2": r.I2, "Q": r.Q, "Q_p": r.Q_p, "m": r.m}
+                for r in results]
     if len(keep) < 3:
         return []
     results = leave_one_out(yi, vi, method=settings.tau2_method, level=settings.ci_level,
@@ -459,16 +499,23 @@ def _one_per_paper(rows: Sequence[EffectSizeRecord],
 
 def _entry(name: str, description: str, rows: Sequence[EffectSizeRecord],
            settings: StatsSettings, *, hakn: bool | None = None, digitization: bool = False,
-           primary: MetaResult | None = None) -> dict[str, Any]:
+           primary: MetaResult | None = None, dependency: str | None = None) -> dict[str, Any]:
     keep, _, _ = _poolable(rows, digitization=digitization)
-    result = pool_rows(rows, settings, hakn=hakn, digitization=digitization)
+    result = pool_rows(rows, settings, hakn=hakn, digitization=digitization,
+                       dependency=dependency)
+    dep_used = (getattr(settings, "dependency", "independent")
+                if dependency is None else dependency)
     entry: dict[str, Any] = {
         "name": name, "description": description, "k": len(keep),
         "k_papers": len({r.cluster_id or r.paper_id or r.dataset_id for r in keep}),
         "hakn": settings.hakn if hakn is None else hakn,
         "tau2_method": settings.tau2_method,
+        "dependency": dep_used,
         "digitization_variance_included": bool(digitization),
     }
+    if result is not None and getattr(result, "robust", False):
+        entry.update({"n_clusters": result.n_clusters, "df_robust": result.df_robust,
+                      "rho": result.rho})
     if result is None:
         entry.update({"estimate": None, "se": None, "ci_low": None, "ci_high": None,
                       "tau2": None, "I2": None, "pi_low": None, "pi_high": None,
@@ -503,6 +550,7 @@ def sensitivity_analyses(rows: Sequence[EffectSizeRecord], settings: StatsSettin
     when no held row could be admitted, so the analysis is always present and never invented.
     """
     primary = pool_rows(rows, settings)
+    rve_primary = getattr(settings, "dependency", "independent") == "cluster_robust"
     def add(name, description, subset, **kw):
         return _entry(name, description, subset, settings, primary=primary, **kw)
 
@@ -528,17 +576,40 @@ def sensitivity_analyses(rows: Sequence[EffectSizeRecord], settings: StatsSettin
         add("best_guess", "the best-guess line: the primary analysis plus every held row a "
                           "named rule admitted at its own value (DECISION A)",
             list(rows) if best_guess_rows is None else list(best_guess_rows)),
-        add("hartung_knapp", "Hartung-Knapp variance and t(k-1) confidence interval", rows,
-            hakn=True),
-        add("normal_z", "normal (z) confidence interval, no Hartung-Knapp", rows, hakn=False),
+        add("hartung_knapp", "Hartung-Knapp variance and t(k-1) confidence interval"
+                             + (" (rows treated as independent)" if rve_primary else ""),
+            rows, hakn=True, dependency="independent"),
+        add("normal_z", "normal (z) confidence interval, no Hartung-Knapp"
+                        + (" (rows treated as independent)" if rve_primary else ""),
+            rows, hakn=False, dependency="independent"),
         add("with_digitization_variance",
             "digitisation uncertainty added to each figure-derived sampling variance", rows,
             digitization=True),
         add("without_digitization_variance", "sampling variance only", rows, digitization=False),
-        add("one_row_per_paper", "each paper's rows combined into one (amendment A)",
-            _one_per_paper(rows, settings)),
+        add("one_row_per_paper", "each paper's rows combined into one (amendment A)"
+                                 + (" (rows treated as independent)" if rve_primary else ""),
+            _one_per_paper(rows, settings), dependency="independent"),
         add("all_rows", "every row, including several from the same paper", rows),
     ]
+    # the dependency analysis: what the OTHER treatment of dependent rows would have given.
+    # Under a composite primary (one_row_per_paper) it is OMITTED with the reason recorded:
+    # RVE over composites is not the robumeta analysis of the raw rows, and the pre-aggregation
+    # rows are not plumbed into this function — an absent analysis with a reason beats a wrong one.
+    if rve_primary:
+        analyses.append(add("dependency", "rows treated as independent (the pre-RVE pooled test)",
+                            rows, dependency="independent"))
+    elif not getattr(settings, "one_row_per_paper", True):
+        analyses.append(add("dependency",
+                            f"cluster-robust (RVE) pooled test, rows clustered by paper "
+                            f"(ρ = {getattr(settings, 'rve_rho', 0.8)})",
+                            rows, dependency="cluster_robust"))
+    else:
+        analyses.append({"name": "dependency", "estimate": None, "se": None, "ci_low": None,
+                         "ci_high": None, "delta_vs_primary": None,
+                         "description": "the other treatment of dependent rows",
+                         "note": "not computed: the primary analysis composites each paper's "
+                                 "rows into one (one_row_per_paper), and cluster-robust pooling "
+                                 "of composites is not the robumeta analysis of the raw rows"})
     metrics: list[str] = []
     for record in rows:
         if record.analysis_metric not in metrics:
@@ -682,8 +753,13 @@ def _egger(keep: Sequence[EffectSizeRecord], yi, vi,
 
 
 def funnel_plot(rows: Sequence[EffectSizeRecord], settings: StatsSettings, out_stem: str | Path,
-                formats: Sequence[str] = ("png", "svg")) -> dict[str, Path]:
-    """Funnel with pseudo-CI contours plus Egger's test (JSON), drawn from `canopy.stats`."""
+                formats: Sequence[str] = ("png", "svg"),
+                center: float | None = None) -> dict[str, Path]:
+    """Funnel with pseudo-CI contours plus Egger's test (JSON), drawn from `canopy.stats`.
+
+    `center` is the run's own pooled estimate; REQUIRED under `dependency: cluster_robust`,
+    where an internal re-pool would center the contours on a number pooled.json does not carry.
+    """
     keep, yi, vi = _poolable(rows)
     stem = Path(out_stem)
     if len(keep) < 2:
@@ -691,8 +767,15 @@ def funnel_plot(rows: Sequence[EffectSizeRecord], settings: StatsSettings, out_s
                    "note": "fewer than two poolable rows — no funnel drawn"}
         return {"json": dump_json(payload, stem.with_suffix(".json"))}
 
-    data = funnel_data(yi, vi, method=settings.tau2_method, labels=[_label(r) for r in keep])
+    data = funnel_data(yi, vi, method=settings.tau2_method, labels=[_label(r) for r in keep],
+                       center=center)
     egger, egger_note = _egger(keep, yi, vi, settings)
+    if getattr(settings, "dependency", "independent") == "cluster_robust":
+        # the plot and the test stay row-wise on purpose (a cluster-robust Egger is new
+        # estimator work); one label tells the truth about what they treat as independent
+        egger_note = "; ".join(x for x in [
+            egger_note, "rows are plotted and tested individually; several rows can share a "
+                        "paper, and the Egger test treats them as independent"] if x)
     payload = {"k": len(keep), "funnel": data, "egger_note": egger_note,
                "egger": None if egger is None else asdict(egger)}
     out = {"json": dump_json(payload, stem.with_suffix(".json"))}

@@ -1103,3 +1103,128 @@ def test_report_html_sections_in_order(tmp_run):
 def test_aftereffect_report_says_best_guess_only(tmp_run):
     assert ("Best guess only — nothing could be pooled for the primary analysis."
             in (tmp_run / "report.html").read_text(encoding="utf-8"))
+
+
+# --------------------------------------------------------------------- cluster-robust (RVE)
+@pytest.fixture
+def rve_settings(settings) -> StatsSettings:
+    return settings.model_copy(update={"dependency": "cluster_robust", "hakn": False,
+                                       "one_row_per_paper": False, "rve_rho": 0.8})
+
+
+@pytest.fixture
+def clustered_rows(small_rows) -> list[EffectSizeRecord]:
+    """The five rows re-labeled so two papers contribute two rows each: 3 clusters of 2/2/1."""
+    clusters = ["p0", "p0", "p1", "p1", "p2"]
+    return [row.model_copy(update={"paper_id": c, "cluster_id": c})
+            for row, c in zip(small_rows, clusters)]
+
+
+def test_pool_rows_clusters_by_the_k_papers_chain_under_rve(clustered_rows, rve_settings,
+                                                            settings):
+    from canopy.report.tables import pool_rows
+
+    robust = pool_rows(clustered_rows, rve_settings)
+    plain = pool_rows(clustered_rows, settings)
+    assert robust.robust and robust.n_clusters == 3 and robust.rho == 0.8
+    assert robust.estimate != pytest.approx(plain.estimate)   # the full CORR fit, not a re-label
+    # the per-pool override wins over the settings default, both ways
+    assert not pool_rows(clustered_rows, rve_settings, dependency="independent").robust
+    assert pool_rows(clustered_rows, settings.model_copy(update={"one_row_per_paper": False}),
+                     dependency="cluster_robust").robust
+
+
+def test_pooled_json_records_rve_fields(tmp_path, clustered_rows, outcome, rve_settings):
+    from canopy.report import write_outcome_outputs
+    from canopy.report.tables import pool_rows
+
+    pooled = pool_rows(clustered_rows, rve_settings)
+    write_outcome_outputs(tmp_path, outcome, clustered_rows, pooled, rve_settings)
+    payload = json.loads((tmp_path / "results" / outcome.key / "pooled.json").read_text())
+    assert payload["robust"] is True
+    assert payload["n_clusters"] == 3
+    assert payload["rho"] == 0.8
+    assert payload["df_robust"] == pytest.approx(pooled.df_robust)
+    assert payload["settings"]["dependency"] == "cluster_robust"
+    assert payload["Q_p"] is None                         # NaN lands as null, never as NaN text
+    # funnel.json's center is the run's own pooled estimate — the two files may never disagree
+    funnel = json.loads((tmp_path / "results" / outcome.key / "funnel.json").read_text())
+    assert funnel["funnel"]["estimate"] == pytest.approx(pooled.estimate)
+    assert "treats them as independent" in funnel["egger_note"]
+    # sensitivity: the dependency entry exists and the HK entry stayed independent
+    sens = json.loads((tmp_path / "results" / outcome.key / "sensitivity.json").read_text())
+    by_name = {e["name"]: e for e in sens["analyses"]}
+    assert by_name["dependency"]["dependency"] == "independent"
+    assert by_name["hartung_knapp"]["dependency"] == "independent"
+    assert by_name["primary"]["dependency"] == "cluster_robust"
+    assert by_name["primary"]["n_clusters"] == 3
+
+
+def test_rve_forest_footer_speaks_the_corr_model_and_prints_no_nan(clustered_rows, rve_settings):
+    from canopy.report.tables import pool_rows
+    from canopy.report.theme import conventions_footer
+
+    pooled = pool_rows(clustered_rows, rve_settings)
+    footer = "\n".join(conventions_footer(rve_settings, pooled, k_papers=3, k_datasets=5))
+    assert "CORR method of moments (RVE)" in footer
+    assert "Cluster-robust SE" in footer and "m = 3 clusters of 5 rows" in footer
+    assert "Satterthwaite" in footer
+    assert "heterogeneity test not defined under RVE" in footer
+    assert "nan" not in footer                            # M2: no literal nan on any RVE plot
+    assert "REML" not in footer                           # B1: never a wrong label on the tau²
+    assert "df < 4" in footer                             # 3 clusters — the warning must fire
+
+
+def test_rve_forest_weight_column_prints_the_pooler_weights(clustered_rows, rve_settings):
+    from canopy.report.forest import forest_layout
+    from canopy.report.tables import pool_rows, poolable_rows
+
+    pooled = pool_rows(clustered_rows, rve_settings)
+    layout = forest_layout(clustered_rows, pooled, rve_settings)
+    printed = {row.record.dataset_id: row.weight_pct for row in layout.rows}
+    expected = {r.dataset_id: float(w) for r, w in zip(poolable_rows(clustered_rows),
+                                                       pooled.weights_pct)}
+    for dataset_id, pct in expected.items():
+        assert printed[dataset_id] == pytest.approx(pct, abs=1e-9), dataset_id
+
+
+def test_rve_never_reaches_the_r_renderer(tmp_path, clustered_rows, outcome, rve_settings,
+                                          monkeypatch):
+    from canopy.report import forest_render
+    from canopy.report.tables import pool_rows
+
+    def _boom(*a, **k):                                   # noqa: ANN002, ANN003
+        raise AssertionError("render_forest_r must not be called for an RVE forest")
+    monkeypatch.setattr(forest_render, "render_forest_r", _boom)
+    pooled = pool_rows(clustered_rows, rve_settings)
+    paths, info = forest_render.render_forest(clustered_rows, pooled, outcome, rve_settings,
+                                              None, tmp_path / "forest")
+    assert paths["png"].exists()
+    assert info.renderer == "canopy.report.forest (matplotlib)"
+    assert "RVE" in info.reason
+    assert info.crosscheck is None                        # canopy validate stays green
+
+
+def test_rve_leave_one_out_drops_clusters_not_rows(clustered_rows, rve_settings):
+    from canopy.report.tables import leave_one_out_rows
+
+    table = leave_one_out_rows(clustered_rows, rve_settings)
+    assert len(table) == 3                                # one per cluster, not 5 per row
+    assert table[0]["omitted_dataset_id"] == ["d0", "d1"]  # the cluster's rows, joined
+    assert all(entry["m"] == 2 for entry in table)
+
+
+def test_sensitivity_dependency_entry_is_omitted_under_a_composite_primary(small_rows, settings):
+    """one_row_per_paper primaries get the entry OMITTED with the reason recorded — RVE over
+    composites is not the robumeta analysis of the raw rows (review M1)."""
+    from canopy.report.tables import sensitivity_analyses
+
+    composite = settings.model_copy(update={"one_row_per_paper": True})
+    payload = sensitivity_analyses(small_rows, composite)
+    entry = next(e for e in payload["analyses"] if e["name"] == "dependency")
+    assert entry["estimate"] is None
+    assert "not computed" in entry["note"]
+    # …and under a non-composite independent primary the entry really is the RVE pool
+    computed = sensitivity_analyses(small_rows, settings)
+    entry = next(e for e in computed["analyses"] if e["name"] == "dependency")
+    assert entry["dependency"] == "cluster_robust" and entry["estimate"] is not None

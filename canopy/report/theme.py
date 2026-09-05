@@ -166,8 +166,14 @@ def pi_label(settings: StatsSettings, pooled: MetaResult | None = None) -> str:
     name, dist = _PI.get(str(settings.pi_method).upper(), (str(settings.pi_method), "t"))
     if pooled is None:
         return f"{name}, {dist}"
-    df = {"V": pooled.k - 1, "HTS": pooled.k - 2}.get(str(settings.pi_method).upper())
-    return f"{name}, {dist}" + (f", df = {df}" if df is not None else "")
+    # under a cluster-robust pool the PI was computed over CLUSTERS — the label must count what
+    # the estimator counted, and adds the caveat the method owes (robumeta reports no PI at all)
+    base = pooled.n_clusters if getattr(pooled, "robust", False) else pooled.k
+    df = {"V": base - 1, "HTS": base - 2}.get(str(settings.pi_method).upper())
+    label = f"{name}, {dist}" + (f", df = {df}" if df is not None else "")
+    if getattr(pooled, "robust", False):
+        label += " over clusters (working-model quantity; robumeta reports none)"
+    return label
 
 
 def ci_method_label(pooled: MetaResult) -> str:
@@ -179,6 +185,11 @@ def ci_method_label(pooled: MetaResult) -> str:
     Hartung–Knapp" over a normal-z interval — a false statement about the method, sitting next to
     an honest note nothing read (review M4).
     """
+    if getattr(pooled, "robust_fallback", ""):
+        return (f"z (cluster-robust variance was requested but could not be applied: "
+                f"{pooled.robust_fallback})")
+    if getattr(pooled, "robust", False):
+        return f"t(df = {pooled.df_robust:.2f}, Satterthwaite), cluster-robust"
     if getattr(pooled, "hakn_fallback", ""):
         return (f"z (the Hartung–Knapp adjustment was requested but had nothing to adjust: "
                 f"{pooled.hakn_fallback})")
@@ -197,21 +208,50 @@ def conventions_footer(settings: StatsSettings, pooled: MetaResult, *, k_papers:
     """
     level = float(level if level is not None else settings.ci_level)
     pct = f"{level * 100:g}%"
+    robust = bool(getattr(pooled, "robust", False))
+    if robust:
+        # every fragment names what the CORR fit actually computed: MoM τ², robumeta's Q-based
+        # I² with its non-integer df and NO p (robumeta defines none), and no I²τ/H² — those are
+        # single-level constructs the working model does not produce. Printing "τ² by REML" or
+        # "I²τ = nan%" here would be a wrong label on a real number.
+        tau_line = (f"Random-effects model · {estimator_label(settings)} "
+                    f"(variance: {variance_label(settings)}) · τ² by CORR method of moments "
+                    f"(RVE) (τ² = {pooled.tau2:.4f}, τ = {pooled.tau:.3f})")
+        q_line = (f"Q = {pooled.Q:.2f} (df = {pooled.Q_df:.2f}; no p: heterogeneity test not "
+                  f"defined under RVE) · I² = {100 * pooled.I2:.1f}% [(Q−df)/Q, robumeta]")
+        method_slot = "(dependency: cluster-robust RVE)"
+    else:
+        tau_line = (f"Random-effects model · {estimator_label(settings)} "
+                    f"(variance: {variance_label(settings)}) · τ² by {settings.tau2_method} "
+                    f"(τ² = {pooled.tau2:.4f}, τ = {pooled.tau:.3f})")
+        q_line = (f"Q = {pooled.Q:.2f} (df = {pooled.Q_df}, p {fmt_p(pooled.Q_p)}) · "
+                  f"I² = {100 * pooled.I2:.1f}% [(Q−df)/Q, meta] · "
+                  f"I²τ = {100 * pooled.I2_tau:.1f}% [τ²/(τ²+s²), metafor] · "
+                  f"H² = {pooled.H2:.2f}")
+        method_slot = f"(Hartung–Knapp: {'on' if settings.hakn else 'off'})"
     lines = [
-        f"Random-effects model · {estimator_label(settings)} "
-        f"(variance: {variance_label(settings)}) · τ² by {settings.tau2_method} "
-        f"(τ² = {pooled.tau2:.4f}, τ = {pooled.tau:.3f})",
-        f"Q = {pooled.Q:.2f} (df = {pooled.Q_df}, p {fmt_p(pooled.Q_p)}) · "
-        f"I² = {100 * pooled.I2:.1f}% [(Q−df)/Q, meta] · "
-        f"I²τ = {100 * pooled.I2_tau:.1f}% [τ²/(τ²+s²), metafor] · H² = {pooled.H2:.2f}",
-        f"{pct} CI from {ci_method_label(pooled)} "
-        f"(Hartung–Knapp: {'on' if settings.hakn else 'off'}) · "
-        + (f"{pct} prediction interval: {pi_label(settings, pooled)}" if pooled.k >= 3 else
-           f"no prediction interval: it needs k ≥ 3 and k = {pooled.k}"),
+        tau_line,
+        q_line,
+        f"{pct} CI from {ci_method_label(pooled)} {method_slot} · "
+        + (f"{pct} prediction interval: {pi_label(settings, pooled)}"
+           if (pooled.n_clusters if robust else pooled.k) >= 3 else
+           f"no prediction interval: it needs k ≥ 3 and k = "
+           f"{pooled.n_clusters if robust else pooled.k}"),
         f"k = {k_datasets} datasets from {k_papers} papers · "
         f"{n_excluded} rows excluded (needs_human {max(0, n_excluded - n_not_convertible)}, "
         f"not convertible {n_not_convertible}): drawn hollow, not pooled",
     ]
+    if robust:
+        line = (f"Cluster-robust SE (robumeta-style CORR working model, ρ = {pooled.rho:g}): "
+                f"m = {pooled.n_clusters} clusters of {pooled.k} rows; rows of one paper share "
+                f"a cluster · Satterthwaite df = {pooled.df_robust:.2f}")
+        if getattr(pooled, "robust_small_sample", False):
+            line += " · df < 4: the p-value is not trustworthy at this few clusters (Tipton 2015)"
+        if getattr(pooled, "robust_note", ""):
+            line += f" · {pooled.robust_note}"
+        lines.insert(3, line)
+    elif getattr(pooled, "robust_fallback", ""):
+        lines.insert(3, f"Cluster-robust SE requested but not applied: {pooled.robust_fallback}")
     lines.extend(str(line) for line in extra if line)
     return lines
 

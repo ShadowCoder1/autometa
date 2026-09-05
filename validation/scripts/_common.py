@@ -232,16 +232,20 @@ def gold_records(rows: Sequence[GoldRow], settings: Any) -> list[Any]:
 
 
 def pool_gold(rows: Sequence[GoldRow], settings: Any) -> Any:
-    """Pool the human's own TE/seTE with `canopy.stats.meta.random_effects` under `settings`."""
-    from canopy.stats.meta import random_effects
+    """Pool the human's own TE/seTE through the SAME funnel the auto side uses.
+
+    Rebuilt on `gold_records` + `canopy.report.tables.pool_rows` (RVE design §10): this used to
+    call `random_effects` directly, which silently pooled the manual side WITHOUT cluster-robust
+    settings while the auto side used them — the two panels then compared two different models.
+    One pooling funnel in the whole repo, and the gold clusters (`gold:<author>`) flow the same
+    way the run's do.
+    """
+    from canopy.report.tables import pool_rows
 
     usable = [r for r in rows if r.te is not None and r.se not in (None, 0.0)]
-    yi = [r.te for r in usable]
-    vi = [r.se ** 2 for r in usable]                       # type: ignore[union-attr]
-    if len(yi) < 2:
+    if len(usable) < 2:
         return None
-    return random_effects(yi, vi, method=settings.tau2_method, hakn=bool(settings.hakn),
-                          level=float(settings.ci_level))
+    return pool_rows(gold_records(usable, settings), settings)
 
 
 # ============================================================================ reading a run

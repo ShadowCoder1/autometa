@@ -223,12 +223,23 @@ def methods_paragraph(manifest: RunManifest, protocol: Protocol,
         f"the between-group contrast. Route precedence was "
         f"{' > '.join(settings.route_precedence)}.",
         "",
-        f"Studies were combined with a random-effects model, τ² estimated by "
-        f"{settings.tau2_method}"
-        f"{', with the Hartung–Knapp adjustment' if settings.hakn else ' (no Hartung–Knapp '
-                                                                      'adjustment)'}, "
-        f"and {settings.ci_level * 100:g}% confidence intervals; prediction intervals use the "
-        f"{pi_label(settings)} convention. Heterogeneity is reported as Q, I² and τ². "
+        (f"Studies were combined with the robumeta-style cluster-robust (RVE) random-effects "
+         f"model, because one paper can contribute several dependent rows: CORR working "
+         f"weights, τ² by the CORR method of moments, CR2 small-sample-corrected standard "
+         f"errors and t tests on Satterthwaite degrees of freedom, with rows clustered by "
+         f"paper (assumed within-cluster correlation ρ = {settings.rve_rho:g}) and "
+         f"{settings.ci_level * 100:g}% confidence intervals; prediction intervals use the "
+         f"{pi_label(settings)} convention over clusters (a working-model quantity; robumeta "
+         f"reports none). Heterogeneity is reported as Q (non-integer df; robumeta defines no "
+         f"p for it), I² and τ². "
+         if getattr(settings, "dependency", "independent") == "cluster_robust" else
+         f"Studies were combined with a random-effects model, τ² estimated by "
+         f"{settings.tau2_method}"
+         f"{', with the Hartung–Knapp adjustment' if settings.hakn else ' (no Hartung–Knapp '
+                                                                       'adjustment)'}, "
+         f"and {settings.ci_level * 100:g}% confidence intervals; prediction intervals use the "
+         f"{pi_label(settings)} convention. Heterogeneity is reported as Q, I² and τ². ")
+        +
         f"Rows whose verification confidence was not "
         f"{' or '.join(settings.primary_analysis_includes)} were held for human review and "
         f"excluded from the "
@@ -265,10 +276,17 @@ def methods_paragraph(manifest: RunManifest, protocol: Protocol,
             f"(a further {len(held)} were held for human review). The pooled "
             f"{estimator_label(settings)} was {pooled.estimate:.2f} "
             f"({settings.ci_level * 100:g}% CI {pooled.ci_low:.2f} to {pooled.ci_high:.2f}; "
-            f"{'t' if pooled.hakn and not pooled.hakn_fallback else 'z'} = {pooled.z:.2f}, "
+            f"{'t' if (pooled.hakn and not pooled.hakn_fallback) or getattr(pooled, 'robust', False) else 'z'}"
+            f" = {pooled.z:.2f}, "
             f"p {theme.fmt_p(pooled.p)}"
             + (f"; the Hartung–Knapp adjustment was requested but had nothing to adjust: "
                f"{pooled.hakn_fallback}" if pooled.hakn_fallback else "")
+            + (f"; SEs cluster-robust over m = {pooled.n_clusters} clusters, "
+               f"df = {pooled.df_robust:.2f} (Satterthwaite)"
+               if getattr(pooled, "robust", False) else "")
+            + (f"; cluster-robust variance was requested but could not be applied: "
+               f"{pooled.robust_fallback}"
+               if getattr(pooled, "robust_fallback", "") else "")
             + f"), with "
             f"τ² = {pooled.tau2:.3f}, I² = {100 * pooled.I2:.1f}% and a "
             f"{settings.ci_level * 100:g}% prediction interval of {pi_low:.2f} to {pi_high:.2f}"
@@ -279,12 +297,16 @@ def methods_paragraph(manifest: RunManifest, protocol: Protocol,
                          f"negative values “{outcome.negative_direction_label}”.")
         lines.append(sentence)
         lines.append("")
+    both_dependencies = (getattr(settings, "dependency", "independent") == "cluster_robust"
+                         or not getattr(settings, "one_row_per_paper", True))
     lines.append("Sensitivity analyses re-pooled each outcome excluding figure-derived rows, "
                  "excluding rows converted from test statistics, including the rows held for "
                  "review, with and without the Hartung–Knapp adjustment, with and without "
-                 "digitisation variance, split by analysis metric, and with one row per paper; "
-                 "all are reported in `sensitivity.json`. Small-study effects were examined with "
-                 "a funnel plot and Egger's test.")
+                 "digitisation variance, split by analysis metric, and with one row per paper"
+                 + (", and under the other treatment of dependent rows"
+                    if both_dependencies else "")
+                 + "; all are reported in `sensitivity.json`. Small-study effects were examined "
+                   "with a funnel plot and Egger's test.")
     lines.append("")
     return "\n".join(lines)
 

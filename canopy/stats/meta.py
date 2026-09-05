@@ -9,6 +9,11 @@ Reproduces R `metafor::rma(yi, vi, method=...)` and `meta::metagen(TE, seTE, ...
 * Hartung–Knapp (hakn=True): variance = Σw(y−μ)² / ((k−1)Σw), t(k−1) CI, identical in meta and metafor.
 * Q-profile confidence interval for tau² (Viechtbauer 2007), as in metafor::confint.
 * Egger regression exactly as the Cisneros Rmd computed it: lm(TE/seTE ~ 1/seTE), t-test on the intercept.
+* Cluster-robust pooling (``clusters=`` given): the FULL robumeta 2.1 CORR fit — Hedges, Tipton &
+  Johnson (2010) working model, method-of-moments tau², CR2-adjusted sandwich SE and Satterthwaite
+  df (Tipton 2015, robumeta ``small=TRUE``). This is a different estimator, not a corrected SE on
+  the same estimate: the point estimate uses the CORR cluster weights and generally differs from
+  the row-weighted REML one. Validated against robumeta 2.1 itself (tests/test_meta.py).
 """
 from __future__ import annotations
 
@@ -35,17 +40,17 @@ class MetaResult:
     tau: float
     se_tau2: float | None
     Q: float
-    Q_df: int
+    Q_df: float              # k−1 ordinarily; NON-INTEGER under cluster-robust pooling (robumeta df_Q)
     Q_p: float
     I2: float                # meta convention (Q-based), proportion 0..1
-    I2_tau: float            # metafor convention (tau²-based), proportion 0..1
+    I2_tau: float            # metafor convention (tau²-based), proportion 0..1; NaN under RVE
     H2: float
     weights: np.ndarray      # normalized RE weights (sum 1)
     weights_pct: np.ndarray  # RE weights in %
-    weights_raw: np.ndarray  # 1/(vi + tau²)
-    pi_low: float            # prediction interval, t(k-2) (meta HTS)
+    weights_raw: np.ndarray  # 1/(vi + tau²), or the CORR working weights 1/(k_j(v̄_j+τ²)) under RVE
+    pi_low: float            # prediction interval, t(k-2) (meta HTS); t(m-2) over CLUSTERS under RVE
     pi_high: float
-    pi_df: int
+    pi_df: float
     pi_low_z: float          # prediction interval, z-based (metafor default; meta method.predict="S")
     pi_high_z: float
     pi_low_v: float = float("nan")   # prediction interval, t(k-1) (meta ≥7 default method.predict="V", Veroniki 2019)
@@ -61,6 +66,22 @@ class MetaResult:
     #: non-empty when the Hartung-Knapp adjustment could not be applied and the ordinary
     #: random-effects standard error was used instead. Empty on every ordinary pool.
     hakn_fallback: str = ""
+    # ---- cluster-robust (RVE) fields; defaults describe an ordinary (independent-rows) pool ----
+    #: RVE was requested AND applied: estimate/se/ci/z/p are the full robumeta CORR fit.
+    robust: bool = False
+    #: RVE was requested at all (True even when `robust_fallback` explains why it wasn't applied).
+    robust_requested: bool = False
+    n_clusters: int = 0                    # m, distinct cluster labels among the pooled rows
+    rho: float = float("nan")              # assumed within-cluster correlation (settings.rve_rho)
+    df_robust: float = float("nan")        # Satterthwaite df of the pooled test
+    se_model: float = float("nan")         # the working-model SE sqrt(1/ΣW) the robust SE replaced
+    robust_small_sample: bool = False      # df_robust < 4 — robumeta: "do not trust the results"
+    #: non-empty when RVE was requested but could not be applied; says why. The numbers then
+    #: carry the ordinary independent-rows pool, and every report surface prints this reason.
+    robust_fallback: str = ""
+    #: a stability caveat that does NOT invalidate the numbers (e.g. one cluster carries
+    #: essentially all the weight); printed beside the result, never instead of it.
+    robust_note: str = ""
 
     def as_dict(self) -> dict:
         d = asdict(self)
@@ -136,9 +157,10 @@ class LeaveOneOut:
     ci_low: float
     ci_high: float
     tau2: float
-    I2: float                # metafor convention (tau²-based), proportion 0..1
+    I2: float                # metafor convention (tau²-based), proportion 0..1; NaN under RVE
     Q: float
     Q_p: float
+    m: int = 0               # remaining clusters (cluster-robust leave-one-out only; 0 otherwise)
 
 
 # ----------------------------------------------------------------------------- helpers
@@ -244,6 +266,103 @@ def tau2_qprofile_ci(yi, vi, level: float = 0.95, upper: float = 1e5):
     return lb, ub
 
 
+# ----------------------------------------------------------------------------- cluster-robust
+def cluster_robust(yi, vi, clusters, rho: float = 0.8, level: float = 0.95) -> MetaResult:
+    """The full robumeta 2.1 CORR fit, intercept-only: HTJ (2010) working model with
+    method-of-moments tau², CR2-adjusted sandwich SE and Satterthwaite df (Tipton 2015,
+    ``small=TRUE``). Validated digit-for-digit against robumeta itself (tests/test_meta.py).
+
+    Raises ``ValueError`` for fewer than 2 distinct clusters — robumeta itself dies opaquely
+    inside ``eigen`` there, and no meaningful number exists. Callers that must not raise go
+    through :func:`random_effects`, which records the fallback instead.
+    """
+    yi, vi = _check(yi, vi)
+    if not (0.0 <= rho <= 1.0):
+        raise ValueError("rho must be between 0 and 1 inclusive")
+    labels = [str(c) for c in clusters]
+    if len(labels) != yi.size:
+        raise ValueError("clusters must have one label per row")
+    # group rows by cluster; dict preserves first-seen order but every quantity below is a sum
+    # over clusters, so the result is invariant to row order and to relabeling (tested).
+    members: dict[str, list[int]] = {}
+    for index, label in enumerate(labels):
+        members.setdefault(label, []).append(index)
+    m = len(members)
+    if m < 2:
+        raise ValueError("RVE needs at least 2 clusters")
+    k_j = np.array([len(rows) for rows in members.values()], dtype=float)
+    vbar = np.array([float(np.mean(vi[rows])) for rows in members.values()])
+    ybar = np.array([float(np.mean(yi[rows])) for rows in members.values()])
+
+    # F2 — preliminary (tau-free) fit, weights 1/(k_j v̄_j) constant within cluster
+    mu_prelim = float(np.sum(ybar / vbar) / np.sum(1.0 / vbar))
+    w_prelim = np.repeat(1.0 / (k_j * vbar), k_j.astype(int))
+    order = np.concatenate([np.asarray(rows) for rows in members.values()])
+    QE = float(np.sum(w_prelim * (yi[order] - mu_prelim) ** 2))
+
+    # F3 — CORR method-of-moments tau² (rho enters ONLY additively, robu.R:344-346)
+    sumW = float(np.sum(1.0 / vbar))
+    denom = sumW - float(np.sum((1.0 / vbar) ** 2)) / sumW
+    termA = float(np.sum(1.0 / (k_j * vbar))) / sumW
+    termB = float(np.sum((k_j - 1.0) / (k_j * vbar))) / sumW
+    tau2 = max(0.0, (QE - m + termA) / denom + rho * termB / denom)
+
+    # F4 — heterogeneity as robumeta reports it (df_Q non-integer; no p is defined)
+    df_Q = m - termA - rho * termB
+    I2 = float(max(0.0, (QE - df_Q) / QE)) if QE > 0 else 0.0
+
+    # F5 — final fit and CR2 sandwich
+    W = 1.0 / (vbar + tau2)                        # cluster weights
+    S = float(np.sum(W))
+    mu = float(np.sum(W * ybar) / S)
+    h = W / S                                      # cluster leverages, sum exactly 1
+    se_robust = float(np.sqrt(np.sum(W ** 2 * (ybar - mu) ** 2 / (1.0 - h)) / S ** 2))
+    note = ""
+    if float(np.min(1.0 - h)) < 1e-8:
+        # robumeta clamps a near-zero eigenvalue at 1e-10 and we deliberately do not replicate
+        # the clamp: past this point both implementations print garbage, and the honest output
+        # is the caveat, not a stabilised-looking number.
+        note = "one cluster carries essentially all the weight; results are not stable"
+
+    # F6 — Satterthwaite df from the weights alone; cross-term via (Σg)² − Σg², g = h²/(1−h)
+    g = h ** 2 / (1.0 - h)
+    df_S = float(1.0 / (np.sum(h ** 2) + np.sum(g) ** 2 - np.sum(g ** 2)))
+
+    # F8 — inference on t(df_S)
+    stat = mu / se_robust if se_robust > 0 else float("inf") * np.sign(mu or 1.0)
+    p = float(2 * sps.t.sf(abs(stat), df_S))
+    tq = sps.t.ppf(1 - (1 - level) / 2, df_S)
+    ci_low, ci_high = mu - tq * se_robust, mu + tq * se_robust
+
+    # D8 — working-model prediction interval over CLUSTERS, with the caveat carried by the report
+    pi_sd = float(np.sqrt(se_robust ** 2 + tau2))
+    if m >= 3:
+        t2 = sps.t.ppf(1 - (1 - level) / 2, m - 2)
+        pi_low, pi_high = mu - t2 * pi_sd, mu + t2 * pi_sd
+    else:
+        pi_low = pi_high = float("nan")
+    zq = sps.norm.ppf(1 - (1 - level) / 2)
+    tv = sps.t.ppf(1 - (1 - level) / 2, m - 1)
+
+    # F9 — per-row working weights W_j/k_j; they sum to S, so shares sum to 1 (100%)
+    per_row = np.empty(yi.size)
+    for (label, rows), Wj, kj in zip(members.items(), W, k_j):
+        per_row[np.asarray(rows)] = Wj / kj
+    return MetaResult(k=yi.size, method="CORR-MoM", estimate=mu, se=se_robust,
+                      ci_low=float(ci_low), ci_high=float(ci_high), z=float(stat), p=p,
+                      tau2=float(tau2), tau=float(np.sqrt(tau2)), se_tau2=None,
+                      Q=QE, Q_df=float(df_Q), Q_p=float("nan"), I2=I2,
+                      I2_tau=float("nan"), H2=float("nan"),
+                      weights=per_row / S, weights_pct=100 * per_row / S, weights_raw=per_row,
+                      pi_low=float(pi_low), pi_high=float(pi_high), pi_df=float(m - 2),
+                      pi_low_z=float(mu - zq * pi_sd), pi_high_z=float(mu + zq * pi_sd),
+                      pi_low_v=float(mu - tv * pi_sd), pi_high_v=float(mu + tv * pi_sd),
+                      hakn=False, level=level, yi=yi, vi=vi,
+                      robust=True, robust_requested=True, n_clusters=m, rho=float(rho),
+                      df_robust=df_S, se_model=float(np.sqrt(1.0 / S)),
+                      robust_small_sample=bool(df_S < 4), robust_note=note)
+
+
 # ----------------------------------------------------------------------------- public API
 def fixed_effects(yi, vi, level: float = 0.95) -> FixedResult:
     yi, vi = _check(yi, vi)
@@ -259,7 +378,27 @@ def fixed_effects(yi, vi, level: float = 0.95) -> FixedResult:
 
 
 def random_effects(yi, vi, method: Tau2Method = "REML", hakn: bool = False, level: float = 0.95,
-                   tau2_ci: bool = False) -> MetaResult:
+                   tau2_ci: bool = False, *, clusters=None, rho: float = 0.8) -> MetaResult:
+    """`clusters=None` (the default) is the ordinary independent-rows pool, bit-identical to
+    what this function always produced. With `clusters` given (one label per row), the pool is
+    the full robumeta CORR fit (:func:`cluster_robust`) — `method` is then ignored, because the
+    CORR method-of-moments tau² is part of that method. The ONE degenerate condition — fewer
+    than 2 distinct clusters — falls back to the independent pool with the reason recorded in
+    `robust_fallback`, following the hakn_fallback precedent: raising here would kill a whole
+    run at the pooling step after every paper had been paid for.
+    """
+    if clusters is not None:
+        if hakn:
+            raise ValueError("hakn and cluster-robust pooling are mutually exclusive "
+                             "small-sample corrections; choose one")
+        labels = [str(c) for c in clusters]
+        if len(set(labels)) >= 2:
+            return cluster_robust(yi, vi, labels, rho=rho, level=level)
+        result = random_effects(yi, vi, method=method, hakn=False, level=level, tau2_ci=tau2_ci)
+        result.robust_requested = True
+        result.robust_fallback = ("fewer than 2 clusters (all pooled rows share one cluster); "
+                                  "pooled as independent rows")
+        return result
     yi, vi = _check(yi, vi)
     k = yi.size
     se_tau2 = None
@@ -343,12 +482,17 @@ def random_effects(yi, vi, method: Tau2Method = "REML", hakn: bool = False, leve
 
 def prediction_interval(res: "MetaResult", method: str = "V") -> tuple[float, float, float]:
     """Return (low, high, df) for the requested convention: 'HTS' t(k-2) [meta ≤6 default, Cisneros 2024 figures],
-    'V' t(k-1) [meta ≥7 default], 'z' normal [metafor default; meta 'S']."""
+    'V' t(k-1) [meta ≥7 default], 'z' normal [metafor default; meta 'S'].
+
+    Under a cluster-robust pool the df base is the CLUSTER count (the stored intervals were
+    computed on it): counting rows there would fake precision the dependence removed.
+    """
     m = method.upper()
+    base = res.n_clusters if getattr(res, "robust", False) else res.k
     if m == "HTS":
-        return res.pi_low, res.pi_high, res.k - 2
+        return res.pi_low, res.pi_high, base - 2
     if m == "V":
-        return res.pi_low_v, res.pi_high_v, res.k - 1
+        return res.pi_low_v, res.pi_high_v, base - 1
     if m in ("Z", "S"):
         return res.pi_low_z, res.pi_high_z, float("inf")
     raise ValueError(f"unknown prediction-interval method {method!r}")
@@ -418,20 +562,45 @@ def _weighted_ls(X, y, w):
 
 
 def leave_one_out(yi, vi, method: Tau2Method = "REML", level: float = 0.95,
-                  labels=None) -> list[LeaveOneOut]:
+                  labels=None, *, clusters=None, rho: float = 0.8) -> list[LeaveOneOut]:
     """Re-pool k times, omitting one study each time (`metafor::leave1out`).
 
     A pooled estimate that one study can move is a different finding from one that no study can,
     and this is the cheapest way to show which it is.
+
+    With `clusters` given, the unit omitted is the CLUSTER, not the row: under a cluster-robust
+    pool, dropping one of a paper's five rows is not a meaningful "without this study". One
+    result row per cluster; `label` is then the omitted cluster's label; needs >= 3 clusters.
     """
     yi, vi = _check(yi, vi)
     k = yi.size
+    if clusters is not None:
+        cl = [str(c) for c in clusters]
+        if len(cl) != k:
+            raise ValueError("clusters must have one label per row")
+        distinct = list(dict.fromkeys(cl))
+        if len(distinct) < 3:
+            raise ValueError("cluster-robust leave-one-out needs at least 3 clusters")
+        names = list(labels) if labels is not None else distinct
+        if len(names) != len(distinct):
+            raise ValueError("labels must have one entry per cluster")
+        arr = np.array(cl)
+        rows: list[LeaveOneOut] = []
+        for i, label in enumerate(distinct):
+            keep = arr != label
+            res = random_effects(yi[keep], vi[keep], method=method, level=level,
+                                 clusters=arr[keep], rho=rho)
+            rows.append(LeaveOneOut(omitted=i, label=names[i], k=res.k, estimate=res.estimate,
+                                    se=res.se, ci_low=res.ci_low, ci_high=res.ci_high,
+                                    tau2=res.tau2, I2=res.I2_tau, Q=res.Q, Q_p=res.Q_p,
+                                    m=res.n_clusters))
+        return rows
     if k < 3:
         raise ValueError("leave-one-out needs at least 3 studies")
     names = list(labels) if labels is not None else [str(i) for i in range(k)]
     if len(names) != k:
         raise ValueError("labels must have one entry per study")
-    rows: list[LeaveOneOut] = []
+    rows = []
     for i in range(k):
         keep = np.arange(k) != i
         res = random_effects(yi[keep], vi[keep], method=method, level=level)
@@ -442,26 +611,31 @@ def leave_one_out(yi, vi, method: Tau2Method = "REML", level: float = 0.95,
 
 
 def funnel_data(yi, vi, method: Tau2Method = "REML", labels=None,
-                levels: tuple[float, ...] = (0.95, 0.99), n_points: int = 50) -> dict:
+                levels: tuple[float, ...] = (0.95, 0.99), n_points: int = 50,
+                center: float | None = None) -> dict:
     """Everything a funnel plot needs, computed once: the points and the pseudo-CI contours.
 
     The contours are the region a study of a given standard error would fall in if the pooled
     estimate were the truth, so the plot can be drawn by any renderer without repeating the stats.
+
+    `center` overrides the internally re-pooled estimate — REQUIRED whenever the run's pooled
+    estimate came from a different model (cluster-robust), so funnel.json and pooled.json can
+    never disagree about what "the pooled estimate" is.
     """
     yi, vi = _check(yi, vi)
     sei = np.sqrt(vi)
-    res = random_effects(yi, vi, method=method)
+    estimate = float(center) if center is not None else random_effects(yi, vi, method=method).estimate
     se_max = float(sei.max())
     grid = np.linspace(0.0, se_max, max(2, n_points))
     contours = {}
     for level in levels:
         q = sps.norm.ppf(1 - (1 - level) / 2)
         contours[str(level)] = {"se": [float(s) for s in grid],
-                                "low": [float(res.estimate - q * s) for s in grid],
-                                "high": [float(res.estimate + q * s) for s in grid]}
+                                "low": [float(estimate - q * s) for s in grid],
+                                "high": [float(estimate + q * s) for s in grid]}
     names = list(labels) if labels is not None else [str(i) for i in range(yi.size)]
     return {"yi": [float(v) for v in yi], "sei": [float(v) for v in sei], "labels": names,
-            "estimate": float(res.estimate), "se_max": se_max, "method": method,
+            "estimate": float(estimate), "se_max": se_max, "method": method,
             "contours": contours}
 
 

@@ -51,6 +51,9 @@ def _summary(pooled: Any, records: Sequence[Any], settings: Any) -> dict[str, An
             "estimate": pooled.estimate, "ci_low": pooled.ci_low, "ci_high": pooled.ci_high,
             "se": pooled.se, "tau2": pooled.tau2, "i2_pct": 100.0 * pooled.I2, "q": pooled.Q,
             "p": pooled.p, "pi_low": pi_low, "pi_high": pi_high, "pi_df": pi_df,
+            "robust": bool(getattr(pooled, "robust", False)),
+            "n_clusters": int(getattr(pooled, "n_clusters", 0)),
+            "df_robust": float(getattr(pooled, "df_robust", float("nan"))),
             "weights_pct": [float(w) for w in pooled.weights_pct]}
 
 

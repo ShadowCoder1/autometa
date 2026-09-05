@@ -15,7 +15,7 @@ import json
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class CanopyModel(BaseModel):
@@ -94,6 +94,7 @@ Estimator = Literal["cohen", "hedges"]
 VarianceMethod = Literal["borenstein", "hedges_olkin_df", "meta_exact", "meta_exact_g", "meta_hedges_approx"]
 Tau2Method = Literal["REML", "DL", "PM"]
 PIMethod = Literal["V", "HTS", "z"]
+Dependency = Literal["independent", "cluster_robust"]
 
 
 # ----------------------------------------------------------------------------- protocol
@@ -125,6 +126,19 @@ class StatsSettings(CanopyModel):
     variance: VarianceMethod = "borenstein"
     tau2_method: Tau2Method = "REML"
     hakn: bool = False
+    #: how dependent rows (same cluster: one paper contributing several rows) are treated by the
+    #: pooled test. `independent` is the historical behavior: every row its own study.
+    #: `cluster_robust` is the FULL robumeta-style CORR fit (Hedges/Tipton/Johnson 2010; Tipton
+    #: 2015 small-sample correction): CORR cluster weights, method-of-moments tau², CR2 sandwich
+    #: SE and t on Satterthwaite df — a different estimator, whose point estimate generally
+    #: differs from the independent-rows one, not merely a corrected SE. `tau2_method` is ignored
+    #: under it (the CORR method-of-moments tau² is part of the method).
+    dependency: Dependency = "independent"
+    #: the within-cluster correlation the CORR working model assumes (robumeta's `rho`); only
+    #: read when `dependency: cluster_robust`. Default 0.8 = robumeta's own default, i.e. what a
+    #: reference robumeta run computes. NOT the same knob as `within_paper_r`, which
+    #: parameterizes the Borenstein composite under `one_row_per_paper` — a different construct.
+    rve_rho: float = 0.8
     pi_method: PIMethod = "V"
     route_precedence: list[str] = Field(default_factory=lambda: [
         "text_mean_sd", "table", "text_mean_se_ci", "figure", "test_statistic", "p_value", "reported_d"])
@@ -149,6 +163,25 @@ class StatsSettings(CanopyModel):
     #: decimals the forest prints for the effect and its interval. The tables keep full precision:
     #: this is how the plot READS, not how anything was computed.
     forest_digits: int = 1
+
+    @model_validator(mode="after")
+    def _dependency_rules(self) -> "StatsSettings":
+        """Refuse contradictory requests at settings load — before any spend, never mid-run."""
+        if self.dependency == "cluster_robust":
+            if self.hakn:
+                raise ValueError(
+                    "hakn and dependency: cluster_robust are both small-sample corrections of "
+                    "the pooled test and cannot be combined: the cluster-robust fit replaces "
+                    "the SE that Hartung-Knapp would adjust. Set hakn: false to use RVE.")
+            if self.one_row_per_paper:
+                raise ValueError(
+                    "dependency: cluster_robust replaces one_row_per_paper as the treatment of "
+                    "dependent rows: compositing them away and then correcting for the "
+                    "dependence you removed is a contradictory request, and the result would "
+                    "silently be a plain random-effects pool. Set one_row_per_paper: false.")
+            if not 0.0 <= self.rve_rho <= 1.0:
+                raise ValueError("rve_rho must be between 0 and 1 inclusive")
+        return self
 
 
 class DigitizeSettings(CanopyModel):

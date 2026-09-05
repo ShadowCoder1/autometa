@@ -370,3 +370,36 @@ def test_a_z_prediction_interval_with_infinite_df_writes_the_sentence_and_no_cra
     assert "expected to fall between" in text
     assert "inf" not in text.lower()
     assert "pi_df" not in conclusion.facts or conclusion.facts["pi_df"] != float("inf")
+
+
+# --------------------------------------------------------------------- cluster-robust (RVE)
+def _rve() -> Conclusion:
+    """The late-adaptation case re-pooled cluster-robust: same fixture rows, RVE settings."""
+    protocol = nine.protocol()
+    settings = protocol.stats.model_copy(update={"dependency": "cluster_robust", "hakn": False,
+                                                 "one_row_per_paper": False})
+    split = _split_rows(nine.records("late_adaptation"), settings)
+    pooled = pool_rows(split.primary, settings)
+    loo = leave_one_out_rows(split.primary, settings)
+    return outcome_conclusion(protocol.outcome("late_adaptation"), settings, pooled=pooled,
+                              rows=split.primary, held=split.held, loo=loo,
+                              group_a=protocol.group_a, group_b=protocol.group_b)
+
+
+def test_rve_conclusion_states_the_cluster_model_and_its_facts():
+    c = _rve()
+    t = render_text(c)
+    assert "cluster-robust" in t and "Satterthwaite" in t
+    assert "n_clusters" in c.facts and "df_robust" in c.facts and "rho" in c.facts
+    assert "nan" not in t.lower()
+    # the non-integer Q df is printed as itself, never truncated to an int (review M3)
+    assert c.facts["q_df"] == pytest.approx(float(c.facts["q_df"]))
+
+
+def test_rve_conclusion_keeps_the_ledger_invariant():
+    c = _rve()
+    rendered = ({f"{v:.2f}" for v in c.facts.values() if isinstance(v, float)}
+                | {f"{v:.3f}" for v in c.facts.values() if isinstance(v, float)}
+                | {f"{v:.0f}" for v in c.facts.values() if isinstance(v, float)}
+                | {str(v) for v in c.facts.values()})
+    assert set(NUMBER.findall(render_text(c))) <= rendered

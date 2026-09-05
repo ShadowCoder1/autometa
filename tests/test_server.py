@@ -2238,3 +2238,28 @@ def test_the_prisma_line_states_what_the_search_was_forbidden_to_find():
     assert "excluded_by_user" in COUNT_KEYS
     listed = app_js.split("var COUNT_KEYS = [")[1].split("];")[0]
     assert "excluded_by_user" in listed
+
+
+def test_repool_under_an_edited_rve_protocol_flips_the_model_and_the_methods(cloned):
+    """Editing `dependency: cluster_robust` into a run's protocol.yaml and repooling gives RVE
+    numbers in pooled.json AND a methods page describing the new model — the manifest.settings
+    staleness bug the RVE adversarial review verified (a repool used to write a methods
+    paragraph describing the settings saved at original run time)."""
+    api, run_id, token, runs = cloned["api"], cloned["run_id"], cloned["token"], cloned["runs"]
+
+    protocol_path = runs / run_id / "protocol.yaml"
+    text = protocol_path.read_text(encoding="utf-8")
+    assert "stats:" in text
+    text = text.replace("stats:", "stats:\n  dependency: cluster_robust\n"
+                                  "  hakn: false\n  one_row_per_paper: false", 1)
+    protocol_path.write_text(text, encoding="utf-8")
+
+    repooled = api.post(f"/api/runs/{run_id}/repool", headers=auth(token))
+    assert repooled.status_code == 200, repooled.text
+
+    pooled = json.loads(api.get(f"/api/runs/{run_id}/files/results/{OUTCOME}/pooled.json",
+                                headers=auth(token)).text)
+    assert pooled["settings"]["dependency"] == "cluster_robust"
+    assert pooled["robust"] is True or pooled["robust_fallback"]  # single-cluster data falls back
+    methods = api.get(f"/api/runs/{run_id}/files/methods.md", headers=auth(token)).text
+    assert "cluster-robust" in methods

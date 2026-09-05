@@ -234,8 +234,13 @@ def outcome_conclusion(outcome: OutcomeDef, settings: StatsSettings, *,
             if _finite(pooled.I2):
                 inner.append(f"I² = {_fact(facts, 'i2', 100 * pooled.I2, 0)}%")
             if _finite(pooled.Q):
-                facts["q_df"] = int(pooled.Q_df)
-                inner.append(f"Q({int(pooled.Q_df)}) = {_fact(facts, 'q', pooled.Q)}")
+                if getattr(pooled, "robust", False):
+                    # robumeta's df_Q is non-integer; truncating it would state a wrong df as fact
+                    inner.append(f"Q({_fact(facts, 'q_df', pooled.Q_df, 2)}) = "
+                                 f"{_fact(facts, 'q', pooled.Q)}")
+                else:
+                    facts["q_df"] = int(pooled.Q_df)
+                    inner.append(f"Q({int(pooled.Q_df)}) = {_fact(facts, 'q', pooled.Q)}")
             if _finite(pooled.Q_p):
                 inner.append(f"p = {_fact(facts, 'q_p', pooled.Q_p, 3)}")
             sentences.append(
@@ -262,6 +267,24 @@ def outcome_conclusion(outcome: OutcomeDef, settings: StatsSettings, *,
         else:
             # R12: `pi_low_used` really is nan at k = 2 under HTS. It says so in words.
             sentences.append(f"A prediction interval is not estimable at k = {k} under {method}.")
+
+        # --- how the interval was built, when it was not the ordinary one (RVE)
+        if getattr(pooled, "robust", False):
+            sentence = (
+                f"Standard errors are cluster-robust over m = "
+                f"{_fact(facts, 'n_clusters', pooled.n_clusters, 0)} clusters (Satterthwaite "
+                f"df = {_fact(facts, 'df_robust', pooled.df_robust, 2)}); rows from one paper "
+                f"are treated as dependent (ρ = {_fact(facts, 'rho', pooled.rho, 2)}).")
+            if getattr(pooled, "robust_small_sample", False):
+                sentence += (f" With Satterthwaite df below "
+                             f"{_fact(facts, 'df_trust_threshold', 4, 0)}, robumeta's own "
+                             f"guidance is not to trust the result.")
+            sentences.append(sentence)
+        elif getattr(pooled, "robust_fallback", ""):
+            fallback = _register(facts, "robust_fallback", pooled.robust_fallback)
+            sentences.append(f"Cluster-robust standard errors were requested but could not be "
+                             f"applied ({fallback}); the interval shown is the ordinary "
+                             f"random-effects one.")
 
         # --- leave-one-out (R8)
         estimates = [float(e["estimate"]) for e in loo if _finite(e.get("estimate"))]

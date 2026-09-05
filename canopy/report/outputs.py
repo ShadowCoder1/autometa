@@ -62,6 +62,10 @@ def _pooled_payload(pooled: MetaResult | None, rows: Sequence[EffectSizeRecord],
     payload.update({"pi_method": settings.pi_method, "pi_low_used": pi_low,
                     "pi_high_used": pi_high, "pi_df_used": pi_df,
                     "estimator": settings.estimator, "variance_method": settings.variance})
+    if getattr(pooled, "robust_fallback", ""):
+        # a limitation lives in the record itself, not only in a nested field a reader may skip
+        payload["note"] = ("cluster-robust pooling was requested and not applied: "
+                           f"{pooled.robust_fallback}")
     return payload
 
 
@@ -164,7 +168,8 @@ def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
                                       best_guess_rows=bg_rows)
     out.update({f"sensitivity_{k}": v for k, v in sensitivity.items()})
 
-    funnel = funnel_plot(rows, settings, directory / "funnel")
+    funnel = funnel_plot(rows, settings, directory / "funnel",
+                         center=None if pooled is None else pooled.estimate)
     out.update({f"funnel_{k}": v for k, v in funnel.items()})
 
     # a forest of a line that added nothing is the strict forest under another name, and one of a

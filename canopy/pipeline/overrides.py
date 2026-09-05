@@ -1046,6 +1046,10 @@ def apply_overrides_and_repool(run_dir: str | Path, *, protocol_path: str | Path
     manifest = load_manifest(out)
     protocol = _protocol_for(out, manifest, protocol_path)
     settings = protocol.stats
+    # the manifest's stored settings feed methods.md on the rewrite below; without this line a
+    # repool under an edited protocol pools with the new settings and then writes a methods
+    # paragraph describing the old ones (adversarial review of the RVE design, verified bug)
+    manifest.settings = settings
     overrides = _live_overrides(read_overrides(out))
     consumed = consumed_seqs(out)
     state = _RunState(out, manifest)
