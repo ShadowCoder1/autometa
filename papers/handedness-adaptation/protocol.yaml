@@ -108,7 +108,9 @@ stats:
 
   # Apply a small-sample correction to the pooled test, since the number of datasets per outcome
   # may be modest. See the note on dependency below for what this does and does not cover.
-  hakn: true
+  hakn: false
+  dependency: cluster_robust
+  rve_rho: 0.8
 
 notes: >-
   Moderators to record for every dataset:
@@ -127,12 +129,14 @@ notes: >-
 #
 # 1. DEPENDENCY. Many samples will contribute several comparisons, which violates the
 #    independence assumption of a conventional random-effects model. The plan is cluster-robust
-#    variance estimation. Canopy has no RVE: with `one_row_per_paper: false` the dependent rows
-#    are pooled as if independent, which leaves the point estimate close but the confidence
-#    interval too narrow. The alternative, `one_row_per_paper: true`, composites each paper's
-#    rows using `within_paper_r` — that models the dependency but changes the number of rows, so
-#    it answers a slightly different question. Neither setting is RVE, and the pooled CIs should
-#    be treated as optimistic until the rows are re-fitted with a cluster-robust model.
+#    variance estimation, and `dependency: cluster_robust` above is exactly that: the full
+#    robumeta-style CORR fit (method-of-moments tau-squared, CR2 small-sample standard errors,
+#    t on Satterthwaite df), rows clustered by paper, with the assumed within-cluster
+#    correlation `rve_rho: 0.8` (robumeta's own default; a different knob from
+#    `within_paper_r`, which parameterizes the one_row_per_paper composite and is unused here).
+#    With few clusters the Satterthwaite df can fall below 4, and the outputs then carry
+#    robumeta's own caution that the p-value is not trustworthy — the wide interval is the
+#    honest cost of the correction, not a defect.
 #
 # 2. WITHIN-SUBJECT DESIGNS. Where a study tests both limbs in the same participants, the two
 #    arms are paired rather than independent. Canopy computes an independent-groups standardized
