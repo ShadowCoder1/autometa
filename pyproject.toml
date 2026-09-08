@@ -7,7 +7,7 @@ name = "canopy-meta"
 version = "0.1.0"
 description = "Canopy: agent-verified automated meta-analysis from a folder of paper PDFs (LLM extraction from text, tables and figures; random-effects forest plots with provenance)."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "AGPL-3.0-or-later" }
 dependencies = [
   "anthropic>=0.122",

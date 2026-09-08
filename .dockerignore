@@ -1,0 +1,18 @@
+# Never copy secrets, corpora or local state into an image that gets pushed to a registry.
+.env
+.venv/
+.git/
+runs/
+papers/
+uploads/
+cache/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+validation/
+docs/
+.design/
+*.egg-info/
+.DS_Store
+serve.log
