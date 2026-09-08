@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <meta name="referrer" content="no-referrer">
-<title>Canopy — agent-verified meta-analysis</title>
+<title>AutoMeta — agent-verified meta-analysis</title>
 <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -14,7 +14,7 @@
 <header class="topbar">
   <div class="brand">
     <span class="mark" aria-hidden="true"></span>
-    <span class="wordmark">Canopy</span>
+    <span class="wordmark">AutoMeta</span>
   </div>
   <p class="run-title" id="run-title"></p>
   <div class="topbar-right">
@@ -52,7 +52,7 @@
     <div class="lede">
       <h1>Start a review</h1>
       <p>Choose a folder of PDFs and write a protocol. The protocol carries all the field
-         knowledge; Canopy contributes the reading, the checks, and the audit trail.</p>
+         knowledge; AutoMeta contributes the reading, the checks, and the audit trail.</p>
     </div>
 
     <form id="run-form" autocomplete="off">
@@ -162,7 +162,7 @@
 
         <!-- ships hidden: the page a user loads is the page they had before this existed -->
         <div class="drop find-panel" id="find-panel" hidden>
-          <p class="hint" id="find-note">Canopy will ask open scholarly indexes for papers that
+          <p class="hint" id="find-note">AutoMeta will ask open scholarly indexes for papers that
              answer the sentence above, read each title and abstract against it, and fetch the ones
              that are open access. Papers behind a paywall are listed with their links, so you can
              upload the ones you have. Nothing starts a review until you say so.</p>
@@ -219,7 +219,7 @@
     <div class="lede row">
       <div>
         <h1 id="search-title" tabindex="-1">Paper search</h1>
-        <p id="search-sub">Canopy asks open indexes your question, reads each title and abstract
+        <p id="search-sub">AutoMeta asks open indexes your question, reads each title and abstract
            against it, and records why every paper is in or out. Only openly licensed copies are
            downloaded; nothing here is a review until you begin one.</p>
       </div>
@@ -257,7 +257,7 @@
       <section class="card" aria-labelledby="h-locked">
         <div class="card-head"><h2 id="h-locked">Behind a paywall</h2>
           <span class="hint" id="locked-count"></span></div>
-        <p class="hint">Canopy will not download these. Open one; if you have access, upload the PDF
+        <p class="hint">AutoMeta will not download these. Open one; if you have access, upload the PDF
            and it joins the review. Skip the rest — the review will say they were unavailable.</p>
         <ul class="cand-list" id="list-locked" aria-labelledby="h-locked"></ul>
       </section>
@@ -410,7 +410,7 @@
     <div class="card pane" id="pane-questions" role="tabpanel" tabindex="0"
          aria-labelledby="tab-questions" hidden>
       <div class="card-head">
-        <p class="hint">Each open question shows the page Canopy read, the answers it weighed,
+        <p class="hint">Each open question shows the page AutoMeta read, the answers it weighed,
            and why it could not decide. Answering records an override and re-pools the plot.
            Questions from the mapping stage are applied on the next resume, since those pages
            have not been read yet.</p>

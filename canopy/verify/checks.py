@@ -165,6 +165,11 @@ CHECK_SEVERITY: dict[str, str] = {
     "sign_not_confirmed": "warn",
     "group_label_swapped": "error",
     "unit_mismatch": "warn",
+    #: …and the ROW-level refusal `resolve._finish` raises when the two numbers it actually
+    #: divided carry differing resolved units (`confidence.RESOLVED_UNIT_MISMATCH`). An `error`
+    #: because the row must not pool: the difference of two cross-unit values is not a contrast.
+    #: Never raised on a candidate — declared here so the review layer can weigh and ask it.
+    "resolved_unit_mismatch": "error",
     "unit_other_expression": "info",
     "metric_mixed": "warn",
     "metric_mixed_across_outcomes": "info",

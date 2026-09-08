@@ -47,14 +47,25 @@ def test_low_confidence_rows_enter_at_their_own_value():
         assert next(r for r in rows if r.dataset_id == ds).es == es
 
 
-def test_contradicting_flags_veto_unless_retired():
-    _, _, d = _lines("late_adaptation")
-    assert d["b7523a41b03a:d2"].veto == "contradicted_value"
-    assert "series_identity_conflict" in d["b7523a41b03a:d2"].reason
-    assert d["3570e4ce2a9c:d2"].veto == "contradicted_value"
-    assert "axis_conflict" in d["3570e4ce2a9c:d2"].reason
+def test_a_contradicted_row_with_a_value_enters_under_disputed_reading_guess():
+    """A contradiction is a dispute to show, not a veto: the one contradicted fixture row with a
+    live es enters at its own value with both disputes named. A contradicted row with NO value
+    still dies at the honest "cannot" — the no-value vetoes, or the direction it never had —
+    asserted by veto NAME so a contradiction never quietly becomes the stated reason again."""
+    _, rows, d = _lines("late_adaptation")
+    admitted = d["b7523a41b03a:d2"]
+    assert admitted.admitted and admitted.rule == "disputed_reading_guess"
+    assert "series_identity_conflict" in admitted.reason
+    assert "axis_conflict" in admitted.reason
+    assert admitted.evidence["contradicting_flags"] == ["axis_conflict",
+                                                        "series_identity_conflict"]
+    entered = next(r for r in rows if r.dataset_id == "b7523a41b03a:d2")
+    assert entered.es == 0.8311426326817023                # nothing re-signed or rescaled
+    # es=None rows fall through to the no-value vetoes, never to the retired flag veto
+    assert d["3570e4ce2a9c:d2"].veto == "one_group_only"
     _, _, d = _lines("aftereffect")
-    assert d["d1f2946e7e81:d1"].veto == "contradicted_value"
+    # es=None AND higher_is_better=None: the direction veto outranks the no-value ones
+    assert d["d1f2946e7e81:d1"].veto == "orientation_unresolvable"
 
 
 def test_a_retired_flag_no_longer_vetoes_the_rebuilt_row():
@@ -269,24 +280,22 @@ def _heuer_exp2_aftereffect():
         "flags": [*settled, "orientation_by_majority"]})
 
 
-def test_a_disputed_sign_never_enters_the_best_guess_line():
-    """Whole-branch review, MAJOR 2: this row was admitted at 26% of the aftereffect best guess,
-    with the dispute merely quoted — and its admission is what flipped `sign_agrees_with_strict`
-    to false and wrote "The best-guess line points the other way" into the conclusion.
+def test_a_disputed_sign_enters_under_disputed_reading_guess():
+    """The always-guess ruling on MAJOR 2's row: suppression is replaced by loudness.
 
-    `sign_mismatch` is by definition a contested sign: the direction the paper states and the
-    direction the extracted means imply disagree. DECISION A says the line "never resolves a sign
-    it does not have", and that promise cannot depend on the check being right about this row —
-    a row whose sign is disputed is not a magnitude the line may borrow.
+    `sign_mismatch` contests a sign the row HAS — `higher_is_better` is settled and the es is
+    signed by the extracted means — so the line shows it with its dispute rather than refusing
+    it: distinct rule name, the dispute first in the reason, the value never re-signed. The
+    invariant "never resolves a sign it does not have" is untouched (the orientation veto, and
+    the answer tier's F3 absolute, both stand).
     """
     row = _heuer_exp2_aftereffect()
     rows, dec = best_guess_rows([], [row], outcome=nine.protocol().outcome("aftereffect"),
                                 settings=nine.protocol().stats)
-    assert not dec[0].admitted and dec[0].rule == ""
-    assert dec[0].veto == "contradicted_value" and dec[0].veto in VETOES
+    assert dec[0].admitted and dec[0].rule == "disputed_reading_guess"
     assert "sign_mismatch" in dec[0].reason
-    assert "never resolves a sign it does not have" in dec[0].reason
-    assert rows == []
+    assert "sign_mismatch" in dec[0].evidence["contradicting_flags"]
+    assert rows[0].es == row.es and rows[0].var == row.var    # never re-signed or rescaled
 
 
 def test_the_same_row_without_the_sign_dispute_is_still_admitted():

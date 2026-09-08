@@ -185,6 +185,6 @@ def protocol_to_yaml(protocol: Protocol) -> str:
         "notes": data["notes"],
     }
     body = yaml.safe_dump(ordered, sort_keys=False, allow_unicode=True, width=100)
-    return ("# Drafted by Canopy from one sentence — a starting point, not a protocol.\n"
+    return ("# Drafted by AutoMeta from one sentence — a starting point, not a protocol.\n"
             "# Edit every line, then: canopy run --papers PDFS --protocol this.yaml --out runs/x\n"
             f"{body}")

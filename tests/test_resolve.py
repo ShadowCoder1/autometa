@@ -930,6 +930,45 @@ def test_the_review_layer_reads_the_resolvers_set_rather_than_a_copy_of_it():
     assert ROW_REFUSALS is declared
 
 
+def test_finish_refuses_a_resolved_pair_in_different_units():
+    """The refusal screens the two numbers actually divided — the RESOLVED arms, not any
+    candidate: a degrees-vs-millimetres pair on a group route is not a contrast."""
+    values = bock_values()
+    values.group_b.unit = "mm"
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.route == "text_mean_sd"                 # the conversion itself still ran
+    assert "resolved_unit_mismatch" in record.flags
+    assert record.confidence == "needs_human"
+    said = next(s for s in record.conversion_steps if "different units" in s)
+    assert "deg" in said and "mm" in said
+    assert "not a contrast" in said
+
+
+def test_an_empty_unit_never_refuses():
+    """`same_unit`'s own rule, held through `_finish`: nothing is decided against a reading
+    that did not say what unit it is in."""
+    values = bock_values()
+    values.group_b.unit = ""
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert "resolved_unit_mismatch" not in record.flags
+    assert record.confidence == "auto_accept"
+
+
+def test_a_statistic_route_never_unit_refuses():
+    """A printed t consumed no unit-bearing pair, so the arms' units — mismatched or not —
+    say nothing about the number the conversion produced."""
+    values = ResolvedValues(
+        dataset_id="b511dbb76fa6:d1", outcome_key="late_adaptation", higher_is_better=True,
+        group_a=GroupValues(n=12, mean=31.51, unit="deg", route="text"),
+        group_b=GroupValues(n=12, mean=12.28, unit="mm", route="text"),
+        test_statistic=StatisticValues(stat_type="t", value=2.1, df=22.0,
+                                       design="independent_t", direction="a_greater",
+                                       contrast_kind="groups"))
+    record = resolve_effect(dataset(), LATE, values, StatsSettings())
+    assert record.route == "test_statistic"
+    assert "resolved_unit_mismatch" not in record.flags
+
+
 # ----------------------------------------------- D1: a printed value with no spread yields
 #
 # Heuer & Hegele 2008 d1 late adaptation. The adjudicator kept the two numbers the paper PRINTS —

@@ -18,25 +18,28 @@ prepare→resolve path the repool's rebuild uses — never arithmetic of its own
 so every number a guessed row consumes is traceable to a named field of a named record, and no
 stage file or live verdict changes. Orientation is untouched either way: a row is signed by a
 human answer or by the tiebreak ballot long before this module sees it, and a row that is still
-unsigned — or whose sign is contested — is vetoed rather than guessed at, by every tier.
+unsigned is vetoed rather than guessed at, by every tier. A row whose sign is CONTESTED keeps
+the sign its own resolved means gave it and is shown with the dispute — no tier ever ENTERS
+values over one (`F3_ABSOLUTES`).
 
 Two things decide each held row, and every held row gets exactly one of them with a reason:
 
 * a **veto** (`VETOES`, first match wins) — a named reason the row's value may not be borrowed at
-  all. The two flag-driven vetoes import their vocabulary from `verify.confidence` rather than
-  restating it, so a flag added to `ROW_REFUSAL_CODES` or `CONTRADICTING_FLAGS` starts vetoing
-  here on the same commit. A flag a human answer retired is no longer on the rebuilt row, so it
-  does not veto — which is the whole point of answering.
+  all. The flag-driven veto imports its vocabulary from `verify.confidence` rather than restating
+  it, so a flag added to `ROW_REFUSAL_CODES` starts vetoing here on the same commit. A flag a
+  human answer retired is no longer on the rebuilt row, so it does not veto — which is the whole
+  point of answering.
 * a **rule** (`RULES`, first match wins) — the named ground on which the value is admitted, with
   the row's own value and variance carried through untouched.
 
-A verifier's refutation is NOT a veto. A refutation is a dispute about a magnitude or a quantity,
-and the best-guess line's job is to say what the reading implies while showing the dispute: the
-reason opens with `disputed` and names it. What the line never resolves is a SIGN it does not
-have — an unsigned row is vetoed, because guessing a direction would be inventing the finding,
-and so is a row whose sign is CONTESTED (`sign_mismatch`: the direction the paper states and the
-direction the extracted means imply disagree). A disputed magnitude is a number to show with its
-dispute; a disputed direction is a different finding.
+A verifier's refutation is NOT a veto, and neither is a contradiction. Each is a dispute about a
+magnitude, a quantity or a direction, and the best-guess line's job is to say what the resolved
+reading implies while showing the dispute: a contradicted row with a usable value enters under
+`disputed_reading_guess`, its reason opening with the dispute's own names, at the es/var the
+resolver built — nothing recomputed, re-signed or rescaled. What the line never resolves is a
+SIGN it does not have — an unsigned row is vetoed, because guessing a direction would be
+inventing the finding. A disputed direction is shown WITH its dispute; only a direction the row
+does not have is refused.
 """
 from __future__ import annotations
 
@@ -64,19 +67,24 @@ __all__ = ["ANSWER_RULES", "BEST_GUESS_FLAG", "RULES", "VETOES", "VETO_ROW_FLAGS
 #: on every row the best-guess line added, and on any composite one of them went into
 BEST_GUESS_FLAG = "best_guess"
 #: the closed set of grounds on which a held row may enter the line, in match order
-RULES: tuple[str, ...] = ("inferred_premise", "low_confidence_value", "precedence_override")
+RULES: tuple[str, ...] = ("disputed_reading_guess", "inferred_premise", "low_confidence_value",
+                          "precedence_override")
 #: the closed set of reasons a held row may not, in match order (first wins)
-VETOES: tuple[str, ...] = ("row_refusal", "contradicted_value", "orientation_unresolvable",
-                           "one_group_only", "no_variance")
+VETOES: tuple[str, ...] = ("row_refusal", "orientation_unresolvable", "one_group_only",
+                           "no_variance")
 #: the resolver owns the refusal vocabulary — imported, never copied (standing ruling)
 VETO_ROW_FLAGS = ROW_REFUSAL_CODES
-#: "this may be a different quantity" — `verify.confidence`'s own set, likewise imported
+#: "this may be a different quantity" — `verify.confidence`'s own set, likewise imported. No
+#: longer a veto: a held row carrying one of these WITH a usable value enters under
+#: `disputed_reading_guess`, the disputes named; the answer tier still refuses to build over an
+#: uncrossed one (`_cell_decide`).
 CONTRADICTED = CONTRADICTING_FLAGS
 #: a contested SIGN, not a contested magnitude: `checks.sign_check` raises it when the direction
-#: the paper STATES and the direction the extracted means imply disagree. It vetoes under
-#: `contradicted_value` (amendment, whole-branch review MAJOR 2) — the closed enum is unchanged,
-#: because what a disputed sign contradicts is the row's direction, and DECISION A's invariant is
-#: that this line never resolves a direction it does not have. Named and checked rather than
+#: the paper STATES and the direction the extracted means imply disagree. It admits under
+#: `disputed_reading_guess` at the row's own resolved sign — `higher_is_better` is settled and
+#: the es is signed by the extracted means, so the line still never resolves a sign it does not
+#: have; a sign the row HAS but the prose disputes is shown with its dispute, never suppressed.
+#: The answer tier never ENTERS values over it (`F3_ABSOLUTES`). Named and checked rather than
 #: spelled inline, so renaming the code in `verify.checks` fails here on the same commit.
 SIGN_DISPUTED = "sign_mismatch"
 assert severity_of(SIGN_DISPUTED) == "error"
@@ -213,21 +221,6 @@ def _veto(record: EffectSizeRecord) -> tuple[str, str, dict[str, Any]] | None:
                 f"conversion refused is not one the best-guess line may borrow",
                 _evidence(record, refusal_flags=refused))
 
-    contradicting = sorted(set(record.flags) & CONTRADICTED)
-    if contradicting:
-        return ("contradicted_value",
-                f"{', '.join(contradicting)}: the evidence says this reading may not be the "
-                f"quantity the cell asks for, and a best guess about the wrong quantity is not a "
-                f"guess about this contrast — a human has to settle it first",
-                _evidence(record, contradicting_flags=contradicting))
-
-    if SIGN_DISPUTED in record.flags:
-        return ("contradicted_value",
-                "sign_mismatch: the paper's stated direction contradicts the extracted means, so "
-                "the sign of this row is disputed — the best-guess line never resolves a sign it "
-                "does not have",
-                _evidence(record, contradicting_flags=[SIGN_DISPUTED]))
-
     if record.higher_is_better is None:
         return ("orientation_unresolvable",
                 "which direction counts as better was never settled for this measure, so this "
@@ -267,6 +260,18 @@ def _rule(record: EffectSizeRecord) -> tuple[str, str, dict[str, Any]] | None:
              f"se {'—' if record.se is None else format(float(record.se), '.4g')})")
     disputed = _disputes(record)
     mark = f"disputed ({', '.join(disputed)}) — " if disputed else ""
+
+    named = sorted(set(record.flags) & CONTRADICTED)
+    if SIGN_DISPUTED in record.flags:
+        named.append(SIGN_DISPUTED)
+    if named:
+        # FIRST, deliberately: what the number IS being contested outranks how it was built —
+        # loudest ground first. The vetoes have already run, so the row HAS a value and a sign.
+        return ("disputed_reading_guess",
+                f"the evidence disputes what this reading is ({', '.join(named)}); the best-guess "
+                f"line takes the resolved value as the tool's best answer — {value} — nothing "
+                f"re-signed or rescaled, and the question stays open in human review",
+                _evidence(record, contradicting_flags=named, disputed=disputed))
 
     inferred = sorted(set(record.flags) & INFERRED_PREMISE_FLAGS)
     if inferred and record.route not in GROUP_ROUTES:
@@ -1598,6 +1603,16 @@ def _cell_decide(record: EffectSizeRecord, ctx: _CellContext) -> BestGuessDecisi
         veto, reason, _ = vetoed
         _record_cell_guesses(ctx, record, guessed, f"the built row is vetoed — {veto}: "
                                                    f"{reason[:200]}")
+        return None
+    leaked = sorted(set(built.flags) & CONTRADICTED)
+    if leaked:
+        # tier-only, and not `disputed_reading_guess` territory: that rule admits a HELD row at
+        # its own resolved value, while this row's values the tier itself entered. An instance
+        # `_mask_pair` kept — attached to a cell that neither crossed nor answered it — must not
+        # ride values the tier typed in, so the fire is refused (the leak fixture, T-B17).
+        _record_cell_guesses(ctx, record, guessed,
+                             f"the built row carries an uncrossed contradiction "
+                             f"({', '.join(leaked)})")
         return None
     if not _has_value(built):
         detail = built.not_convertible_reason or "; ".join(built.routes_rejected.values())

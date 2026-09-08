@@ -268,7 +268,7 @@ def create_app(runs_dir: str | Path = "runs", *,
     list. A sibling makes the separation structural. `test_a_search_never_appears_in_the_run_list`
     passes both directories explicitly, so it pins the endpoint and not this default.
     """
-    app = FastAPI(title="Canopy", docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title="AutoMeta", docs_url=None, redoc_url=None, openapi_url=None)
     manager = JobManager(runs_dir, client_factory=client_factory,
                          **({} if max_active_runs is None else {"max_active": max_active_runs}))
     searches = SearchJobs(searches_dir if searches_dir is not None
@@ -1302,7 +1302,7 @@ def serve(host: str = "127.0.0.1", port: int = 8000, runs_dir: str | Path = "run
     if not loopback:
         print(f"\n  WARNING: binding {host} exposes your runs — and the PDFs, quotes and API\n"
               f"  budget behind them — to every machine that can reach this port.\n"
-              f"  Canopy has no user accounts: the only secret is a per-run token.\n"
+              f"  AutoMeta has no user accounts: the only secret is a per-run token.\n"
               f"  Use 127.0.0.1 unless you have a reason not to.\n")
     app = create_app(runs_dir, loopback_only=loopback,
                      allowed_hosts=["localhost", "127.0.0.1", "::1"] if loopback else None)

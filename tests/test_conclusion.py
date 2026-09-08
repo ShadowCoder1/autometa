@@ -189,7 +189,7 @@ def test_held_sentence_is_mandatory_and_quantitative():
     """R7: the fixture's late outcome holds 8 of 10 rows and the sentence says so."""
     text = render_text(_late())
     assert "8 of 10 rows for this outcome are held for human review." in text
-    assert "5 row(s) could not be given a value by any rule" in text
+    assert "4 row(s) could not be given a value by any rule" in text
 
 
 def test_no_held_rows_means_no_held_sentence():

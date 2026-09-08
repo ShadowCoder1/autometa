@@ -173,20 +173,29 @@ def write_outcome_outputs(run_dir: str | Path, outcome: OutcomeDef,
     bg_payload = best_guess_payload(pooled, bg_pooled, decisions, added_rows=added,
                                     loo_bg=bg_loo, rows=bg_rows, weights=bg_weights,
                                     settings=settings, cell_guesses=cell_guesses, fired=fired)
-    # DECISION B's caveat is assembled only when this OUTCOME fired; otherwise it is the exact
-    # pre-tier constant, byte for byte (rules §7/M3 — a fired run's unfired outcome included)
+    # The caveat is assembled when this OUTCOME fired or admitted a disputed reading; otherwise
+    # it is the exact pre-tier constant, byte for byte (rules §7/M3 — a fired run's unfired
+    # outcome included). `disputed` is counted over the DECISIONS — pre-aggregation, one per
+    # held row — because `mark_composites` names a two-rule composite "composite", and a count
+    # over the aggregated rows would let a disputed member slip out of the clause.
+    disputed = sum(1 for d in decisions if d.admitted and d.rule == "disputed_reading_guess")
     bg_caveat = None
-    if fired:
+    if fired or disputed:
         from .theme import best_guess_caveat
 
         entered = [slots for d in decisions for slots in d.entered.values()] \
             + [g.get("entered") or {} for g in cell_guesses]
         bg_caveat = best_guess_caveat(
-            fired=True,
+            fired=fired,
             crossings=any(d.stepped_past for d in decisions)
             or any(g.get("stepped_past") for g in cell_guesses),
             borrowed=any((slots.get("dispersion") or {}).get("note") for slots in entered),
-            by_rule_totals=bg_payload.get("by_rule_totals"))
+            by_rule_totals=bg_payload.get("by_rule_totals"),
+            disputed=disputed)
+        # threaded to the report through the block itself (the forest takes it as an argument
+        # below); absent whenever the constant would be printed, so a quiet run's payload is
+        # byte-identical
+        bg_payload["caveat"] = bg_caveat
 
     table = extraction_table(list(all_rows) if all_rows is not None
                              else [*rows, *needs_human_rows],

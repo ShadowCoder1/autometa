@@ -239,7 +239,8 @@ def test_the_d1_boundary_blocks_agreed_solo_read_on_a_contradicting_code():
              _cand("A", "x:d1:late_adaptation:A:digitize:readout:sonnet:direct", 44.5, 1.0,
                    n=10, model="claude-sonnet-5")]
     _, dec = _run(_held(flags=["axis_conflict"]), [va, vb], cands)
-    assert not dec[0].admitted and dec[0].veto == "contradicted_value"
+    # the tier still refuses to ENTER; the es-None row then falls to DECISION A's no-value veto
+    assert not dec[0].admitted and dec[0].veto == "no_variance"
     # …and calibration_disputed alone blocks too (the shared-instrument boundary)
     va2 = _verdict("A", mean=44.25, disp=1.0, n=10, route="figure", adjudicated=False,
                    tol=0.885, flags=[_flag("calibration_disputed", "error", [A_ENS])])
@@ -901,6 +902,14 @@ def test_the_caveat_is_the_constant_unfired_and_assembled_when_fired():
     assert "every crossing is listed on the row" in fired
     assert "pull its effect toward null" in fired
     assert "adjudicated_value ×1" in fired
+    # the disputed clause is appended fired or not — a DECISION A admission must announce
+    # itself at line level even where the answer tier never ran — and the unfired base stays
+    # the exact constant, prefix-intact
+    disputed = best_guess_caveat(disputed=2)
+    assert disputed.startswith(BEST_GUESS_CAVEAT)
+    assert "2 row(s) enter over a standing dispute" in disputed
+    assert "each names its dispute" in disputed
+    assert "enter over a standing dispute" in best_guess_caveat(fired=True, disputed=1)
 
 
 def test_t_b9_a_two_rule_row_joins_names_in_catalogue_order():

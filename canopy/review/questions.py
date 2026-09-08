@@ -57,6 +57,7 @@ QUESTION_KINDS: tuple[str, ...] = (
     "quote_not_found",    # the quote this number rests on is not printed in the paper
     "number_unusable",    # a number the conversion needs is missing or cannot be right (n, SD)
     "dispersion_doubt",   # the spread the row was divided by cannot be the one the authors used
+    "unit_doubt",         # the two values the row divided are in different units — what unit is this arm's?
     "needs_group_values",  # the row rests on a printed statistic whose estimand is unestablished
     "reader_contradicts_values",   # a reader's stated direction contradicts this cell's own means
     "other",              # a held cell that fits none of the above: show the reason
@@ -164,6 +165,11 @@ _FLAG_TO_KIND: tuple[tuple[str, str], ...] = (
     ("n_too_small", "number_unusable"),
     ("sd_nonpositive", "number_unusable"),
     ("implausible_dispersion", "dispersion_doubt"),
+    #: the row-level refusal `resolve._finish` raises when the two values it divided are in
+    #: different units. The UNIT is what clears it — a corrected unit rebuilds the row and the
+    #: refusal is re-derived — so the terminus must be a question that asks for one, never
+    #: `confirm_value` (whose answer could take the last card off a still-refused row).
+    ("resolved_unit_mismatch", "unit_doubt"),
     # last, deliberately: these codes can be on a cell whose direction *was* settled (C3 records
     # a single-witness or majority orientation with its own flag). When the direction is genuinely
     # unresolved `_kind` has already returned `orientation` above, before any of this list is read.
@@ -906,6 +912,8 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
                                 suppressed_out=suppressed_options))
     if kind == "dispersion_doubt":
         options = _stamped(_dispersion_options(flags))
+    if kind == "unit_doubt":
+        options = _stamped(_unit_options())
     if kind == "converted_statistic":
         options = _stamped(_converted_options(verdict, overruled))
     image = _image(run, candidates, provenance)
@@ -913,6 +921,8 @@ def _question(entry: Mapping[str, Any], verdict: Mapping[str, Any],
                      measure, overruled, flags)
     if kind == "dispersion_doubt":
         prompt = _dispersion_prompt(who=label, outcome_key=outcome_key, row=row)
+    if kind == "unit_doubt":
+        prompt = _unit_prompt(who=label, outcome_key=outcome_key, unit=unit, row=row)
     if kind == "converted_statistic":
         prompt = _converted_prompt(who=label, outcome_key=outcome_key, row=row,
                                    statistic=statistic)
@@ -1229,6 +1239,22 @@ def _dispersion_options(flags: Sequence[str]) -> list[dict[str, Any]]:
     ]
 
 
+def _unit_options() -> list[dict[str, Any]]:
+    """The one outcome of a cross-unit pair that no typed unit fixes.
+
+    `resolved_unit_mismatch` is re-derived from the verdicts' own units on every rebuild, so
+    the answer that lifts it is a corrected UNIT typed with the value — free text, because the
+    right unit is not a number the record holds and no `clears` could retire a refusal the
+    arithmetic re-raises. The option below is the other outcome: the paper really does report
+    the two arms on different scales, and their difference is not a contrast.
+    """
+    return [
+        {"key": "different_quantities",
+         "label": "the two groups really are reported in different units — their difference "
+                  "is not a contrast, so the cell leaves the analysis"},
+    ]
+
+
 def _converted_options(verdict: Mapping[str, Any],
                        overruled: Collection[str] = ()) -> list[dict[str, Any]]:
     """The two answers that can be PICKED for a row built from a printed statistic.
@@ -1400,6 +1426,20 @@ def _dispersion_prompt(*, who: str, outcome_key: str, row: Mapping[str, Any]) ->
     group = f"the {who} group" if who else "this group"
     return (f"The spread this {outcome_key.replace('_', ' ')} row was divided by cannot be the one "
             f"the authors used: {detail}. What is {group}'s spread really?")
+
+
+def _unit_prompt(*, who: str, outcome_key: str, unit: str, row: Mapping[str, Any]) -> str:
+    """The resolver's own refusal in the question, and the answer it names: this arm's UNIT."""
+    said = [step for step in row.get("conversion_steps") or []
+            if "different units" in str(step)]
+    detail = _short(said[0], 320) if said else \
+        "the two groups' resolved values are in different units"
+    group = f"the {who} group" if who else "this group"
+    return (f"This {outcome_key.replace('_', ' ')} row divided two values that are not in the "
+            f"same unit: {detail}. What UNIT is {group}'s value reported in? Re-type the value "
+            f"with its unit — the unit is what clears the refusal; a value alone leaves the "
+            f"stale unit standing and the row refused."
+            + (f" The unit on record for this cell is {unit!r}." if unit else ""))
 
 
 def _present_holds(verdict: Mapping[str, Any], *names: str,
@@ -2467,6 +2507,7 @@ def _answer_kind(kind: str) -> str:
             "include_dataset": "include_dataset", "which_measure": "which_measure",
             "quote_not_found": "value", "number_unusable": "value",
             "dispersion_doubt": "value",
+            "unit_doubt": "value",
             "needs_group_values": "value",
             "converted_statistic": "mark_reviewed",
             "reader_contradicts_values": "value",
@@ -2577,6 +2618,11 @@ def _single_override(question: Mapping[str, Any], answer: Mapping[str, Any]) -> 
         return {**base, "kind": "exclude_dataset",
                 "justification": f"{just} — a within-subject error bar is not a between-group "
                                  f"denominator, and the paper prints no other; excluded"}
+    if kind == "unit_doubt" and option is not None \
+            and option.get("key") == "different_quantities":
+        return {**base, "kind": "exclude_dataset",
+                "justification": f"{just} — the two groups are reported in different units, "
+                                 f"and their difference is not a contrast; excluded"}
     if option is not None and option.get("dispersion_type") and option.get("mean") is None:
         # naming what the error bars ARE is a decision about the spread's type and nothing else:
         # `resolve_effect` converts it and the row is re-derived, which is what decides whether the
@@ -2651,7 +2697,9 @@ def _single_override(question: Mapping[str, Any], answer: Mapping[str, Any]) -> 
                    "dispersion_type": (option or {}).get("dispersion_type")
                    if option is not None else answer.get("dispersion_type"),
                    "n": (option or {}).get("n") if option is not None else answer.get("n"),
-                   "unit": question.get("unit") or "",
+                   # the reviewer's own typed unit first: on a `unit_doubt` card the unit is the
+                   # answer, and the card's unit is the very reading in doubt
+                   "unit": str(answer.get("unit") or "").strip() or question.get("unit") or "",
                    "justification": f"{just} — {(option or {}).get('label') or 'typed value'}"}
         return payload
     if kind == "confirm_value" and answer.get("option") == "yes":

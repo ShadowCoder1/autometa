@@ -771,6 +771,14 @@ def unverified_variance_bucket(bucket: ConfidenceBucket,
 #: reviewer who has learned what it means at one level has learned it at both.
 IMPLAUSIBLE_DISPERSION = "implausible_dispersion"
 
+#: the code the ROW carries when the two numbers it actually divided are in different units.
+#: A NEW name, deliberately not the candidate-level `unit_mismatch`: that one records reader
+#: DISAGREEMENT about a unit and rides many perfectly divisible rows, while this one says the
+#: RESOLVED pair itself is cross-unit — a difference of a millimetre value and a ratio is not a
+#: contrast, so no line may take the row. An empty unit never raises it (`verify.units.same_unit`):
+#: nothing is decided against a reading that did not say.
+RESOLVED_UNIT_MISMATCH = "resolved_unit_mismatch"
+
 #: EVERY code the resolver can put on a ROW that neither cell carries — the findings that are
 #: about the number the CONVERSION produced, so they cannot exist until both cells are in.
 #:
@@ -785,7 +793,8 @@ IMPLAUSIBLE_DISPERSION = "implausible_dispersion"
 #:
 #: `resolve._add_row_refusal` is the only writer and it refuses a code that is not here, so the
 #: set cannot fall behind the resolver — `tests/test_resolve.py` pins that both ways.
-ROW_REFUSAL_CODES: frozenset[str] = frozenset({IMPLAUSIBLE_DISPERSION})
+ROW_REFUSAL_CODES: frozenset[str] = frozenset({IMPLAUSIBLE_DISPERSION,
+                                               RESOLVED_UNIT_MISMATCH})
 
 
 def dispersion_plausibility_bucket(bucket: ConfidenceBucket, d: float | None, *,

@@ -35,9 +35,10 @@ from ..stats.conversions import (mean_sd_from_five_number, mean_sd_from_median_i
                                  combine_groups, partial_variance, split_control)
 from ..stats.effect_sizes import NotConvertible, SMDResult
 from ..verify.confidence import (DF_SHORTFALL_PREFIX, IMPLAUSIBLE_DISPERSION,
-                                 INFERRED_PREMISE_FLAGS, ROW_REFUSAL_CODES,
-                                 conversion_gate_bucket, dispersion_plausibility_bucket,
-                                 unverified_variance_bucket)
+                                 INFERRED_PREMISE_FLAGS, RESOLVED_UNIT_MISMATCH,
+                                 ROW_REFUSAL_CODES, conversion_gate_bucket,
+                                 dispersion_plausibility_bucket, unverified_variance_bucket)
+from ..verify.units import same_unit, unit_key
 from ..verify.vote import modality as reading_modality
 
 __all__ = ["resolve_effect", "resolve_effect_with_fallback", "available_routes",
@@ -1147,6 +1148,21 @@ def _finish(record: EffectSizeRecord, name: str, result: SMDResult, inputs: dict
         record.confidence = screened
         _add_row_refusal(record, IMPLAUSIBLE_DISPERSION)
         steps.extend(said)
+        record.conversion_steps = steps
+        record.conversion_chain = "; ".join(steps)
+
+    # units of the two numbers actually divided — the RESOLVED arms, not any candidate (reader
+    # disagreement about a unit is `unit_mismatch`, a warn; the resolved pair being cross-unit
+    # is this row's own arithmetic). `same_unit` already encodes "an empty unit is never a
+    # mismatch", so nothing is decided against a reading that did not say; a statistic or a
+    # reported d consumed no unit-bearing pair, so only the group routes are screened.
+    if name in GROUP_ROUTES and not same_unit(values.group_a.unit if values.group_a else "",
+                                              values.group_b.unit if values.group_b else ""):
+        record.confidence = "needs_human"
+        _add_row_refusal(record, RESOLVED_UNIT_MISMATCH)
+        steps.append(f"refused: the two groups' resolved values are in different units "
+                     f"({unit_key(values.group_a.unit)} vs {unit_key(values.group_b.unit)}); "
+                     f"their difference is not a contrast, so no line may take this row")
         record.conversion_steps = steps
         record.conversion_chain = "; ".join(steps)
     return record

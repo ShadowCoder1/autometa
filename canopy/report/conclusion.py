@@ -43,6 +43,8 @@ __all__ = ["Conclusion", "VETO_PHRASES", "outcome_conclusion", "overall_conclusi
 #: on the day it is added (and reads as its own name until someone writes it a phrase).
 VETO_PHRASES: dict[str, str] = {
     "row_refusal": "the resolver refused the row",
+    # no longer in `bestguess.VETOES` (disputed readings now enter under their own rule) —
+    # kept because pre-change payloads reload through this
     "contradicted_value": "the reading may be a different quantity",
     "orientation_unresolvable": "direction unresolved",
     "one_group_only": "only one group's statistics",

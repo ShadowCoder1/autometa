@@ -82,30 +82,37 @@ BEST_GUESS_CAVEAT = ("Best guess, not the primary analysis: this line adds rows 
 
 def best_guess_caveat(*, fired: bool = False, crossings: bool = False,
                       borrowed: bool = False,
-                      by_rule_totals: dict[str, int] | None = None) -> str:
+                      by_rule_totals: dict[str, int] | None = None,
+                      disputed: int = 0) -> str:
     """DECISION B: the caveat ASSEMBLED, when the answer tier fired — else the constant above.
 
     Fire-gated on purpose (rules §7/M3): an outcome where no cell rule fired keeps the exact
     string it printed before the tier existed, byte for byte. When one did, the base sentence
     changes to say what the line now does — enters values already in the record under named
-    rules — and each clause below is added only when it is true of THIS outcome.
+    rules — and each clause below is added only when it is true of THIS outcome. The `disputed`
+    clause is the exception, added fired or not: a `disputed_reading_guess` admission is a
+    DECISION A row rule, and the line must announce it wherever the caveat is shown.
     """
-    if not fired:
-        return BEST_GUESS_CAVEAT
-    text = ("Best guess, not the primary analysis: this line adds rows held for human review, "
-            "each entered at values already in the run's own record under named per-row rules, "
-            "and each still unconfirmed.")
-    if crossings:
-        text += (" Some rows answer still-open review questions past standing objections; "
-                 "every crossing is listed on the row.")
-    if borrowed:
-        text += (" Where a settled mean lacked a printed spread, the spread was borrowed from "
-                 "a same-cell reading the record designates — borrowing can under-weight a "
-                 "row and pull its effect toward null.")
-    if by_rule_totals:
-        text += (" Best-guess rows by rule: "
-                 + ", ".join(f"{rule} ×{count}"
-                             for rule, count in sorted(by_rule_totals.items())) + ".")
+    if fired:
+        text = ("Best guess, not the primary analysis: this line adds rows held for human "
+                "review, each entered at values already in the run's own record under named "
+                "per-row rules, and each still unconfirmed.")
+        if crossings:
+            text += (" Some rows answer still-open review questions past standing objections; "
+                     "every crossing is listed on the row.")
+        if borrowed:
+            text += (" Where a settled mean lacked a printed spread, the spread was borrowed "
+                     "from a same-cell reading the record designates — borrowing can "
+                     "under-weight a row and pull its effect toward null.")
+        if by_rule_totals:
+            text += (" Best-guess rows by rule: "
+                     + ", ".join(f"{rule} ×{count}"
+                                 for rule, count in sorted(by_rule_totals.items())) + ".")
+    else:
+        text = BEST_GUESS_CAVEAT
+    if disputed > 0:
+        text += (f" {disputed} row(s) enter over a standing dispute about what the number is "
+                 f"or which way it points; each names its dispute.")
     return text
 
 

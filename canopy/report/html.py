@@ -206,7 +206,7 @@ def methods_paragraph(manifest: RunManifest, protocol: Protocol,
     lines = [
         f"## Methods — {protocol.title}",
         "",
-        f"Records were screened and extracted by Canopy {manifest.canopy_version or '(dev)'} "
+        f"Records were screened and extracted by AutoMeta {manifest.canopy_version or '(dev)'} "
         f"(commit `{manifest.git_commit or 'unknown'}`) under protocol "
         f"`{Path(manifest.protocol_path).name or 'protocol.yaml'}` "
         f"(sha256 `{manifest.protocol_hash[:12]}`), run `{manifest.run_id}` on "
@@ -413,8 +413,11 @@ def _best_guess_section(key: str, label: str, best: Mapping[str, Any],
     if not best or int(best.get("n_added") or 0) < 1:
         return []
     only = strict_k < 2 and int(best.get("k") or 0) >= 2
+    # the ASSEMBLED caveat when the block carries one (a fired tier, a disputed admission) —
+    # the constant otherwise, so a quiet outcome's section is byte-identical
+    caveat = str(best.get("caveat") or "") or theme.BEST_GUESS_CAVEAT
     parts = [f"<h3>{_e(BEST_GUESS_ONLY_HEADING if only else BEST_GUESS_HEADING)}</h3>",
-             f'<p class="callout">{_e(theme.BEST_GUESS_CAVEAT)}</p>']
+             f'<p class="callout">{_e(caveat)}</p>']
     if best.get("k"):
         parts.append(_cards([
             (f"best guess {estimator_label(settings)}", _num(best.get("estimate"))),
@@ -494,8 +497,8 @@ def _renderer_callout(renderer: Mapping[str, Any] | None) -> str:
     check = renderer["crosscheck"]
     named = ", ".join(str(q) for q in (check.get("failed") or [])) or "the pooled result"
     detail = "; ".join(str(w) for w in (check.get("warnings") or []))
-    return (f'<p class="callout">R <code>meta</code> and canopy disagreed on {_e(named)}, so '
-            f'this plot was NOT drawn by R: it is canopy\u2019s own, from the numbers in the '
+    return (f'<p class="callout">R <code>meta</code> and AutoMeta disagreed on {_e(named)}, so '
+            f'this plot was NOT drawn by R: it is AutoMeta\u2019s own, from the numbers in the '
             f'tables below. <code>canopy validate</code> exits non-zero on this run. '
             f'{_e(renderer.get("reason") or detail)}</p>')
 
@@ -578,7 +581,7 @@ def write_html_report(run_dir: str | Path, manifest: RunManifest, protocol: Prot
     ]))
     parts.append(f'<p class="files">run <code>{_e(manifest.run_id)}</code> · '
                  f'{_e(manifest.created_at)} · protocol sha256 '
-                 f'<code>{_e(manifest.protocol_hash[:12])}</code> · canopy '
+                 f'<code>{_e(manifest.protocol_hash[:12])}</code> · AutoMeta '
                  f'{_e(manifest.canopy_version or "dev")} '
                  f'(<code>{_e(manifest.git_commit or "unknown")}</code>) · profile '
                  f'<code>{_e(settings.profile)}</code></p>')
@@ -699,7 +702,7 @@ def write_html_report(run_dir: str | Path, manifest: RunManifest, protocol: Prot
 
     page = ("<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-            f"<title>{_e(protocol.title)} — Canopy report</title>"
+            f"<title>{_e(protocol.title)} — AutoMeta report</title>"
             f"<style>{REPORT_CSS}</style></head><body><main>"
             + "\n".join(parts) +
             "</main></body></html>\n")

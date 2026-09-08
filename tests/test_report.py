@@ -680,10 +680,16 @@ def test_each_line_aggregates_its_own_rows_and_a_mixed_composite_is_a_guess(tmp_
     of its members were guessed.
     """
     out, payload, cells = _nine_outputs(tmp_path, "late_adaptation", one_row_per_paper=True)
-    composite = next(a for a in payload["best_guess"]["added"] if "+" in a["dataset_id"])
-    for member in composite["dataset_id"].split("+"):
-        assert member in composite["reason"]
+    composites = [a for a in payload["best_guess"]["added"] if "+" in a["dataset_id"]]
+    buch = next(c for c in composites if c["dataset_id"].startswith("592b3b55a318"))
+    for member in buch["dataset_id"].split("+"):
+        assert member in buch["reason"]
         assert cells[(member, "late_adaptation")]["in_best_guess"] is True
+    # …and a composite folding a STRICT row into a disputed admission is a guess wholesale
+    # too, its reason naming the guessed member alone — the strict member is in the line
+    # already and is not a guess to explain
+    mixed = next(c for c in composites if c["dataset_id"].startswith("b7523a41b03a"))
+    assert "b7523a41b03a:d2 (disputed_reading_guess)" in mixed["reason"]
     assert payload["k"] == 2 and payload["best_guess"]["k"] == 4
     assert out["forest_best_guess_png"].exists()
 
@@ -704,9 +710,10 @@ def test_extraction_columns_have_best_guess_before_moderators(tmp_path):
     assert guessed["in_best_guess"] is True
     assert guessed["best_guess_rule"] == "low_confidence_value" and guessed["best_guess_reason"]
     assert guessed["best_guess_es"] == guessed["es"]
-    refused = table["b7523a41b03a:d2"]
-    assert refused["in_best_guess"] is False and refused["best_guess_rule"] == ""
-    assert refused["best_guess_reason"].startswith("contradicted_value:")
+    disputed = table["b7523a41b03a:d2"]
+    assert disputed["in_best_guess"] is True
+    assert disputed["best_guess_rule"] == "disputed_reading_guess"
+    assert disputed["best_guess_es"] == disputed["es"]        # at its own value, never rescaled
     assert table["b511dbb76fa6:d1"]["in_best_guess"] is True      # a strict row is in the line
     assert table["b511dbb76fa6:d1"]["best_guess_rule"] == ""      # but it is not a guess
 
@@ -717,10 +724,11 @@ def test_include_needs_human_note_counts_what_it_could_not_include(tmp_path):
     entry = next(a for a in payload["analyses"] if a["name"] == "include_needs_human")
     assert "4 of 8 held row(s) could not be included" in entry["note"]
     assert entry["k"] == 2 + 4                            # the four that carry a usable value
-    # and the best-guess line is NOT that set: one of the four is vetoed `contradicted_value`,
-    # which is the whole difference between "add everything held" and "add what a rule admits"
+    # on THIS fixture the two ks now coincide (the disputed row enters both); the sets still
+    # differ in general — a `row_refusal` or unsigned row with a value is included here and
+    # vetoed there, which is the difference between "add everything held" and "what a rule admits"
     best_guess = next(a for a in payload["analyses"] if a["name"] == "best_guess")
-    assert best_guess["k"] == 5 and best_guess["delta_vs_primary"] is not None
+    assert best_guess["k"] == 6 and best_guess["delta_vs_primary"] is not None
 
 
 # --------------------------------------------------------------------------- HTML report
@@ -1089,12 +1097,15 @@ def test_report_html_sections_in_order(tmp_run):
 
     html = (tmp_run / "report.html").read_text(encoding="utf-8")
     assert html.index("<h2>Conclusion</h2>") < html.index("Best guess (not the primary analysis)")
+    # LA has a disputed admission, so its section prints the ASSEMBLED caveat: the constant is
+    # its prefix, and the disputed clause follows it (adversarial finding 3's threading)
     assert theme.BEST_GUESS_CAVEAT in html
+    assert "enter over a standing dispute" in html
     # the outcome's own heading (its strict cards) comes before its guess
     label = nine.protocol().outcome("late_adaptation").label
     assert html.index(f"<h2>{label}</h2>") < html.index("Best guess (not the primary analysis)")
     assert "results/late_adaptation/forest_best_guess.png" in html
-    assert "low_confidence_value" in html and "contradicted_value" in html
+    assert "low_confidence_value" in html and "disputed_reading_guess" in html
     # …and the guess's own artefacts are real files, not a second name for the strict ones
     missing = sorted({t for t in local_links(html) if not (tmp_run / t).exists()})
     assert missing == [], f"dead links in report.html: {missing}"

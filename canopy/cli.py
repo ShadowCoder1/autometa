@@ -309,7 +309,7 @@ def serve(
     try:
         from .server.app import serve as _serve            # Task 12 supplies this
     except ImportError:
-        console.print("[yellow]the Canopy web UI is not installed in this build[/yellow]")
+        console.print("[yellow]the AutoMeta web UI is not installed in this build[/yellow]")
         console.print("`canopy serve` needs `canopy/server/` (Task 12). Until then, open the "
                       "static report a run already wrote:")
         console.print("  [dim]open runs/<name>/report.html[/dim]")

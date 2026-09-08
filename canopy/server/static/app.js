@@ -1,4 +1,4 @@
-/* Canopy — the review UI.
+/* AutoMeta — the review UI.
  *
  * Vanilla JS, no build step, no network except this server. One rule governs the whole file:
  * every string that came out of a PDF or a model is written with `textContent`, never as markup.
@@ -244,7 +244,7 @@
       keyNote.textContent = "Sorting the papers for you needs a model. Without one the search "
         + "still runs and still fetches the open-access PDFs: the queries come from your own "
         + "words and no abstract is read, so every paper is listed for you to judge and none is "
-        + "ticked. Canopy reads ANTHROPIC_API_KEY from .env; nothing on this page ever shows it.";
+        + "ticked. AutoMeta reads ANTHROPIC_API_KEY from .env; nothing on this page ever shows it.";
       show(keyNote, !!settings.search_key_required);
     });
   }
@@ -1181,6 +1181,8 @@
       free.appendChild(sel);
       free.appendChild(h("input", { attrs: { type: "number", step: "1", name: "n",
         placeholder: "n" } }));
+      free.appendChild(h("input", { attrs: { type: "text", name: "unit",
+        placeholder: "unit (e.g. deg, cm)" + (q.unit ? " \u2014 read: " + q.unit : "") } }));
     }
     form.appendChild(free);
     form.addEventListener("change", function () {
@@ -1241,8 +1243,8 @@
     // the reason, one sentence per thing that is holding it — a card folded from two cells
     // carries both cells' reasons, and a wall of them joined by `||` reads as neither
     var why = h("details", { cls: "q-why" }, [
-      h("summary", { text: q.status === "settled" ? "what Canopy decided, and on what"
-                                                : "why Canopy could not decide" })
+      h("summary", { text: q.status === "settled" ? "what AutoMeta decided, and on what"
+                                                : "why AutoMeta could not decide" })
     ]);
     String(q.why || "").split(" || ").forEach(function (reason) {
       if (reason.trim()) { why.appendChild(h("p", { text: reason.trim() })); }
@@ -1313,7 +1315,7 @@
     } else if (slotPicks.length && !picked && !combined) {
       payload.slots = slotPicks;
     } else if (free) {
-      ["hint", "mean", "dispersion_value", "dispersion_type", "n", "group"].forEach(
+      ["hint", "mean", "dispersion_value", "dispersion_type", "n", "group", "unit"].forEach(
         function (name) {
           var input = form.querySelector("[name=" + name + "]");
           if (input && input.value !== "") { payload[name] = input.value; }
@@ -1698,7 +1700,7 @@
   }
 
   /* ── extraction table ── */
-  // a sha is how Canopy identifies a row; a name and a page number are how a reader checks one
+  // a sha is how AutoMeta identifies a row; a name and a page number are how a reader checks one
   var COLUMNS = [
     ["study_label", "study"], ["dataset_label", "dataset"], ["pages", "page"],
     ["n_a", "n A"], ["n_b", "n B"], ["mean_a", "mean A"], ["mean_b", "mean B"],
@@ -2095,6 +2097,7 @@
       dispersionType.appendChild(h("option", { text: name, attrs: { value: name } }));
     });
     var n = h("input", { attrs: { type: "number", min: "1", placeholder: "n" } });
+    var unit = h("input", { attrs: { type: "text", placeholder: "unit (e.g. deg, cm)" } });
     var hint = h("input", { attrs: { type: "text", placeholder: "what should be read instead" } });
     var direction = h("select");
     [["false", "a SMALLER raw value is more of what this review scores (error-type measure)"],
@@ -2127,7 +2130,8 @@
       h("label", { cls: "field" }, [h("span", { cls: "label", text: "mean" }), mean]),
       h("label", { cls: "field" }, [h("span", { cls: "label", text: "dispersion" }), dispersion]),
       h("label", { cls: "field" }, [h("span", { cls: "label", text: "type" }), dispersionType]),
-      h("label", { cls: "field" }, [h("span", { cls: "label", text: "n" }), n])
+      h("label", { cls: "field" }, [h("span", { cls: "label", text: "n" }), n]),
+      h("label", { cls: "field" }, [h("span", { cls: "label", text: "unit" }), unit])
     ]);
     var hintRow = h("label", { cls: "field" }, [h("span", { cls: "label", text: "hint" }), hint]);
     var eligibleRow = h("label", { cls: "field" },
@@ -2160,6 +2164,7 @@
           if (dispersion.value) { payload.dispersion_value = Number(dispersion.value); }
           payload.dispersion_type = dispersionType.value;
           if (n.value) { payload.n = Number(n.value); }
+          if (unit.value.trim()) { payload.unit = unit.value.trim(); }
         }
         if (kind.value === "re_extract") { payload.hint = hint.value.trim(); }
         if (kind.value === "eligibility") { payload.eligible = eligible.value === "true"; }
@@ -2564,7 +2569,7 @@
     }
     if (counts.possible_duplicates) {
       text += " " + plural(counts.possible_duplicates, "pair")
-        + " might be the same paper twice; Canopy will not merge those on its own.";
+        + " might be the same paper twice; AutoMeta will not merge those on its own.";
     }
     // the user's own exclusions belong IN the ladder, not beside it: a recall read off this line
     // is not a number until the line says what the search was forbidden to find.
@@ -2623,7 +2628,7 @@
 
   function renderDuplicates(search) {
     var card = cardOnce("search-dupes", "Might be the same paper twice",
-                        "Canopy never merges these on its own: a wrong merge deletes a study and "
+                        "AutoMeta never merges these on its own: a wrong merge deletes a study and "
                         + "nobody ever sees it, while a wrong split costs you one click");
     var list = $("search-dupes-list");
     clear(list);
@@ -2737,7 +2742,7 @@
     return bits.join(" · ");
   }
 
-  /* Canopy's own word for why there is no PDF on a row, in a sentence. `fetch_outcome` is
+  /* AutoMeta's own word for why there is no PDF on a row, in a sentence. `fetch_outcome` is
      recorded for every candidate the fetch stage did not reach, and it was recorded correctly
      and shown nowhere — so a user looking at a paper with no PDF could not tell "no index
      offered a copy" from "the cap stopped us" from "the publisher refused". */
@@ -2956,7 +2961,7 @@
   // what the browser can know before a round trip; everything else is the server's to refuse, and
   // its own words are shown verbatim rather than paraphrased
   function badPdf(file) {
-    if (!/\.pdf$/i.test(file.name)) { return "That file is not a PDF. Canopy only reads PDFs."; }
+    if (!/\.pdf$/i.test(file.name)) { return "That file is not a PDF. AutoMeta only reads PDFs."; }
     var cap = (state.settings || {}).max_upload_mb;
     if (cap && file.size > cap * 1e6) {
       return "That PDF is " + (file.size / 1e6).toFixed(1) + " MB; this server accepts up to "
@@ -3018,7 +3023,7 @@
     });
     var note = $("search-extra-note");
     if (!files.length) {
-      note.textContent = "That file is not a PDF. Canopy only reads PDFs.";
+      note.textContent = "That file is not a PDF. AutoMeta only reads PDFs.";
       return;
     }
     var form = new FormData();
