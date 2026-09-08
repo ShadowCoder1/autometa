@@ -1,9 +1,12 @@
-# Canopy
+# AutoMeta
 
 **A meta-analysis from a folder of paper PDFs — with every number traceable to the sentence, table
 cell or pixel it came from.**
 
-You give Canopy a folder of PDFs and a protocol (what question, which two groups, which outcomes,
+*(The Python package and CLI are still named `canopy`, the project's working name. AutoMeta is the
+name the web interface and the published figures use.)*
+
+You give AutoMeta a folder of PDFs and a protocol (what question, which two groups, which outcomes,
 which studies count). It reads every paper the way a careful reviewer would — locating the values
 in the text, the tables and the figures, reading each one with more than one model, checking those
 readings against each other and against the PDF, converting them to effect sizes **in code**, and
@@ -16,6 +19,14 @@ digitiser's own marks drawn on it.
 
 > **Status.** Working end to end and validated against one published review (see
 > [`validation/README.md`](validation/README.md)). Not a released package: expect to read the code.
+
+> **No paper PDFs are distributed here.** Journal articles are copyrighted by their publishers, so
+> every third-party PDF is excluded from this repository — the review corpora, the open-access
+> validation set, and the test fixtures alike. Each of those directories keeps its manifest, so you
+> can fetch the same papers yourself from their DOIs; `validation/papers_oa/fetch_oa_papers.py`
+> does it for the open-access set. Tests that read a fixture PDF will fail until you supply one
+> (see [`tests/fixtures/pdfs/README.md`](tests/fixtures/pdfs/README.md)); the rest of the suite
+> runs on a fresh clone.
 
 ---
 

@@ -10,3 +10,10 @@ cache/
 
 # local Claude Code worktrees
 .claude/
+
+# Third-party paper PDFs are never committed: journal articles are the publishers'
+# copyright, and "open access" usually means free to read, not free to redistribute.
+# Each corpus keeps its manifest so the same papers can be fetched from their DOIs.
+papers/**/*.pdf
+tests/fixtures/pdfs/*.pdf
+validation/papers_oa/*.pdf
