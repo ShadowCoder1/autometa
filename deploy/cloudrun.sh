@@ -73,8 +73,10 @@ secret() {
         # 1. the local .env, read silently — the key is already on this machine, and this way it
         #    never touches a command line, a prompt, or a chat window
         if [ -f "$ENV_FILE" ]; then
+            # `|| true`: a key that is simply not in the file must not kill the script — under
+            # `set -e -o pipefail` a grep that matches nothing is a fatal assignment.
             value="$(grep -E "^${name}=" "$ENV_FILE" | head -1 | cut -d= -f2- \
-                     | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")"
+                     | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//" || true)"
             [ -n "$value" ] && echo "  $name: read from $ENV_FILE"
         fi
         # 2. the environment:  CANOPY_ACCESS_CODE=word deploy/cloudrun.sh
@@ -118,7 +120,7 @@ trap 'rm -f "$ENVFILE"' EXIT
     echo "CANOPY_MAX_UPLOAD_MB: \"30\""          # Cloud Run refuses request bodies over 32 MB
     if [ -f "$ENV_FILE" ]; then
         for key in ANTHROPIC_BASE_URL CANOPY_LLM_EXTRA_BODY CANOPY_CONTACT_EMAIL; do
-            val="$(grep -E "^${key}=" "$ENV_FILE" | head -1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")"
+            val="$(grep -E "^${key}=" "$ENV_FILE" | head -1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//" || true)"
             [ -n "$val" ] && printf '%s: %s\n' "$key" "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$val")"
         done
     else
