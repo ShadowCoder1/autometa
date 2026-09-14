@@ -26,24 +26,50 @@ import pytest
 
 from canopy.llm.client import LLMClient
 from canopy.llm.providers import FakeProvider
-from canopy.search.indices import EuropePmc, OpenAlex
+from canopy.search.blocks import expand_plan, plan_from_answer, render_strings, template_plan
+from canopy.search.indices import EuropePmc, OpenAlex, PubMed, depth_for
 from canopy.search.models import PHASES, counts_of, project
 from canopy.search.run import EXCLUDED_BY_USER, MIN_TITLE_FRAGMENT, run_search
-from canopy.search.transport import HttpResponse, RecordedTransport, fixture_key
+from canopy.search.fetch import INTERNET_ARCHIVE
+from canopy.search.transport import HttpResponse, RecordedTransport, fixture_key, html_key
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "search"
 PDF = Path(__file__).resolve().parent / "fixtures" / "pdfs" / "bock2005.pdf"
 
 QUESTION = "does resistance training reduce tremor in Parkinson's disease?"
-QUERY = "resistance training parkinson tremor"
-PER_QUERY = 25
+DEPTH = 25
 MODEL_ROLES = {"primary": "claude-opus-5", "secondary": "claude-sonnet-5"}
 
-#: what the query call answers. One query, so one request per index and one fixture per index.
-QUERIES_PAYLOAD = {"queries": [{"text": QUERY, "why": "the words of the question itself"}],
-                   "criteria": ["adults with Parkinson's disease",
-                                "a resistance-training arm and a comparator",
-                                "a tremor outcome reported numerically"]}
+#: what the block call answers: three blocks, one string (no related designs, so no second),
+#: and a rubric. The words are the question's own, so nothing here names a field of study.
+QUERIES_PAYLOAD = {
+    "blocks": [
+        {"name": "groups", "why": "the condition", "terms": ["parkinson", "parkinsonian"]},
+        {"name": "task", "why": "the intervention",
+         "terms": ["resistance training", "strength training"]},
+        {"name": "phenomenon", "why": "the outcome", "terms": ["tremor", "bradykinesia"]},
+        {"name": "related_designs", "why": "", "terms": []}],
+    "rubric": [{"rule": "adults with the condition named", "kind": "population",
+                "abstract_can_fail": True},
+               {"rule": "a resistance-training arm and a comparator", "kind": "comparison",
+                "abstract_can_fail": False},
+               {"rule": "a tremor outcome reported numerically", "kind": "outcome",
+                "abstract_can_fail": False}]}
+EMPTY_ESEARCH = {"esearchresult": {"count": "0", "retmax": "0", "retstart": "0", "idlist": [],
+                                   "querytranslation": "nothing"}}
+EMPTY_OA = {"results": [], "meta": {"count": 0, "next_cursor": None}}
+
+
+def planned_strings(answer=QUERIES_PAYLOAD, protocol=None) -> dict:
+    """The strings the pipeline will build from this answer, computed the way it computes them
+    (no width control: the fake transport has no counts, so nothing is pruned)."""
+    plan = plan_from_answer(answer, question=QUESTION, protocol=protocol)
+    expand_plan(plan, protocol, QUESTION)
+    render_strings(plan)
+    return plan["strings"]
+
+
+QUERY = planned_strings()["Q1"]["pubmed"]
 
 
 def load(name: str) -> dict:
@@ -58,20 +84,30 @@ def fake_probe(_path):
 
 def index_transport(*, epmc: dict | None = None, openalex: dict | None = None,
                     epmc_response: HttpResponse | None = None,
-                    openalex_response: HttpResponse | None = None) -> RecordedTransport:
-    """A transport with one recorded answer per (index, query), at the key the adapter will ask for.
+                    openalex_response: HttpResponse | None = None,
+                    strings: dict | None = None) -> RecordedTransport:
+    """A transport with one recorded answer per (index form, query), at the key the adapter
+    will ask for: PubMed answers no ids, OpenAlex title/abstract the given works, OpenAlex full
+    text nothing, Europe PMC the given records — so the record holds 6 + 5 distinct papers.
 
     The keys come from each adapter's own `request()`, so an adapter that changed its parameters
     raises `MissingSearchFixture` here instead of quietly passing against a stale recording.
+    Width control's count requests are NOT recorded: the fake refuses them loudly, width control
+    records the terms as unmeasured, and the strings are sent as written.
     """
     transport = RecordedTransport()
-    for index, body, response in ((EuropePmc(), epmc, epmc_response),
-                                  (OpenAlex(), openalex, openalex_response)):
-        url, params = index.request(QUERY, limit=PER_QUERY)
-        if response is None:
-            response = HttpResponse(url=url, status=200, outcome="ok",
-                                    body=json.dumps(body or {}).encode("utf-8"))
-        transport.record(url, response, params)
+    for query_id, forms in (strings or planned_strings()).items():
+        text = forms["pubmed"]
+        rows = [(PubMed(), "", EMPTY_ESEARCH, None),
+                (OpenAlex(), "ta", openalex, openalex_response),
+                (EuropePmc(), "", epmc, epmc_response),
+                (OpenAlex(), "ft", EMPTY_OA, None)]
+        for index, form, body, response in rows:
+            url, params = index.request(text, limit=depth_for(index.name, DEPTH), form=form)
+            if response is None:
+                response = HttpResponse(url=url, status=200, outcome="ok",
+                                        body=json.dumps(body or {}).encode("utf-8"))
+            transport.record(url, response, params)
     return transport
 
 
@@ -83,8 +119,15 @@ def serve_pdfs(transport: RecordedTransport, urls) -> RecordedTransport:
 
 def refuse(transport: RecordedTransport, url: str, *, status: int, outcome: str,
            error: str = "") -> RecordedTransport:
+    """A URL that will not yield a PDF — and, because the fetcher now reads a landing page once
+    and asks the Internet Archive once, a page naming no PDF and an archive with no copy."""
     transport.responses[fixture_key(url)] = HttpResponse(
         url=url, status=status, outcome=outcome, error=error or f"HTTP {status}")
+    transport.responses[html_key(url)] = HttpResponse(
+        url=url, status=200, outcome="ok", body=b"<html><body>Sign in to read</body></html>")
+    transport.responses[fixture_key(INTERNET_ARCHIVE + url)] = HttpResponse(
+        url=INTERNET_ARCHIVE + url, status=404, outcome="http_error",
+        error="web.archive.org answered HTTP 404")
     return transport
 
 
@@ -100,7 +143,9 @@ def include_everything(n: int) -> dict:
     would no longer mean anything.
     """
     return {"decisions": [{"ref": str(i), "decision": "include",
-                           "reason": "a resistance-training trial reporting tremor"}
+                           "reason": "a resistance-training trial reporting tremor",
+                           "quote": "progressive resistance training", "q1": "yes", "q2": "yes",
+                           "q3": "yes", "q4": "yes", "q5": "named", "q6": "yes"}
                           for i in range(1, n + 1)]}
 
 
@@ -138,7 +183,7 @@ def test_a_whole_search_end_to_end(tmp_path, phase_log):
         question=QUESTION, transport=transport,
         client=scripted_client(QUERIES_PAYLOAD, include_everything(11)),
         model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=60,
-        staging_dir=tmp_path / "pdfs", per_query=PER_QUERY, probe=fake_probe,
+        staging_dir=tmp_path / "pdfs", depth=DEPTH, probe=fake_probe,
         on_phase=lambda *event: phase_log.append(event))
 
     counts = counts_of(record.candidates, record.possible_duplicates)
@@ -157,11 +202,18 @@ def test_a_whole_search_end_to_end(tmp_path, phase_log):
     # paper unresolvable at begin time (review §B1).
     assert all(c.pdf_path.startswith("pdfs/") for c in fetched)
     assert all((tmp_path / c.pdf_path).exists() for c in fetched)
-    # every attempt is on the record, including the two that proved a landing page is not a paper
-    assert sum(len(c.fetch_attempts) for c in record.candidates) == 6
-    assert {a["outcome"] for c in record.candidates for a in c.fetch_attempts} == {"ok",
-                                                                                  "not_a_pdf"}
+    # every attempt is on the record, including the two that proved a landing page is not a
+    # paper — each read once for a PDF link it did not have, then asked of the archive once
+    assert sum(len(c.fetch_attempts) for c in record.candidates) == 4 + 2 * 3
+    assert {a["outcome"] for c in record.candidates for a in c.fetch_attempts} == {
+        "ok", "not_a_pdf", "no_pdf_link", "http_error"}
+    assert {a.get("via", "") for c in record.candidates for a in c.fetch_attempts} == {
+        "", "landing_page", "internet_archive"}
     assert record.stopped_because == ""
+    # …and the record prices the review those PDFs would start
+    assert record.predicted["run_commit"]["n_read"] == 4
+    assert record.predicted["run_commit"]["n_unsure"] == 0
+    assert any("commits about $" in note for note in record.notes)
 
 
 def test_the_five_phases_report_in_order(tmp_path, phase_log):
@@ -170,7 +222,7 @@ def test_the_five_phases_report_in_order(tmp_path, phase_log):
     run_search(question=QUESTION, transport=transport,
                client=scripted_client(QUERIES_PAYLOAD, include_everything(11)),
                model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=0,
-               staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe,
+               staging_dir=tmp_path, depth=DEPTH, probe=fake_probe,
                on_phase=lambda *event: phase_log.append(event))
 
     names = [name for name, status, *_ in phase_log if status == "running"]
@@ -191,7 +243,7 @@ def test_a_broken_progress_listener_cannot_kill_a_search(tmp_path):
     record = run_search(question=QUESTION, transport=transport,
                         client=scripted_client(QUERIES_PAYLOAD, include_everything(11)),
                         model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=0,
-                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe,
+                        staging_dir=tmp_path, depth=DEPTH, probe=fake_probe,
                         on_phase=explode)
     assert len(record.candidates) == 11 and len(record.phases) == 2 * len(PHASES)
 
@@ -203,15 +255,25 @@ def test_sources_carry_n_returned_and_unique_contributed(tmp_path):
     record = run_search(question=QUESTION, transport=transport,
                         client=scripted_client(QUERIES_PAYLOAD, include_everything(11)),
                         model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=0,
-                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+                        staging_dir=tmp_path, depth=DEPTH, probe=fake_probe)
 
-    rows = {row["name"]: row for row in record.sources}
-    assert set(rows) == {"europepmc", "openalex"}
-    assert rows["europepmc"]["n_returned"] == 6 and rows["openalex"]["n_returned"] == 5
+    rows = {(row["name"], row["form"]): row for row in record.sources}
+    assert set(rows) == {("pubmed", ""), ("openalex", "ta"), ("europepmc", ""),
+                         ("openalex", "ft")}, "one row per (index, query, form)"
+    assert [r["name"] for r in record.sources] == ["pubmed", "openalex", "europepmc",
+                                                   "openalex"], "the measured order"
+    assert rows[("europepmc", "")]["n_returned"] == 6 and rows[("openalex", "ta")][
+        "n_returned"] == 5
+    assert rows[("pubmed", "")]["n_returned"] == 0 and rows[("openalex", "ft")]["n_returned"] == 0
     # these two recordings share no paper, so every row is a unique contribution
-    assert rows["europepmc"]["unique_contributed"] == 6
-    assert rows["openalex"]["unique_contributed"] == 5
-    assert all(row["query"] == QUERY for row in record.sources)
+    assert rows[("europepmc", "")]["unique_contributed"] == 6
+    assert rows[("openalex", "ta")]["unique_contributed"] == 5
+    assert all(row["query"] == QUERY and row["query_id"] == "Q1" and row["pages"] == 1
+               for row in record.sources)
+    # …and every candidate knows the position each form returned it at
+    assert all(c.ranks for c in record.candidates)
+    assert sorted(c.ranks["europepmc:Q1:"] for c in record.candidates
+                  if "europepmc:Q1:" in c.ranks) == [1, 2, 3, 4, 5, 6]
 
 
 def test_a_paper_both_indexes_found_is_counted_once_and_credited_to_neither(tmp_path):
@@ -229,7 +291,7 @@ def test_a_paper_both_indexes_found_is_counted_once_and_credited_to_neither(tmp_
     record = run_search(question=QUESTION, transport=transport,
                         client=scripted_client(QUERIES_PAYLOAD, include_everything(10)),
                         model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=0,
-                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+                        staging_dir=tmp_path, depth=DEPTH, probe=fake_probe)
 
     counts = counts_of(record.candidates, record.possible_duplicates)
     assert counts["records"] == 11 and counts["after_dedupe"] == 10, "eleven rows, ten papers"
@@ -239,7 +301,8 @@ def test_a_paper_both_indexes_found_is_counted_once_and_credited_to_neither(tmp_
     rows = {row["name"]: row for row in record.sources}
     assert rows["europepmc"]["unique_contributed"] == 5
     assert rows["openalex"]["unique_contributed"] == 4
-    assert sum(row["unique_contributed"] for row in record.sources) == 9, "the shared one is neither's"
+    assert sum(rows[name]["unique_contributed"] for name in rows) == 9, \
+        "the shared one is neither's"
 
 
 # ---------------------------------------------------------------------------- degrading honestly
@@ -254,7 +317,7 @@ def test_openalex_running_out_of_budget_leaves_the_search_alive(tmp_path, phase_
     record = run_search(question=QUESTION, transport=transport,
                         client=scripted_client(QUERIES_PAYLOAD, include_everything(6)),
                         model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=0,
-                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe,
+                        staging_dir=tmp_path, depth=DEPTH, probe=fake_probe,
                         on_phase=lambda *event: phase_log.append(event))
 
     assert len(record.candidates) == 6, "Europe PMC's six survive"
@@ -275,39 +338,30 @@ def test_both_indexes_failing_is_recorded_not_raised(tmp_path, phase_log):
     record = run_search(question=QUESTION, transport=transport,
                         client=scripted_client(QUERIES_PAYLOAD), model_roles=MODEL_ROLES,
                         budget_usd=1.0, max_screened=200, max_fetch=0, staging_dir=tmp_path,
-                        per_query=PER_QUERY, probe=fake_probe,
+                        depth=DEPTH, probe=fake_probe,
                         on_phase=lambda *event: phase_log.append(event))
 
     assert record.candidates == []
-    assert [row["error"] for row in record.sources] == ["the index answered HTTP 503"] * 2
+    dead = {(r["name"], r["form"]): r["error"] for r in record.sources if r["error"]}
+    assert dead == {("europepmc", ""): "the index answered HTTP 503",
+                    ("openalex", "ta"): "the index answered HTTP 503"}
     assert ("index", "error") in [(name, status) for name, status, *_ in phase_log]
     assert len(record.phases) == 2 * len(PHASES), "every rung still reported"
 
 
 def keyless_transport() -> RecordedTransport:
-    """Europe PMC answering both template queries; OpenAlex answering both with nothing.
+    """Europe PMC answering both template strings; PubMed and OpenAlex answering with nothing.
 
-    The template path builds two queries out of the user's own words, so each index is asked
-    twice, and `RecordedTransport` refuses any request it has no recording for.
+    The protocol-less template path requires every content word of the question, in two
+    strings (all the words, then the first four), so each index form is asked twice, and
+    `RecordedTransport` refuses any request it has no recording for.
     """
-    index = EuropePmc()
-    transport = RecordedTransport()
-    for query_text in ("resistance training reduce tremor parkinson disease",
-                       "resistance training reduce tremor"):
-        url, params = index.request(query_text, limit=PER_QUERY)
-        transport.record(url, HttpResponse(
-            url=url, status=200, outcome="ok",
-            body=json.dumps(load("europepmc_search")).encode()), params)
-    url, params = OpenAlex().request("resistance training reduce tremor parkinson disease",
-                                     limit=PER_QUERY)
-    transport.record(url, HttpResponse(url=url, status=200, outcome="ok",
-                                       body=json.dumps({"results": [], "meta": {}}).encode()),
-                     params)
-    url, params = OpenAlex().request("resistance training reduce tremor", limit=PER_QUERY)
-    transport.record(url, HttpResponse(url=url, status=200, outcome="ok",
-                                       body=json.dumps({"results": [], "meta": {}}).encode()),
-                     params)
-    return transport
+    plan = template_plan(QUESTION)
+    expand_plan(plan)
+    render_strings(plan)
+    assert list(plan["strings"]) == ["Q1", "Q2"]
+    return index_transport(epmc=load("europepmc_search"), openalex=EMPTY_OA,
+                           strings=plan["strings"])
 
 
 #: the four Europe PMC records in the recording that carry a `?pdf=render` copy
@@ -328,7 +382,7 @@ def test_with_no_model_the_queries_are_the_user_s_own_words_and_nothing_is_scree
     record = run_search(question=QUESTION, transport=serve_pdfs(keyless_transport(),
                                                                 KEYLESS_RENDER),
                         client=None, model_roles=MODEL_ROLES, budget_usd=None, max_screened=200,
-                        max_fetch=60, staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+                        max_fetch=60, staging_dir=tmp_path, depth=DEPTH, probe=fake_probe)
 
     counts = counts_of(record.candidates, record.possible_duplicates)
     assert record.query_source == "template" and record.cost_usd == 0.0
@@ -351,7 +405,7 @@ def test_a_keyless_search_still_fetches_the_open_copies_and_can_become_a_run(tmp
     record = run_search(question=QUESTION, transport=serve_pdfs(keyless_transport(),
                                                                 KEYLESS_RENDER),
                         client=None, model_roles=MODEL_ROLES, budget_usd=None, max_screened=200,
-                        max_fetch=60, staging_dir=tmp_path / "staging", per_query=PER_QUERY,
+                        max_fetch=60, staging_dir=tmp_path / "staging", depth=DEPTH,
                         probe=fake_probe)
 
     counts = counts_of(record.candidates, record.possible_duplicates)
@@ -376,7 +430,7 @@ def test_the_records_count_is_the_rows_the_indexes_returned_not_the_index_names(
     """
     record = run_search(question=QUESTION, transport=keyless_transport(), client=None,
                         model_roles=MODEL_ROLES, budget_usd=None, max_screened=200, max_fetch=0,
-                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+                        staging_dir=tmp_path, depth=DEPTH, probe=fake_probe)
 
     counts = counts_of(record.candidates, record.possible_duplicates)
     assert counts["after_dedupe"] == 6, "six distinct papers"
@@ -396,7 +450,7 @@ def test_the_screening_batch_map_is_written_into_the_record(tmp_path):
     record = run_search(question=QUESTION, transport=transport,
                         client=scripted_client(QUERIES_PAYLOAD, include_everything(11)),
                         model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=0,
-                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+                        staging_dir=tmp_path, depth=DEPTH, probe=fake_probe)
 
     blob = json.loads(json.dumps(record.to_json()))
     assert blob["batches"], "the map reaches disk"
@@ -416,7 +470,7 @@ def test_unpaywall_is_skipped_with_a_note_when_there_is_no_contact_address(tmp_p
     record = run_search(question=QUESTION, transport=transport,
                         client=scripted_client(QUERIES_PAYLOAD, include_everything(11)),
                         model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=60,
-                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+                        staging_dir=tmp_path, depth=DEPTH, probe=fake_probe)
 
     assert any("CANOPY_CONTACT_EMAIL" in note for note in record.notes)
     assert not any(row["name"] == "unpaywall" for row in record.sources)
@@ -438,16 +492,19 @@ def test_cancelling_between_stages_skips_the_rest_and_names_the_reason(tmp_path,
     record = run_search(question=QUESTION, transport=transport,
                         client=scripted_client(QUERIES_PAYLOAD), model_roles=MODEL_ROLES,
                         budget_usd=1.0, max_screened=200, max_fetch=60, staging_dir=tmp_path,
-                        per_query=PER_QUERY, probe=fake_probe, cancelled=cancelled,
+                        depth=DEPTH, probe=fake_probe, cancelled=cancelled,
                         on_phase=lambda *event: phase_log.append(event))
 
     assert record.stopped_because == "cancelled"
     assert record.candidates == [] and record.sources == []
     skipped = [name for name, status, *_ in phase_log if status == "skipped"]
-    assert skipped == ["index", "dedupe", "screen", "fetch"]
+    assert skipped == ["index", "dedupe", "screen", "snowball", "fetch"]
     assert all("you stopped this search" in message
                for _, status, message, _ in phase_log if status == "skipped")
-    assert transport.calls == [], "nothing went to an index after the cancellation"
+    # width control's hit counts belong to the queries stage, which had already run; no SEARCH
+    # went to an index after the cancellation
+    assert all(c["context"].get("form") == "count" for c in transport.calls), \
+        "nothing went to an index after the cancellation"
 
 
 def test_the_screening_cap_leaves_the_rest_listed_and_unscreened(tmp_path):
@@ -457,7 +514,7 @@ def test_the_screening_cap_leaves_the_rest_listed_and_unscreened(tmp_path):
     record = run_search(question=QUESTION, transport=transport,
                         client=scripted_client(QUERIES_PAYLOAD, include_everything(4)),
                         model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=4, max_fetch=0,
-                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+                        staging_dir=tmp_path, depth=DEPTH, probe=fake_probe)
 
     counts = counts_of(record.candidates, record.possible_duplicates)
     assert counts["after_dedupe"] == 11, "nothing is dropped by a cap"
@@ -474,7 +531,7 @@ def test_the_fetch_cap_is_recorded_on_the_candidates_it_stopped(tmp_path):
     record = run_search(question=QUESTION, transport=transport,
                         client=scripted_client(QUERIES_PAYLOAD, include_everything(11)),
                         model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=2,
-                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+                        staging_dir=tmp_path, depth=DEPTH, probe=fake_probe)
 
     over = [c for c in record.candidates if c.fetch_outcome == "over_fetch_cap"]
     assert len(over) == 9 and all(c.state == "wanted" for c in over)
@@ -493,7 +550,7 @@ def test_a_question_that_produces_no_query_says_so_instead_of_searching_nothing(
     assert record.queries == [] and record.candidates == []
     assert ("queries", "error") in [(name, status) for name, status, *_ in phase_log]
     assert [name for name, status, *_ in phase_log if status == "skipped"] == [
-        "index", "dedupe", "screen", "fetch"]
+        "index", "dedupe", "screen", "snowball", "fetch"]
 
 
 def test_the_record_is_json_serialisable_with_its_counts(tmp_path):
@@ -502,7 +559,7 @@ def test_the_record_is_json_serialisable_with_its_counts(tmp_path):
     record = run_search(question=QUESTION, transport=transport,
                         client=scripted_client(QUERIES_PAYLOAD, include_everything(11)),
                         model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=0,
-                        staging_dir=tmp_path, per_query=PER_QUERY, probe=fake_probe)
+                        staging_dir=tmp_path, depth=DEPTH, probe=fake_probe)
 
     blob = json.loads(json.dumps(record.to_json()))
     assert blob["counts"]["after_dedupe"] == 11
@@ -556,7 +613,7 @@ def search_excluding(exclude, tmp_path, *, client=None, max_screened=200):
     client = client or scripted_client(QUERIES_PAYLOAD, include_everything(11))
     record = run_search(question=QUESTION, transport=transport, client=client,
                         model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=max_screened,
-                        max_fetch=0, staging_dir=tmp_path, per_query=PER_QUERY,
+                        max_fetch=0, staging_dir=tmp_path, depth=DEPTH,
                         probe=fake_probe, exclude=exclude)
     return record, client
 
@@ -643,8 +700,12 @@ def test_an_exclusion_that_matched_nothing_is_never_silent(tmp_path):
 def test_the_user_and_the_screener_are_never_confused_for_each_other(tmp_path):
     """Both land in the `excluded` state; a reader of `search.json` must still tell them apart."""
     verdicts = {"decisions": [{"ref": "1", "decision": "exclude",
-                               "reason": "no tremor outcome is reported"}]
-                + [{"ref": str(i), "decision": "include", "reason": "a resistance-training trial"}
+                               "reason": "no tremor outcome is reported", "quote": "",
+                               "q1": "yes", "q2": "yes", "q3": "no", "q4": "unknown",
+                               "q5": "unknown", "q6": "yes"}]
+                + [{"ref": str(i), "decision": "include", "reason": "a resistance-training trial",
+                    "quote": "resistance training", "q1": "yes", "q2": "yes", "q3": "yes",
+                    "q4": "yes", "q5": "named", "q6": "yes"}
                    for i in range(2, 11)]}
     record, _client = search_excluding(
         [FORBIDDEN_DOI], tmp_path,
@@ -704,7 +765,7 @@ def test_an_excluded_paper_is_not_fetched_even_when_an_open_copy_is_there(tmp_pa
     record = run_search(question=QUESTION, transport=transport,
                         client=scripted_client(QUERIES_PAYLOAD, include_everything(10)),
                         model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=60,
-                        staging_dir=tmp_path / "pdfs", per_query=PER_QUERY, probe=fake_probe,
+                        staging_dir=tmp_path / "pdfs", depth=DEPTH, probe=fake_probe,
                         exclude=["10.2196/97507"])
 
     forbidden = next(c for c in record.candidates if c.excluded_by_user)
@@ -715,3 +776,115 @@ def test_an_excluded_paper_is_not_fetched_even_when_an_open_copy_is_there(tmp_pa
     assert counts_of(record.candidates)["fetched"] == 3
     assert not any(attempt["url"].endswith("PMC13317673?pdf=render")
                    for c in record.candidates for attempt in c.fetch_attempts)
+
+
+# --------------------------------------------------- the unsure papers, and Unpaywall twice (§5, §7)
+def unknown_everything(n: int) -> dict:
+    return {"decisions": [{"ref": str(i), "decision": "unknown",
+                           "reason": "the abstract does not say which group was tested",
+                           "quote": "", "q1": "yes", "q2": "unknown", "q3": "unknown",
+                           "q4": "unknown", "q5": "possible", "q6": "yes"}
+                          for i in range(1, n + 1)]}
+
+
+def test_unsure_papers_are_fetched_under_their_cap_and_priced_at_the_end(tmp_path):
+    """A v2 screener answers `unknown` for half of what it reads, and each one fetched is a paper
+    the review reads at dollars a paper: `max_fetch_unsure` bounds them, the rest stay ticked and
+    say so, and the record's last note prices what `begin` would commit."""
+    transport = index_transport(epmc=load("europepmc_search"), openalex=load("openalex_works"))
+    serve_pdfs(transport, [f"https://europepmc.org/articles/{p}?pdf=render"
+                           for p in ("PMC13317673", "PMC12941259", "PMC12982457", "PMC13065030")])
+    for landing in ("https://www.ncbi.nlm.nih.gov/pmc/articles/4366306",
+                    "https://www.ncbi.nlm.nih.gov/pmc/articles/4586021"):
+        refuse(transport, landing, status=200, outcome="not_a_pdf")
+
+    record = run_search(question=QUESTION, transport=transport,
+                        client=scripted_client(QUERIES_PAYLOAD, unknown_everything(11)),
+                        model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=60,
+                        max_fetch_unsure=6, staging_dir=tmp_path / "pdfs", depth=DEPTH,
+                        probe=fake_probe)
+
+    counts = counts_of(record.candidates, record.possible_duplicates)
+    assert counts["unsure"] == 11 and counts["included"] == 0
+    assert counts["fetched"] == counts["unsure_fetched"] == 4, "the four open copies"
+    fetched = [c for c in record.candidates if c.state == "fetched"]
+    assert all(c.screen_decision == "unknown" and c.keep for c in fetched)
+    routeless = [c for c in record.candidates if c.fetch_outcome == "no_oa_location"]
+    assert len(routeless) == 5 and all(c.state == "unsure" for c in routeless)
+    assert counts["paywalled"] == 0, "nobody wanted these, so no paywall may be claimed"
+    commit = record.predicted["run_commit"]
+    assert (commit["n_read"], commit["n_wanted"], commit["n_unsure"]) == (4, 0, 4)
+    assert commit["usd"] == round(4 * commit["per_paper_usd"], 2)
+    assert any("unsure paper(s) are ≈ $" in note for note in record.notes)
+
+    # …and under a cap of two, the two most relevant unsure papers are tried and no others
+    transport = index_transport(epmc=load("europepmc_search"), openalex=load("openalex_works"))
+    serve_pdfs(transport, [f"https://europepmc.org/articles/{p}?pdf=render"
+                           for p in ("PMC13317673", "PMC12941259", "PMC12982457", "PMC13065030")])
+    for landing in ("https://www.ncbi.nlm.nih.gov/pmc/articles/4366306",
+                    "https://www.ncbi.nlm.nih.gov/pmc/articles/4586021"):
+        refuse(transport, landing, status=200, outcome="not_a_pdf")
+    record = run_search(question=QUESTION, transport=transport,
+                        client=scripted_client(QUERIES_PAYLOAD, unknown_everything(11)),
+                        model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=60,
+                        max_fetch_unsure=2, staging_dir=tmp_path / "pdfs2", depth=DEPTH,
+                        probe=fake_probe)
+    tried = [c for c in record.candidates if c.fetch_attempts]
+    over = [c for c in record.candidates if c.fetch_outcome == "over_unsure_cap"]
+    assert len(tried) == 2 and len(over) == 4
+    assert all(c.state == "unsure" and c.keep and c.fetch_attempts == [] for c in over)
+    assert min(c.relevance for c in tried) >= max(c.relevance for c in over), \
+        "the cap cut the least relevant, not the last to arrive"
+    assert any("most relevant unsure" in note for note in record.notes)
+
+
+def test_unpaywall_is_asked_before_the_fetch_and_again_after_every_route_failed(tmp_path,
+                                                                                 monkeypatch):
+    """Before: the papers no index offered a copy of. After: the papers whose every route
+    failed — Unpaywall's repository copy is often the one a publisher's landing page hid."""
+    monkeypatch.setenv("CANOPY_CONTACT_EMAIL", "someone@example.org")
+    from canopy.search.indices import Unpaywall
+
+    transport = index_transport(epmc=load("europepmc_search"), openalex=load("openalex_works"))
+    serve_pdfs(transport, [f"https://europepmc.org/articles/{p}?pdf=render"
+                           for p in ("PMC13317673", "PMC12941259", "PMC12982457", "PMC13065030")])
+    landing = "https://www.ncbi.nlm.nih.gov/pmc/articles/4366306"
+    refuse(transport, landing, status=200, outcome="not_a_pdf")
+    refuse(transport, "https://www.ncbi.nlm.nih.gov/pmc/articles/4586021", status=200,
+           outcome="not_a_pdf")
+    # the paper behind that landing page has a repository copy Unpaywall knows about
+    with_landing = next(w for w in load("openalex_works")["results"]
+                        if (w.get("open_access") or {}).get("oa_url") == landing)
+    doi = with_landing["doi"].replace("https://doi.org/", "")
+    late = "https://repo.example.org/copy.pdf"
+    url, params = Unpaywall().request(doi, email="someone@example.org")
+    transport.record(url, HttpResponse(url=url, status=200, outcome="ok", body=json.dumps({
+        "is_oa": True, "best_oa_location": {"url_for_pdf": late, "license": "cc-by"},
+        "oa_locations": []}).encode()), params)
+    serve_pdfs(transport, [late])
+    # …and every other DOI gets an honest "no copy" from Unpaywall
+    for work in load("openalex_works")["results"] + [
+            {"doi": r["doi"]} for r in load("europepmc_search")["resultList"]["result"]]:
+        other = str(work.get("doi") or "").replace("https://doi.org/", "")
+        if other and other != doi:
+            url, params = Unpaywall().request(other, email="someone@example.org")
+            transport.record(url, HttpResponse(url=url, status=200, outcome="ok",
+                                               body=b'{"is_oa": false, "oa_locations": []}'),
+                             params)
+
+    record = run_search(question=QUESTION, transport=transport,
+                        client=scripted_client(QUERIES_PAYLOAD, include_everything(11)),
+                        model_roles=MODEL_ROLES, budget_usd=1.0, max_screened=200, max_fetch=60,
+                        staging_dir=tmp_path / "pdfs", depth=DEPTH, probe=fake_probe)
+
+    paper = next(c for c in record.candidates if c.doi == doi.lower())
+    assert paper.state == "fetched" and paper.license == "cc-by"
+    assert [(a["outcome"], a.get("via", "")) for a in paper.fetch_attempts] == [
+        ("not_a_pdf", ""), ("no_pdf_link", "landing_page"), ("http_error", "internet_archive"),
+        ("ok", "")]
+    assert counts_of(record.candidates)["fetched"] == 5
+    rows = [s for s in record.sources if s["name"] == "unpaywall"]
+    # asked once per DOI, never twice: the 'before' pass covered the routeless, the 'after' hook
+    # covered the ones whose routes failed, and nothing was asked about a paper that fetched
+    assert len(rows) == len({s["query"] for s in rows})
+    assert not any("CANOPY_CONTACT_EMAIL" in note for note in record.notes)

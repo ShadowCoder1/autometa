@@ -1,18 +1,10 @@
-# Never copy secrets, corpora or local state into an image that gets pushed to a registry.
-.env
-.venv/
-.git/
-runs/
-papers/
-uploads/
-cache/
-**/__pycache__/
-*.pyc
-.pytest_cache/
-tests/
-validation/
-docs/
-.design/
-*.egg-info/
-.DS_Store
-serve.log
+# The image copies pyproject.toml, README.md and canopy/ — nothing else — but Docker and
+# Cloud Build upload the whole directory as context first. Without this file that upload is every
+# run, every PDF and the virtualenv: gigabytes, some of it copyrighted, none of it needed.
+*
+!pyproject.toml
+!README.md
+!canopy/
+canopy/**/__pycache__/
+canopy/**/*.pyc
+canopy/**/.DS_Store

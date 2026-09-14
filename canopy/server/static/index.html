@@ -7,9 +7,9 @@
 <meta name="referrer" content="no-referrer">
 <title>AutoMeta — agent-verified meta-analysis</title>
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%2325344a"/><path d="M7 16h18" stroke="%23a7b4c8" stroke-width="1.6"/><path d="M8 12.5v7M24 12.5v7" stroke="%23a7b4c8" stroke-width="1.6"/><rect x="12.2" y="12.2" width="7.6" height="7.6" transform="rotate(45 16 16)" fill="%236ca6ef"/></svg>'>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400..700&family=Source+Sans+3:ital,wght@0,400..700;1,400..700&family=JetBrains+Mono:wght@400..700&display=swap">
+<!-- No web fonts: this page makes no external request, so it works offline and a reviewer's
+     reading of their own papers is never announced to a font CDN. The stacks in styles.css
+     name the faces we would like and fall back to good system ones. -->
 <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -170,12 +170,34 @@
              answer the sentence above, read each title and abstract against it, and fetch the ones
              that are open access. Papers behind a paywall are listed with their links, so you can
              upload the ones you have. Nothing starts a review until you say so.</p>
-          <div class="grid-2">
+          <div class="grid-3">
             <label class="field"><span class="label">Most it may spend (USD)</span>
               <input type="number" id="f-max-usd" min="0" step="0.25"></label>
             <label class="field"><span class="label">Abstracts to read at most</span>
               <input type="number" id="f-max-screened" min="1" step="10"></label>
+            <label class="field"><span class="label">Unsure papers to fetch at most</span>
+              <input type="number" id="f-max-fetch-unsure" min="0" step="10"></label>
           </div>
+          <div class="grid-2">
+            <label class="field"><span class="label">How deep to read each index</span>
+              <select id="f-depth">
+                <option value="200">200 rows a string (quick)</option>
+                <option value="1000" selected>1,000 rows a string</option>
+                <option value="3000">3,000 rows a string (slow)</option>
+              </select></label>
+            <label class="field check"><input type="checkbox" id="f-snowball" checked>
+              <span class="label">Chase citations of what the screener keeps</span></label>
+          </div>
+          <label class="field"><span class="label">Papers that must be found (one DOI per
+             line, up to 20)</span>
+            <textarea id="f-seeds" rows="2" spellcheck="false"></textarea></label>
+          <p class="hint">Each seed is checked against the search strings before anything is
+             searched: a word the width control pruned is put back when a seed needs it, the
+             blocks are rewritten once for the seeds still unreached, and a seed no string can
+             reach is added to the list itself — marked as yours, never counted as found.</p>
+          <p class="hint" id="find-cost-note" hidden></p>
+          <p class="hint" id="find-email-note" hidden></p>
+          <p class="hint" id="find-openalex-note" hidden></p>
           <label class="field"><span class="label">Never include these (one DOI or title per
              line)</span>
             <textarea id="f-exclude" rows="3" spellcheck="false"></textarea></label>

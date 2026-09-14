@@ -20,7 +20,8 @@ from ..models import GroupDef, OutcomeDef, Protocol, StatsSettings
 from .theme import estimator_label
 
 __all__ = ["ForestColumns", "forest_columns", "columns_for", "prettify_moderator",
-           "group_initial", "elide", "MAX_LABEL_CH", "MAX_MOD_CH", "N_COLUMN", "STUDY_COLUMN",
+           "group_initial", "elide", "elide_marked", "MAX_LABEL_CH", "MAX_MOD_CH", "N_COLUMN",
+           "STUDY_COLUMN",
            "YEAR_COLUMN"]
 
 #: how long a study label and a moderator value may be before the plot elides them. Shared by
@@ -44,6 +45,23 @@ def elide(text: object, limit: int) -> str:
     """`text`, cut to `limit` characters with an ellipsis when it does not fit."""
     value = str(text)
     return value if len(value) <= limit else value[: max(1, limit - 1)] + "\u2026"
+
+
+def elide_marked(text: object, limit: int, mark: str = "") -> str:
+    """`text` elided to `limit`, with `mark` still on it — the mark goes on AFTER the cut.
+
+    Both forests mark an overridden row's author label with `theme.OVERRIDE_MARK`, and the
+    matplotlib one appended it BEFORE eliding: at `MAX_LABEL_CH = 17` every author string of 16
+    characters or more lost the marker, silently, on exactly the rows whose labels are longest
+    (review finding). A marker that elision can delete is no marker at all — the plot then reads as
+    "nothing here was overridden" on a figure where something was.
+
+    So the mark sits outside the character budget: it is a finding about the row rather than part of
+    its name, and both renderers size the author column from its own cells, so the two extra
+    characters widen that column instead of clipping anything.
+    """
+    value = elide(text, limit)
+    return f"{value} {mark}" if mark else value
 
 
 def prettify_moderator(name: str) -> str:

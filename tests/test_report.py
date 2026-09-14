@@ -158,6 +158,51 @@ def test_footer_counts_needs_human_and_not_convertible_separately(tmp_path, gold
     assert "2 rows excluded (needs_human 1, not convertible 1)" in svg
 
 
+def test_the_override_marker_survives_a_long_author_label(tmp_path, gold_rows, pooled_gold,
+                                                          outcome, settings):
+    """The △ was appended to the label BEFORE `elide(…, 17)`, so a long label silently lost it.
+
+    Which is the worst failure a marker can have: the rows whose author strings are longest are
+    exactly the rows on which the plot then claimed nothing had been overridden. The footer's key
+    kept saying a △ meant an override, with no △ anywhere on the figure.
+    """
+    from canopy.report.forest import _left_columns, forest_layout, forest_plot
+    from canopy.report.theme import OVERRIDE_MARK
+
+    name = "Vandenberghe-Lindqvist"
+    assert len(name) > 17                              # longer than `labels.MAX_LABEL_CH`
+    marked = gold_rows[0].model_copy(update={
+        "flags": ["human_override"],
+        "citation": Citation(first_author=name, authors=name, year=2011)})
+    rows = [marked, *gold_rows[1:]]
+
+    layout = forest_layout(rows, pooled_gold, settings)
+    cells = _left_columns(layout)[0].cells
+    mine = next(cell for cell, row in zip(cells, layout.all_rows) if row.overridden)
+    assert mine.startswith("Vandenberghe-Lin") and mine.endswith(OVERRIDE_MARK)
+    assert sum(1 for cell in cells if OVERRIDE_MARK in cell) == 1
+
+    svg = forest_plot(rows, pooled_gold, outcome, settings,
+                      tmp_path / "forest")["svg"].read_text(encoding="utf-8")
+    assert mine in svg                                 # …and it is on the figure, not just the cell
+
+
+def test_is_overridden_reads_the_flag_and_not_the_route(gold_rows):
+    """`record.route == "human_override"` was a clause that could never fire (review finding).
+
+    A row's route is a resolver route name — `text_mean_sd`, `figure:*`, `composite`,
+    `not_convertible` — and nothing writes an override's own name into it. An override is recorded
+    as the `human_override` FLAG, by `pipeline.overrides._rebuild_row`, on every row any override
+    rebuilt. So the clause was deleted rather than corrected: it tested nothing, it hid that it
+    tested nothing, and a route is not where this question is answered.
+    """
+    from canopy.report.theme import OVERRIDE_FLAG, is_overridden
+
+    assert is_overridden(gold_rows[0].model_copy(update={"flags": [OVERRIDE_FLAG]}))
+    assert not is_overridden(gold_rows[0])
+    assert not is_overridden(gold_rows[0].model_copy(update={"route": OVERRIDE_FLAG}))
+
+
 def test_forest_plot_is_sorted_by_effect(tmp_path, gold_rows, pooled_gold, outcome, settings):
     from canopy.report.forest import forest_plot, forest_layout
 
@@ -247,6 +292,39 @@ def test_extraction_table_survives_a_row_with_no_verdicts(tmp_path, resolved_row
     row = list(csv.DictReader(out["csv"].open(newline="", encoding="utf-8")))[0]
     assert row["mean_a"] == "44.67"          # falls back to the record's own inputs
     assert row["quote_a"] == ""
+
+
+def test_an_overridden_arm_never_carries_the_replaced_candidate_quote(tmp_path, resolved_row):
+    """A reviewer's number printed beside a reading's page and quote is a FALSE provenance claim.
+
+    `verdict.candidate_ids` still names the candidates behind the value an override replaced, and a
+    `value` override carries no quote, page or crop of its own — so the cell used to print the
+    corrected mean next to the verbatim sentence, the page and the digitiser's overlay of a number
+    that is no longer there. Two real rows of `runs/et_with_dbs` did that: one printed `mean_b =
+    35.4` beside the sentence printing 27.1 for the OTHER arm, and one printed a reviewer's swapped
+    series beside the overlay of the box it overruled. A reader checking such a quote concludes the
+    number is wrong, when it is the quote that does not belong.
+
+    The arm a human answered says so instead. The arm nobody answered keeps its provenance: blanking
+    that too would throw away a quote that is still true of the number beside it.
+    """
+    from canopy.report.tables import HUMAN_PROVENANCE, extraction_table
+
+    verdicts, candidates = _verdicts_for(resolved_row)
+    answered = next(v for v in verdicts if v.group == "A")
+    answered.mean = 41.0                  # what `overrides._apply_value` does to the answered cell
+    answered.overridden_by_human = True
+    answered.override_justification = "Table 2 prints 41.0 for the older group, not the text"
+    out = extraction_table([resolved_row.model_copy(update={"flags": ["human_override"]})],
+                           tmp_path / "t", verdicts=verdicts, candidates=candidates)
+    row = list(csv.DictReader(out["csv"].open(newline="", encoding="utf-8")))[0]
+
+    assert row["mean_a"] == "41"
+    assert (row["page_a"], row["crop_a"], row["overlay_a"]) == ("", "", "")
+    assert "44.67" not in row["quote_a"]               # the replaced reading's own sentence
+    assert row["quote_a"] == f"{HUMAN_PROVENANCE}: {answered.override_justification}"
+    assert row["page_b"] == "3" and row["quote_b"].startswith("46.14")
+    assert row["crop_b"] == "crops/B.png"
 
 
 def test_extraction_table_writes_an_infinite_value_instead_of_raising(tmp_path, resolved_row):

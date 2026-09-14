@@ -84,7 +84,7 @@ def fake_search(record: SearchRecord, *, search_dir: Path, options: Any, client_
                        "unique_contributed": 3, "error": ""}]
     record.phases = [{"name": name, "status": "done", "message": f"{name} finished",
                       "seconds": 0.01}
-                     for name in ("queries", "index", "dedupe", "screen")]
+                     for name in ("queries", "index", "dedupe", "screen", "snowball")]
     record.candidates = [
         Candidate(key=KEY_FETCHED, title="Adaptation in older adults", authors=["Bock, O"],
                   year=2005, doi="10.1000/fetched", found_by=["openalex"], state="fetched",
@@ -201,7 +201,7 @@ def test_a_search_runs_and_the_page_can_read_every_field_it_draws(api):
 
     # every phase in `PHASES`, in order, whether the pipeline mentioned it or not
     assert [p["name"] for p in body["phases"]] == ["queries", "index", "dedupe", "screen",
-                                                   "fetch"]
+                                                   "snowball", "fetch"]
     assert all(p["status"] == "done" for p in body["phases"])
 
     # the candidates arrive PROJECTED: display strings, no abstract, no nested fetch record
@@ -336,7 +336,8 @@ def test_begin_builds_a_real_run_directory_through_make_run(api, tmp_path):
     assert response.status_code == 201, response.text
     body = response.json()
     # the SAME body `POST /api/runs` returns, so the page's `attach()` needs no second branch
-    assert set(body) == {"run_id", "token", "n_files", "status", "title", "skipped"}
+    assert set(body) == {"run_id", "token", "n_files", "status", "title", "skipped",
+                         "run_commit"}, "the `/api/runs` body, plus what the review will read"
     assert body["n_files"] == 2                # the fetched one and the uploaded one
     assert body["skipped"] == []
 
@@ -522,7 +523,10 @@ def test_the_caps_are_recorded_on_the_search(api, tmp_path):
     wait_done(api, search_id, token)
     job = json.loads((tmp_path / "searches" / search_id / "job.json").read_text(encoding="utf-8"))
     assert job["kind"] == "search"
-    assert job["options"] == {"max_usd": 0.5, "max_screened": DEFAULT_MAX_SCREENED}
+    # no `max_screened`: the cap is derived from the budget by the pipeline unless the user set
+    # one, and a number nobody chose must not be recorded as if they had
+    assert job["options"] == {"max_usd": 0.5}
+    assert DEFAULT_MAX_SCREENED > 0
 
 
 # ============================================================================ separation
@@ -620,12 +624,47 @@ def test_the_default_runner_adapts_the_server_seam_to_the_pipeline(tmp_path, mon
     assert saved
 
 
-def test_the_settings_endpoint_says_what_a_search_needs(api):
+def test_recording_is_opt_in_by_environment_and_wraps_the_real_transport(tmp_path, monkeypatch):
+    """`CANOPY_SEARCH_RECORD=1` puts the recordings under the bench's fixture tree, keyed by the
+    search id; any other value is a directory; unset means the plain transport."""
+    pipeline = pytest.importorskip("canopy.search.run")
+    from canopy.search.transport import RecordingTransport
+    from canopy.server import searches
+
+    monkeypatch.delenv("CANOPY_SEARCH_RECORD", raising=False)
+    assert searches.recording_dir("s1") is None
+    monkeypatch.setenv("CANOPY_SEARCH_RECORD", "0")
+    assert searches.recording_dir("s1") is None
+    monkeypatch.setenv("CANOPY_SEARCH_RECORD", "1")
+    assert searches.recording_dir("s20260901-abc") == searches.RECORD_ROOT / "s20260901-abc"
+    monkeypatch.setenv("CANOPY_SEARCH_RECORD", str(tmp_path / "rec"))
+    assert searches.recording_dir("s1") == tmp_path / "rec"
+
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(pipeline, "run_search",
+                        lambda **kw: seen.update(kw) or SearchRecord(search_id="s1"))
+    record = SearchRecord(search_id="s1", question="q")
+    searches.default_search_runner(
+        record, search_dir=tmp_path, options={"max_usd": 1.0, "max_screened": 5},
+        client_factory=lambda **kw: "a client", cancel=threading.Event(),
+        progress=lambda event: None, save=lambda current=None: None)
+    assert isinstance(seen["transport"], RecordingTransport)
+    assert seen["transport"].directory == tmp_path / "rec"
+    assert any("recorded under" in note for note in record.notes)
+
+
+def test_the_settings_endpoint_says_what_a_search_needs(api, monkeypatch):
     from canopy.server.searches import DEFAULT_MAX_SCREENED, DEFAULT_MAX_USD
 
+    monkeypatch.delenv("CANOPY_OPENALEX_KEY", raising=False)
+    monkeypatch.delenv("CANOPY_CONTACT_EMAIL", raising=False)
     body = api.get("/api/settings").json()
     assert body["search_max_usd"] == DEFAULT_MAX_USD
     assert body["search_max_screened"] == DEFAULT_MAX_SCREENED
+    # two booleans and never a value: the page warns, it does not see
+    assert body["openalex_key_set"] is False and body["contact_email_set"] is False
+    assert "CANOPY_OPENALEX_KEY" not in json.dumps(body) or body["openalex_key_set"] is False
+    assert body["run_cost_per_paper"] > 0 and body["search_max_fetch_unsure"] == 100
     # a fake runner never reaches a model, so this server must not demand an API key
     assert body["search_key_required"] is False
     assert body["search_uses_real_models"] is False
@@ -1146,3 +1185,49 @@ def test_the_page_is_told_which_of_its_exclusions_matched_nothing(make_app):
     # …and a poll after the search finished says the same thing, not less of it
     again = api.get(f"/api/searches/{search_id}", headers=auth(token)).json()
     assert again["exclusions"] == body["exclusions"]
+
+
+# ============================================================ step 7: seeds, depth, snowball, preview
+def test_the_new_options_are_validated_recorded_and_passed_to_the_pipeline(api, tmp_path,
+                                                                            monkeypatch):
+    """`seed_dois` must look like DOIs and stop at twenty; `depth` and `snowball` ride along;
+    all three reach `run_search` under the pipeline's own names."""
+    from canopy.server.searches import SearchOptions, default_search_runner
+
+    assert api.post("/api/searches", json={"question": "q", "options": {
+        "seed_dois": ["not a doi"]}}).status_code == 422
+    assert api.post("/api/searches", json={"question": "q", "options": {
+        "seed_dois": [f"10.1000/x{i}" for i in range(21)]}}).status_code == 422
+    assert api.post("/api/searches", json={"question": "q", "options": {
+        "depth": 10}}).status_code == 422
+    chosen = SearchOptions.model_validate({"max_usd": 3, "seed_dois": ["10.1000/a", " ", ""],
+                                           "depth": 200, "snowball": False}).resolved()
+    assert chosen == {"max_usd": 3.0, "seed_dois": ["10.1000/a"], "depth": 200,
+                      "snowball": False}
+
+    pipeline = pytest.importorskip("canopy.search.run")
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(pipeline, "run_search",
+                        lambda **kw: seen.update(kw) or SearchRecord(search_id="s1"))
+    monkeypatch.delenv("CANOPY_SEARCH_RECORD", raising=False)
+    default_search_runner(SearchRecord(search_id="s1", question="q"), search_dir=tmp_path,
+                          options=chosen, client_factory=lambda **kw: "a client",
+                          cancel=threading.Event(), progress=lambda e: None,
+                          save=lambda current=None: None)
+    assert seen["seed_dois"] == ["10.1000/a"] and seen["depth"] == 200
+    assert seen["chase_citations"] is False and seen["max_screened"] is None
+
+
+def test_the_cost_preview_is_the_pipelines_arithmetic(api):
+    body = api.get("/api/searches/preview?max_usd=5&max_fetch_unsure=100").json()
+    assert body["cap"] == 1166 and body["screen_usd"] == 3.5 and body["snowball_usd"] == 1.0
+    assert body["run_commit"]["n_unsure"] == 100 and body["run_commit"]["usd"] > 0
+    assert "per_paper_source" in body["run_commit"]
+    off = api.get("/api/searches/preview?max_usd=5&snowball=false").json()
+    assert off["snowball_records"] == 0 and off["worst_case_usd"] < body["worst_case_usd"]
+
+
+def test_the_search_state_carries_the_plan_rounds_and_predicted_cost(api):
+    search_id, token, _ = finished(api)
+    body = api.get(f"/api/searches/{search_id}", headers=auth(token)).json()
+    assert "plan" in body and "rounds" in body and "predicted" in body

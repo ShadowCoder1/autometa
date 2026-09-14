@@ -37,6 +37,26 @@ This lives beside the orchestrator rather than in the server because **both** en
 apply the log the same way: `run_pipeline` re-applies it at the end of every run (so an override
 survives `canopy run --resume` on the command line, with no server involved), and the UI calls it
 after each decision. `canopy/server/overrides.py` is a thin adapter over this module.
+
+A reviewer's own NUMBER is the one input no verifier ever reads, so two properties are enforced
+here and nowhere else. An adversarial review measured what their absence cost: one
+reviewer-originated row at `d = 1.5`, `n = 60/60` among five `d = 0.2` studies took 31.9% of the
+weight and moved the pooled estimate from 0.20 to 0.615, with every artefact reading normal.
+
+* **A typed number says where it came from.** A `value` answer that sets a `mean` carries a
+  `quote`, and `_ground_value` checks it against the paper's ingested text before the record is
+  written — the same `verify.grounding.ground_quote` the extract stage scores candidates with. A
+  mean whose quote the paper does not contain and which no reading in the run holds is REFUSED.
+  One only the reviewer's own eyes witness — a value read off a plot, which no quote can ground —
+  is recorded as `ungrounded` and named in the summary, never silently. Records written before the
+  check carry no `grounding` field at all, and that absence is the marker: an append-only log
+  cannot be amended, so they are reported as `never_checked` rather than rewritten.
+* **A typed number carries no verification it did not earn.** The vote, the checks and the score
+  were computed on the number a human replaced, so `_apply_value` voids them
+  (`_void_verification`): the arm has *no score*, which is a different finding from a low one. It
+  is held by `no_verification` until a reviewer says on the record that they accept a number this
+  run never verified; `low_score` keeps its own meaning — a cell that WAS verified and scored
+  below the line — and may not overrule the absence of a score it was built to disagree with.
 """
 from __future__ import annotations
 
@@ -61,14 +81,19 @@ from .rows import (PreparedRow, converted_route, house_spread_type, prepare_rows
 from .state import (load_manifest, read_stage, review_entry, save_manifest, sha12,
                     sort_review_queue, stage_done)
 
-__all__ = ["GROUP_STATISTICS", "HUMAN_OVERRIDE", "KINDS", "MAP_KINDS", "MAP_PENDING", "ORIENTATION_ANSWERED",
+__all__ = ["GROUP_STATISTICS", "HUMAN_OVERRIDE", "HUMAN_ROUTE", "KINDS", "MAP_KINDS",
+           "MAP_PENDING", "ORIENTATION_ANSWERED",
            "OVERRIDES_FILE", "OverrideRejected",
            "OVERRULABLE", "RE_EXTRACT_PENDING", "codes_cleared_by_value", "consumed_seqs",
            "recorded_flags", "recorded_holds", "row_flags", "append_override", "append_overrides",
            "read_overrides", "apply_overrides_and_repool", "map_answers", "eligibility_answers",
            "re_extract_answers", "override_summary", "repool_lock",
-           "HumanLanded", "human_landed_values", "within_read_tolerance", "stale_hold_names",
-           "READ_TOLERANCE_REL"]
+           "HumanLanded", "human_landed_values", "human_mean_landed", "within_read_tolerance",
+           "stale_hold_names",
+           "READ_TOLERANCE_REL",
+           "VALUE_GROUNDED", "VALUE_READING_CONFIRMED", "VALUE_UNGROUNDED", "VALUE_NO_TEXT",
+           "VALUE_NEVER_CHECKED", "VALUE_GROUNDING_STATES", "VALUE_WITNESSED", "value_grounding",
+           "VERIFICATION_VOIDED", "NO_VERIFICATION"]
 
 OVERRIDES_FILE = "overrides.jsonl"
 SUMMARY_FILE = "overrides_applied.json"
@@ -192,6 +217,15 @@ def _validate(payload: Mapping[str, Any]) -> dict[str, Any]:
             "dispersion_type": _text(payload.get("dispersion_type"), 20).upper() or "",
             "n": _count(payload.get("n"), "n"),
             "unit": _text(payload.get("unit"), 40),
+            # WHERE IN THE PAPER the number is. The `eligibility`, `orientation`,
+            # `include_dataset` and `group_n` branches have each carried this field from the start
+            # and the one that writes a STATISTIC did not, so the only decision in the log that
+            # changes a pooled effect size was the only one with no slot for its provenance —
+            # nothing recorded where a typed mean came from, and so nothing could check it. §C3's
+            # reason, verbatim: a reader of the review must be able to check a number against the
+            # paper, not merely see that somebody typed it. `_ground_value` (called by `_checked`,
+            # which has the run directory this cannot see) is what checks it.
+            "quote": _text(payload.get("quote"), 1000),
             # the findings THIS answer settles, named by the question that offered it — "yes, this
             # series is this group" answers the series identity, which no field of the record
             # could otherwise say. Never a licence to clear more than the option named.
@@ -469,7 +503,56 @@ def recorded_holds(run_dir: str | Path, record: Mapping[str, Any]) -> set[str] |
         # the conversion. Named here so `overrules: ["no_group_values"]` is validated exactly like
         # a refutation or an adjudication — against what the cell was actually holding.
         holds.add("no_group_values")
+    if _human_mean_landed(run_dir, record):
+        # …and the fifth: a human has replaced this arm's mean, so `_void_verification` struck the
+        # vote, the checks and the score that were computed on the number that is gone. Read off
+        # the LOG, not off the verdict: `_recorded_verdict` reads the fixed STAGE file, which still
+        # holds the score the run computed, because the voiding lives in the re-pool's working
+        # copies and nothing ever writes it back. Without this line an answer naming
+        # `no_verification` would be refused as "a finding this cell does not carry" and the cell
+        # could never be released by anything at all.
+        holds.add(NO_VERIFICATION)
     return holds
+
+
+def human_mean_landed(landed: HumanLanded, dataset_id: str, outcome_key: str,
+                      group: str | None, *, checked_only: bool = False) -> bool:
+    """Has a human's mean LANDED on this cell-group? One rule, two callers.
+
+    The validator here reads it off the log's own registry; `canopy.review.questions` reads it off
+    the same registry to decide whether to OFFER `no_verification` as an answer. Two
+    implementations would drift, and the drift has one shape: the page stops offering the only
+    answer to a hold the analysis still enforces, which is the "held with nothing to answer"
+    failure §C4 exists to remove.
+
+    LANDED, not merely stated: a mean still stuck `pending` has displaced nothing, and a hold
+    offered against a replacement the analysis has not made yet is the same failure the other way
+    round. Both arms when no group is named, because a record without one is about the cell.
+
+    `checked_only` asks the narrower question the `no_verification` hold is actually about: was the
+    standing mean supplied by a record the log CHECKED? A grandfathered one settles its cell under
+    the rules in force when it was taken (`_void_verification(checked=False)`), so the hold does not
+    exist for it — and a page that offered the answer anyway would ask for something that changes
+    nothing. Both callers of this hold pass it; only the plain question does not.
+    """
+    if not dataset_id or not outcome_key:
+        return False
+    for key in ((str(group),) if group in ("A", "B") else ("A", "B")):
+        cell = landed.for_cell(dataset_id, outcome_key, key)
+        if cell is None or cell.get("mean") is None or not cell.get("mean_landed"):
+            continue
+        if not checked_only or cell.get("mean_checked"):
+            return True
+    return False
+
+
+def _human_mean_landed(run_dir: str | Path, record: Mapping[str, Any]) -> bool:
+    """`human_mean_landed` for one log record, over this run's registry — the CHECKED question,
+    because `recorded_holds` is naming a hold and only a checked record creates one."""
+    return human_mean_landed(human_landed_values(run_dir),
+                             str(record.get("dataset_id") or ""),
+                             str(record.get("outcome_key") or ""), record.get("group"),
+                             checked_only=True)
 
 
 def _check_clears(run_dir: str | Path, record: Mapping[str, Any]) -> str:
@@ -503,6 +586,202 @@ def _check_clears(run_dir: str | Path, record: Mapping[str, Any]) -> str:
                else " (the cell carries none)"))
 
 
+# ------------------------------------------------- where a reviewer's own number came from
+#: the provenance of a mean a human stated, as `_ground_value` decides it and the apply loop
+#: reports it. Stored on the record as `record["grounding"]["state"]`, so the log itself says what
+#: was checked about every number in it — which is the half of §C4 the `value` branch never had.
+#:
+#: `VALUE_GROUNDED` the reviewer's quote is printed in the paper's ingested text;
+#: `VALUE_READING_CONFIRMED` no quote (or one that did not ground), but the RUN holds this reading
+#:   for this cell — a candidate, the resolved value, or the alternative a verifier offered — so
+#:   the number is a choice among readings `ground_candidate` already checked, not a new one;
+#: `VALUE_UNGROUNDED` neither: a number only the reviewer's own eyes witness. Recorded, reported,
+#:   and held by `no_verification` until a person accepts it on the record (see `_derived_bucket`);
+#: `VALUE_NO_TEXT` a quote, and no ingested page text in this run directory to check it against;
+#: `VALUE_NEVER_CHECKED` the record predates the check — see `value_grounding`.
+VALUE_GROUNDED = "grounded"
+VALUE_READING_CONFIRMED = "reading_confirmed"
+VALUE_UNGROUNDED = "ungrounded"
+VALUE_NO_TEXT = "no_text_to_check"
+VALUE_NEVER_CHECKED = "never_checked"
+VALUE_GROUNDING_STATES: tuple[str, ...] = (VALUE_GROUNDED, VALUE_READING_CONFIRMED,
+                                           VALUE_UNGROUNDED, VALUE_NO_TEXT, VALUE_NEVER_CHECKED)
+#: the two states in which a human's mean has a witness that is not the human: the paper's own
+#: words, or a reading the run took and grounded for itself. Everything else goes in the summary.
+VALUE_WITNESSED: frozenset[str] = frozenset({VALUE_GROUNDED, VALUE_READING_CONFIRMED})
+
+
+def _ingested_pages(run_dir: str | Path, paper_id: str) -> list[str]:
+    """Every page of this paper's ingested text, read from the run directory itself.
+
+    Deliberately NOT `PaperRecord.load(...).page_text(...)`: that record stores the `out_dir` the
+    INGESTING process wrote, which is a path relative to that machine's working directory. A run
+    directory that has been copied or archived — which is how every re-pool of a finished review
+    happens — resolves it against the wrong place and the whole paper reads as empty. The text
+    files sit beside `paper.json`, so they are read relative to the directory the record was found
+    in and the check works wherever the run now lives.
+
+    Forgiving, on the precedent `run._page_texts` sets: a run whose page files are not on this
+    machine yields no pages, and a check that cannot read the paper has nothing to say. What it
+    must never do is say the paper contradicts a quote it could not read.
+    """
+    directory = Path(run_dir) / "papers" / sha12(paper_id) / "ingest"
+    try:
+        payload = json.loads((directory / "paper.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out: list[str] = []
+    for page in (payload.get("pages") or []) if isinstance(payload, dict) else []:
+        name = str((page or {}).get("text_file") or "") if isinstance(page, Mapping) else ""
+        if not name:
+            continue
+        try:
+            out.append((directory / name).read_text(encoding="utf-8"))
+        except OSError:
+            continue
+    return out
+
+
+def _run_readings(run_dir: str | Path, record: Mapping[str, Any]) -> list[float]:
+    """Every mean the RUN holds for this cell — the witnesses a typed number can have besides a quote.
+
+    Three sources, all of them readings the pipeline already grounded for itself: the value the
+    run resolved, the alternative each verifier offered against it (`alt_mean`, which carries an
+    `alt_quote`), and every candidate the extract stage produced for the cell.
+
+    NOT scoped to the record's group, on purpose. "That series is the other group's" is a real
+    answer (`which_series`), and the number it supplies is the sibling arm's reading — witnessed
+    by the run, just not under the name the run filed it under. Scoping by group would refuse the
+    one value answer whose whole content is that the run put a reading in the wrong column.
+    """
+    dataset_id = str(record.get("dataset_id") or "")
+    outcome_key = str(record.get("outcome_key") or "")
+    if not dataset_id or not outcome_key:
+        return []
+    out: list[float] = []
+    verdict = _recorded_verdict(run_dir, record) or {}
+    for value in (verdict.get("mean"), *[(v or {}).get("alt_mean")
+                                         for v in verdict.get("verifiers") or []]):
+        number = _stated_number(value)
+        if number is not None:
+            out.append(number)
+    paper_id = str(record.get("paper_id") or "")
+    root = Path(run_dir) / "papers"
+    folders = [root / sha12(paper_id)] if paper_id else sorted(
+        path for path in root.glob("*") if path.is_dir())
+    for folder in folders:
+        for name, key in (("extract.json", "candidates"), ("verify.json", "extra_candidates")):
+            try:
+                payload = json.loads((folder / name).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            for candidate in (payload.get(key) or []) if isinstance(payload, dict) else []:
+                if not isinstance(candidate, Mapping):
+                    continue
+                if candidate.get("dataset_id") != dataset_id \
+                        or candidate.get("outcome_key") != outcome_key:
+                    continue
+                number = _stated_number(candidate.get("mean"))
+                if number is not None:
+                    out.append(number)
+    return out
+
+
+def _ground_value(run_dir: str | Path, record: Mapping[str, Any]) -> dict[str, Any]:
+    """The provenance of this answer's mean, checked. `{}` when it states no mean.
+
+    Raises `OverrideRejected` for the one case the review argued must be refused outright: a mean
+    whose quote the paper does not contain AND which no reading in the run holds. A quote that
+    names words the paper never printed is not weak evidence, it is a false witness, and a number
+    standing on one has nothing behind it at all.
+
+    It does NOT refuse a mean with no quote. The one legitimate unquotable number is a value read
+    off a plot — which is the routine case in this corpus, and the reason `ground_candidate` leaves
+    pixel candidates' quotes empty. Demanding a quote there would buy the caption or the axis
+    label, which grounds beautifully and says nothing whatever about the number, and the worst
+    outcome available is a check that manufactures assurance. Such a mean is recorded
+    `VALUE_UNGROUNDED`, reported in the summary, and held as unverified by `_void_verification` and
+    `_derived_bucket` until a person accepts it by name.
+    """
+    # in situ, like every other cross-package import in this module: `verify.grounding` reaches
+    # `ingest.pdf` and so pymupdf, which the log has no business importing to append a record
+    from ..verify.grounding import ground_quote, is_short_quote, numbers_in
+
+    mean = _stated_number(record.get("mean"))
+    if mean is None:
+        return {}
+    quote = str(record.get("quote") or "").strip()
+
+    def witnessed() -> float | None:
+        """The run's own reading of this number, if it has one. Called at most once per append:
+        `extract.json` runs to megabytes (2.9 MB in `runs/attention`) and a grounded quote needs
+        no second witness, so the scan is not paid for on the path that does not use it."""
+        return next((reading for reading in _run_readings(run_dir, record)
+                     if within_read_tolerance(mean, reading)), None)
+
+    if not quote:
+        witness = witnessed()
+        if witness is not None:
+            return {"state": VALUE_READING_CONFIRMED, "reading": witness}
+        return {"state": VALUE_UNGROUNDED,
+                "why": "no quote, and no reading in this run holds this number: only the "
+                       "reviewer witnesses it"}
+    pages = _ingested_pages(run_dir, str(record.get("paper_id") or ""))
+    if not pages:
+        return {"state": VALUE_NO_TEXT, "quote": quote[:200],
+                "why": "this run directory holds no ingested page text for the paper, so the "
+                       "quote could not be checked against it"}
+    # …and whether the quoted words actually hold the number. RECORDED, never gated: a reviewer may
+    # legitimately quote the sentence a table row belongs to, or a value they converted from the
+    # quoted one, and refusing those would refuse correct answers. But a grounded sentence that does
+    # not contain the number is weaker evidence than one that does, and only the record can say
+    # which a reader is looking at.
+    holds = any(within_read_tolerance(mean, value) for value in numbers_in(quote))
+    best, where = 0.0, 0
+    for number, text in enumerate(pages, start=1):
+        grounded, similarity, _ = ground_quote(quote, text)
+        if grounded:
+            return {"state": VALUE_GROUNDED, "similarity": similarity, "page": number,
+                    "quote": quote[:200], "short_quote": is_short_quote(quote),
+                    "quote_holds_the_number": holds}
+        if similarity > best:
+            best, where = similarity, number
+    witness = witnessed()
+    if witness is not None:
+        # the quote is wrong and the NUMBER is not: the run read this value itself. Recorded as
+        # what it is — a reading the pipeline grounded — with the failed quote beside it, because
+        # refusing here would throw away a correct answer over a mis-pasted sentence.
+        return {"state": VALUE_READING_CONFIRMED, "reading": witness, "quote": quote[:200],
+                "quote_grounded": False, "similarity": round(best, 4), "page": where}
+    raise OverrideRejected(
+        f"this number has nothing behind it: the quote is not printed in the paper (best "
+        f"similarity {best:.2f}"
+        + (f" on page {where}" if where else "")
+        + f", and {len(pages)} page(s) were searched) and no reading in this run holds "
+          f"{mean!r}. Quote the paper's own words for the number, or name the reading you mean")
+
+
+def value_grounding(record: Mapping[str, Any]) -> dict[str, Any]:
+    """How this record's mean was checked — `{}` when the record states no mean.
+
+    A record written before the check existed carries no `grounding` field, and THAT absence is
+    the marker. The log is append-only — nothing in it is ever rewritten, which is the property the
+    whole module rests on — so a grandfathered record cannot be amended to say it was never
+    grounded, and inventing a state inside it would be the rewriting this file exists to refuse.
+    The absence is named `VALUE_NEVER_CHECKED` here, reported by the apply loop into the summary's
+    `ungrounded` list, and nowhere else. `runs/et_with_dbs` (24 `value` records) and
+    `runs/attention` (19) both predate the check and both must keep re-pooling unchanged.
+    """
+    if _stated_number(record.get("mean")) is None:
+        return {}
+    state = record.get("grounding")
+    if isinstance(state, Mapping) and str(state.get("state") or "") in VALUE_GROUNDING_STATES:
+        return dict(state)
+    return {"state": VALUE_NEVER_CHECKED,
+            "why": "written before a reviewer's number was checked against the paper; an "
+                   "append-only log cannot be amended to say so, so the missing field says it"}
+
+
 def append_override(run_dir: str | Path, payload: Mapping[str, Any]) -> dict[str, Any]:
     """Validate and append one decision. Returns the record as it was written."""
     return append_overrides(run_dir, [payload])[0]
@@ -528,6 +807,13 @@ def append_overrides(run_dir: str | Path,
 def _checked(directory: Path, payload: Mapping[str, Any]) -> dict[str, Any]:
     """The record this payload would be written as — or `OverrideRejected`. Writes nothing."""
     record = _validate(payload)
+    # where the number came from, checked against the paper before the record is written. Here and
+    # not in `_validate`, because grounding needs the run directory and the ingested pages in it,
+    # and `_validate` is also run over RAW log lines by `map_answers` and its two siblings — a
+    # check that read the disk from there would make replaying a log depend on what is still on it.
+    grounding = _ground_value(directory, record)
+    if grounding:
+        record["grounding"] = grounding
     if record.get("clears") or record.get("overrules"):
         # what the cell was holding when the reviewer answered, on the record. A `--resume`
         # rewrites the verify stage file, and without this the same answer would be re-validated
@@ -657,6 +943,12 @@ def _stated_count(value: Any) -> int | None:
 _NO_STATEMENT: dict[str, Any] = {
     "mean": None, "dispersion_value": None, "dispersion_type": "", "n": None, "unit": "",
     "seq": 0, "field_seqs": {}, "question_ids": [], "overrules": set(), "mean_landed": False,
+    #: …and whether the record that supplied the standing mean was one the log CHECKED for
+    #: provenance. Grandfathered records (no `grounding` field) settle their cell under the rules
+    #: that were in force when they were taken, so the `no_verification` hold does not apply to
+    #: them — and the page must offer exactly the findings the analysis is enforcing, or it asks a
+    #: question whose answer changes nothing. Per-mean, latest-wins, like every other field here.
+    "mean_checked": False,
 }
 
 
@@ -773,6 +1065,8 @@ def human_landed_values(run_dir: str | Path) -> HumanLanded:
             cell["overrules"] |= {str(x) for x in record.get("overrules") or []}
             if stated["mean"] is not None:
                 cell["mean_landed"] = seq not in pending
+                cell["mean_checked"] = \
+                    value_grounding(record).get("state") != VALUE_NEVER_CHECKED
     return HumanLanded(cells, dataset_n)
 
 
@@ -1060,6 +1354,14 @@ def apply_overrides_and_repool(run_dir: str | Path, *, protocol_path: str | Path
     #: T4's trace on the analysis side: every hold a landed value answer auto-retired this
     #: replay, written into the summary beside `applied` — nothing is silent
     auto_resolved: list[dict[str, Any]] = []
+    #: and the grounding fix's trace: every number in this analysis that a human stated and the
+    #: paper does not witness — a record from before the check existed (`never_checked`), a value
+    #: read off a plot that no quote can ground (`ungrounded`), or a quote this run directory holds
+    #: no text to check (`no_text_to_check`). Grandfathering is the reason this list exists: an
+    #: append-only log cannot be amended, so the 43 records of `runs/et_with_dbs` and the 25 of
+    #: `runs/attention` keep applying exactly as they did, and a reader of the review can still see
+    #: which of their numbers was never checked against a paper.
+    ungrounded: list[dict[str, Any]] = []
     records = {(r.dataset_id, r.outcome_key): r.model_copy(deep=True) for r in state.records}
     verdicts = {(v.dataset_id, v.outcome_key, v.group): v.model_copy(deep=True)
                 for v in state.verdicts}
@@ -1249,6 +1551,16 @@ def apply_overrides_and_repool(run_dir: str | Path, *, protocol_path: str | Path
                 touched_rows.add((dataset_id, outcome_key))
             if ok and override.get("mean") is not None:
                 means_answered.add((dataset_id, outcome_key, str(override.get("group") or "")))
+                # …and on the record, in the summary, whenever the paper does not witness it.
+                # Reported for every applied mean and not only for the refused ones, because the
+                # states that are not refused are exactly the ones a reader would otherwise have
+                # no way to see: `ungrounded` and the grandfathered `never_checked`.
+                provenance = value_grounding(override)
+                if provenance.get("state") not in VALUE_WITNESSED:
+                    ungrounded.append({"dataset_id": dataset_id, "outcome_key": outcome_key,
+                                       "group": str(override.get("group") or ""),
+                                       "seq": override.get("seq"), "mean": override.get("mean"),
+                                       **provenance})
             (applied if ok else pending).append(override if ok else {**override, "why": why})
 
     _reconcile(records, verdicts, touched_rows, dropped)
@@ -1256,6 +1568,7 @@ def apply_overrides_and_repool(run_dir: str | Path, *, protocol_path: str | Path
     outcomes = _rewrite(out, manifest, protocol, kept, state, verdicts, excluded)
     summary = {"applied": len(applied), "pending": pending, "excluded": excluded,
                "outcomes": outcomes, "overrides": applied, "auto_resolved": auto_resolved,
+               "ungrounded": ungrounded,
                "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     dump_json(summary, out / SUMMARY_FILE)
     return summary
@@ -1438,6 +1751,12 @@ def _bucket_after_orientation(verdict: Verdict, row_flags: Collection[str] = (),
 
     if set(row_flags) & ROW_REFUSALS:                      # a refusal no cell answer can name
         return "needs_human"
+    if _unverified(verdict) and NO_VERIFICATION not in set(overruled):
+        # the same rule as `_derived_bucket`'s and in the same place, before the healthy-cell
+        # shortcut: a direction is not an answer to "this arm's number was replaced and nothing has
+        # verified what stands there". Both appliers can reach one cell in one replay, and a rule
+        # only one of them honoured would release the cell through whichever ran last.
+        return "needs_human"
     if verdict.confidence != "needs_human":                # a healthy cell of the same measure
         return "accept_with_note"                          # capped, never promoted
     if verdict.mean is None and not (converted_route(row_route)
@@ -1568,33 +1887,44 @@ def _apply_analysed_n(override: Mapping[str, Any],
     state.group_n_seq[dataset_id] = int(override.get("seq") or 0)
 
     sizes = {"A": int(override["n_a"]), "B": int(override["n_b"])}
-    touched = 0
+    # on the CELLS as well as on the row: the extraction table prints each group's n from its
+    # VERDICT, and a reviewer who has just supplied the analysed sizes must not be shown the
+    # recruited ones beside a row that no longer uses them. It settles nothing else — the bucket is
+    # untouched, because a size is not an answer to whatever is holding the cell.
+    #
+    # Over the verdicts rather than over the rows, because a dataset can have cells and no row: the
+    # extract stage never reached them, the row a later typed pair builds IS divided by the answered
+    # size (`_apply_group_n`, off `state.group_n`), and a cell loop nested inside the row loop left
+    # exactly those cells printing the recruited count beside it.
+    for (cell_dataset, _, group), verdict in verdicts.items():
+        if cell_dataset != dataset_id or group not in sizes:
+            continue
+        verdict.n = sizes[str(group)]
+        # …and NOT `overridden_by_human`: the only reader of that field is the review page, which
+        # shows it as "a human overrode this cell", and nobody overrode this cell's value, its
+        # spread or its direction — a group size was supplied. The justification still travels, so
+        # the record says who supplied it and why (review finding 4).
+        verdict.override_justification = override["justification"]
     for key in [k for k in records if k[0] == dataset_id]:
         outcome_key = key[1]
         verdict_a = verdicts.get((dataset_id, outcome_key, "A"))
         verdict_b = verdicts.get((dataset_id, outcome_key, "B"))
         if verdict_a is None or verdict_b is None:
             continue
-        # on the CELLS as well as on the row: the extraction table prints each group's n from its
-        # verdict, and a reviewer who has just supplied the analysed sizes must not be shown the
-        # recruited ones beside a row that no longer uses them. It settles nothing else — the
-        # bucket is untouched, because a size is not an answer to whatever is holding the cell.
-        for verdict in (verdict_a, verdict_b):
-            verdict.n = sizes[str(verdict.group)]
-            # …and NOT `overridden_by_human`: the only reader of that field is the review page,
-            # which shows it as "a human overrode this cell", and nobody overrode this cell's
-            # value, its spread or its direction — a group size was supplied. The justification
-            # still travels, so the record says who supplied it and why (review finding 4).
-            verdict.override_justification = override["justification"]
         records[key] = _rebuild_row(records[key], dataset, verdict_a, verdict_b, protocol,
                                     outcome_key, override["justification"],
                                     state=state, verdicts=verdicts)
         if touched_rows is not None:
             touched_rows.add(key)
-        touched += 1
-    if not touched:
-        return False, (f"no verified row of dataset {dataset_id!r} in this run to give analysed "
-                       f"group sizes to")
+    # …and touching no row is not a refusal. The dataset is MAPPED — an unmapped id was refused at
+    # the top, and that refusal still stands — so the sizes recorded on `state.group_n` above are
+    # what every later rebuild of every row of this dataset is built with, including the row a
+    # value answer on one of its cells is about to make (`_cell_the_run_never_read`). The answer has
+    # LANDED; the run simply has nothing read yet for it to change.
+    #
+    # Reporting it `pending` was a false statement twice over: the reviewer was told for ever that
+    # an answer on the record had not happened, and `HumanLanded` reads the summary's `pending`
+    # list, so the same line withheld hold-retirement from a size that was in fact being applied.
     return True, ""
 
 
@@ -1634,6 +1964,12 @@ GROUP_STATISTICS: tuple[str, ...] = ("mean", "dispersion_value", "n")
 #: first is an exclusion, the second is a question, and `run.cells_for_review` keeps the cells of
 #: the second in the queue on the strength of this flag.
 HUMAN_OVERRIDE = "human_override"
+
+#: what a CELL's route is when the run never read it and a person typed its numbers
+#: (`_cell_the_run_never_read`). Named once because the value is also load-bearing, not decorative:
+#: `pipeline.rows` infers the ROW's source route from the cells', so this is the one spelling that
+#: means "a human supplied this" to the resolver as well as to the table that prints `route_a`.
+HUMAN_ROUTE = "human"
 
 VALUE_CLEARS_MEAN: frozenset[str] = frozenset({
     "axis_conflict", "calibration_disputed", "calibration_refuted", "calibration_single_witness",
@@ -1737,8 +2073,48 @@ def _cleared_on(override: Mapping[str, Any], codes: Iterable[str]) -> set[str]:
 #: be released, and nothing else in the record could say a person had looked. The C5/C9 gates are
 #: untouched by it: they are re-derived by the resolver on every rebuild, so a converted row whose
 #: contrast is unestablished stays held however many cells are released (whole-diff H2).
+#:
+#: `no_verification` is the fifth, and it is the finding the grounding review found missing. A
+#: human replaced this arm's value, so `_void_verification` struck the vote, the checks and the
+#: score that had been computed on the number that is gone: the cell now has NO score. That is a
+#: different statement from "a low score", and `low_score` may not overrule it — `low_score` means
+#: "I have read the score and I disagree with it", and there is no score to read. The only answer
+#: is a person saying, on the record, that they accept a number this run never verified. Keeping
+#: the two apart is the whole point: `low_score` keeps its real purpose, a cell that WAS verified
+#: and scored below the line, and stops doubling as a lever over the absence of verification.
 OVERRULABLE: tuple[str, ...] = ("verifier_refuted", "adjudicated", "low_score",
-                                "no_group_values")
+                                "no_group_values", "no_verification")
+#: …named once, because three places test for it and a literal in each is a typo away from a cell
+#: nothing can release. (The tuple above is also a CAP — `[:len(OVERRULABLE)]` — so it grows with
+#: the list rather than silently dropping the newest member of it.)
+NO_VERIFICATION = "no_verification"
+
+#: what an arm's verification fields say once a human has replaced the number they were about:
+#: nothing at all. Written into `confidence_reasons` in place of the reasons the score was built
+#: from — the review queue and the report print that list, and leaving an argument about a replaced
+#: number there is the "publish" half of the finding — and it is also the MARKER the bucket rules
+#: key on. `confidence_score = None` alone cannot carry the state: a verdict that simply never
+#: recorded a score is `None` too, so a rule that could not tell the two apart would hold cells
+#: nobody has touched. The pair is the representation — no score, and the reason there is none.
+VERIFICATION_VOIDED = ("no score: a human replaced this arm's value, so the run's vote, its checks "
+                       "and its confidence score all describe the number that was replaced")
+#: …and the same statement about a record written before the log checked where a number came from.
+#: The replaced reading's PROVENANCE is struck either way — a refuted reading's quote and page
+#: printed beside a human's number is the "publish" half of the finding, and no bucket depends on
+#: them — but nothing that can change a bucket is touched on a decision taken under the older
+#: contract, and this marker is how the bucket rules tell the two apart.
+#:
+#: That is the second half of grandfathering, and it is not a softening: an append-only log's whole
+#: promise is that a recorded decision keeps the meaning it had when it was recorded, and a gate
+#: applied backwards turns a finished review into an empty forest with nobody deciding to. Measured
+#: on the two runs in `runs/`: without it `et_with_dbs` pools k = 0 where it pooled k = 6 and
+#: `attention` k = 2 where it pooled k = 5. Every one of those numbers is still named in the
+#: summary's `ungrounded` list, so nothing is hidden — and every NEW answer is gated, because a
+#: record written from now on carries the `grounding` field that puts it on the other side of this.
+VERIFICATION_VOIDED_UNCHECKED = (
+    "the readings behind this arm were replaced by a human and this decision predates the check on "
+    "where a reviewer's number comes from, so it settles the cell exactly as it did when it was "
+    "taken, and the re-pool's summary names its number as one the paper was never asked about")
 
 #: findings `resolve._finish` puts on the ROW rather than on either cell, because they are about
 #: the number the conversion produced. No `clears` can name one and no cell answer retires one:
@@ -1748,6 +2124,73 @@ OVERRULABLE: tuple[str, ...] = ("verifier_refuted", "adjudicated", "low_score",
 #: row and not this list would release cells under a refused row (integration fix round,
 #: consistency item 1). `resolve._add_row_refusal` refuses any code that is not in it.
 ROW_REFUSALS: frozenset[str] = ROW_REFUSAL_CODES
+
+
+def _unverified(verdict: Verdict) -> bool:
+    """Has this arm's verification been voided by a human value? (`_void_verification`'s marker.)"""
+    return VERIFICATION_VOIDED in (verdict.confidence_reasons or [])
+
+
+def _void_verification(verdict: Verdict, mean: float, candidates: Sequence[Candidate] = (),
+                       *, checked: bool = True) -> None:
+    """Strike this arm's verification, because it describes a number that is no longer here.
+
+    The review finding: `_apply_value` replaced the mean and left `agreement`, `route`,
+    `candidate_ids`, `confidence_score`, `confidence_margin` and `confidence_reasons` all
+    describing the reading it replaced — so the cell was held on `confidence_score <
+    ACCEPT_WITH_NOTE` and released by `overrules: ["low_score"]`, which is the lever for
+    DISAGREEING with a score that exists. Voided, the arm has NO score (`VERIFICATION_VOIDED`) and
+    is released only by a person naming `no_verification`.
+
+    `candidate_ids` are kept when the candidate READ THIS NUMBER — within the codebase's own
+    read-tolerance line. That list is what the extraction table builds `quote_a`, `page_a` and the
+    figure crop from, and it is published as the provenance of whatever stands in `mean_a`: a
+    candidate that reads the same value still is that provenance (picking one of the run's readings
+    is the commonest value answer there is, and losing its crop would cost a reviewer the picture),
+    while one that read something else is the provenance of a different number and goes.
+
+    `verdict.route` is the other field the review named and the one thing here that is NOT voided,
+    because it turns out not to be a label: `pipeline.rows` infers the ROW's source route from the
+    cells', so writing `HUMAN_ROUTE` over it made the resolver unable to name the row's source at
+    all. Measured on the two runs in `runs/`: it added `unknown_source_route` to three rows, turned
+    one row's `figure` into `text_mean_se_ci`, and dropped two rows out of their pooled analyses.
+    Teaching the resolver that a human-supplied cell is a known source is a change in
+    `pipeline/rows.py` and `pipeline/resolve.py`, which this module does not own.
+
+    `verifier_verdict`, `verifiers` and `adjudicated` are deliberately NOT voided. A refutation is
+    the one stale field whose removal would RELEASE the cell rather than hold it, and whether a
+    human's number displaces one is already decided — narrowly, on the structured shape of the
+    objection — by `stale_hold_names` (T4). Blind voiding would undo that rule by the back door and
+    retire live objections (an identity refutation indicts the human's number too).
+
+    `checked=False` is a record written before the log checked where a number came from. The split
+    is exactly the one the line above draws: the replaced reading's PROVENANCE goes either way,
+    because no bucket is computed from it; the SCORE and what derives from it are left alone,
+    because changing them would re-settle a decision taken under the older contract. The measured
+    cost of not drawing that line: a cell held by a code the answer retired, whose score was above
+    the acceptance line all along, read as "score 0.0" the moment the score was nulled — two rows of
+    `runs/` left their pooled analyses on a migration that was supposed to change nothing.
+    """
+    kept = {str(c.candidate_id) for c in candidates
+            if str(c.candidate_id) in {str(x) for x in verdict.candidate_ids}
+            and within_read_tolerance(c.mean, mean)}
+    verdict.candidate_ids = [cid for cid in verdict.candidate_ids if str(cid) in kept]
+    verdict.vote_method = ""
+    verdict.vote_tolerance = None
+    verdict.agreeing_ids = []
+    verdict.disagreeing_ids = []
+    verdict.confidence_reasons = [VERIFICATION_VOIDED if checked
+                                  else VERIFICATION_VOIDED_UNCHECKED]
+    if not checked:
+        return
+    verdict.confidence_score = None
+    verdict.confidence_margin = None
+    verdict.nearest_boundary = ""
+    # the vote was taken among readings of the replaced number. `agreement` is left "none" rather
+    # than "disagree" because the disagreement it recorded is not this number's — and it releases
+    # nothing that was not already released: `_derived_bucket` passes `mean_answered` whenever a
+    # mean was supplied, which is exactly when this runs.
+    verdict.agreement = "none"
 
 
 def _derived_bucket(verdict: Verdict, *, mean_answered: bool = False,
@@ -1776,6 +2219,15 @@ def _derived_bucket(verdict: Verdict, *, mean_answered: bool = False,
         # own numbers are what it judges, and while it stands the cells stay in the queue: a row
         # held with no question anywhere is the failure C4 exists to remove.
         return "needs_human"
+    if _unverified(verdict) and NO_VERIFICATION not in overruled:
+        # …and SECOND, before the healthy-cell shortcut below, which is the reason it has to be
+        # here: that shortcut trusts `verdict.confidence`, and a cell's bucket is the output of the
+        # very score `_void_verification` has just struck. A cell the run accepted on a number a
+        # human has since replaced is not an accepted cell — it is a cell with no verification at
+        # all, and the measured failure (a reviewer-originated d = 1.5 row taking 31.9% of the
+        # weight with every artefact reading normal) is what "accept_with_note" on one costs.
+        # `low_score` deliberately does not reach this: see `OVERRULABLE`.
+        return "needs_human"
     if verdict.confidence != "needs_human":                # a healthy cell: capped, not promoted
         return "accept_with_note"
     if verdict.mean is None and not (converted_route(row_route) and "no_group_values" in overruled):
@@ -1802,8 +2254,18 @@ def _derived_bucket(verdict: Verdict, *, mean_answered: bool = False,
         return "needs_human"
     if {flag.code for flag in verdict.flags} & CONTRADICTING_FLAGS:
         return "needs_human"
-    if (verdict.confidence_score or 0.0) < ACCEPT_WITH_NOTE \
+    if not _unverified(verdict) and (verdict.confidence_score or 0.0) < ACCEPT_WITH_NOTE \
             and "low_score" not in overruled:
+        # a score that EXISTS and fell short, which is the one thing `low_score` was built to
+        # answer. A VOIDED arm is excluded from this line, not merely handled before it: `or 0.0`
+        # would otherwise read the absence of a score as a score of zero all over again, and a
+        # reviewer who answered `no_verification` — the only answer there is to "nothing verified
+        # the number that stands here" — would find the cell still held by a finding nobody could
+        # name. That is the "held with nothing to answer" failure, arrived at from the other side.
+        #
+        # `or 0.0` stays for a verdict that simply never recorded a score: it holds the cell as it
+        # always has, and narrowing it here would RELEASE every such cell, which is the opposite of
+        # the finding. What the fix removes is `low_score` standing for two different findings.
         return "needs_human"
     return "accept_with_note"
 
@@ -2033,7 +2495,7 @@ def _cell_the_run_never_read(dataset: DatasetSpec, outcome_key: str, state: "_Ru
             continue
         verdicts[(dataset_id, outcome_key, group)] = Verdict(
             dataset_id=dataset_id, outcome_key=outcome_key, group=group,
-            n=size, confidence="needs_human", needs_human=True, route="human",
+            n=size, confidence="needs_human", needs_human=True, route=HUMAN_ROUTE,
             higher_is_better=(oriented.higher_is_better if oriented is not None else None),
             orientation_source=(oriented.orientation_source if oriented is not None else ""),
             verifier_reason=FROM_THE_LOG)
@@ -2077,6 +2539,13 @@ def _apply_value(override: Mapping[str, Any], records: dict[tuple[str, str], Eff
 
     if override.get("mean") is not None:
         verdict.mean = float(override["mean"])
+        # …and the verification of the number that was there goes with it. Everything the run
+        # recorded about this arm — the vote, the score, the reasons, the readings behind it — was
+        # computed on the mean just replaced, and leaving it in place is what let `low_score`
+        # release a cell nothing had verified and let the extraction table publish a refuted
+        # reading's quote beside a human's number.
+        _void_verification(verdict, float(override["mean"]), state.candidates,
+                           checked=value_grounding(override).get("state") != VALUE_NEVER_CHECKED)
     # the spread this cell held BEFORE this record: a type is a statement about the number it was
     # stated for, so whether the standing type may survive is decided against the standing spread
     # and has to be read before that spread is replaced.

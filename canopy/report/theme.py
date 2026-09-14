@@ -31,7 +31,8 @@ from ..stats.meta import MetaResult                    # noqa: E402
 
 __all__ = ["SURFACE", "INK", "INK_SECONDARY", "MUTED", "GRID", "AXIS", "MARK", "ACCENT",
            "ACCENT_SOFT", "HOLLOW_FACE", "ROUTE_GLYPHS", "ROUTE_LABELS", "GLYPH_LEGEND",
-           "OVERRIDE_FLAG", "OVERRIDE_MARK", "BEST_GUESS_CAVEAT", "DPI", "route_glyph",
+           "OVERRIDE_FLAG", "OVERRIDE_MARK", "OVERRIDE_KEY", "BEST_GUESS_CAVEAT", "DPI",
+           "route_glyph",
            "is_overridden",
            "conventions_footer", "estimator_label", "variance_label", "pi_label", "fmt_p",
            "figure_style", "save_figure", "study_label", "fmt", "fmt_ci"]
@@ -72,6 +73,11 @@ ROUTE_LABELS: dict[str, str] = {
 #: a value a human replaced carries this flag (the review workflow writes it) and this marker
 OVERRIDE_FLAG = "human_override"
 OVERRIDE_MARK = "△"
+#: …and wherever the marker is drawn, the sentence that explains it. ONE string, because the two
+#: renderers print it in different places — matplotlib in the glyph legend under the plot, R in one
+#: of `forest.meta`'s two additional lines — and a reader comparing a figure drawn by one with a
+#: figure drawn by the other must not find two different keys for the same glyph.
+OVERRIDE_KEY = f"{OVERRIDE_MARK} value overridden by a human"
 
 #: DECISION A. Printed on every best-guess artefact — the forest's subtitle, the report's cards,
 #: the SPA's second tab — because the one real risk of a second line is that it becomes the
@@ -132,7 +138,18 @@ def route_glyph(route: str) -> str:
 
 
 def is_overridden(record: EffectSizeRecord) -> bool:
-    return OVERRIDE_FLAG in (record.flags or ()) or record.route == OVERRIDE_FLAG
+    """Did a human replace a value on this row? The FLAG is the whole of the answer.
+
+    The second clause this carried — `record.route == OVERRIDE_FLAG` — could never be true, and was
+    deleted rather than corrected (review finding). A row's route is a resolver route name
+    (`text_mean_sd`, `figure:*`, `composite`, `not_convertible`) and no path writes an override's
+    own name into it; the one place "human" is a route at all is a VERDICT for a cell the run never
+    read. Meanwhile `pipeline.overrides._rebuild_row` puts `human_override` on EVERY row any
+    override rebuilt, so the flag already answers the question completely. A second clause guessing
+    the same fact from a route tested nothing, hid that it tested nothing, and would mark rows
+    nobody touched if a caller ever came to believe it.
+    """
+    return OVERRIDE_FLAG in (record.flags or ())
 
 
 def GLYPH_LEGEND(routes: Iterable[str], overridden: bool = False) -> str:
@@ -144,7 +161,7 @@ def GLYPH_LEGEND(routes: Iterable[str], overridden: bool = False) -> str:
             seen.append(glyph)
     parts = [f"{g} {ROUTE_LABELS.get(g, 'unknown')}" for g in seen]
     if overridden:
-        parts.append(f"{OVERRIDE_MARK} value overridden by a human")
+        parts.append(OVERRIDE_KEY)
     return "Source:  " + "   ".join(parts) if parts else ""
 
 

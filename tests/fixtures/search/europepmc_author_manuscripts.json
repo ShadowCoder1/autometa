@@ -1,0 +1,1301 @@
+{
+ "_note": "Four real Europe PMC `resultType=core` records recorded 2026-09-09 by the search bench: NIH author manuscripts with isOpenAccess N, inEPMC Y, hasPDF Y and an explicit availabilityCode F pdf route.",
+ "version": "6.9",
+ "hitCount": 4,
+ "request": {
+  "resultType": "core"
+ },
+ "resultList": {
+  "result": [
+   {
+    "id": "16733695",
+    "source": "MED",
+    "pmid": "16733695",
+    "pmcid": "PMC10705045",
+    "fullTextIdList": {
+     "fullTextId": [
+      "PMC10705045"
+     ]
+    },
+    "doi": "10.1007/s00221-006-0543-2",
+    "title": "Interlimb transfer of visuomotor rotations depends on handedness.",
+    "authorString": "Wang J, Sainburg RL.",
+    "authorList": {
+     "author": [
+      {
+       "fullName": "Wang J",
+       "firstName": "Jinsung",
+       "lastName": "Wang",
+       "initials": "J",
+       "authorAffiliationDetailsList": {
+        "authorAffiliation": [
+         {
+          "affiliation": "Department of Kinesiology, The Pennsylvania State University, 266 Recreation Bldg, University Park, Pennsylvania 16802, USA. jinsung@psu.edu"
+         }
+        ]
+       }
+      },
+      {
+       "fullName": "Sainburg RL",
+       "firstName": "Robert L",
+       "lastName": "Sainburg",
+       "initials": "RL",
+       "authorId": {
+        "type": "ORCID",
+        "value": "0000-0003-2627-1258"
+       }
+      }
+     ]
+    },
+    "authorIdList": {
+     "authorId": [
+      {
+       "type": "ORCID",
+       "value": "0000-0003-2627-1258"
+      }
+     ]
+    },
+    "journalInfo": {
+     "issue": "2",
+     "volume": "175",
+     "journalIssueId": 1357236,
+     "dateOfPublication": "2006 Nov",
+     "monthOfPublication": 11,
+     "yearOfPublication": 2006,
+     "printPublicationDate": "2006-11-01",
+     "journal": {
+      "title": "Experimental brain research",
+      "medlineAbbreviation": "Exp Brain Res",
+      "isoabbreviation": "Exp Brain Res",
+      "essn": "1432-1106",
+      "issn": "0014-4819",
+      "nlmid": "0043312"
+     }
+    },
+    "pubYear": "2006",
+    "pageInfo": "223-230",
+    "abstractText": "We previously reported that opposite arm adaptation to visuomotor rotations improved the initial direction of right arm movements in right-handers, whereas it only improved the final position accuracy of their left arm movements. We now investigate the pattern of interlimb transfer following adaptation to 30 degrees visuomotor rotations in left-handers to determine whether the direction of transfer depends on handedness. Our results indicate unambiguous transfer across the arms. In terms of final position accuracy, the direction of transfer is opposite to that observed in right-handers, such that transfer only occurred from the left to the right arm movements. Directional accuracy also showed the opposite pattern of transfer to that of right-handers: initial movement direction, calculated at peak tangential acceleration, transferred only from right to left arms. When movement direction was measured later in the movement, at peak tangential velocity, asymmetrical transfer also occurred, such that greater transfer occurred from right to left arms. However, a small, but significant influence of opposite arm adaptation also occurred for the left arm, which might reflect differences in the use of the nondominant arm between left- and right-handers. Overall, our results indicate that left-handers show a mirror-imaged pattern of interlimb transfer in visuomotor adaptation to that previously reported for right-handers. This pattern of transfer is consistent with the hypothesis that asymmetry in interlimb transfer is dependent on differential specialization of the dominant and nondominant hemisphere/limb systems for trajectory and positional control, respectively.",
+    "affiliation": "Department of Kinesiology, The Pennsylvania State University, 266 Recreation Bldg, University Park, Pennsylvania 16802, USA. jinsung@psu.edu",
+    "publicationStatus": "ppublish",
+    "language": "eng",
+    "pubModel": "Print-Electronic",
+    "pubTypeList": {
+     "pubType": [
+      "Comparative Study",
+      "research-article",
+      "Journal Article",
+      "Research Support, N.I.H., Extramural"
+     ]
+    },
+    "grantsList": {
+     "grant": [
+      {
+       "grantId": "R01HD39311",
+       "agency": "NICHD NIH HHS",
+       "acronym": "HD",
+       "orderIn": 0
+      },
+      {
+       "grantId": "F32 NS046239",
+       "agency": "NINDS NIH HHS",
+       "acronym": "NS",
+       "orderIn": 0
+      },
+      {
+       "grantId": "1-F32-NS-46239-1",
+       "agency": "NINDS NIH HHS",
+       "acronym": "NS",
+       "orderIn": 0
+      },
+      {
+       "grantId": "R01 HD039311",
+       "agency": "NICHD NIH HHS",
+       "acronym": "HD",
+       "orderIn": 0
+      }
+     ]
+    },
+    "meshHeadingList": {
+     "meshHeading": [
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Extremities",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Humans"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Analysis of Variance"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Photic Stimulation",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "MT",
+          "qualifierName": "methods",
+          "majorTopic_YN": "N"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Space Perception",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Psychomotor Performance",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "Y",
+       "descriptorName": "Rotation"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Adolescent"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Adult"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Female"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Male"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Functional Laterality",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Biomechanical Phenomena"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Transfer, Psychology",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      }
+     ]
+    },
+    "subsetList": {
+     "subset": [
+      {
+       "code": "IM",
+       "name": "Index Medicus"
+      }
+     ]
+    },
+    "fullTextUrlList": {
+     "fullTextUrl": [
+      {
+       "availability": "Subscription required",
+       "availabilityCode": "S",
+       "documentStyle": "doi",
+       "site": "DOI",
+       "url": "https://doi.org/10.1007/s00221-006-0543-2"
+      },
+      {
+       "availability": "Free",
+       "availabilityCode": "F",
+       "documentStyle": "html",
+       "site": "Europe_PMC",
+       "url": "https://europepmc.org/articles/PMC10705045"
+      },
+      {
+       "availability": "Free",
+       "availabilityCode": "F",
+       "documentStyle": "pdf",
+       "site": "Europe_PMC",
+       "url": "https://europepmc.org/articles/PMC10705045?pdf=render"
+      },
+      {
+       "availability": "Free",
+       "availabilityCode": "F",
+       "documentStyle": "doi",
+       "site": "DOI",
+       "url": "https://doi.org/10.1007/s00221-006-0543-2"
+      }
+     ]
+    },
+    "isOpenAccess": "N",
+    "inEPMC": "Y",
+    "inPMC": "Y",
+    "hasPDF": "Y",
+    "hasBook": "N",
+    "hasSuppl": "N",
+    "citedByCount": 74,
+    "hasData": "N",
+    "hasReferences": "Y",
+    "hasTextMinedTerms": "Y",
+    "hasDbCrossReferences": "N",
+    "hasLabsLinks": "N",
+    "hasEvaluations": "N",
+    "authMan": "Y",
+    "epmcAuthMan": "N",
+    "nihAuthMan": "Y",
+    "manuscriptId": "NIHMS1947812",
+    "hasTMAccessionNumbers": "N",
+    "dateOfCompletion": "2007-05-15",
+    "dateOfCreation": "2006-05-31",
+    "firstIndexDate": "2008-02-16",
+    "fullTextReceivedDate": "2025-02-03",
+    "dateOfRevision": "2023-12-10",
+    "electronicPublicationDate": "2006-05-30",
+    "firstPublicationDate": "2006-05-30"
+   },
+   {
+    "id": "11807578",
+    "source": "MED",
+    "pmid": "11807578",
+    "pmcid": "PMC10710695",
+    "fullTextIdList": {
+     "fullTextId": [
+      "PMC10710695"
+     ]
+    },
+    "doi": "10.1007/s00221-001-0913-8",
+    "title": "Evidence for a dynamic-dominance hypothesis of handedness.",
+    "authorString": "Sainburg RL.",
+    "authorList": {
+     "author": [
+      {
+       "fullName": "Sainburg RL",
+       "firstName": "Robert L",
+       "lastName": "Sainburg",
+       "initials": "RL",
+       "authorId": {
+        "type": "ORCID",
+        "value": "0000-0003-2627-1258"
+       },
+       "authorAffiliationDetailsList": {
+        "authorAffiliation": [
+         {
+          "affiliation": "Department of Kinesiology, The Pennsylvania State University, 266 Recreation Bldg., University Park, PA 16802, USA. rls45@psu.edu"
+         }
+        ]
+       }
+      }
+     ]
+    },
+    "authorIdList": {
+     "authorId": [
+      {
+       "type": "ORCID",
+       "value": "0000-0003-2627-1258"
+      }
+     ]
+    },
+    "dataLinksTagsList": {
+     "dataLinkstag": [
+      "altmetrics"
+     ]
+    },
+    "journalInfo": {
+     "issue": "2",
+     "volume": "142",
+     "journalIssueId": 1046506,
+     "dateOfPublication": "2002 Jan",
+     "monthOfPublication": 1,
+     "yearOfPublication": 2002,
+     "printPublicationDate": "2002-01-01",
+     "journal": {
+      "title": "Experimental brain research",
+      "medlineAbbreviation": "Exp Brain Res",
+      "isoabbreviation": "Exp Brain Res",
+      "essn": "1432-1106",
+      "issn": "0014-4819",
+      "nlmid": "0043312"
+     }
+    },
+    "pubYear": "2002",
+    "pageInfo": "241-258",
+    "abstractText": "Handedness is a prominent behavioral phenomenon that emerges from asymmetrical neural organization of human motor systems. However, the aspects of motor performance that correspond to handedness remain largely undetermined. A recent study examining interlimb differences in coordination of reaching demonstrated dominant arm advantages in controlling limb segment inertial dynamics (Sainburg and Kalakanis 2000). Based on these findings, I now propose the dynamic-dominance hypothesis, which states that the essential factor that distinguishes dominant from nondominant arm performance is the facility governing the control of limb dynamics. The purpose of this study is to test two predictions of this hypothesis: 1) adaptation to novel intersegmental dynamics, requiring the development of new dynamic transforms, should be more effective for the dominant arm; 2) there should be no difference in adapting to visuomotor rotations performed with the dominant as compared with the nondominant arm. The latter prediction is based on the idea that visual information about target position is translated into an internal reference frame prior to transformation of the movement plan into dynamic properties, which reflect the forces required to produce movement. To test these predictions, dominant arm adaptation is compared to nondominant arm adaptation during exposure to novel inertial loads and to novel visuomotor rotations. The results indicate substantial interlimb differences in adaptation to novel inertial dynamics, but equivalent adaptation to novel visuomotor rotations. Inverse dynamic analysis revealed better coordination of dominant arm muscle torques across both shoulder and elbow joints, as compared with nondominant arm muscle torques. As a result, dominant arm movements were produced with a fraction of the mean squared muscle torque computed for nondominant arm movements made at similar speeds. These results support the dynamic-dominance hypothesis, indicating that interlimb asymmetries in control arise downstream to visuomotor transformations, when dynamic variables that correspond to the forces required for motion are specified.",
+    "affiliation": "Department of Kinesiology, The Pennsylvania State University, 266 Recreation Bldg., University Park, PA 16802, USA. rls45@psu.edu",
+    "publicationStatus": "ppublish",
+    "language": "eng",
+    "pubModel": "Print-Electronic",
+    "pubTypeList": {
+     "pubType": [
+      "Research Support, U.S. Gov't, P.H.S.",
+      "research-article",
+      "Journal Article"
+     ]
+    },
+    "grantsList": {
+     "grant": [
+      {
+       "grantId": "K01 HD 01186",
+       "agency": "NICHD NIH HHS",
+       "acronym": "HD",
+       "orderIn": 0
+      },
+      {
+       "grantId": "HD 39311",
+       "agency": "NICHD NIH HHS",
+       "acronym": "HD",
+       "orderIn": 0
+      },
+      {
+       "grantId": "R01 HD039311",
+       "agency": "NICHD NIH HHS",
+       "acronym": "HD",
+       "orderIn": 0
+      }
+     ]
+    },
+    "meshHeadingList": {
+     "meshHeading": [
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Arm",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "IR",
+          "qualifierName": "innervation",
+          "majorTopic_YN": "Y"
+         },
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "N"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Muscle, Skeletal",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "IR",
+          "qualifierName": "innervation",
+          "majorTopic_YN": "N"
+         },
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "N"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Elbow Joint",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "N"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Shoulder Joint",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "N"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Cerebral Cortex",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "AH",
+          "qualifierName": "anatomy & histology",
+          "majorTopic_YN": "N"
+         },
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Humans"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Orientation",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "N"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Psychomotor Performance",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Adaptation, Physiological",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "N"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Movement",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Muscle Contraction",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "Y",
+       "descriptorName": "Torque"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Weight-Bearing",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "N"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Models, Neurological"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Adolescent"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Adult"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Female"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Male"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Functional Laterality",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      }
+     ]
+    },
+    "subsetList": {
+     "subset": [
+      {
+       "code": "IM",
+       "name": "Index Medicus"
+      }
+     ]
+    },
+    "fullTextUrlList": {
+     "fullTextUrl": [
+      {
+       "availability": "Subscription required",
+       "availabilityCode": "S",
+       "documentStyle": "doi",
+       "site": "DOI",
+       "url": "https://doi.org/10.1007/s00221-001-0913-8"
+      },
+      {
+       "availability": "Free",
+       "availabilityCode": "F",
+       "documentStyle": "html",
+       "site": "Europe_PMC",
+       "url": "https://europepmc.org/articles/PMC10710695"
+      },
+      {
+       "availability": "Free",
+       "availabilityCode": "F",
+       "documentStyle": "pdf",
+       "site": "Europe_PMC",
+       "url": "https://europepmc.org/articles/PMC10710695?pdf=render"
+      },
+      {
+       "availability": "Free",
+       "availabilityCode": "F",
+       "documentStyle": "doi",
+       "site": "DOI",
+       "url": "https://doi.org/10.1007/s00221-001-0913-8"
+      }
+     ]
+    },
+    "isOpenAccess": "N",
+    "inEPMC": "Y",
+    "inPMC": "Y",
+    "hasPDF": "Y",
+    "hasBook": "N",
+    "hasSuppl": "N",
+    "citedByCount": 463,
+    "hasData": "N",
+    "hasReferences": "Y",
+    "hasTextMinedTerms": "Y",
+    "hasDbCrossReferences": "N",
+    "hasLabsLinks": "Y",
+    "hasEvaluations": "N",
+    "authMan": "Y",
+    "epmcAuthMan": "N",
+    "nihAuthMan": "Y",
+    "manuscriptId": "NIHMS1947813",
+    "hasTMAccessionNumbers": "N",
+    "dateOfCompletion": "2002-04-18",
+    "dateOfCreation": "2002-01-25",
+    "firstIndexDate": "2009-11-13",
+    "fullTextReceivedDate": "2025-02-03",
+    "dateOfRevision": "2023-12-12",
+    "electronicPublicationDate": "2001-11-22",
+    "firstPublicationDate": "2001-11-22"
+   },
+   {
+    "id": "17171336",
+    "source": "MED",
+    "pmid": "17171336",
+    "pmcid": "PMC10681153",
+    "fullTextIdList": {
+     "fullTextId": [
+      "PMC10681153"
+     ]
+    },
+    "doi": "10.1007/s00221-006-0811-1",
+    "title": "Lateralization of motor adaptation reveals independence in control of trajectory and steady-state position.",
+    "authorString": "Duff SV, Sainburg RL.",
+    "authorList": {
+     "author": [
+      {
+       "fullName": "Duff SV",
+       "firstName": "Susan V",
+       "lastName": "Duff",
+       "initials": "SV",
+       "authorAffiliationDetailsList": {
+        "authorAffiliation": [
+         {
+          "affiliation": "Department of Kinesiology, The Pennsylvania State University, University Park, PA 16802, USA."
+         }
+        ]
+       }
+      },
+      {
+       "fullName": "Sainburg RL",
+       "firstName": "Robert L",
+       "lastName": "Sainburg",
+       "initials": "RL",
+       "authorId": {
+        "type": "ORCID",
+        "value": "0000-0003-2627-1258"
+       }
+      }
+     ]
+    },
+    "authorIdList": {
+     "authorId": [
+      {
+       "type": "ORCID",
+       "value": "0000-0003-2627-1258"
+      }
+     ]
+    },
+    "journalInfo": {
+     "issue": "4",
+     "volume": "179",
+     "journalIssueId": 1396459,
+     "dateOfPublication": "2007 Jun",
+     "monthOfPublication": 6,
+     "yearOfPublication": 2007,
+     "printPublicationDate": "2007-06-01",
+     "journal": {
+      "title": "Experimental brain research",
+      "medlineAbbreviation": "Exp Brain Res",
+      "isoabbreviation": "Exp Brain Res",
+      "essn": "1432-1106",
+      "issn": "0014-4819",
+      "nlmid": "0043312"
+     }
+    },
+    "pubYear": "2007",
+    "pageInfo": "551-561",
+    "abstractText": "We recently provided evidence that the dominant and nondominant arms are specialized for controlling different aspects of reaching movements. In this study, we test whether these specializations lead to qualitatively different adaptive mechanisms, when exposed to novel inertial dynamics. Two groups of six right-handed adults performed a reaching task toward a single target with either the dominant or nondominant arm. After 39 trials of task familiarization without a load, subjects performed 180 trials with a 1.5 kg mass, positioned 25 cm lateral to the forearm. To assess the time course of adaptation, we quantified changes in movement direction and linearity, and to assess the quality of adaptation, we randomly interspersed aftereffect trials and generalization trials. The former were assessed by removing the mass and the latter by changing the location of the movement in the workspace. Whereas, final position accuracy improved to the same extent for both arms, initial movement direction improved only for the dominant arm. In contrast, nondominant arm adaptation occurred mainly by making more effective corrections for persistent errors in initial direction. Consistent with these findings, aftereffect trials, an indicator of feedforward control processes, showed progressive increases in error for only the dominant arm. In addition, substantial generalization only occurred for the dominant arm. These results support our hypothesis that interlimb differences in control mechanisms produce different patterns of adaptation to novel inertial dynamics.",
+    "affiliation": "Department of Kinesiology, The Pennsylvania State University, University Park, PA 16802, USA.",
+    "publicationStatus": "ppublish",
+    "language": "eng",
+    "pubModel": "Print-Electronic",
+    "pubTypeList": {
+     "pubType": [
+      "research-article",
+      "Journal Article",
+      "Research Support, N.I.H., Extramural"
+     ]
+    },
+    "grantsList": {
+     "grant": [
+      {
+       "grantId": "R01 HD039311",
+       "agency": "NICHD NIH HHS",
+       "acronym": "HD",
+       "orderIn": 0
+      },
+      {
+       "grantId": "R01HD39311",
+       "agency": "NICHD NIH HHS",
+       "acronym": "HD",
+       "orderIn": 0
+      }
+     ]
+    },
+    "meshHeadingList": {
+     "meshHeading": [
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Arm",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Muscle, Skeletal",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Central Nervous System",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "N"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Humans"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Psychomotor Performance",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Reaction Time",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "N"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Adaptation, Physiological",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Movement",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Muscle Contraction",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "N"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Time Factors"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Adolescent"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Adult"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Female"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Male"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Functional Laterality",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "N"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Biomechanical Phenomena"
+      }
+     ]
+    },
+    "subsetList": {
+     "subset": [
+      {
+       "code": "IM",
+       "name": "Index Medicus"
+      }
+     ]
+    },
+    "fullTextUrlList": {
+     "fullTextUrl": [
+      {
+       "availability": "Subscription required",
+       "availabilityCode": "S",
+       "documentStyle": "doi",
+       "site": "DOI",
+       "url": "https://doi.org/10.1007/s00221-006-0811-1"
+      },
+      {
+       "availability": "Free",
+       "availabilityCode": "F",
+       "documentStyle": "html",
+       "site": "Europe_PMC",
+       "url": "https://europepmc.org/articles/PMC10681153"
+      },
+      {
+       "availability": "Free",
+       "availabilityCode": "F",
+       "documentStyle": "pdf",
+       "site": "Europe_PMC",
+       "url": "https://europepmc.org/articles/PMC10681153?pdf=render"
+      },
+      {
+       "availability": "Free",
+       "availabilityCode": "F",
+       "documentStyle": "doi",
+       "site": "DOI",
+       "url": "https://doi.org/10.1007/s00221-006-0811-1"
+      }
+     ]
+    },
+    "isOpenAccess": "N",
+    "inEPMC": "Y",
+    "inPMC": "Y",
+    "hasPDF": "Y",
+    "hasBook": "N",
+    "hasSuppl": "N",
+    "citedByCount": 90,
+    "hasData": "N",
+    "hasReferences": "Y",
+    "hasTextMinedTerms": "Y",
+    "hasDbCrossReferences": "N",
+    "hasLabsLinks": "N",
+    "hasEvaluations": "N",
+    "authMan": "Y",
+    "epmcAuthMan": "N",
+    "nihAuthMan": "Y",
+    "manuscriptId": "NIHMS1941792",
+    "hasTMAccessionNumbers": "N",
+    "dateOfCompletion": "2007-10-17",
+    "dateOfCreation": "2006-12-16",
+    "firstIndexDate": "2008-02-16",
+    "fullTextReceivedDate": "2025-02-03",
+    "dateOfRevision": "2023-11-28",
+    "electronicPublicationDate": "2006-12-15",
+    "firstPublicationDate": "2006-12-15"
+   },
+   {
+    "id": "12172655",
+    "source": "MED",
+    "pmid": "12172655",
+    "pmcid": "PMC10704413",
+    "fullTextIdList": {
+     "fullTextId": [
+      "PMC10704413"
+     ]
+    },
+    "doi": "10.1007/s00221-002-1140-7",
+    "title": "Interlimb transfer of visuomotor rotations: independence of direction and final position information.",
+    "authorString": "Sainburg RL, Wang J.",
+    "authorList": {
+     "author": [
+      {
+       "fullName": "Sainburg RL",
+       "firstName": "Robert L",
+       "lastName": "Sainburg",
+       "initials": "RL",
+       "authorId": {
+        "type": "ORCID",
+        "value": "0000-0003-2627-1258"
+       },
+       "authorAffiliationDetailsList": {
+        "authorAffiliation": [
+         {
+          "affiliation": "Department of Kinesiology, 266 Recreation Bldg., The Pennsylvania State University, University Park, PA 16802, USA. rls45@psu.edu"
+         }
+        ]
+       }
+      },
+      {
+       "fullName": "Wang J",
+       "firstName": "Jinsung",
+       "lastName": "Wang",
+       "initials": "J"
+      }
+     ]
+    },
+    "authorIdList": {
+     "authorId": [
+      {
+       "type": "ORCID",
+       "value": "0000-0003-2627-1258"
+      }
+     ]
+    },
+    "journalInfo": {
+     "issue": "4",
+     "volume": "145",
+     "journalIssueId": 1111802,
+     "dateOfPublication": "2002 Aug",
+     "monthOfPublication": 8,
+     "yearOfPublication": 2002,
+     "printPublicationDate": "2002-08-01",
+     "journal": {
+      "title": "Experimental brain research",
+      "medlineAbbreviation": "Exp Brain Res",
+      "essn": "1432-1106",
+      "isoabbreviation": "Exp Brain Res",
+      "issn": "0014-4819",
+      "nlmid": "0043312"
+     }
+    },
+    "pubYear": "2002",
+    "pageInfo": "437-447",
+    "abstractText": "Previous findings from our laboratory support the idea that the dominant arm is more proficient than the non-dominant arm in coordinating intersegmental dynamics for specifying trajectory direction and shape during multijoint reaching movements. We also showed that adaptation of right and left arms to novel visuomotor rotations was equivalent, suggesting that this process occurs upstream to processes that distinguish dominant and non-dominant arm performance. Because of this, we speculate that such visuomotor adaptations might transfer to subsequent performance during adaptation with the other arm. We now examine whether opposite arm training to novel visuomotor rotations transfers to affect adaptation using the right and left arms. Two subject groups, RL and LR, each comprising seven right-handed subjects, adapted to a 30 degrees counterclockwise rotation in the visual display during a center-out reaching task performed in eight directions. Each group first adapted using either the right (RL) or left (LR) arm, followed by opposite arm adaptation. In order to assess transfer, we compared the same side arm movements (either right or left) following opposite arm adaptation to those performed prior to opposite arm adaptation. Our findings indicate unambiguous transfer of learning across the arms. Different features of movement transferred in different directions: Opposite arm training improved the initial direction of right arm movements under the rotated visual condition, whereas opposite arm training improved the final position accuracy, but not the direction of left arm movements. These findings confirm that transfer of training was not due to a general cognitive strategy, since such an effect should influence either hand equally. These findings support the hypothesis that each arm controller has access to information learned during opposite arm training. We suggest that each controller uses this information differently, depending on its proficiency for specifying particular features of movement. We discuss evidence that these two aspects of control are differentially mediated by the right and left cerebral hemispheres.",
+    "affiliation": "Department of Kinesiology, 266 Recreation Bldg., The Pennsylvania State University, University Park, PA 16802, USA. rls45@psu.edu",
+    "publicationStatus": "ppublish",
+    "language": "eng",
+    "pubModel": "Print-Electronic",
+    "pubTypeList": {
+     "pubType": [
+      "research-article",
+      "Journal Article"
+     ]
+    },
+    "grantsList": {
+     "grant": [
+      {
+       "grantId": "R01 HD039311",
+       "agency": "NICHD NIH HHS",
+       "acronym": "HD",
+       "orderIn": 0
+      }
+     ]
+    },
+    "meshHeadingList": {
+     "meshHeading": [
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Arm",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "IR",
+          "qualifierName": "innervation",
+          "majorTopic_YN": "Y"
+         },
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "N"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Muscle, Skeletal",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "IR",
+          "qualifierName": "innervation",
+          "majorTopic_YN": "Y"
+         },
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "N"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Cerebral Cortex",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Corpus Callosum",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Humans"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Photic Stimulation"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Orientation",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "N"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Learning",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "N"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Space Perception",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "N"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Psychomotor Performance",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Movement",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Adolescent"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Adult"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Female"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Male"
+      },
+      {
+       "majorTopic_YN": "N",
+       "descriptorName": "Functional Laterality",
+       "meshQualifierList": {
+        "meshQualifier": [
+         {
+          "abbreviation": "PH",
+          "qualifierName": "physiology",
+          "majorTopic_YN": "Y"
+         }
+        ]
+       }
+      }
+     ]
+    },
+    "subsetList": {
+     "subset": [
+      {
+       "code": "IM",
+       "name": "Index Medicus"
+      }
+     ]
+    },
+    "fullTextUrlList": {
+     "fullTextUrl": [
+      {
+       "availability": "Subscription required",
+       "availabilityCode": "S",
+       "documentStyle": "doi",
+       "site": "DOI",
+       "url": "https://doi.org/10.1007/s00221-002-1140-7"
+      },
+      {
+       "availability": "Free",
+       "availabilityCode": "F",
+       "documentStyle": "html",
+       "site": "Europe_PMC",
+       "url": "https://europepmc.org/articles/PMC10704413"
+      },
+      {
+       "availability": "Free",
+       "availabilityCode": "F",
+       "documentStyle": "pdf",
+       "site": "Europe_PMC",
+       "url": "https://europepmc.org/articles/PMC10704413?pdf=render"
+      },
+      {
+       "availability": "Free",
+       "availabilityCode": "F",
+       "documentStyle": "doi",
+       "site": "DOI",
+       "url": "https://doi.org/10.1007/s00221-002-1140-7"
+      }
+     ]
+    },
+    "isOpenAccess": "N",
+    "inEPMC": "Y",
+    "inPMC": "Y",
+    "hasPDF": "Y",
+    "hasBook": "N",
+    "hasSuppl": "N",
+    "citedByCount": 253,
+    "hasData": "N",
+    "hasReferences": "Y",
+    "hasTextMinedTerms": "Y",
+    "hasDbCrossReferences": "N",
+    "hasLabsLinks": "N",
+    "hasEvaluations": "N",
+    "authMan": "Y",
+    "epmcAuthMan": "N",
+    "nihAuthMan": "Y",
+    "manuscriptId": "NIHMS1947816",
+    "hasTMAccessionNumbers": "N",
+    "dateOfCompletion": "2002-11-06",
+    "dateOfCreation": "2002-08-13",
+    "firstIndexDate": "2009-11-13",
+    "fullTextReceivedDate": "2025-02-03",
+    "dateOfRevision": "2023-12-09",
+    "electronicPublicationDate": "2002-06-26",
+    "firstPublicationDate": "2002-06-26"
+   }
+  ]
+ }
+}

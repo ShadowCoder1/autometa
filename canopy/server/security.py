@@ -11,12 +11,17 @@ every request. The server hands out exactly two capabilities:
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import secrets
 from pathlib import Path
 
-__all__ = ["ALLOWED_SUFFIXES", "DENIED_TOP_LEVEL", "PathRejected", "mint_token", "media_type",
-           "safe_run_path", "token_matches", "is_loopback", "is_attachment"]
+__all__ = ["ALLOWED_SUFFIXES", "DENIED_TOP_LEVEL", "ACCESS_COOKIE", "PathRejected", "mint_token",
+           "media_type", "safe_run_path", "token_matches", "is_loopback", "is_attachment",
+           "access_cookie_value", "access_granted"]
+
+#: the cookie a browser holds once it has given the site's access code
+ACCESS_COOKIE = "canopy_access"
 
 #: what a run directory may serve — artefacts a reader looks at, nothing executable
 ALLOWED_SUFFIXES: frozenset[str] = frozenset({
@@ -58,6 +63,31 @@ def token_matches(given: str | None, expected: str | None) -> bool:
 
 def is_loopback(host: str | None) -> bool:
     return str(host or "").strip().strip("[]").lower() in _LOOPBACK_HOSTS
+
+
+def access_cookie_value(code: str) -> str:
+    """What a browser holds after giving the right code: a digest of it, never the code itself.
+
+    The code is one environment variable on the server, and it is the only thing between the
+    public internet and the API budget. A cookie carrying it verbatim would copy it into every
+    request log and every browser's cookie jar. A digest lets the holder prove they once knew the
+    code without a log reader learning it.
+    """
+    return hashlib.sha256(b"canopy-access:" + code.encode("utf-8")).hexdigest()
+
+
+def access_granted(cookie: str | None, header: str | None, code: str | None) -> bool:
+    """Whether a request may pass the site gate.
+
+    No configured code means no gate — the local, loopback-only server stays exactly as it was.
+    With one, a request passes on the cookie a correct code earned, or on the code itself in a
+    header (a script that never saw the form). Constant-time, and empty never matches.
+    """
+    if not code:
+        return True
+    if cookie and hmac.compare_digest(str(cookie), access_cookie_value(code)):
+        return True
+    return token_matches(header, code)
 
 
 def media_type(path: str | Path) -> str:

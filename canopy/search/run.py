@@ -1,5 +1,13 @@
 """The orchestrator: queries → index → dedupe → screen → fetch, and a record of all five.
 
+The first stage now builds concept BLOCKS (`blocks.py`) and two Boolean strings from them, has
+width control measure and prune them (`width.py`), and sends each string to every index form in
+the order the indexes were measured to rank (`indices.py`: PubMed, OpenAlex title/abstract,
+Europe PMC three pages deep, OpenAlex full text when the string fits). The screening cap then
+cuts a RANKED list (`rank.py`), not the arrival order, and is derived from the budget unless the
+user set a number. The reasons are in design 03 §1–3 and are measured in
+`validation/search_bench`.
+
 `run_search` is the only function here, and everything it needs from the outside world arrives as
 an argument: the transport, the model client, the model names, the caps, the directory, the
 progress callback and the cancellation check. Nothing is constructed here that could open a socket
@@ -56,23 +64,32 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+import threading
+
+from .blocks import INDEX_FORMS, build_plan, query_rows, template_plan
+from .cost import (COST_PER_RECORD, SHARE_SNOWBALL, predict, run_commit, run_cost_per_paper,
+                   screening_cap)
 from .dedupe import dedupe, normalise_doi, normalise_title
-from .fetch import default_probe, fetch_candidates
-from .indices import INDEXES, DISCOVERY_INDEXES, Unpaywall, contact_email, source_record
+from .fetch import DEFAULT_MAX_FETCH_UNSURE, FETCH_DEADLINE_S, default_probe, fetch_candidates
+from .indices import (DEFAULT_DEPTH, INDEXES, DISCOVERY_INDEXES, Unpaywall, contact_email,
+                      depth_for, search_pages, source_record)
 from .models import PHASES, Candidate, SearchRecord, counts_of, new_key
-from .queries import build_queries, template_queries
+from .rank import rank
 from .screen import screen_candidates
+from .snowball import round_cap, snowball
 from .transport import SearchTransport
 
-__all__ = ["run_search", "DEFAULT_PER_QUERY", "DEFAULT_MAX_SCREENED", "DEFAULT_MAX_FETCH",
-           "MIN_TITLE_FRAGMENT", "EXCLUDED_BY_USER", "exclusion_rules", "new_search_id"]
+__all__ = ["run_search", "DEFAULT_DEPTH", "DEFAULT_MAX_SCREENED", "DEFAULT_MAX_FETCH",
+           "DEFAULT_MAX_FETCH_UNSURE", "MIN_TITLE_FRAGMENT", "EXCLUDED_BY_USER",
+           "exclusion_rules", "new_search_id"]
 
-#: rows asked of each index per query. One request per query per index: the metered index charges
-#: the same for a page of 200 as for a page of 1, and the unmetered one pages 1,000 at a time, so a
-#: paginator would spend requests to no purpose.
-DEFAULT_PER_QUERY = 100
+#: the screening cap when neither a budget nor a number bounds it (`cost.screening_cap`). Kept
+#: because the server's settings pin against it; a search with a budget derives its own.
 DEFAULT_MAX_SCREENED = 200
-DEFAULT_MAX_FETCH = 60
+#: candidates the fetch stage may ATTEMPT. Five hundred, up from sixty: fetching costs bandwidth
+#: and no money, the stage has a wall clock of its own (`FETCH_DEADLINE_S`), and the sixty-cap
+#: cut 201 papers of the first real search without the page being able to say so.
+DEFAULT_MAX_FETCH = 500
 
 #: the shortest NORMALISED title fragment that may be used as a substring rule.
 #:
@@ -134,14 +151,17 @@ def run_search(*, question: str,
                client: Any | None = None,
                model_roles: Mapping[str, str],
                budget_usd: float | None,
-               max_screened: int = DEFAULT_MAX_SCREENED,
+               max_screened: int | None = None,
                max_fetch: int = DEFAULT_MAX_FETCH,
+               max_fetch_unsure: int | None = DEFAULT_MAX_FETCH_UNSURE,
                staging_dir: str | Path,
                on_phase: Callable[[str, str, str, float], None] | None = None,
                cancelled: Callable[[], bool] | None = None,
                index_names: Sequence[str] = DISCOVERY_INDEXES,
                exclude: Sequence[str] = (),
-               per_query: int = DEFAULT_PER_QUERY,
+               depth: int = DEFAULT_DEPTH,
+               seed_dois: Sequence[str] = (),
+               chase_citations: bool = True,
                probe: Callable[[Path], Mapping[str, Any]] | None = None,
                search_id: str = "",
                now: datetime | None = None) -> SearchRecord:
@@ -149,7 +169,7 @@ def run_search(*, question: str,
     publisher did.
 
     `client is None` means no model is available: the queries come from the user's own words
-    (`template_queries`) and nothing is screened. That is a supported way to run, not a failure —
+    (`blocks.template_plan`) and nothing is screened. That is a supported way to run, not a failure —
     `record.query_source` says which path was taken and the page shows it, because it changes what
     a reader should expect of the recall.
 
@@ -161,10 +181,23 @@ def run_search(*, question: str,
     dedupe and before the screener, so a forbidden paper is never sent to a model, never fetched
     and never billed — and it is recorded as the person's decision, in `record.exclusions` and in
     `Candidate.excluded_by_user`, never as a verdict this tool reached.
+
+    `max_fetch_unsure` bounds how many papers the screener could not decide about are fetched
+    (best claim first). Each one fetched is a paper the review will read in full, at dollars a
+    paper, and the record's last note prices that commitment out loud (`fetch.py`, design 03 §5).
+
+    `max_screened` is an OVERRIDE: `None` means the cap is what `SHARE_SCREEN` of `budget_usd`
+    buys at `COST_PER_RECORD` (`cost.screening_cap`), and the list it cuts is ranked. `depth` is
+    the rows asked of each index form per string (Europe PMC three times that). `seed_dois` are
+    recorded on the plan for the seed check (design 03 §1, step 7) and not yet acted on.
     """
     started = time.monotonic()
     record = SearchRecord(search_id=search_id or new_search_id(now), question=question,
-                          created_at=_iso(now))
+                          created_at=_iso(now), depth=int(depth))
+    # what this search is expected to spend, written before a cent is: the bench compares it
+    # with what it did spend, and the page shows it beside the cap
+    record.predicted = predict(budget_usd, max_fetch_unsure=max_fetch_unsure,
+                               snowball=chase_citations)
     phases = _Phases(record, on_phase)
     staging = Path(staging_dir)
     staging.mkdir(parents=True, exist_ok=True)
@@ -186,31 +219,31 @@ def run_search(*, question: str,
     # ---------------------------------------------------------------- 1. queries
     phases.emit("queries", "running")
     stage = time.monotonic()
-    built = _build_queries(client, question, protocol, model_roles, record)
-    record.queries = built["queries"]
-    record.criteria = built["criteria"]
-    record.query_source = built["source"]
-    record.cost_usd += float(built.get("cost_usd") or 0.0)
-    record.notes.extend(built.get("notes") or [])
-    if not record.queries:
+    plan = _build_plan(client, question, protocol, model_roles, record, transport, seed_dois)
+    record.plan = plan
+    record.queries = query_rows(plan)
+    record.criteria = [str(r.get("rule") or "") for r in plan.get("rubric") or []
+                       if str(r.get("rule") or "").strip()]
+    record.query_source = str(plan.get("source") or "template")
+    record.cost_usd += float(plan.get("cost_usd") or 0.0)
+    record.notes.extend(str(n) for n in (plan.get("notes") or []))
+    if not any(row.get("text") for row in record.queries):
         # nothing to ask. Reported rather than raised: the user gets a search that found nothing
         # and a sentence saying why, which they can act on by rewording the question.
         phases.emit("queries", "error", "no query could be built from this question — try naming "
                                         "the groups you are comparing and the outcome you care "
                                         "about", time.monotonic() - stage)
         return skip_rest(1, "")
-    phases.emit("queries", "ok",
-                f"{len(record.queries)} quer{'y' if len(record.queries) == 1 else 'ies'} "
-                f"from {'a model' if record.query_source == 'model' else 'your own words'}",
-                time.monotonic() - stage)
+    phases.emit("queries", "ok", _plan_message(plan, record.queries), time.monotonic() - stage)
     if stop_requested():
         return skip_rest(1, "cancelled")
 
     # ---------------------------------------------------------------- 2. index
     phases.emit("index", "running")
     stage = time.monotonic()
-    found = _run_indexes(transport, record, index_names, per_query=per_query)
-    phases.emit("index", "ok" if any(s["n_returned"] for s in record.sources) else "error",
+    found = _run_indexes(transport, record, index_names, depth=depth)
+    found.extend(_injected_seeds(record))
+    phases.emit("index", "ok" if any(s.get("n_returned") for s in record.sources) else "error",
                 _index_message(record.sources, len(found)), time.monotonic() - stage)
     if stop_requested():
         return skip_rest(2, "cancelled")
@@ -243,12 +276,19 @@ def run_search(*, question: str,
     # way past: it was never going to be read, so counting it against the abstracts that could be
     # would cost the user a record they had not excluded.
     screenable = [c for c in record.candidates if not c.excluded_by_user]
-    to_screen, over_cap = _split_at_cap(screenable, max_screened)
+    cap = screening_cap(budget_usd, max_screened)
+    if cap is None and client is not None:
+        cap = DEFAULT_MAX_SCREENED
+    to_screen, over_cap = _rank_and_split(screenable, plan, cap)
     if over_cap:
         record.notes.append(
-            f"the screening cap of {max_screened} stopped this search before {len(over_cap)} "
-            f"records were read — they are listed unscreened, with their abstracts")
-    outcome = _screen(client, to_screen, record, model_roles, budget_usd)
+            f"the screening cap of {cap} "
+            + ("(what 70 % of the budget buys at $0.003 a record) " if max_screened is None
+               else "")
+            + f"stopped this search before {len(over_cap)} records were read — they are the "
+              f"{len(over_cap)} ranked least relevant, listed unscreened with their abstracts "
+              f"and their rank")
+    outcome = _screen(client, to_screen, record, model_roles, budget_usd, protocol)
     record.cost_usd = round(record.cost_usd + outcome.cost_usd, 6)
     # the batch map goes to disk. `screen.py` claimed for a while that it was already there and
     # re-read on resume; it was neither, and a false line in an audit trail is worse than a
@@ -269,55 +309,93 @@ def run_search(*, question: str,
         record.notes.append("the cost cap stopped screening; the papers that were screened were "
                             "still fetched, because fetching costs nothing")
 
-    # ---------------------------------------------------------------- 5. fetch
+    # ---------------------------------------------------------------- 5. snowball
+    phases.emit("snowball", "running")
+    stage = time.monotonic()
+    if client is None:
+        phases.emit("snowball", "skipped", "no model was available to screen what the citations "
+                                           "would find", time.monotonic() - stage)
+    elif not chase_citations:
+        phases.emit("snowball", "skipped", "citation chasing was switched off",
+                    time.monotonic() - stage)
+    elif record.stopped_because == "budget":
+        phases.emit("snowball", "skipped", "the cost cap had already stopped screening",
+                    time.monotonic() - stage)
+    else:
+        _chase(client, record, transport, model_roles, budget_usd, protocol,
+               cancelled=cancelled)
+        phases.emit("snowball", "ok", _snowball_message(record.rounds), time.monotonic() - stage)
+    if stop_requested():
+        return skip_rest(5, "cancelled")
+
+    # ---------------------------------------------------------------- 6. fetch
     phases.emit("fetch", "running")
     stage = time.monotonic()
     summary = _fetch(record, staging, transport=transport, max_fetch=max_fetch,
-                     probe=probe, cancelled=cancelled)
+                     max_fetch_unsure=max_fetch_unsure, probe=probe, cancelled=cancelled)
     record.notes.extend(summary.notes)
     if summary.stopped_because and not record.stopped_because:
         record.stopped_because = summary.stopped_because
     phases.emit("fetch", "ok", _fetch_message(summary), time.monotonic() - stage)
+    _say_the_run_cost(record)
 
+    _say_what_it_cost(record)
     record.notes.append(f"the search took {time.monotonic() - started:.0f}s")
     return record
 
 
 # ------------------------------------------------------------------------------------ the stages
-def _build_queries(client: Any | None, question: str, protocol: Any,
-                   model_roles: Mapping[str, str], record: SearchRecord) -> dict[str, Any]:
-    """One model call, or the user's own words. Never an exception either way.
+def _build_plan(client: Any | None, question: str, protocol: Any,
+                model_roles: Mapping[str, str], record: SearchRecord, transport: SearchTransport,
+                seeds: Sequence[str]) -> dict[str, Any]:
+    """One model call, expansion, width control, rendering — or the user's own words. Never an
+    exception either way.
 
-    `build_queries` already falls back to the template path when the call fails; this wrapper
-    exists for the case it cannot cover — a client object that raises on attribute access, a model
-    name that is not in the roles map — because the query stage failing must not be the thing that
-    stops a free index search.
+    `build_plan` already falls back to the template path when the call fails; this wrapper
+    exists for the case it cannot cover — a client object that raises on attribute access, a
+    model name that is not in the roles map, a width control that dies — because the query stage
+    failing must not be the thing that stops a free index search.
     """
     if client is None:
-        result = template_queries(question, protocol)
-        result.setdefault("notes", []).append(
-            "no model was available, so these queries are made of your own words and nothing was "
+        try:
+            plan = build_plan(None, question, model="", protocol=protocol, transport=transport,
+                              seeds=seeds)
+        except Exception as exc:                # noqa: BLE001 - reported, never raised
+            plan = template_plan(question, protocol)
+            plan["notes"].append(f"width control failed ({type(exc).__name__}: {exc}"[:200]
+                                 + "); the strings are sent unpruned")
+            from .blocks import expand_plan, render_strings
+
+            expand_plan(plan, protocol, question)
+            render_strings(plan)
+        plan["notes"].append(
+            "no model was available, so these blocks are made of your own words and nothing was "
             "screened — every paper found is listed for you to read, and the open-access copies "
             "were still fetched")
-        return result
+        return plan
     model = model_roles.get("queries") or model_roles.get("secondary") or "claude-sonnet-5"
     billed_before = _client_cost(client)
     try:
-        result = build_queries(client, question, model=model, protocol=protocol)
+        plan = build_plan(client, question, model=model, protocol=protocol, transport=transport,
+                          seeds=seeds)
     except Exception as exc:                    # noqa: BLE001 - reported, never raised
-        result = template_queries(question, protocol)
-        result.setdefault("notes", []).append(
-            f"the query call failed ({type(exc).__name__}), so the queries below were built from "
+        plan = template_plan(question, protocol)
+        from .blocks import expand_plan, render_strings
+
+        expand_plan(plan, protocol, question)
+        render_strings(plan)
+        plan["notes"].append(
+            f"the query call failed ({type(exc).__name__}), so the blocks below were built from "
             f"your own words instead")
         record.notes.append(f"query building fell back to your own words: {exc}"[:300])
-    # A call that failed after the provider answered was still BILLED, and `template_queries`
+    # A call that failed after the provider answered was still BILLED, and the template path
     # reports `cost_usd: 0.0` because it never called anything — so a failed query call used to
     # be charged to nobody and shown to the user as $0.00 (review §M9). The client's own ledger
     # is the one that knows, and the difference across the call is the truth whichever path ran.
     spent = max(0.0, _client_cost(client) - billed_before)
-    if spent > float(result.get("cost_usd") or 0.0):
-        result["cost_usd"] = round(spent, 6)
-    return result
+    if spent > float(plan.get("cost_usd") or 0.0):
+        plan["cost_usd"] = round(spent, 6)
+    return plan
 
 
 def _client_cost(client: Any) -> float:
@@ -330,35 +408,73 @@ def _client_cost(client: Any) -> float:
 
 
 def _run_indexes(transport: SearchTransport, record: SearchRecord,
-                 index_names: Sequence[str], *, per_query: int) -> list[Candidate]:
-    """Ask each index each query, and write down what every one of them said.
+                 index_names: Sequence[str], *, depth: int) -> list[Candidate]:
+    """Ask each index form its own rows of `record.queries`, in the measured order, and write
+    down what every one of them said.
 
-    Sequential across indexes and queries: the transport's per-host clock would serialise same-host
-    calls anyway, and the indexes here are a handful of requests, not a crawl. An index that raises
-    — which it should not, the transport returns outcomes as data — is caught and recorded, because
-    "the adapter had a bug" is still not a reason to lose the other index's results.
+    The order is `blocks.INDEX_FORMS` — PubMed, OpenAlex title/abstract, Europe PMC, OpenAlex
+    full text — filtered by `index_names`; a row an index was never sent (the full-text form of
+    a string too long for it) becomes a `sources` row that says `skipped` and why, so the page
+    never mistakes "not asked" for "found nothing". Sequential across indexes and queries: the
+    transport's per-host clock would serialise same-host calls anyway. An index that raises —
+    which it should not, the transport returns outcomes as data — is caught and recorded,
+    because "the adapter had a bug" is still not a reason to lose the other index's results.
     """
     found: list[Candidate] = []
-    for name in index_names:
+    for name, form in INDEX_FORMS:
+        if name not in index_names:
+            continue
         index = INDEXES.get(name)
         if index is None or not getattr(index, "discovery", False):
             continue
-        for query in record.queries:
-            text = str(query.get("text") or "").strip()
-            if not text:
+        for row in record.queries:
+            if str(row.get("index") or "") != name or str(row.get("form") or "") != form:
+                continue
+            if row.get("skipped") or not str(row.get("text") or "").strip():
+                record.sources.append(source_record(
+                    name, "", query_id=str(row.get("query_id") or ""), form=form, pages=0,
+                    skipped=True, chars=int(row.get("chars") or 0),
+                    note=str(row.get("why") or "not sent")))
                 continue
             try:
-                candidates, row = index.search(transport, text, limit=per_query)
+                candidates, source = search_pages(index, transport, row,
+                                                  depth=depth_for(name, depth))
             except Exception as exc:            # noqa: BLE001 - a bug here is one index's problem
-                candidates, row = [], source_record(
-                    name, text, error=f"{type(exc).__name__}: {exc}"[:300], outcome="unreadable")
+                candidates, source = [], source_record(
+                    name, str(row.get("text") or ""), query_id=str(row.get("query_id") or ""),
+                    form=form, pages=0, error=f"{type(exc).__name__}: {exc}"[:300],
+                    outcome="unreadable")
             found.extend(candidates)
-            record.sources.append(row)
-            if row.get("error"):
-                note = row.get("note") or f"{name} did not answer: {row['error']}"
+            record.sources.append(source)
+            if source.get("error"):
+                note = source.get("note") or f"{name} did not answer: {source['error']}"
                 if note not in record.notes:
                     record.notes.append(str(note))
     return found
+
+
+def _injected_seeds(record: SearchRecord) -> list[Candidate]:
+    """The seed papers no string reached even after a restore and a rewrite (design 03 §1):
+    their Europe PMC records become candidates found by "seed", ticked for screening ahead of
+    the cap, and NEVER counted as recall — the user handed them in."""
+    from .indices import EuropePmc
+
+    out: list[Candidate] = []
+    for row in (record.plan or {}).get("seed_inject") or []:
+        if not isinstance(row, Mapping):
+            continue
+        candidate = EuropePmc().parse(row)
+        candidate.found_by = ["seed"]
+        candidate.seed = True
+        out.append(candidate)
+    if out:
+        record.sources.append(source_record("seed", "the seed DOIs no string reached",
+                                            n_returned=len(out), query_id="", form="", pages=0,
+                                            note="injected from the seed list, not found by a "
+                                                 "search string"))
+        record.notes.append(f"{len(out)} seed paper(s) no string reached were added as "
+                            f"candidates found by \"seed\"")
+    return out
 
 
 def _count_rows(merged: Sequence[Candidate], found: Sequence[Candidate]) -> None:
@@ -496,18 +612,32 @@ def _apply_exclusions(record: SearchRecord, entries: Sequence[str]) -> int:
     return forbidden
 
 
-def _split_at_cap(candidates: Sequence[Candidate],
-                  cap: int | None) -> tuple[list[Candidate], list[Candidate]]:
-    """The first `cap` candidates and the rest. The rest are NOT dropped — they stay in the record,
-    unscreened, with the reason, so the count a user reads is a fact about the list they see."""
-    rows = list(candidates)
-    if cap is None or cap < 0 or len(rows) <= cap:
-        return rows, []
-    return rows[:cap], rows[cap:]
+def _rank_and_split(candidates: Sequence[Candidate], plan: Mapping[str, Any],
+                    cap: int | None) -> tuple[list[Candidate], list[Candidate]]:
+    """Every candidate scored and sorted (`rank.py`), then the first `cap` and the rest.
+
+    The rest are NOT dropped — they stay in the record, unscreened, with the reason and their
+    rank, so the count a user reads is a fact about the list they see. Ranked before the cut,
+    not after: the first search cut its list in arrival order and the one key paper the indexes
+    returned late was lost to the order the network answered in (design 01).
+    """
+    ordered = rank(list(candidates), plan)
+    for position, candidate in enumerate(ordered, start=1):
+        candidate.relevance_why = f"rank {position}: {candidate.relevance_why}"
+    if cap is None or cap < 0 or len(ordered) <= cap:
+        return ordered, []
+    # a seed the user handed in is read whatever its rank: it was never a candidate to cut
+    chosen = ordered[:cap] + [c for c in ordered[cap:] if c.seed]
+    rest = [c for c in ordered[cap:] if not c.seed]
+    for candidate in rest:
+        candidate.screen_reason = (f"ranked {ordered.index(candidate) + 1} of {len(ordered)}, "
+                                   f"past the screening cap of {cap} — nobody read it")
+    return chosen, rest
 
 
 def _screen(client: Any | None, candidates: Sequence[Candidate], record: SearchRecord,
-            model_roles: Mapping[str, str], budget_usd: float | None) -> Any:
+            model_roles: Mapping[str, str], budget_usd: float | None,
+            protocol: Any = None, round_index: int = 0) -> Any:
     """The screening stage, with its own failure caught.
 
     `screen_candidates` already turns a budget stop and a per-batch model error into recorded
@@ -520,7 +650,9 @@ def _screen(client: Any | None, candidates: Sequence[Candidate], record: SearchR
              or model_roles.get("secondary") or "claude-sonnet-5")
     try:
         return screen_candidates(client, candidates, question=record.question,
-                                 criteria=record.criteria, model=model, budget_usd=budget_usd,
+                                 protocol=protocol, rubric=list(record.plan.get("rubric") or []),
+                                 plan=record.plan, criteria=record.criteria, model=model,
+                                 budget_usd=budget_usd, round_index=round_index,
                                  cell_key_prefix=f"screen:{record.search_id}")
     except Exception as exc:                    # noqa: BLE001 - reported, never raised
         outcome = ScreenOutcome()
@@ -532,57 +664,160 @@ def _screen(client: Any | None, candidates: Sequence[Candidate], record: SearchR
         return outcome
 
 
-def _fetch(record: SearchRecord, staging: Path, *, transport: SearchTransport,
-           max_fetch: int, probe: Callable[[Path], Mapping[str, Any]] | None,
-           cancelled: Callable[[], bool] | None) -> Any:
-    """Resolve the long tail with Unpaywall, then fetch. Both halves failure-tolerant.
+def _chase(client: Any, record: SearchRecord, transport: SearchTransport,
+           model_roles: Mapping[str, str], budget_usd: float | None, protocol: Any, *,
+           cancelled: Callable[[], bool] | None) -> None:
+    """The citation-chasing rounds (`snowball.py`), each screened like the first pass and
+    priced into the record. Never raises: a stage that dies is a note and the search goes on
+    to fetch what it already has."""
+    cap = round_cap(budget_usd, share=SHARE_SNOWBALL, cost_per_record=COST_PER_RECORD)
 
-    The Unpaywall pass runs FIRST and only for candidates that this stage would fetch, have a DOI,
-    and have no OA URL from either discovery index — that is the population it exists for, and
-    asking it about a paper Europe PMC already offered would spend a request to learn something we
-    know. The list is filtered BEFORE `max_fetch` is applied, so the cap bounds the requests this
+    def screen_round(chosen: Sequence[Candidate], round_index: int) -> Any:
+        outcome = _screen(client, chosen, record, model_roles, budget_usd, protocol,
+                          round_index=round_index)
+        record.cost_usd = round(record.cost_usd + float(outcome.cost_usd or 0.0), 6)
+        record.batches.extend(dict(asdict(b), round=round_index) for b in outcome.batches)
+        record.notes.extend(outcome.notes)
+        return outcome
+
+    try:
+        everything, rounds = snowball(record.candidates, transport=transport, plan=record.plan,
+                                      screen=screen_round, cap=cap, budget_usd=budget_usd,
+                                      cost_so_far=lambda: record.cost_usd, cancelled=cancelled)
+    except Exception as exc:                    # noqa: BLE001 - reported, never raised
+        record.notes.append(f"citation chasing failed ({type(exc).__name__}: {exc}); the search "
+                            f"goes on with what the strings found"[:300])
+        return
+    record.candidates = everything
+    record.rounds = rounds
+    _measure_unique(record)
+    for row in rounds:
+        for note in row.get("notes") or []:
+            if note not in record.notes:
+                record.notes.append(str(note))
+
+
+def _fetch(record: SearchRecord, staging: Path, *, transport: SearchTransport,
+           max_fetch: int, max_fetch_unsure: int | None,
+           probe: Callable[[Path], Mapping[str, Any]] | None,
+           cancelled: Callable[[], bool] | None) -> Any:
+    """Resolve the long tail with Unpaywall, then fetch, then Unpaywall again for what failed.
+    Every half failure-tolerant.
+
+    The first Unpaywall pass runs for candidates this stage would fetch, that have a DOI, and
+    that have no OA URL from any discovery index — that is the population it exists for, and
+    asking it about a paper Europe PMC already offered would spend a request to learn something
+    we know. The list is the fetch workload itself (`fetchable`: wanted, then the unsure papers
+    under their cap, then the unread), cut at `max_fetch`, so the cap bounds the requests this
     pass makes rather than being eaten by candidates it was going to skip anyway.
 
-    "Would fetch" now includes the records nobody screened: with no model nothing is `wanted`, so
-    a pass that resolved only `wanted` asked Unpaywall about nothing, and the fetch stage then had
-    nothing to fetch. Wanted papers are still resolved first, so a cap that bites cuts the
-    unscreened tail.
+    The second pass is the fetch stage's `resolve_more` hook: a candidate whose every index
+    route failed definitively is offered to Unpaywall once, and tried again only for the routes
+    that are new. Unpaywall's own copy is often the repository PDF an index's landing page hid.
     """
-    from .fetch import FetchSummary, oa_sources
+    from .fetch import FetchSummary, fetchable, oa_sources
 
-    unresolved = [c for c in record.candidates
-                  if c.doi and not oa_sources(c) and c.state in ("wanted", "not_screened")]
-    unresolved.sort(key=lambda c: c.state != "wanted")      # stable: wanted first, order kept
+    workload = fetchable(record.candidates, max_fetch_unsure=max_fetch_unsure)[:max_fetch]
+    unresolved = [c for c in workload if c.doi and not oa_sources(c)]
     unpaywall = Unpaywall()
+    lock = threading.Lock()
+    asked: set[str] = set()
+
+    def resolve(candidate: Candidate) -> bool:
+        """Ask Unpaywall once; merge what it said; True when a route we did not have landed."""
+        with lock:
+            if candidate.key in asked:
+                return False
+            asked.add(candidate.key)
+        before = {url for _, url in oa_sources(candidate, limit=1000)}
+        try:
+            ids, row = unpaywall.locations(transport, candidate)
+        except Exception as exc:            # noqa: BLE001 - one candidate's problem
+            ids, row = {}, source_record("unpaywall", candidate.doi,
+                                         error=f"{type(exc).__name__}: {exc}"[:300])
+        candidate.ids.update(ids)
+        # the licence is whatever Unpaywall stated, and only when nothing else stated one
+        if not candidate.license and row.get("license"):
+            candidate.license = str(row["license"])
+        with lock:
+            record.sources.append(row)
+        return any(url not in before for _, url in oa_sources(candidate, limit=1000))
+
     if contact_email():
-        for candidate in unresolved[:max_fetch]:
+        for candidate in unresolved:
             if cancelled and cancelled():
                 break
-            try:
-                ids, row = unpaywall.locations(transport, candidate)
-            except Exception as exc:            # noqa: BLE001 - one candidate's problem
-                ids, row = {}, source_record("unpaywall", candidate.doi,
-                                             error=f"{type(exc).__name__}: {exc}"[:300])
-            candidate.ids.update(ids)
-            # the licence is whatever Unpaywall stated, and only when nothing else stated one
-            if not candidate.license and row.get("license"):
-                candidate.license = str(row["license"])
-            record.sources.append(row)
-    elif unresolved:
-        record.notes.append(
-            "Unpaywall was not consulted for the papers no index offered a PDF for: it needs a "
-            "real contact address, so set CANOPY_CONTACT_EMAIL to widen the fetch")
+            resolve(candidate)
+        resolve_more: Callable[[Candidate], bool] | None = resolve
+    else:
+        resolve_more = None
+        if unresolved or workload:
+            record.notes.append(
+                "Unpaywall was not consulted — before the fetch for the papers no index offered "
+                "a PDF for, nor after it for the ones every route failed on: it needs a real "
+                "contact address, so set CANOPY_CONTACT_EMAIL to widen the fetch")
 
     try:
         return fetch_candidates(record.candidates, staging, transport=transport,
                                 probe=probe if probe is not None else default_probe(),
-                                max_fetch=max_fetch, cancelled=cancelled)
+                                max_fetch=max_fetch, max_fetch_unsure=max_fetch_unsure,
+                                deadline_s=FETCH_DEADLINE_S, cancelled=cancelled,
+                                resolve_more=resolve_more)
     except Exception as exc:                    # noqa: BLE001 - reported, never raised
         summary = FetchSummary()
         summary.notes.append(
             f"the fetch stage failed ({type(exc).__name__}: {exc}); the papers it did not reach "
             f"are listed with their links"[:300])
         return summary
+
+
+def _say_what_it_cost(record: SearchRecord) -> None:
+    """`record.predicted["actual"]`: what the search really billed, beside what was predicted
+    for it — the plan call, the first pass (audit included), the citation-chasing rounds. The
+    bench prints the two side by side; a prediction that is not measured is a guess."""
+    first = [b for b in record.batches if not b.get("round")]
+    rounds = [b for b in record.batches if b.get("round")]
+    actual = {
+        "plan_usd": round(float((record.plan or {}).get("cost_usd") or 0.0), 4),
+        "screen_usd": round(sum(float(b.get("cost_usd") or 0.0) for b in first), 4),
+        "audit_usd": round(sum(float(b.get("cost_usd") or 0.0) for b in first if b.get("audit")),
+                           4),
+        "snowball_usd": round(sum(float(b.get("cost_usd") or 0.0) for b in rounds), 4),
+        "n_screened": sum(int(b.get("n_verdicts") or 0) for b in first if not b.get("audit")),
+        "snowball_rounds": len([r for r in record.rounds if r.get("n_seeds")]),
+        "total_usd": round(float(record.cost_usd or 0.0), 4),
+    }
+    predicted = dict(record.predicted or {})
+    predicted["actual"] = actual
+    record.predicted = predicted
+
+
+def _say_the_run_cost(record: SearchRecord) -> None:
+    """The bill a `begin` would start, said in the record's own words and numbers.
+
+    The search costs cents a record; the review it becomes costs dollars a paper, and half of
+    what a careful screener reads is `unsure` and now fetched. `record.predicted["run_commit"]`
+    carries the numbers for the page and for `begin`; the note carries the sentence for a reader
+    of `search.json` with no page in front of them.
+    """
+    # what `begin` would send: ticked AND readable, which is neither "fetched" (an unscreened
+    # paper is fetched and unticked) nor "wanted" (a wanted paper may be paywalled)
+    ticked = [c for c in record.candidates if c.keep and c.pdf_path]
+    n_unsure = sum(1 for c in ticked if c.screen_decision == "unknown")
+    per_paper, source = run_cost_per_paper()
+    commit = run_commit(len(ticked) - n_unsure, n_unsure, per_paper)
+    commit["per_paper_source"] = source
+    predicted = dict(getattr(record, "predicted", None) or {})
+    predicted["run_commit"] = commit
+    record.predicted = predicted
+    if commit["n_read"]:
+        record.notes.append(
+            f"{commit['n_read']} paper(s) have a PDF and are ticked for the review: "
+            f"{commit['n_wanted']} the screener wanted and {commit['n_unsure']} it could not "
+            f"decide about. Reading each in the review costs about ${per_paper:.2f} ({source}), "
+            f"so beginning it as it stands commits about ${commit['usd']:.2f} — the "
+            f"{commit['n_unsure']} unsure paper(s) are ≈ ${commit['unsure_usd']:.2f} of that. "
+            f"Untick any you do not want before you begin")
 
 
 # ----------------------------------------------------------------------------------- the wording
@@ -593,10 +828,34 @@ def _stop_message(why: str) -> str:
 
 
 def _index_message(sources: Sequence[Mapping[str, Any]], n_found: int) -> str:
-    live = [s for s in sources if not s.get("error")]
+    live = [s for s in sources if not s.get("error") and not s.get("skipped")]
     dead = sorted({str(s.get("name")) for s in sources if s.get("error")})
+    skipped = [s for s in sources if s.get("skipped")]
     text = f"{n_found} record(s) from {len({str(s.get('name')) for s in live})} index(es)"
-    return text + (f"; {', '.join(dead)} did not answer" if dead else "")
+    per_index: dict[str, int] = {}
+    for source in live:
+        label = str(source.get("name")) + (f" {source.get('form')}" if source.get("form") else "")
+        per_index[label] = per_index.get(label, 0) + int(source.get("n_returned") or 0)
+    if per_index:
+        text += " (" + ", ".join(f"{k} {v}" for k, v in per_index.items()) + ")"
+    if dead:
+        text += f"; {', '.join(dead)} did not answer"
+    if skipped:
+        text += f"; {len(skipped)} string(s) too long for OpenAlex full text"
+    return text
+
+
+def _plan_message(plan: Mapping[str, Any], rows: Sequence[Mapping[str, Any]]) -> str:
+    blocks = [b for b in plan.get("blocks") or [] if b.get("terms")]
+    n_terms = sum(len(b.get("terms") or []) for b in blocks)
+    n_variants = sum(len(v) for b in blocks for v in (b.get("expanded") or {}).values())
+    n_pruned = sum(len(b.get("pruned") or []) for b in blocks)
+    n_strings = len(plan.get("strings") or {})
+    sent = sum(1 for r in rows if r.get("text") and not r.get("skipped"))
+    source = "a model" if plan.get("source") == "model" else "your own words"
+    return (f"{n_strings} search string(s) from {len(blocks)} concept block(s) by {source}: "
+            f"{n_terms} terms, {n_variants} variants, {n_pruned} pruned by width control; sent "
+            f"to {sent} index form(s)")
 
 
 def _screen_message(client: Any | None, counts: Mapping[str, int]) -> str:
@@ -607,8 +866,29 @@ def _screen_message(client: Any | None, counts: Mapping[str, int]) -> str:
             f"{counts['excluded']} ruled out")
 
 
+def _snowball_message(rounds: Sequence[Mapping[str, Any]]) -> str:
+    real = [r for r in rounds if r.get("n_seeds")]
+    if not real:
+        return "nothing to chase: no included or unsure paper to start from"
+    n_new = sum(int(r.get("n_new") or 0) for r in real)
+    n_screened = sum(int(r.get("n_screened") or 0) for r in real)
+    n_inc = sum(int(r.get("n_included") or 0) for r in real)
+    n_unk = sum(int(r.get("n_unknown") or 0) for r in real)
+    requests = sum(sum(int(v) for v in (r.get("requests") or {}).values()) for r in real)
+    return (f"{len(real)} round(s) from {sum(int(r.get('n_seeds') or 0) for r in real)} seed(s): "
+            f"{n_new} new paper(s), {n_screened} screened, {n_inc} wanted, {n_unk} unsure "
+            f"({requests} requests)" + (f"; stopped: {real[-1]['stopped']}"
+                                       if real[-1].get("stopped") else ""))
+
+
 def _fetch_message(summary: Any) -> str:
-    parts = [f"{summary.n_fetched} PDF(s) fetched"]
+    parts = [f"{summary.n_fetched} PDF(s) fetched"
+             + (f" ({summary.n_unsure_fetched} of them unsure)"
+                if getattr(summary, "n_unsure_fetched", 0) else "")]
+    if getattr(summary, "n_unsure_over_cap", 0):
+        parts.append(f"{summary.n_unsure_over_cap} unsure over the unsure cap")
+    if getattr(summary, "n_over_deadline", 0):
+        parts.append(f"{summary.n_over_deadline} past the fetch deadline")
     if summary.n_paywalled:
         parts.append(f"{summary.n_paywalled} with no open-access copy")
     if summary.n_no_copy:
@@ -617,6 +897,8 @@ def _fetch_message(summary: Any) -> str:
         parts.append(f"{summary.n_no_copy} unscreened with no copy we could fetch")
     if summary.n_rate_limited:
         parts.append(f"{summary.n_rate_limited} rate-limited")
+    if getattr(summary, "n_unreachable", 0):
+        parts.append(f"{summary.n_unreachable} unreachable")
     if summary.n_over_cap:
         parts.append(f"{summary.n_over_cap} over the fetch cap")
     return ", ".join(parts)

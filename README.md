@@ -145,6 +145,25 @@ the review queue sorted by how far each held-back cell would move the pooled est
 and an evidence drawer showing what each model read and the crop it read it from. Uploads are
 magic-byte checked and stored as `<sha256>.pdf`; artefacts are served by manifest id, not by path.
 
+### Hosting it
+
+The same server runs anywhere a container runs. The `Dockerfile` builds it with R and the `meta`
+package so the report's forest plot is the one the local install draws, and `deploy/cloudrun.sh`
+puts it on Google Cloud Run in one command — always-on, one instance, runs on a bucket, secrets in
+Secret Manager, an HTTPS URL at the end:
+
+```bash
+gcloud auth login && gcloud config set project <PROJECT_ID>
+CANOPY_ENV_FILE=.env deploy/cloudrun.sh          # asks for the key and an access code, silently
+```
+
+Two things change off loopback. The run list stops handing out tokens, so a visitor sees only the
+runs they started. And **`CANOPY_ACCESS_CODE` puts a password on the whole site** — without it,
+anyone who finds the URL can start a review on your key, with your budget. The browser holds a
+digest of the code in an `HttpOnly` cookie, never the code; scripts send it as `X-Canopy-Access`.
+An always-on 2 vCPU / 4 GiB instance is roughly $100 a month before any model calls; the model
+calls are what a review actually costs (see below).
+
 ---
 
 ## Writing a protocol

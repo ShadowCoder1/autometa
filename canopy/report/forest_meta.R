@@ -44,7 +44,27 @@ die <- function(message) {
 # has neither even though capabilities("cairo") says TRUE. So each format is opened on a scratch
 # file first and the ones that cannot open are reported back as unavailable rather than left as
 # an empty file the report would link to.
+# cairo first, and not for looks. The classic pdf() device draws Type1/Helvetica, which cannot
+# encode most of this report's provenance glyphs: measured on R 4.4.0, `▤` (figure), `▦` (table),
+# `ƒ` (test statistic), `†` (reported d), `Σ` (combined), `⌀` (not convertible), `△` (human
+# override) and `…` (elided label) are ALL dropped with only an mbcsToSbcs warning, while `¶` and
+# `·` survive. A PDF from that device therefore carries a nearly empty route column and a legend
+# explaining glyphs it did not draw — the png and svg of the same figure are correct. cairo_pdf has
+# the glyphs, so it is tried first.
+#
+# This is a fallback and not a probe because capabilities("cairo") can claim a device the machine
+# cannot open: on this Mac cairo_pdf fails with a missing libSM.6.dylib (R's X11 module), so the
+# classic device is what actually runs and the glyph loss above is NOT yet solved here. Fixing it
+# for real needs either a cairo-capable R or a Type1-safe glyph set in theme.py — the latter
+# changes every figure's visual language, so it is a deliberate decision, not a silent
+# substitution. A PDF missing glyphs still beats no PDF, so the fallback stays.
 canopy_pdf <- function(file, width, height) {
+  cairo <- tryCatch({
+    grDevices::cairo_pdf(filename = file, width = width, height = height,
+                         pointsize = .canopy$pointsize)
+    TRUE
+  }, error = function(e) FALSE, warning = function(w) FALSE)
+  if (cairo) return(invisible(NULL))
   grDevices::pdf(file = file, width = width, height = height, pointsize = .canopy$pointsize)
 }
 

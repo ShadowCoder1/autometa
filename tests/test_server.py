@@ -584,6 +584,23 @@ def test_override_and_repool_change_the_pooled_estimate(cloned):
     assert repooled.status_code == 200, repooled.text
     assert repooled.json()["applied"] == 1
 
+    # …and it is not pooled yet. The run's score for this arm was computed on the value this answer
+    # replaced, so the re-pool strikes it (`overrides._void_verification`) and the row is held by
+    # the absence of verification until a person accepts a number nothing in the run checked. One
+    # typed number inheriting the acceptance the replaced reading had earned is the hole the
+    # grounding review measured at 31.9% of the pooled weight.
+    held = api.get(f"/api/runs/{run_id}/results/{OUTCOME}", headers=auth(token)).json()
+    assert "estimate" not in (held["pooled"] or {}), \
+        "a row whose number nothing has verified was pooled"
+
+    accepted = api.post(f"/api/runs/{run_id}/overrides", headers=auth(token), json={
+        "kind": "mark_reviewed", "dataset_id": dataset_id, "outcome_key": OUTCOME,
+        "confidence": "accept_with_note", "overrules": ["no_verification"],
+        "justification": "I have read Table 2 and accept both arms as they now stand"})
+    assert accepted.status_code == 201, accepted.text
+    assert api.post(f"/api/runs/{run_id}/repool",
+                    headers=auth(token)).json()["applied"] == 2
+
     after = api.get(f"/api/runs/{run_id}/results/{OUTCOME}", headers=auth(token)).json()
     changed = next(r for r in after["rows"] if r["dataset_id"] == dataset_id)
     assert changed["overridden"] is True
@@ -647,6 +664,13 @@ def test_overrides_survive_a_resume(cloned, specs):
         "kind": "value", "dataset_id": dataset_id, "outcome_key": OUTCOME, "group": "A",
         "mean": 12.0, "dispersion_value": 4.0, "dispersion_type": "SD", "n": 12,
         "justification": "Table 2 prints 12.0 ± 4.0"})
+    # …and the acceptance the typed number needs before it pools: the run's score for that arm was
+    # computed on the value this answer replaced, so the re-pool strikes it and the row is held
+    # until a person says on the record that they accept a number nothing in the run verified.
+    api.post(f"/api/runs/{run_id}/overrides", headers=auth(token), json={
+        "kind": "mark_reviewed", "dataset_id": dataset_id, "outcome_key": OUTCOME,
+        "confidence": "accept_with_note", "overrules": ["no_verification"],
+        "justification": "I have read Table 2 and accept both arms as they now stand"})
     api.post(f"/api/runs/{run_id}/repool", headers=auth(token))
     overridden = api.get(f"/api/runs/{run_id}/results/{OUTCOME}",
                          headers=auth(token)).json()["pooled"]["estimate"]
@@ -663,7 +687,8 @@ def test_overrides_survive_a_resume(cloned, specs):
     changed = next(r for r in after["rows"] if r["dataset_id"] == dataset_id)
     assert changed["overridden"] is True and changed["inputs"]["mean_a"] == 12.0
     assert any(e["stage"] == "review" and "override" in e["message"] for e in events)
-    assert json.loads((run_dir / "overrides_applied.json").read_text())["applied"] == 1
+    # both records: the typed value and the acceptance it needed before the row could pool
+    assert json.loads((run_dir / "overrides_applied.json").read_text())["applied"] == 2
 
 
 def test_a_repool_writes_every_artefact_a_run_writes(cloned, monkeypatch):
@@ -1798,17 +1823,30 @@ def test_the_search_sends_only_options_the_server_will_accept():
     assert "options.max_usd = " in body and "options.max_screened = " in body
     sent = set(re.findall(r"options\.([a-z_]+) =", body))
     assert sent <= set(SearchOptions.model_fields), "the page sends a field the server forbids"
-    assert sent == {"max_usd", "max_screened", "exclude"}
+    assert sent == {"max_usd", "max_screened", "max_fetch_unsure", "depth", "snowball",
+                    "seed_dois", "exclude"}
     page = (STATIC / "index.html").read_text(encoding="utf-8")
     assert 'id="f-max-usd"' in page and 'id="f-max-screened"' in page
+    assert 'id="f-max-fetch-unsure"' in page and 'id="f-seeds"' in page
+    assert 'id="f-depth"' in page and 'id="f-snowball"' in page
     assert 'id="f-exclude"' in page
 
 
 def test_the_paywalled_link_comes_from_the_server_never_from_the_page():
     """test_the_spa_makes_no_external_requests forbids the literal; this says why it must stay
-    forbidden — a publisher URL the page built out of a DOI would be a URL nobody audited."""
+    forbidden — a publisher URL the page built out of a DOI would be a URL nobody audited.
+
+    The ban is on HOST literals, not on the names of services. `"https:"` does appear in this
+    file (the scheme check below), so `"https:" + "//doi.org/" + doi` is the concatenation this
+    tripwire exists to catch, and the list now covers every host the search talks to rather than
+    two of them. What it deliberately allows is a service NAMED in prose or in a DOM id — the
+    Find panel has to be able to say "no OpenAlex key is set" in words a person can act on, and
+    a sentence is not a URL. The proof that no href is ever assembled is the loop below.
+    """
     app_js = (STATIC / "app.js").read_text(encoding="utf-8")
-    assert "doi.org" not in app_js and "openalex" not in app_js
+    for host in ("doi.org", "openalex.org", "europepmc.org", "ebi.ac.uk", "ncbi.nlm.nih.gov",
+                 "unpaywall.org", "eutils", "web.archive.org"):
+        assert host not in app_js, host
     assert "var elsewhere = link.url;" in app_js          # the whole URL, as the server sent it
     assert 'protocol === "https:"' in app_js              # …and it must be one, before it is drawn
     assert 'rel: "noopener noreferrer"' in app_js and 'target: "_blank"' in app_js
@@ -2263,3 +2301,59 @@ def test_repool_under_an_edited_rve_protocol_flips_the_model_and_the_methods(clo
     assert pooled["robust"] is True or pooled["robust_fallback"]  # single-cluster data falls back
     methods = api.get(f"/api/runs/{run_id}/files/methods.md", headers=auth(token)).text
     assert "cluster-robust" in methods
+
+
+# ============================================================================ site access code
+def test_access_code_gates_everything_but_the_form(make_app):
+    """With a code set, a browser sees only the form until it gives the code — and then holds a
+    digest of it, never the code itself."""
+    from canopy.server.security import ACCESS_COOKIE, access_cookie_value
+
+    api = make_app(access_code="open-sesame", loopback_only=False)
+    assert api.get("/", follow_redirects=False).status_code == 303
+    assert api.get("/api/runs").status_code == 401
+    assert api.get("/static/app.js", follow_redirects=False).status_code == 303
+
+    page = api.get("/access")
+    assert page.status_code == 200 and 'name="code"' in page.text
+    assert page.headers["cache-control"] == "no-store"
+
+    wrong = api.post("/access", data={"code": "nope"}, follow_redirects=False)
+    assert wrong.status_code == 401 and ACCESS_COOKIE not in wrong.cookies
+    assert api.get("/api/runs").status_code == 401                # a wrong answer earned nothing
+
+    right = api.post("/access", data={"code": "open-sesame"}, follow_redirects=False)
+    assert right.status_code == 303 and right.headers["location"] == "/"
+    assert right.cookies.get(ACCESS_COOKIE) == access_cookie_value("open-sesame")
+    assert "open-sesame" not in right.headers["set-cookie"]
+    assert "HttpOnly" in right.headers["set-cookie"]
+    assert api.get("/api/runs").status_code == 200                # the client kept the cookie
+    assert api.get("/", follow_redirects=False).status_code == 200
+
+
+def test_access_code_accepted_in_a_header_for_scripts(make_app):
+    api = make_app(access_code="open-sesame", loopback_only=False)
+    assert api.get("/api/runs", headers={"X-Canopy-Access": "open-sesame"}).status_code == 200
+    assert api.get("/api/runs", headers={"X-Canopy-Access": "open-sesam"}).status_code == 401
+    assert api.get("/api/runs", headers={"X-Canopy-Access": ""}).status_code == 401
+
+
+def test_no_access_code_means_no_gate(make_app):
+    """The loopback server is unchanged: nothing is gated and the form is not a page."""
+    api = make_app()
+    assert api.get("/api/runs").status_code == 200
+    assert api.get("/access", follow_redirects=False).status_code == 303
+    assert api.post("/access", data={"code": "anything"}, follow_redirects=False).status_code == 303
+
+
+def test_access_cookie_is_a_digest_and_constant_time():
+    from canopy.server.security import access_cookie_value, access_granted
+
+    digest = access_cookie_value("open-sesame")
+    assert len(digest) == 64 and "open-sesame" not in digest
+    assert access_granted(digest, None, "open-sesame")
+    tampered = digest[:-1] + ("0" if digest[-1] != "0" else "1")   # always a different digest
+    assert not access_granted(tampered, None, "open-sesame")
+    assert not access_granted("", "", "open-sesame")
+    assert access_granted(None, None, None)                        # no code: no gate
+    assert access_granted(None, "open-sesame", "open-sesame")

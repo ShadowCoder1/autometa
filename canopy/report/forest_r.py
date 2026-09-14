@@ -34,7 +34,8 @@ from typing import Any, Mapping, Sequence
 from ..models import EffectSizeRecord, OutcomeDef, Protocol, StatsSettings
 from ..stats.meta import MetaResult, prediction_interval
 from . import labels as labels_mod
-from .theme import BEST_GUESS_CAVEAT, MARK, MUTED, pi_label, study_label
+from .theme import (BEST_GUESS_CAVEAT, MARK, MUTED, OVERRIDE_KEY, OVERRIDE_MARK, is_overridden,
+                    pi_label, study_label)
 
 __all__ = ["RInfo", "RenderInfo", "RenderResult", "ForestCrossCheckError", "ForestRenderError",
            "PREDICT", "R_SCRIPT", "RENDERER_R", "RENDERER_MATPLOTLIB", "CONFIRMED", "GUESSED",
@@ -241,7 +242,13 @@ def _row_cells(record: EffectSizeRecord, moderators: Sequence[str], line: str,
         se = math.sqrt(float(record.var))
     guessed = line != "strict" and record.dataset_id in set(best_guess_ids)
     cells = [record.dataset_id,
-             labels_mod.elide(study_label(record), labels_mod.MAX_LABEL_CH),
+             # the override marker belongs on the PUBLISHED plot, which is this one whenever R is
+             # installed (`forest_render.render_forest` prefers it). Without it a row a human had
+             # corrected was byte-identical to one the tool read, while the matplotlib fallback
+             # marked it — so the same review said two different things about its own provenance,
+             # depending on which renderer the machine could reach (review finding).
+             labels_mod.elide_marked(study_label(record), labels_mod.MAX_LABEL_CH,
+                                     OVERRIDE_MARK if is_overridden(record) else ""),
              str(record.citation.year or ""),
              repr(float(record.es)) if record.es is not None else "",
              repr(float(se)) if se is not None else "",
@@ -274,23 +281,42 @@ def _left_ch(columns: labels_mod.ForestColumns, cells: Sequence[Sequence[str]]) 
     return total
 
 
-def _addlines(is_guess_line: bool, pi_text: str, width_ch: int,
-              caveat: str | None = None) -> tuple[str, str]:
-    """The two lines meta prints under the plot: the best-guess caveat, our own PI, or neither.
+def _addlines(is_guess_line: bool, pi_text: str, width_ch: int, caveat: str | None = None,
+              override_key: str = "") -> tuple[str, str]:
+    """The two lines meta prints under the plot: the best-guess caveat, our own PI, the key, none.
 
     Wrapped to the width of the left-hand TABLE, not to the figure. `forest.meta` puts an addline
     on the same row as the axis's direction labels whenever a heterogeneity line is printed above
     it, so a line that runs past the table runs straight through "Reduced in Old"; one that stops
     at the table's edge sits harmlessly beside it.
+
+    `override_key` is the key for the △ on an overridden row's label. The matplotlib forest keys it
+    in its glyph legend, which `forest.meta`'s layout has no room for, so it goes here — joined to
+    whatever already holds the second line rather than replacing it, because a figure must not have
+    to choose between explaining its marker and printing its prediction interval.
     """
     width_ch = max(MIN_ADDLINE_CH, int(width_ch))
     text = BEST_GUESS_CAVEAT if caveat is None else caveat
     if not is_guess_line:
-        return "", labels_mod.elide(pi_text, width_ch) if pi_text else ""
+        return "", _with_key(pi_text, override_key, width_ch)
     if pi_text:                                            # both wanted; the caveat gets one line
-        return labels_mod.elide(text, width_ch), labels_mod.elide(pi_text, width_ch)
+        return labels_mod.elide(text, width_ch), _with_key(pi_text, override_key, width_ch)
     wrapped = textwrap.wrap(text, width_ch) or [""]
-    return wrapped[0], labels_mod.elide(" ".join(wrapped[1:]), width_ch)
+    return wrapped[0], _with_key(" ".join(wrapped[1:]), override_key, width_ch)
+
+
+def _with_key(text: str, key: str, width_ch: int) -> str:
+    """One addline: `text` elided to the table's width, with `key` still on the end of it.
+
+    The key's room comes out of the text and never the other way round — the same rule
+    `labels.elide_marked` applies to the marker itself, for the same reason: a key an elision may
+    delete is a key that disappears on exactly the figures that carry an override.
+    """
+    if not key:
+        return labels_mod.elide(text, width_ch) if text else ""
+    if not text:
+        return labels_mod.elide(key, max(width_ch, len(key)))
+    return f"{labels_mod.elide(text, max(MIN_ADDLINE_CH // 2, width_ch - len(key) - 3))} · {key}"
 
 
 def _size(columns: labels_mod.ForestColumns, cells: Sequence[Sequence[str]],
@@ -342,7 +368,10 @@ def write_forest_inputs(rows: Sequence[EffectSizeRecord], pooled: MetaResult,
         pi_text = (f"{settings.ci_level * 100:g}% prediction interval "
                    f"({pi_label(settings, pooled)}), computed by canopy: "
                    f"[{our_low:.2f}, {our_high:.2f}]")
-    addline1, addline2 = _addlines(is_guess_line, pi_text, _left_ch(columns, cells), caveat)
+    addline1, addline2 = _addlines(is_guess_line, pi_text, _left_ch(columns, cells), caveat,
+                                   override_key=(OVERRIDE_KEY if any(is_overridden(record)
+                                                                     for record in ordered)
+                                                 else ""))
     # header, blank, the pooled row, heterogeneity, the axis and its labels; a subgroup adds a
     # heading and a summary per level plus the between-subgroup test; an addline pushes the
     # direction labels onto a row of their own

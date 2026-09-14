@@ -138,6 +138,55 @@ def test_best_guess_options_use_subgroup_and_distinct_style(tmp_path):
     assert {k: v for k, v in levels.items() if v == "Best guess"}.keys() == set(added)
 
 
+def test_the_r_forest_marks_an_overridden_row_and_keys_the_marker(tmp_path):
+    """An override has to be visible on the PUBLISHED plot, which is R's whenever R is installed.
+
+    `forest_render.render_forest` prefers this renderer, and its inputs carried no override marking
+    at all: a row a human had corrected came out byte-identical to one the tool read, while the
+    matplotlib fallback marked it — so one review said two different things about its own provenance
+    depending on which renderer the machine could reach. `forest.meta` has no glyph legend to key
+    the marker in, so the key goes on the additional line it does have.
+    """
+    import csv
+
+    from canopy.report.theme import OVERRIDE_KEY, OVERRIDE_MARK
+
+    rows, pooled, outcome, settings, protocol = _strict_late()
+    marked = rows[0].model_copy(update={"flags": [*rows[0].flags, "human_override"]})
+    rows_csv, opts = forest_r.write_forest_inputs([marked, *rows[1:]], pooled, outcome, settings,
+                                                  protocol, out_dir=tmp_path)
+    written = {row["dataset_id"]: row["studlab"]
+               for row in csv.DictReader(rows_csv.open(newline="", encoding="utf-8"))}
+    assert written[marked.dataset_id].endswith(OVERRIDE_MARK)
+    assert [label for label in written.values() if OVERRIDE_MARK in label] == \
+           [written[marked.dataset_id]]
+    options = json.loads(opts.read_text(encoding="utf-8"))
+    assert OVERRIDE_KEY in options["text_addline2"]
+
+    # …and nothing is marked or keyed on the same rows without the flag
+    plain, _opts = forest_r.write_forest_inputs(rows, pooled, outcome, settings, protocol,
+                                                out_dir=tmp_path / "plain")
+    assert OVERRIDE_MARK not in plain.read_text(encoding="utf-8")
+
+
+def test_the_override_key_does_not_displace_the_prediction_interval(tmp_path):
+    """Both belong under the plot and meta has two lines: the key joins the PI, it does not evict it."""
+    from canopy.report.theme import OVERRIDE_KEY
+
+    rows, pooled, added, outcome, settings, protocol = _best_guess_late()
+    # `S` is a prediction interval canopy computes and `PREDICT` does not map, so the figure prints
+    # ours under the plot — the one case where both addlines are already spoken for
+    settings = settings.model_copy(update={"pi_method": "S"})
+    marked = [rows[0].model_copy(update={"flags": [*rows[0].flags, "human_override"]}), *rows[1:]]
+    _csv, opts = forest_r.write_forest_inputs(marked, pooled, outcome, settings, protocol,
+                                              line="best_guess", best_guess_ids=added,
+                                              out_dir=tmp_path)
+    options = json.loads(opts.read_text(encoding="utf-8"))
+    assert options["text_addline1"].startswith("Best guess, not the primary analysis")
+    assert "prediction interval" in options["text_addline2"]
+    assert options["text_addline2"].endswith(OVERRIDE_KEY)
+
+
 def test_the_strict_line_has_no_subgroup_and_no_caveat(tmp_path):
     rows, pooled, outcome, settings, protocol = _strict_late()
     _csv, opts = forest_r.write_forest_inputs(rows, pooled, outcome, settings, protocol,
@@ -343,6 +392,30 @@ def test_r_renders_and_agrees_on_runs_nine_late(tmp_path):
     # every format this machine could not write is named, so the report can say why
     for fmt in set(forest_r.FORMATS) - set(result.paths):
         assert fmt in info.reason
+
+
+@pytest.mark.skipif(forest_r.r_available() is None, reason="Rscript/meta not installed")
+@pytest.mark.slow
+def test_the_marker_and_its_key_reach_the_drawn_r_figure(tmp_path):
+    """Writing △ into rows.csv is only half of it: the device has to draw it.
+
+    The SVG is the format a test can read as text, and `svglite` carries the glyph and the key line
+    under the plot. The PDF device is a Type1 path that cannot encode it — it drops U+25B3 with a
+    `mbcsToSbcs` warning, the same way it already substitutes "..." for the ellipsis every elided
+    label carries — so the PDF shows the key's words without its glyph.
+    """
+    from canopy.report.theme import OVERRIDE_KEY, OVERRIDE_MARK, study_label
+
+    rows, pooled, o, s, p = _strict_late()
+    marked = [rows[0].model_copy(update={"flags": [*rows[0].flags, "human_override"]}), *rows[1:]]
+    result = forest_r.render_forest_r(marked, pooled, o, s, p, tmp_path / "forest")
+    if "svg" not in result.paths:
+        pytest.skip("this R has no svg device")
+    svg = result.paths["svg"].read_text(encoding="utf-8")
+    assert OVERRIDE_KEY in svg
+    label = labels.elide(study_label(marked[0]), labels.MAX_LABEL_CH)
+    assert f">{label} {OVERRIDE_MARK}<" in svg
+    assert f">{label}<" not in svg                     # the marked label is the only one drawn
 
 
 @pytest.mark.skipif(forest_r.r_available() is None, reason="Rscript/meta not installed")

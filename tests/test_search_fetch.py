@@ -27,11 +27,14 @@ from pathlib import Path
 
 import pytest
 
-from canopy.search.fetch import (CANCELLED, MAX_ATTEMPTS, NOT_WANTED, NO_OA_LOCATION,
-                                 OVER_FETCH_CAP, _group_by_host, fetch_candidate,
-                                 fetch_candidates, fetchable, host_of, oa_sources)
+from canopy.search.fetch import (CANCELLED, INTERNET_ARCHIVE, MAX_ATTEMPTS, NOT_WANTED,
+                                 NO_OA_LOCATION, NO_PDF_LINK, OVER_FETCH_CAP, OVER_FETCH_DEADLINE,
+                                 OVER_UNSURE_CAP, _group_by_host, fetch_candidate,
+                                 fetch_candidates, fetchable, host_of, oa_sources, pdf_link_in,
+                                 unsure_order)
 from canopy.search.models import Candidate
-from canopy.search.transport import Download, HttpResponse, RecordedTransport, fixture_key
+from canopy.search.transport import (Download, HttpResponse, RecordedTransport, fixture_key,
+                                     html_key)
 
 PDF = Path(__file__).resolve().parent / "fixtures" / "pdfs" / "bock2005.pdf"
 
@@ -52,21 +55,41 @@ def serving(*urls: str) -> RecordedTransport:
 
 
 def refusing(transport: RecordedTransport, url: str, *, status: int, outcome: str,
-             error: str = "") -> RecordedTransport:
-    """Register a recorded FAILURE for one URL. `RecordedTransport` replays it as itself."""
+             error: str = "", archived: bool = False) -> RecordedTransport:
+    """Register a recorded FAILURE for one URL. `RecordedTransport` replays it as itself.
+
+    The Internet Archive's copy of the same URL is refused with it (404, never archived) unless
+    `archived` says a test is about the archive: a definitive failure now sends the fetcher there
+    once, and a fake that had no answer for it would be a loud miss in every old test.
+    """
     transport.responses[fixture_key(url)] = HttpResponse(
         url=url, status=status, outcome=outcome, error=error or f"HTTP {status}")
+    if not archived:
+        transport.responses[fixture_key(INTERNET_ARCHIVE + url)] = HttpResponse(
+            url=INTERNET_ARCHIVE + url, status=404, outcome="http_error",
+            error="web.archive.org answered HTTP 404")
+    return transport
+
+
+def no_archive(transport: RecordedTransport, *urls: str) -> RecordedTransport:
+    """The archive has no copy of these either."""
+    for url in urls:
+        transport.responses[fixture_key(INTERNET_ARCHIVE + url)] = HttpResponse(
+            url=INTERNET_ARCHIVE + url, status=404, outcome="http_error",
+            error="web.archive.org answered HTTP 404")
     return transport
 
 
 # ------------------------------------------------------------------------------- the fetch order
 def test_oa_sources_is_the_order_the_indexes_wrote_and_is_capped():
-    """Three attempts, best route first. The fourth would be a landing page, and the minutes are
-    better spent on the next paper."""
+    """Every route, best first, up to `MAX_ATTEMPTS` (eight — the handedness key's four author
+    manuscripts were reachable only past the third, design 03 §7b)."""
     paper = candidate(europepmc_render=EPMC, openalex_pdf=PUBLISHER,
                       openalex_location_pdf=MIRROR, openalex_oa_url="https://example.org/landing")
-    assert [url for _, url in oa_sources(paper)] == [EPMC, PUBLISHER, MIRROR]
-    assert len(oa_sources(paper)) == MAX_ATTEMPTS
+    assert [url for _, url in oa_sources(paper)] == [EPMC, PUBLISHER, MIRROR,
+                                                     "https://example.org/landing"]
+    many = candidate(**{f"openalex_location_pdf_{i}": f"{MIRROR}?n={i}" for i in range(2, 12)})
+    assert len(oa_sources(many)) == MAX_ATTEMPTS == 8
     assert oa_sources(Candidate(key="c000000000002")) == []
 
 
@@ -108,7 +131,10 @@ def test_a_paper_no_route_could_reach_is_paywalled_because_we_asked(tmp_path):
     transport = refusing(RecordedTransport(), PUBLISHER, status=403, outcome="http_error")
 
     assert fetch_candidate(paper, tmp_path, transport=transport, probe=None) == "http_error"
-    assert paper.state == "paywalled" and len(paper.fetch_attempts) == 1
+    # the publisher's refusal, then the archive asked once for the same URL and refusing too
+    assert paper.state == "paywalled" and len(paper.fetch_attempts) == 2
+    assert paper.fetch_attempts[1]["via"] == "internet_archive"
+    assert paper.fetch_attempts[1]["url"] == INTERNET_ARCHIVE + PUBLISHER
 
 
 def test_a_paper_with_no_oa_route_is_paywalled_and_says_which_kind(tmp_path):
@@ -130,9 +156,12 @@ def test_an_unreadable_pdf_is_not_a_fetched_paper(tmp_path):
     def broken(_path):
         return {"ok": False, "error": "no readable page"}
 
-    outcome = fetch_candidate(paper, tmp_path, transport=serving(EPMC), probe=broken)
+    outcome = fetch_candidate(paper, tmp_path, transport=no_archive(serving(EPMC), EPMC),
+                              probe=broken)
     assert outcome == "unreadable" and paper.state == "paywalled"
     assert paper.fetch_attempts[0]["outcome"] == "unreadable"
+    assert paper.fetch_attempts[1]["via"] == "internet_archive", "…and the archive was asked"
+    assert paper.fetch_outcome == "unreadable", "the archive's 404 is not why there is no PDF"
     assert list(tmp_path.glob("*.pdf")) == []
 
 
@@ -196,7 +225,7 @@ def test_a_rate_limited_paper_is_retried_after_the_others(tmp_path):
     assert transport.order[-1] == EPMC, "…and retried only after the other two had their turn"
     assert first.state == "fetched" and summary.n_fetched == 3
     assert first.fetch_attempts[0]["outcome"] == "rate_limited"
-    assert "rate-limited on the first pass" in " ".join(summary.notes)
+    assert "retried at the end of the pass: 1 rate-limited" in " ".join(summary.notes)
 
 
 def test_a_host_that_kept_saying_429_is_named_and_is_not_called_a_paywall(tmp_path):
@@ -395,7 +424,9 @@ def test_the_summary_counts_what_the_page_prints(tmp_path):
     summary = fetch_candidates([fetched, blocked, nothing], tmp_path, transport=transport,
                                probe=None)
     assert (summary.n_fetched, summary.n_paywalled, summary.n_rate_limited) == (1, 2, 0)
-    assert summary.n_attempts == 2, "the third had nothing to try, and that is not an attempt"
+    assert summary.n_attempts == 3, ("the fetched one, the blocked one and the archive's copy "
+                                     "of it; the third had nothing to try, and that is not an "
+                                     "attempt")
     assert summary.bytes_written == fetched.pdf_bytes
 
 
@@ -408,17 +439,21 @@ def test_a_second_fetch_pass_does_not_re_fetch_what_it_already_answered(tmp_path
     assert transport.calls == []
 
 
-def test_fetchable_is_the_two_populations_and_their_order():
-    """The whole policy in one function: wanted first, then the records nobody read."""
+def test_fetchable_is_the_three_populations_and_their_order():
+    """The whole policy in one function: wanted first, then the unsure papers under their cap,
+    then the records nobody read."""
     wanted = candidate("c000000000001", europepmc_render=EPMC)
     unread = Candidate(key="c000000000002", state="not_screened",
                        ids={"europepmc_render": EPMC})
     routeless = Candidate(key="c000000000003", state="not_screened")
     excluded = Candidate(key="c000000000004", state="excluded",
                          ids={"europepmc_render": EPMC})
-    unsure = Candidate(key="c000000000005", state="unsure", ids={"europepmc_render": EPMC})
+    unsure = Candidate(key="c000000000005", state="unsure", screen_decision="unknown",
+                       ids={"europepmc_render": EPMC})
 
-    assert fetchable([unread, wanted, routeless, excluded, unsure]) == [wanted, unread]
+    assert fetchable([unread, wanted, routeless, excluded, unsure]) == [wanted, unsure, unread]
+    assert fetchable([unread, wanted, routeless, excluded, unsure],
+                     max_fetch_unsure=0) == [wanted, unread]
 
 
 # ------------------- the seam the unit tests on either side could not see
@@ -463,3 +498,178 @@ def test_a_recorded_path_never_escapes_the_search_directory(tmp_path):
     inside.write_bytes(b"%PDF-1.4\n")
     assert not _record_path(inside, staging).startswith("/")
     assert ".." not in _record_path(inside, staging)
+
+
+# ------------------------------------------------------- how hard one paper is tried (design 03 §7)
+def test_every_route_is_tried_before_giving_up(tmp_path):
+    """Up to eight, in the indexes' order. The old cap of three never reached Unpaywall's route
+    for a paper Europe PMC and OpenAlex both had a dead link for."""
+    routes = {f"openalex_location_pdf_{i}": f"{MIRROR}?n={i}" for i in range(2, 6)}
+    paper = candidate(europepmc_render=EPMC, openalex_pdf=PUBLISHER, openalex_location_pdf=MIRROR,
+                      unpaywall_pdf="https://repo.example.org/late.pdf", **routes)
+    transport = serving("https://repo.example.org/late.pdf")
+    for url in [EPMC, PUBLISHER, MIRROR] + list(routes.values()):
+        refusing(transport, url, status=403, outcome="http_error")
+
+    assert fetch_candidate(paper, tmp_path, transport=transport, probe=None) == "fetched"
+    assert len(paper.fetch_attempts) == 8 and paper.fetch_attempts[-1]["outcome"] == "ok"
+    assert paper.fetch_attempts[-1]["url"] == "https://repo.example.org/late.pdf"
+
+
+def test_a_landing_page_is_read_once_for_its_pdf_link_and_the_link_is_relative(tmp_path):
+    """`<link rel="alternate" type="application/pdf" href="…">` is usually relative; it is joined
+    against the page's FINAL url (after redirects) and then fetched through the same gate."""
+    landing = "https://journal.example.org/article/42"
+    paper = candidate(openalex_oa_url=landing)
+    transport = serving("https://journal.example.org/article/42/download.pdf")
+    refusing(transport, landing, status=200, outcome="not_a_pdf",
+             error="journal.example.org served text/html, not a PDF")
+    transport.responses[html_key(landing)] = HttpResponse(
+        url="https://journal.example.org/article/42/", status=200, outcome="ok",
+        body=(b'<html><head><title>x</title>'
+              b'<link rel="alternate" type="application/pdf" href="download.pdf">'
+              b'</head><body></body></html>'))
+
+    assert fetch_candidate(paper, tmp_path, transport=transport, probe=None) == "fetched"
+    assert [(a["url"], a["outcome"], a.get("via", "")) for a in paper.fetch_attempts] == [
+        (landing, "not_a_pdf", ""),
+        ("https://journal.example.org/article/42/download.pdf", "ok", "landing_page")]
+    assert [c["method"] for c in transport.calls] == ["get_bytes", "get_html", "get_bytes"]
+
+
+def test_a_landing_page_that_names_no_pdf_is_on_the_record(tmp_path):
+    landing = "https://journal.example.org/article/43"
+    paper = candidate(openalex_oa_url=landing)
+    transport = refusing(RecordedTransport(), landing, status=200, outcome="not_a_pdf")
+    transport.responses[html_key(landing)] = HttpResponse(
+        url=landing, status=200, outcome="ok", body=b"<html><body>Log in</body></html>")
+
+    assert fetch_candidate(paper, tmp_path, transport=transport, probe=None) == "not_a_pdf"
+    assert paper.state == "paywalled"
+    assert [(a["outcome"], a.get("via", "")) for a in paper.fetch_attempts] == [
+        ("not_a_pdf", ""), (NO_PDF_LINK, "landing_page"), ("http_error", "internet_archive")]
+    # a second pass reads nothing again: the page and the archive were each asked once
+    fetch_candidate(paper, tmp_path, transport=transport, probe=None)
+    assert len(paper.fetch_attempts) == 3
+
+
+def test_pdf_link_in_reads_both_conventions_and_nothing_else():
+    page = ('<html><head><meta name="citation_title" content="x">'
+            '<meta content="https://cdn.example.org/p.pdf" name="citation_pdf_url">'
+            '<a href="/evil.pdf">not this</a></head></html>')
+    assert pdf_link_in(page, "https://journal.example.org/a/1") == "https://cdn.example.org/p.pdf"
+    assert pdf_link_in('<link rel="alternate" type="application/pdf" href="../p.pdf">',
+                       "https://j.example.org/a/b/1") == "https://j.example.org/a/p.pdf"
+    assert pdf_link_in('<link rel="alternate" type="text/html" href="/p.pdf">', "https://x/") == ""
+    assert pdf_link_in('<meta name="citation_pdf_url" content="javascript:alert(1)">',
+                       "https://x/") == ""
+    assert pdf_link_in("", "https://x/") == ""
+
+
+def test_the_archive_is_asked_last_and_never_after_a_rate_limit(tmp_path):
+    paper = candidate(openalex_pdf=PUBLISHER)
+    transport = refusing(serving(INTERNET_ARCHIVE + PUBLISHER), PUBLISHER, status=403,
+                         outcome="http_error", archived=True)
+    assert fetch_candidate(paper, tmp_path, transport=transport, probe=None) == "fetched"
+    assert paper.fetch_attempts[-1]["via"] == "internet_archive"
+    assert paper.fetch_attempts[-1]["host"] == "web.archive.org"
+
+    slowed = candidate("c000000000002", openalex_pdf=f"{PUBLISHER}?x=2")
+    transport = refusing(RecordedTransport(), f"{PUBLISHER}?x=2", status=429,
+                         outcome="rate_limited", archived=True)
+    assert fetch_candidate(slowed, tmp_path, transport=transport, probe=None) == "rate_limited"
+    assert len(slowed.fetch_attempts) == 1, "a 429 earns a retry later, not an archive lookup"
+    assert slowed.state == "wanted"
+
+
+def test_a_url_that_answered_definitively_is_never_asked_again(tmp_path):
+    """Second passes — after Unpaywall found a route, after a 429 elsewhere — ask only what is
+    still open. A 403 will say 403 again."""
+    paper = candidate(europepmc_render=EPMC, openalex_pdf=PUBLISHER)
+    transport = refusing(refusing(RecordedTransport(), EPMC, status=403, outcome="http_error"),
+                         PUBLISHER, status=429, outcome="rate_limited")
+    assert fetch_candidate(paper, tmp_path, transport=transport, probe=None) == "rate_limited"
+    n = len(transport.calls)
+    serve = serving(PUBLISHER)
+    serve.responses.update({k: v for k, v in transport.responses.items()
+                            if k != fixture_key(PUBLISHER)})
+    assert fetch_candidate(paper, tmp_path, transport=serve, probe=None) == "fetched"
+    assert [c["url"] for c in serve.calls] == [PUBLISHER], "only the rate-limited one again"
+    assert n == 2
+
+
+def test_unpaywall_after_every_route_failed_gets_one_more_pass(tmp_path):
+    """The `resolve_more` seam: a candidate whose routes all said no is offered to Unpaywall,
+    and only when that found something new is it tried again."""
+    paper = candidate(openalex_pdf=PUBLISHER)
+    late = "https://repo.example.org/found-later.pdf"
+    transport = refusing(serving(late), PUBLISHER, status=403, outcome="http_error")
+    asked = []
+
+    def resolve_more(c):
+        asked.append(c.key)
+        c.ids["unpaywall_pdf"] = late
+        return True
+
+    summary = fetch_candidates([paper], tmp_path, transport=transport, probe=None,
+                               resolve_more=resolve_more)
+    assert asked == [paper.key] and paper.state == "fetched"
+    assert [a["url"] for a in paper.fetch_attempts] == [PUBLISHER, INTERNET_ARCHIVE + PUBLISHER,
+                                                        late]
+    assert summary.n_fetched == 1
+
+
+# ----------------------------------------------------------- the unsure papers, under their cap
+def test_unsure_papers_are_fetched_after_wanted_in_relevance_order_and_capped(tmp_path):
+    """Half of what a v2 screener reads is `unsure`, and every one fetched is a paper the review
+    will read at dollars a paper: relevance decides which, and `max_fetch_unsure` how many."""
+    wanted = candidate("c000000000001", europepmc_render=f"{EPMC}&w=1")
+    low = Candidate(key="c000000000002", state="unsure", screen_decision="unknown", keep=True,
+                    ids={"europepmc_render": f"{EPMC}&u=low"})
+    high = Candidate(key="c000000000003", state="unsure", screen_decision="unknown", keep=True,
+                     ids={"europepmc_render": f"{EPMC}&u=high"})
+    routeless = Candidate(key="c000000000004", state="unsure", screen_decision="unknown",
+                          keep=True)
+    setattr(low, "relevance", 1.0)
+    setattr(high, "relevance", 5.0)
+    assert unsure_order([low, high, routeless]) == [high, low, routeless]
+    transport = serving(f"{EPMC}&w=1", f"{EPMC}&u=low", f"{EPMC}&u=high")
+
+    summary = fetch_candidates([low, high, routeless, wanted], tmp_path, transport=transport,
+                               probe=None, max_fetch_unsure=1)
+
+    assert wanted.state == "fetched" and high.state == "fetched"
+    assert high.screen_decision == "unknown" and high.keep is True, "still the screener's unsure"
+    assert low.state == "unsure" and low.fetch_outcome == OVER_UNSURE_CAP and low.keep is True
+    assert routeless.fetch_outcome == NO_OA_LOCATION
+    assert [c["url"] for c in transport.calls] == [f"{EPMC}&w=1", f"{EPMC}&u=high"]
+    assert (summary.n_fetched, summary.n_unsure_fetched, summary.n_unsure_over_cap) == (2, 1, 1)
+    assert any("most relevant unsure" in note for note in summary.notes)
+
+
+def test_an_unsure_paper_no_route_could_reach_is_never_called_paywalled(tmp_path):
+    unsure = Candidate(key="c000000000001", state="unsure", screen_decision="unknown", keep=True,
+                       ids={"openalex_pdf": PUBLISHER})
+    transport = refusing(RecordedTransport(), PUBLISHER, status=403, outcome="http_error")
+    fetch_candidates([unsure], tmp_path, transport=transport, probe=None)
+    assert unsure.state == "unsure" and unsure.fetch_outcome == "http_error"
+
+
+def test_the_deadline_cuts_the_tail_and_says_so(tmp_path):
+    """Wanted → unsure → unread is the workload order, so a wall clock that runs out lands on
+    the papers nobody asked for. The rows it never reached carry the reason."""
+    first = candidate("c000000000001", europepmc_render=f"{EPMC}&n=1")
+    second = candidate("c000000000002", europepmc_render=f"{EPMC}&n=2")
+    unread = Candidate(key="c000000000003", state="not_screened",
+                       ids={"europepmc_render": f"{EPMC}&n=3"})
+    transport = serving(f"{EPMC}&n=1", f"{EPMC}&n=2", f"{EPMC}&n=3")
+    ticks = iter([0.0, 0.0, 100.0, 100.0, 100.0, 100.0])
+
+    summary = fetch_candidates([first, second, unread], tmp_path, transport=transport,
+                               probe=None, deadline_s=50.0, now=lambda: next(ticks, 100.0))
+
+    assert first.state == "fetched"
+    assert second.state == "wanted" and second.fetch_outcome == OVER_FETCH_DEADLINE
+    assert unread.fetch_outcome == OVER_FETCH_DEADLINE and unread.fetch_attempts == []
+    assert summary.n_over_deadline == 2
+    assert any("deadline" in note for note in summary.notes)

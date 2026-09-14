@@ -256,9 +256,12 @@ def _left_columns(layout: ForestLayout,
     headings = _left_labels(layout, spec)
     columns = [
         _Column("author", headings[0],
-                [labels.elide(study_label(r.record)
-                              + (f" {theme.OVERRIDE_MARK}" if r.overridden else ""),
-                              MAX_LABEL_CH) for r in rows]),
+                # the marker goes on after the cut (`elide_marked`): appended before it, a label
+                # over MAX_LABEL_CH − 2 characters long lost the △ to the ellipsis, which hid the
+                # override on precisely the rows with the longest author strings (review finding)
+                [labels.elide_marked(study_label(r.record), MAX_LABEL_CH,
+                                     theme.OVERRIDE_MARK if r.overridden else "")
+                 for r in rows]),
         _Column("year", headings[1], [str(r.record.citation.year or "") for r in rows]),
     ]
     for index, name in enumerate(layout.moderators):
@@ -484,14 +487,34 @@ def forest_plot(rows: Sequence[EffectSizeRecord], pooled: MetaResult, outcome: O
 
         # --- direction labels, from the protocol
         if direction_in:
-            y = -(axis_in + direction_in * 0.55) / (height * (1 - (footer_in + direction_in +
-                                                                   axis_in) / height - top_in /
-                                                              height))
-            if outcome.negative_direction_label:
-                ax.text(0.0, y, f"\u2190 {outcome.negative_direction_label}", fontsize=8,
+            axes_in = height * (1 - (footer_in + direction_in + axis_in) / height
+                                - top_in / height)
+            y = -(axis_in + direction_in * 0.55) / axes_in
+            left = f"\u2190 {outcome.negative_direction_label}" \
+                if outcome.negative_direction_label else ""
+            right = f"{outcome.positive_direction_label} \u2192" \
+                if outcome.positive_direction_label else ""
+            # These are anchored at the two ends of a 3.2in axis, so a protocol whose direction
+            # labels are at all wordy runs them into each other in the middle \u2014 "Reduced under
+            # divided attention" against "Greater under divided attention" overprinted to
+            # "Gaeatetunder", which is worse than either label alone because it is unreadable
+            # rather than merely truncated. Width is estimated rather than measured: a real
+            # measurement needs the renderer, which does not exist until draw time, and the
+            # estimate only has to decide between three layouts. 0.5em per character is the usual
+            # rule for this sans face and errs wide, which is the safe direction here.
+            size = 8.0
+            while size > 6.0 and (len(left) + len(right) + 2) * 0.5 * size / 72.0 > plot_in:
+                size -= 0.5
+            stacked = (len(left) + len(right) + 2) * 0.5 * size / 72.0 > plot_in
+            # Still colliding at the floor: give each its own line rather than shrink into
+            # illegibility. The band already has the height, and a reader loses nothing \u2014 the
+            # arrow still points the way the label means.
+            line = (size / 72.0) / axes_in if stacked else 0.0
+            if left:
+                ax.text(0.0, y + line * 0.5, left, fontsize=size,
                         color=MUTED, ha="left", va="center", transform=ax.transAxes)
-            if outcome.positive_direction_label:
-                ax.text(1.0, y, f"{outcome.positive_direction_label} \u2192", fontsize=8,
+            if right:
+                ax.text(1.0, y - line * 0.5, right, fontsize=size,
                         color=MUTED, ha="right", va="center", transform=ax.transAxes)
 
         heading = title if title is not None else (outcome.label or outcome.key)

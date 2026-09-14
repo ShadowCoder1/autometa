@@ -23,7 +23,7 @@ from canopy.search.models import Candidate, counts_of
 from canopy.search.screen import (BATCH, MAX_ABSTRACT_CHARS, NO_ABSTRACT_MARKER, NO_MODEL_REASON,
                                   NO_VERDICT_REASON, SCREEN_DECISIONS, SCREEN_SCHEMA,
                                   TITLE_ONLY_NOTE, TRUNCATION_MARKER, ScreenOutcome,
-                                  batches_of, screen_candidates)
+                                  batches_of, prompt_text, screen_candidates)
 
 MODEL = "claude-sonnet-5"                 # what MODELS["secondary"] is; see the module docstring
 QUESTION = "does resistance training reduce tremor in Parkinson's disease?"
@@ -45,9 +45,25 @@ def _cand(i: int, *, title: str = "", abstract: str = "Randomised trial of progr
                      venue="Movement Disorders", abstract=abstract, **kw)
 
 
+#: the six answers that make each decision legitimate under the v2 rubric, so a scripted verdict
+#: passes the guard unchanged and the test is about what it says it is about
+ANSWERS_FOR = {
+    "include": {"q1": "yes", "q2": "yes", "q3": "yes", "q4": "yes", "q5": "named", "q6": "yes"},
+    "exclude": {"q1": "yes", "q2": "yes", "q3": "no", "q4": "unknown", "q5": "unknown",
+                "q6": "yes"},
+    "unknown": {"q1": "yes", "q2": "unknown", "q3": "unknown", "q4": "unknown", "q5": "possible",
+                "q6": "yes"},
+}
+
+
+def verdict(ref: str, decision: str, reason: str, quote: str = "a quote", **answers) -> dict:
+    base = dict(ANSWERS_FOR.get(decision, ANSWERS_FOR["unknown"]))
+    base.update(answers)
+    return {"ref": ref, "decision": decision, "reason": reason, "quote": quote, **base}
+
+
 def _verdicts(*rows: tuple[str, str, str]) -> dict:
-    return {"decisions": [{"ref": ref, "decision": decision, "reason": reason}
-                          for ref, decision, reason in rows]}
+    return {"decisions": [verdict(ref, decision, reason) for ref, decision, reason in rows]}
 
 
 def _client(payloads, *, usage=None) -> tuple[LLMClient, FakeProvider]:
@@ -62,7 +78,7 @@ def _screen(client, candidates, **kw) -> ScreenOutcome:
 
 
 def _sent_text(provider: FakeProvider, index: int = 0) -> str:
-    return provider.requests[index].messages[0]["content"]
+    return prompt_text(provider.requests[index].messages[0]["content"])
 
 
 # --------------------------------------------------------------------------------- the schema
@@ -97,7 +113,10 @@ def test_every_object_in_the_schema_is_strict():
     items = SCREEN_SCHEMA["properties"]["decisions"]["items"]
     assert SCREEN_SCHEMA["additionalProperties"] is False
     assert items["additionalProperties"] is False
-    assert set(items["required"]) == set(items["properties"]) == {"ref", "decision", "reason"}
+    assert set(items["required"]) == set(items["properties"]) == {
+        "ref", "q1", "q2", "q3", "q4", "q5", "q6", "decision", "quote", "reason"}
+    assert items["properties"]["q4"]["enum"] == ["yes", "unknown"], "never no from an abstract"
+    assert items["properties"]["q5"]["enum"] == ["named", "possible", "no", "unknown"]
 
 
 # --------------------------------------------------------------------------------- verdicts land
@@ -398,3 +417,192 @@ def test_one_failed_batch_costs_twenty_decisions_and_not_the_whole_search():
     assert cands[0].state == "not_screened" and cands[0].screen_decision == ""
     assert "nobody read this record" in cands[0].screen_reason
     assert cands[1].screen_decision == "include"
+
+
+# ================================================================ the v2 rubric (design 03 §4)
+"""The screener sees the protocol, answers six questions with a quote, and a guard enforces the
+decision rules in code. The three answer-key papers the first search excluded on "no comparison"
+framing (design 01) are walked through the guard exactly as design 04 §C walked them."""
+from canopy.protocol import load_protocol  # noqa: E402
+from canopy.search.screen import (PREAMBLE, PROMPT_VERSION, SYSTEM, _guard,  # noqa: E402
+                                  preamble_for, related_term_in)
+from tests.test_server import PROTOCOL as PROTOCOL_PATH  # noqa: E402
+
+RUBRIC = [
+    {"rule": "The study is written in English.", "kind": "language", "abstract_can_fail": True},
+    {"rule": "The participants were neurologically healthy.", "kind": "population",
+     "abstract_can_fail": True},
+    {"rule": "The study reports at least one protocol outcome.", "kind": "outcome",
+     "abstract_can_fail": False},
+]
+PLAN = {"blocks": [
+    {"name": "groups", "terms": ["older adults", "younger adults"],
+     "expanded": {"older adults": ["older", "adults"], "younger adults": ["younger"]},
+     "pruned": []},
+    {"name": "related_designs", "terms": ["untrained group", "control group"],
+     "expanded": {"untrained group": ["untrained"], "control group": []}, "pruned": []}]}
+
+
+def test_the_prompt_is_the_v2_one_and_the_preamble_carries_the_protocol():
+    protocol = load_protocol(str(PROTOCOL_PATH))
+    text = preamble_for(question=QUESTION, protocol=protocol, rubric=RUBRIC)
+    assert PROMPT_VERSION == "search-screen-2"
+    assert "presence of a DESIGN" in SYSTEM and "RELATED design" in SYSTEM
+    assert "GROUP A — " in text and "GROUP B — " in text and "also called:" in text
+    assert "OUTCOMES (any one suffices):" in text and "Late adaptation" in text
+    hard = text.split("HARD RULES (an abstract may fail these):")[1].split("SOFT RULES")[0]
+    soft = text.split("SOFT RULES (an abstract may meet these, never fail them):")[1]
+    assert "1. The study is written in English." in hard
+    assert "2. The participants were neurologically healthy." in hard
+    assert "3. It is a primary study with results" in hard, "always the last hard rule"
+    assert "1. The study reports at least one protocol outcome." in soft
+    assert "q5 groups — does the DESIGN contain both GROUP A and GROUP B?" in text
+    # no rubric: the protocol's eligibility list is SOFT and the primary-study rule alone is HARD
+    bare = preamble_for(question=QUESTION, protocol=protocol, rubric=())
+    assert "1. It is a primary study with results" in bare.split("HARD RULES")[1].split("SOFT")[0]
+    assert protocol.eligibility[0] in bare.split("SOFT RULES")[1]
+
+
+def test_the_user_message_is_two_blocks_with_one_cache_breakpoint_on_the_preamble():
+    """System (≈ 380 tokens) + preamble (≈ 1,000) clears the 1,024-token cache minimum, so every
+    batch after the first reads the preamble from cache. v1 sent one plain string and
+    `cache_creation_input_tokens` was 0 on all eleven calls (design 04 MAJOR-4)."""
+    cands = [_cand(1), _cand(2)]
+    client, provider = _client([_verdicts(("1", "include", "fine"), ("2", "include", "fine"))])
+    _screen(client, cands, protocol=load_protocol(str(PROTOCOL_PATH)), rubric=RUBRIC)
+    content = provider.requests[0].messages[0]["content"]
+    assert isinstance(content, list) and len(content) == 2
+    assert content[0]["cache_control"] == {"type": "ephemeral"} and "cache_control" not in content[1]
+    assert content[0]["text"].startswith("The review asks:") and "GROUP A" in content[0]["text"]
+    assert content[1]["text"].startswith("Screen the 2 records below")
+    assert "1. Paper number 1" in content[1]["text"]
+    # byte-identical preamble across batches: that is what a cache prefix is
+    cands = [_cand(i) for i in range(1, 25)]
+    client, provider = _client([_verdicts(*[(str(i), "include", "ok") for i in range(1, 21)]),
+                                _verdicts(*[(str(i), "include", "ok") for i in range(1, 5)])])
+    _screen(client, cands, protocol=load_protocol(str(PROTOCOL_PATH)), rubric=RUBRIC)
+    first, second = (r.messages[0]["content"][0]["text"] for r in provider.requests[:2])
+    assert first == second
+
+
+def test_the_answers_and_the_quote_land_on_the_candidate():
+    cands = [_cand(1)]
+    client, _ = _client([{"decisions": [verdict("1", "include", "both groups named",
+                                                quote="dominant and non-dominant", q4="yes")]}])
+    _screen(client, cands)
+    assert cands[0].screen_answers == {"q1": "yes", "q2": "yes", "q3": "yes", "q4": "yes",
+                                       "q5": "named", "q6": "yes",
+                                       "quote": "dominant and non-dominant"}
+    assert cands[0].screen_decision == "include" and cands[0].state == "wanted"
+
+
+def test_an_off_enum_answer_is_unknown_on_that_question():
+    cands = [_cand(1)]
+    client, _ = _client([{"decisions": [dict(verdict("1", "unknown", "x"), q4="no", q5="maybe")]}])
+    _screen(client, cands)
+    assert cands[0].screen_answers["q4"] == "unknown" and cands[0].screen_answers["q5"] == "unknown"
+
+
+# --------------------------------------------------------------------------------- the guard
+def _record(text: str) -> Candidate:
+    return Candidate(key="c000000000009", title="A paper", abstract=text)
+
+
+def test_guard_rule_1_an_exclude_with_no_failing_hard_question_is_unknown():
+    answers = {"q1": "yes", "q2": "yes", "q3": "yes", "q4": "unknown", "q5": "possible",
+               "q6": "yes"}
+    decision, note = _guard("exclude", answers, _record("x"), PLAN)
+    assert decision == "unknown" and "without a failing hard question" in note
+
+
+def test_guard_rule_2_fires_when_q5_is_the_only_no_and_a_groups_word_is_present():
+    """Design 04 MAJOR-3 / §C, the Poh shape: q3 = unknown (the abstract never names the
+    perturbation), q5 = no, q6 = yes. Rule 1 lets it through (q5 is a failing question); rule 2
+    must not, because the record talks about the untrained group."""
+    poh = {"q1": "yes", "q2": "yes", "q3": "unknown", "q4": "unknown", "q5": "no", "q6": "yes"}
+    record = _record("Transfer of learning to the untrained limb was measured.")
+    decision, note = _guard("exclude", poh, record, PLAN)
+    assert decision == "unknown" and '"untrained"' in note and "full text" in note
+    # the same answers on a record that mentions no groups word: the exclude stands
+    assert _guard("exclude", poh, _record("A single cohort adapted to the task."), PLAN) == (
+        "exclude", "")
+    # a real hard no beside q5 = no: the exclude stands even with a groups word present
+    hard = dict(poh, q3="no")
+    assert _guard("exclude", hard, record, PLAN) == ("exclude", "")
+
+
+def test_guard_rule_3_an_include_without_named_groups_on_a_met_rubric_is_unknown():
+    named = {"q1": "yes", "q2": "yes", "q3": "yes", "q4": "unknown", "q5": "named", "q6": "yes"}
+    assert _guard("include", named, _record("x"), PLAN) == ("include", "")
+    assert _guard("include", dict(named, q5="possible"), _record("x"), PLAN)[0] == "unknown"
+    assert _guard("include", dict(named, q3="unknown"), _record("x"), PLAN)[0] == "unknown"
+    assert _guard("include", dict(named, q6="no"), _record("x"), PLAN)[0] == "unknown"
+    # a review is excluded on q6 alone, whatever else the abstract names
+    review = {"q1": "yes", "q2": "unknown", "q3": "unknown", "q4": "unknown", "q5": "named",
+              "q6": "no"}
+    assert _guard("exclude", review, _record("older adults were compared"), PLAN) == (
+        "exclude", "")
+
+
+def test_related_term_in_is_literal_whole_word_and_hyphen_blind():
+    assert related_term_in(_record("Older-adults and the untrained group"), PLAN) == "older adults"
+    assert related_term_in(_record("An UNTRAINED cohort"), PLAN) == "untrained"
+    assert related_term_in(_record("adults who were told"), PLAN) == "adults"
+    assert related_term_in(_record("nothing here"), PLAN) == ""
+    assert related_term_in(_record("older adults"), None) == ""
+
+
+def test_the_04_rubric_walk_poh_wang2003_wang2011():
+    """Design 04 §C, as the guard sees it: Poh → unknown, Wang 2003 → include, Wang 2011 →
+    include. Answers as the walk gives them; the records mention the groups words the walk
+    quotes."""
+    walk = [
+        ("Poh 2016", {"q1": "yes", "q2": "yes", "q3": "yes", "q4": "unknown", "q5": "possible",
+                      "q6": "yes"}, "unknown", "transfer between the left and right limbs"),
+        ("Wang & Sainburg 2003", {"q1": "yes", "q2": "yes", "q3": "yes", "q4": "unknown",
+                                  "q5": "named", "q6": "yes"}, "include",
+         "the other arm"),
+        ("Wang 2011", {"q1": "yes", "q2": "yes", "q3": "yes", "q4": "unknown", "q5": "named",
+                       "q6": "yes"}, "include", "with the left arm, then with the right arm"),
+    ]
+    for _name, answers, decision, text in walk:
+        assert _guard(decision, answers, _record(text), PLAN)[0] == decision
+
+
+# --------------------------------------------------------------------------------- the audit
+def test_the_exclude_audit_re_asks_bounded_excludes_and_reverses_the_ones_that_change():
+    """Excludes with q5 = no that still mention a groups word, at most 10 % of the round, most
+    relevant first, asked again with one prefixed line; a changed verdict → unknown."""
+    cands = [_cand(i, abstract="Older adults were tested in a single group.") for i in range(1, 6)]
+    cands += [_cand(i, abstract="A single cohort, no groups named.") for i in range(6, 21)]
+    for i, c in enumerate(cands):
+        c.relevance = 20.0 - i
+    first = {"decisions": [dict(verdict(str(i), "exclude", "single group", q3="no", q5="no"))
+                           for i in range(1, 21)]}
+    # the guard keeps these excludes (q3 = no is a hard no) — the audit is what re-asks them
+    audit_answer = {"decisions": [dict(verdict("1", "unknown", "on reflection both groups",
+                                               q3="unknown", q5="possible")),
+                                  dict(verdict("2", "exclude", "still single group", q3="no",
+                                               q5="no"))]}
+    client, provider = _client([first, audit_answer])
+    outcome = _screen(client, cands, plan=PLAN)
+
+    assert len(provider.requests) == 2
+    audit_text = prompt_text(provider.requests[1].messages[0]["content"])
+    assert audit_text.count('This record contains the words: "older adults". Answer q5 again') == 2
+    assert "Screen the 2 records below" in audit_text, "10 % of 20, most relevant first"
+    reversed_ones = [c for c in cands if c.screen_answers.get("audit") == "reversed"]
+    confirmed = [c for c in cands if c.screen_answers.get("audit") == "confirmed"]
+    assert [c.key for c in reversed_ones] == [cands[0].key]
+    assert cands[0].screen_decision == "unknown" and cands[0].state == "unsure" and cands[0].keep
+    assert "asked again with the groups words in view" in cands[0].screen_reason
+    assert [c.key for c in confirmed] == [cands[1].key]
+    assert cands[1].screen_decision == "exclude"
+    assert all(c.screen_decision == "exclude" and "audit" not in c.screen_answers
+               for c in cands[2:])
+    assert outcome.n_audited == 2 and outcome.n_reversed == 1
+    assert outcome.batches[-1].audit is True and outcome.n_screened == 20
+    assert any("asked again" in note for note in outcome.notes)
+    client, provider = _client([first])
+    outcome = _screen(client, cands, plan=PLAN, audit=False)
+    assert len(provider.requests) == 1 and outcome.n_audited == 0

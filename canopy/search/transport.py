@@ -81,6 +81,8 @@ and `get_bytes` returns a `Download` record rather than a 3-tuple.
 """
 from __future__ import annotations
 
+import base64
+import gzip
 import ipaddress
 import json
 import os
@@ -90,8 +92,10 @@ import threading
 import time
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Mapping, Protocol
+from urllib.parse import urlencode
 
 import httpx
 
@@ -99,11 +103,13 @@ from .. import __version__
 
 __all__ = [
     "UrlRejected", "MissingSearchFixture", "VettedUrl", "HttpResponse", "Download",
-    "SearchTransport", "HttpxTransport", "RecordedTransport", "HostClock", "ByteBudget",
-    "Reservation", "is_public_address", "is_safe_public_host", "check_public", "resolve_host",
-    "pinned_url", "fixture_key", "default_user_agent", "DENY_NETS", "HOST_INTERVALS",
-    "DEFAULT_HOST_INTERVAL", "MAX_REDIRECTS", "REDIRECT_STATUSES", "ALLOWED_PORT",
-    "PDF_CONTENT_TYPES", "OUTCOMES", "MAX_JSON_BYTES", "DEFAULT_TIMEOUT", "DEFAULT_FETCH_TIMEOUT",
+    "SearchTransport", "HttpxTransport", "RecordedTransport", "RecordingTransport", "HostClock",
+    "ByteBudget", "Reservation", "is_public_address", "is_safe_public_host", "check_public",
+    "resolve_host", "pinned_url", "fixture_key", "html_key", "redact_params", "IDENTITY_PARAMS",
+    "MAX_HTML_BYTES",
+    "default_user_agent", "DENY_NETS", "HOST_INTERVALS", "DEFAULT_HOST_INTERVAL",
+    "MAX_REDIRECTS", "REDIRECT_STATUSES", "ALLOWED_PORT", "PDF_CONTENT_TYPES", "OUTCOMES",
+    "MAX_JSON_BYTES", "DEFAULT_TIMEOUT", "DEFAULT_FETCH_TIMEOUT",
 ]
 
 # --------------------------------------------------------------------------------- the policy
@@ -158,10 +164,16 @@ HOST_INTERVALS: dict[str, float] = {
     "api.openalex.org": 0.05,      # 100 req/s is the cap; the daily budget is the real constraint
     "api.crossref.org": 0.35,      # the live header says 3/s, whatever the documentation says
     "api.unpaywall.org": 0.1,
+    "web.archive.org": 2.0,        # the last-resort copy; the Wayback Machine throttles bursts
+    "eutils.ncbi.nlm.nih.gov": 0.4,   # 3 requests/s without a key (NCBI's own rule)
 }
 DEFAULT_HOST_INTERVAL = 1.0
+#: how much of a landing page is worth reading for a PDF link. `citation_pdf_url` sits in `<head>`.
+MAX_HTML_BYTES = 1_000_000
 
 DEFAULT_TIMEOUT = 20.0             # one index call
+#: how long one transport reuses a name's vetted addresses before asking DNS again
+RESOLVE_TTL_S = 300.0
 DEFAULT_FETCH_TIMEOUT = 60.0       # one PDF download
 #: a JSON body is held in memory, so it needs a cap of its own: an index that answers with 10 GB of
 #: `{` should cost us one recorded error, not the machine.
@@ -572,7 +584,17 @@ class SearchTransport(Protocol):
 
     def get_json(self, url: str, *, params: Mapping[str, Any] | None = ...,
                  headers: Mapping[str, str] | None = ..., timeout: float = ...,
-                 accept: str = ..., max_bytes: float = ...) -> HttpResponse:
+                 accept: str = ..., max_bytes: float = ...,
+                 context: Mapping[str, Any] | None = ...,
+                 form_data: Mapping[str, Any] | None = ...) -> HttpResponse:
+        """`context` is what the CALLER knows about this request and the wire does not: the
+        `{index, form, query_id, page, query_text}` tuple `search_pages` passes. The real
+        transport ignores it; the recorder writes it into the fixture; the replayer falls back
+        to it when the exact request was never recorded (`RecordedTransport.query_drift`).
+
+        `form_data` turns the call into a POST with a form-encoded body — for the one index
+        (PubMed's esearch) whose GET URLs 414 above ~3,000 characters while NCBI documents POST
+        for exactly that. The fixture key covers `params` and `form_data` alike."""
         ...
 
     def get_bytes(self, url: str, dest_dir: str | Path, *, filename: str = ...,
@@ -580,6 +602,13 @@ class SearchTransport(Protocol):
                   max_bytes: float = ..., accept: str = ...,
                   content_types: Iterable[str] = ..., allow_http_rewrite: bool = ...,
                   probe: Callable[[Path], Mapping[str, Any]] | None = ...) -> Download:
+        ...
+
+    def get_html(self, url: str, *, headers: Mapping[str, str] | None = ...,
+                 timeout: float = ..., max_bytes: float = ...) -> HttpResponse:
+        """A landing page, so the fetch stage can read the PDF link out of it. Through the same
+        hop-vetting loop as everything else — the page is somebody else's HTML and the link in
+        it is re-vetted by `get_bytes` before a byte of it is fetched."""
         ...
 
 
@@ -667,25 +696,47 @@ def default_user_agent(contact_email: str = "") -> str:
     return f"canopy-meta/{__version__}" + (f" (mailto:{email})" if email else "")
 
 
+#: request parameters that say WHO is asking rather than WHAT is asked: the polite-pool address
+#: the indexes ask for, Unpaywall's mandatory `email`, OpenAlex's `api_key`, eutils' `tool`. They
+#: are left out of `fixture_key` so a recording made under one person's address replays for
+#: everyone, and they are stripped from every recorded fixture (`redact_params`) so a key never
+#: lands in a file that is committed.
+IDENTITY_PARAMS: frozenset[str] = frozenset({"mailto", "email", "api_key", "tool"})
+
+
+def redact_params(params: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The request parameters minus the ones that identify (or authenticate) the caller."""
+    return {k: v for k, v in dict(params or {}).items() if k not in IDENTITY_PARAMS}
+
+
 def fixture_key(url: str, params: Mapping[str, Any] | None = None) -> str:
     """A stable, path-safe key for one request: `<host>-<sha1>`.
 
     Readable half so a person can find the fixture; hashed half so query strings that differ only
-    in ordering are one recording.
+    in ordering are one recording. `IDENTITY_PARAMS` are not part of the key: they change with the
+    operator, not with the question, and a fixture that only replayed for the address it was
+    recorded under would be a fixture for one laptop.
     """
     import hashlib
 
     try:
-        parsed = httpx.URL(url, params=dict(params or {}))
+        parsed = httpx.URL(url, params=redact_params(params))
     except (httpx.InvalidURL, ValueError, TypeError):
         parsed = None
     if parsed is None:
         host, canonical = "invalid", str(url)
     else:
         host = (parsed.host or "invalid").replace(".", "-")
-        query = "&".join(f"{k}={v}" for k, v in sorted(parsed.params.multi_items()))
+        query = "&".join(f"{k}={v}" for k, v in sorted(parsed.params.multi_items())
+                         if k not in IDENTITY_PARAMS)
         canonical = f"{parsed.scheme}://{parsed.host}{parsed.path}?{query}"
     return f"{host}-{hashlib.sha1(canonical.encode('utf-8')).hexdigest()[:16]}"
+
+
+def html_key(url: str) -> str:
+    """The fixture key of a landing page: the URL's key with `-html`, so a page and a download
+    of the same address are two recordings."""
+    return fixture_key(url) + "-html"
 
 
 def _store(reader: _ChunkReader, dest_dir: str | Path, filename: str, *,
@@ -752,6 +803,13 @@ class HttpxTransport:
         self.clock = clock if clock is not None else HostClock()
         self.budget = budget if budget is not None else ByteBudget(None)
         self.resolve = resolve
+        # a name resolved once is reused for `RESOLVE_TTL_S`: the first 500-paper fetch made a
+        # lookup per request and the local resolver started answering "does not resolve"
+        # (96 Europe PMC fetches lost to gaierror in one run). The address a name gave is the
+        # address the socket is pinned to either way; asking DNS again every time was only
+        # ever a chance for it to say something else.
+        self._resolved: dict[tuple[str, int], tuple[float, tuple[str, ...]]] = {}
+        self._resolve_lock = threading.Lock()
         self.max_redirects = max(0, int(max_redirects))
         # A real flag rather than an undesigned escape hatch: pinning is untested against
         # SNI-routing CDNs and IPv6-only hosts, and the day it breaks one, the operator needs a way
@@ -780,6 +838,20 @@ class HttpxTransport:
                              "redirect itself would resolve the next hop's name and defeat the "
                              "address pinning")
 
+    def _cached_resolve(self, host: str, port: int = ALLOWED_PORT) -> tuple[str, ...]:
+        """`self.resolve`, remembered per (host, port) for `RESOLVE_TTL_S`. A failure is never
+        cached: the next request asks again, which is the retry a transient lookup error needs."""
+        key = (host.lower(), int(port))
+        now = time.monotonic()
+        with self._resolve_lock:
+            hit = self._resolved.get(key)
+            if hit is not None and now - hit[0] < RESOLVE_TTL_S:
+                return hit[1]
+        addresses = tuple(self.resolve(host, port))
+        with self._resolve_lock:
+            self._resolved[key] = (now, addresses)
+        return addresses
+
     def close(self) -> None:
         self.client.close()
 
@@ -792,9 +864,14 @@ class HttpxTransport:
     # ------------------------------------------------------------------ the re-vetting hop loop
     @contextmanager
     def _open(self, url: str, *, headers: Mapping[str, str] | None, timeout: float,
-              accept: str, allow_http_rewrite: bool) -> Iterator[tuple[httpx.Response, VettedUrl,
-                                                                       list[str], str]]:
-        """Yield the final response, with every hop on the way re-vetted through `check_public`."""
+              accept: str, allow_http_rewrite: bool,
+              form_data: Mapping[str, Any] | None = None,
+              ) -> Iterator[tuple[httpx.Response, VettedUrl, list[str], str]]:
+        """Yield the final response, with every hop on the way re-vetted through `check_public`.
+
+        `form_data` is POSTed, form-encoded, on the FIRST hop only; a redirect is followed with
+        a GET, as a browser follows a 303. The one caller that POSTs (PubMed) is never redirected.
+        """
         target = str(url)
         rewritten_from = ""
         if allow_http_rewrite and target[:7].lower() == "http://":
@@ -810,7 +887,7 @@ class HttpxTransport:
         with ExitStack() as stack:
             for _hop in range(self.max_redirects + 1):
                 try:
-                    vetted = check_public(target, resolve=self.resolve)
+                    vetted = check_public(target, resolve=self._cached_resolve)
                 except UrlRejected as exc:
                     # name the hop. "we refused 127.0.0.1" is true but useless in a record; the
                     # user needs to see that a URL they trusted sent us somewhere they did not.
@@ -829,10 +906,15 @@ class HttpxTransport:
                 self.client.cookies.clear()
                 self.clock.wait(vetted.host)
                 wire_url = pinned_url(vetted) if self.pin_address else vetted.url
+                posting = form_data is not None and not hops[:-1]
                 try:
                     response = stack.enter_context(self.client.stream(
-                        "GET", wire_url,
-                        headers={**request_headers, "Host": vetted.host},
+                        "POST" if posting else "GET", wire_url,
+                        headers={**request_headers, "Host": vetted.host,
+                                 **({"Content-Type": "application/x-www-form-urlencoded"}
+                                    if posting else {})},
+                        content=(urlencode({k: str(v) for k, v in dict(form_data or {}).items()})
+                                 .encode("ascii") if posting else None),
                         extensions={"sni_hostname": vetted.host},
                         timeout=timeout))
                 except httpx.InvalidURL as exc:
@@ -900,8 +982,15 @@ class HttpxTransport:
     def get_json(self, url: str, *, params: Mapping[str, Any] | None = None,
                  headers: Mapping[str, str] | None = None, timeout: float = DEFAULT_TIMEOUT,
                  accept: str = "application/json",
-                 max_bytes: float = MAX_JSON_BYTES) -> HttpResponse:
-        """One index call. Never raises: every failure comes back as an outcome and a sentence."""
+                 max_bytes: float = MAX_JSON_BYTES,
+                 context: Mapping[str, Any] | None = None,
+                 form_data: Mapping[str, Any] | None = None) -> HttpResponse:
+        """One index call. Never raises: every failure comes back as an outcome and a sentence.
+
+        `context` is accepted for the contract's sake and not used: the wire does not care what
+        page of which query this is. The recorder wrapping this transport does. `form_data`
+        makes it a POST (see `SearchTransport`)."""
+        del context
         started = time.monotonic()
         try:
             target = str(httpx.URL(url, params=dict(params)) if params else httpx.URL(url))
@@ -913,7 +1002,8 @@ class HttpxTransport:
         known: dict[str, Any] = {"url": target}
         try:
             with self._open(target, headers=headers, timeout=timeout, accept=accept,
-                            allow_http_rewrite=False) as (response, vetted, hops, rewritten):
+                            allow_http_rewrite=False,
+                            form_data=form_data) as (response, vetted, hops, rewritten):
                 known = {"url": vetted.url, "status": response.status_code,
                          "headers": dict(response.headers), "hops": tuple(hops),
                          "rewritten_from": rewritten,
@@ -948,6 +1038,46 @@ class HttpxTransport:
             return (f"{host} asked us to slow down (HTTP 429) — this is our request rate, not a "
                     f"paywall; the same URL usually works a minute later")
         return f"{host} answered HTTP {status}"
+
+    # ------------------------------------------------------------------------------- get_html
+    def get_html(self, url: str, *, headers: Mapping[str, str] | None = None,
+                 timeout: float = DEFAULT_TIMEOUT,
+                 max_bytes: float = MAX_HTML_BYTES) -> HttpResponse:
+        """One landing page, capped, through `_open` — every hop vetted and pinned like an index
+        call. The `http://` rewrite is allowed here exactly as it is for a PDF URL, because the
+        landing page an index hands us is as often plain http as the PDF is."""
+        started = time.monotonic()
+        known: dict[str, Any] = {"url": str(url)}
+        try:
+            with self._open(str(url), headers=headers, timeout=timeout,
+                            accept="text/html,application/xhtml+xml",
+                            allow_http_rewrite=True) as (response, vetted, hops, rewritten):
+                known = {"url": vetted.url, "status": response.status_code,
+                         "headers": dict(response.headers), "hops": tuple(hops),
+                         "rewritten_from": rewritten,
+                         "retry_after": _retry_after(response.headers)}
+                body = self._read_capped(response, max_bytes)
+                outcome = self._outcome_for(response.status_code)
+                return HttpResponse(
+                    **known, outcome=outcome, body=body,
+                    error="" if outcome == "ok" else self._status_sentence(
+                        response.status_code, vetted.host),
+                    seconds=time.monotonic() - started)
+        except UrlRejected as exc:
+            return HttpResponse(**{**known, "hops": exc.hops or known.get("hops", ())},
+                                outcome=exc.outcome, error=str(exc),
+                                seconds=time.monotonic() - started)
+        except _BodyTooLarge as exc:
+            return HttpResponse(**known, outcome="too_large", error=str(exc),
+                                seconds=time.monotonic() - started)
+        except httpx.TimeoutException:
+            return HttpResponse(**known, outcome="timeout",
+                                error=f"no answer within {timeout:g}s",
+                                seconds=time.monotonic() - started)
+        except httpx.HTTPError as exc:
+            return HttpResponse(**known, outcome="network_error",
+                                error=f"{exc.__class__.__name__}: {exc}"[:300],
+                                seconds=time.monotonic() - started)
 
     # ------------------------------------------------------------------------------ get_bytes
     def get_bytes(self, url: str, dest_dir: str | Path, *, filename: str = "download.pdf",
@@ -1058,33 +1188,167 @@ class RecordedTransport:
 
     def __init__(self, responses: Mapping[str, HttpResponse] | None = None,
                  payloads: Mapping[str, str | Path] | None = None,
-                 budget: ByteBudget | None = None) -> None:
+                 budget: ByteBudget | None = None, *, strict: bool = True) -> None:
         self.responses = dict(responses or {})
         #: fixture key → a local PDF on disk, served through the same `stream_upload` path the real
         #: transport uses, so a replayed download lands under the identical rules
         self.payloads = {k: Path(v) for k, v in (payloads or {}).items()}
         self.budget = budget if budget is not None else ByteBudget(None)
         self.calls: list[dict[str, Any]] = []
+        #: a key that was asked MORE THAN ONCE in the recording (a 429 and then the retry that
+        #: worked) replays in the order it happened; the last answer repeats thereafter
+        self.sequences: dict[str, list[HttpResponse]] = {}
+        self._cursor: dict[str, int] = {}
+        #: `(index, form, query_id, page)` → `(fixture key, query text, recorded_at)`, the
+        #: fallback for a request whose exact text was never recorded. Filled by `from_dir`.
+        self.tuples: dict[tuple[str, str, str, int], tuple[str, str, str]] = {}
+        #: how many requests were answered through that fallback, and which — the number the
+        #: bench prints beside every measurement taken offline against a changed query string
+        self.query_drift = 0
+        self.drift_log: list[dict[str, Any]] = []
+        #: `strict=False` turns an unrecorded request into a `refused` outcome instead of an
+        #: exception — for the bench, where one missing recording must cost one row of the
+        #: record and not the whole fetch stage. Tests keep the default and the loud failure.
+        self.strict = bool(strict)
+        self.unrecorded: list[dict[str, Any]] = []
+        self._lock = threading.Lock()
 
     def record(self, url: str, response: HttpResponse,
                params: Mapping[str, Any] | None = None) -> None:
         self.responses[fixture_key(url, params)] = response
 
+    @classmethod
+    def from_dir(cls, directory: str | Path, *, budget: ByteBudget | None = None,
+                 strict: bool = True) -> RecordedTransport:
+        """Every fixture `RecordingTransport` wrote under `directory`, ready to replay.
+
+        `<key>.json.gz` files become recorded responses (a key recorded several times becomes a
+        sequence, oldest first); `pdfs.manifest.json` becomes recorded downloads, served from
+        `pdfs/<key>.pdf` when the file is there and as a `refused` outcome naming the missing
+        file when it is not (the PDFs are gitignored; the manifest is not).
+        """
+        root = Path(directory)
+        transport = cls(budget=budget, strict=strict)
+        for path in sorted(root.glob("*.json.gz")):
+            try:
+                with gzip.open(path, "rt", encoding="utf-8") as handle:
+                    fixture = json.load(handle)
+            except (OSError, ValueError):
+                continue
+            key = str(fixture.get("key") or path.name[: -len(".json.gz")])
+            answers = [_response_from_fixture(row) for row in _fixture_rows(fixture)]
+            if not answers:
+                continue
+            transport.responses[key] = answers[-1]
+            if len(answers) > 1:
+                transport.sequences[key] = answers
+            last = _fixture_rows(fixture)[-1]
+            tuple_key = _tuple_of(last)
+            if tuple_key is not None:
+                # the newest recording for a tuple wins: a query iterated on three times has
+                # three fixtures for page 1 of Q1, and the one to fall back to is the latest
+                stamp = str(last.get("recorded_at") or fixture.get("recorded_at") or "")
+                kept = transport.tuples.get(tuple_key)
+                if kept is None or stamp >= kept[2]:
+                    transport.tuples[tuple_key] = (key, str(last.get("query_text") or ""), stamp)
+        manifest = root / "pdfs.manifest.json"
+        if manifest.is_file():
+            try:
+                rows = json.loads(manifest.read_text(encoding="utf-8"))
+            except ValueError:
+                rows = {}
+            for key, entry in (rows or {}).items():
+                attempts = list((entry or {}).get("attempts") or [])
+                if not attempts:
+                    continue
+                answers = []
+                for attempt in attempts:
+                    response = _response_from_fixture(attempt)
+                    if response.outcome == "ok":
+                        pdf = root / "pdfs" / f"{key}.pdf"
+                        if pdf.is_file():
+                            transport.payloads[key] = pdf
+                        else:
+                            response = HttpResponse(
+                                url=response.url, status=response.status, outcome="refused",
+                                error=f"the recorded PDF {pdf.name} is not on disk (pdfs/ is "
+                                      f"not committed) — replay from the machine that "
+                                      f"recorded it, or record again")
+                    answers.append(response)
+                transport.responses[key] = answers[-1]
+                if len(answers) > 1:
+                    transport.sequences[key] = answers
+        return transport
+
+    def _next(self, key: str) -> HttpResponse:
+        """The recorded answer — the next one of a sequence when the key was asked repeatedly."""
+        sequence = self.sequences.get(key)
+        if not sequence:
+            return self.responses[key]
+        with self._lock:
+            position = self._cursor.get(key, 0)
+            self._cursor[key] = position + 1
+        return sequence[min(position, len(sequence) - 1)]
+
+    def _refusal(self, url: str, key: str, method: str) -> HttpResponse:
+        """What an unrecorded request gets under `strict=False`: a refusal that names itself."""
+        row = {"method": method, "url": url, "key": key}
+        with self._lock:
+            self.unrecorded.append(row)
+        return HttpResponse(url=url, outcome="refused",
+                            error=f"no recording for this request ({key}) — this replay is "
+                                  f"offline, and nothing was sent")
+
     def get_json(self, url: str, *, params: Mapping[str, Any] | None = None,
                  headers: Mapping[str, str] | None = None,
                  timeout: float = DEFAULT_TIMEOUT, accept: str = "application/json",
-                 max_bytes: float = MAX_JSON_BYTES) -> HttpResponse:
+                 max_bytes: float = MAX_JSON_BYTES,
+                 context: Mapping[str, Any] | None = None,
+                 form_data: Mapping[str, Any] | None = None) -> HttpResponse:
         """The recorded answer for this URL. Signature-identical to the real one on purpose —
         see `SearchTransport`. There is no `**kwargs`: a keyword the real transport does not have
-        must fail HERE, in a test, and not in the one place there are no tests."""
-        key = fixture_key(url, params)
-        self.calls.append({"method": "get_json", "url": url, "params": dict(params or {}),
-                           "key": key})
-        if key not in self.responses:
-            raise MissingSearchFixture(
-                f"no recorded response for {key} ({url}) — record one with "
-                f"CANOPY_SEARCH_RECORD=1, or hand the test a RecordedTransport that has it")
-        return self.responses[key]
+        must fail HERE, in a test, and not in the one place there are no tests.
+
+        A miss falls back to the `(index, form, query_id, page)` tuple in `context` when one was
+        recorded — and COUNTS it (`query_drift`), because an answer to a slightly different query
+        is a measurement with an asterisk, and the bench prints the asterisk.
+        """
+        key = fixture_key(url, {**dict(params or {}), **dict(form_data or {})})
+        self.calls.append({"method": "get_json", "url": url,
+                           "params": {**dict(params or {}), **dict(form_data or {})},
+                           "key": key, "context": dict(context or {})})
+        if key in self.responses:
+            return self._next(key)
+        tuple_key = _tuple_of(context) if context and not context.get("exact") else None
+        if tuple_key is not None and tuple_key in self.tuples:
+            recorded_key, recorded_text = self.tuples[tuple_key][:2]
+            if recorded_key in self.responses:
+                with self._lock:
+                    self.query_drift += 1
+                    self.drift_log.append({"tuple": list(tuple_key), "recorded_key": recorded_key,
+                                           "recorded_query": recorded_text,
+                                           "asked_query": str(context.get("query_text") or "")})
+                return self._next(recorded_key)
+        if not self.strict:
+            return self._refusal(url, key, "get_json")
+        raise MissingSearchFixture(
+            f"no recorded response for {key} ({url}) — record one with "
+            f"CANOPY_SEARCH_RECORD=1, or hand the test a RecordedTransport that has it")
+
+    def get_html(self, url: str, *, headers: Mapping[str, str] | None = None,
+                 timeout: float = DEFAULT_TIMEOUT,
+                 max_bytes: float = MAX_HTML_BYTES) -> HttpResponse:
+        """The recorded landing page. Keyed apart from a download of the same URL (`-html`), because
+        the fetch stage asks for the bytes first and the page second, and both are recorded."""
+        key = html_key(url)
+        self.calls.append({"method": "get_html", "url": url, "key": key})
+        if key in self.responses:
+            return self._next(key)
+        if not self.strict:
+            return self._refusal(url, key, "get_html")
+        raise MissingSearchFixture(
+            f"no recorded landing page for {key} ({url}) — record one with "
+            f"CANOPY_SEARCH_RECORD=1, or hand the test a RecordedTransport that has it")
 
     def get_bytes(self, url: str, dest_dir: str | Path, *, filename: str = "download.pdf",
                   headers: Mapping[str, str] | None = None,
@@ -1105,10 +1369,12 @@ class RecordedTransport:
         self.calls.append({"method": "get_bytes", "url": url, "key": key, "accept": accept,
                            "content_types": sorted(str(t) for t in content_types),
                            "allow_http_rewrite": bool(allow_http_rewrite)})
-        recorded = self.responses.get(key)
+        recorded = self._next(key) if key in self.responses else None
         if recorded is not None and recorded.outcome != "ok":
             return Download(recorded)          # a recorded 429/403 replays as itself
         if key not in self.payloads:
+            if not self.strict:
+                return Download(self._refusal(url, key, "get_bytes"))
             raise MissingSearchFixture(
                 f"no recorded PDF for {key} ({url}) — add one to `payloads`, or record the "
                 f"failure it should replay instead")
@@ -1127,3 +1393,186 @@ class RecordedTransport:
             grant.settle(n_bytes)
         return Download(recorded or HttpResponse(url=url, status=200, outcome="ok"),
                         path=path, n_bytes=n_bytes)
+
+
+# ------------------------------------------------------------------------------------ the recorder
+#: the fields of one recorded answer. `body_b64` because a JSON body is bytes off the wire and a
+#: fixture must replay exactly what arrived, not what `json.loads` made of it.
+_FIXTURE_FIELDS = ("status", "outcome", "error", "retry_after", "seconds", "url", "hops")
+
+
+def _tuple_of(context: Mapping[str, Any] | None) -> tuple[str, str, str, int] | None:
+    """`(index, form, query_id, page)` out of a context, or None when it does not name one."""
+    if not context or not context.get("index") or not context.get("query_id"):
+        return None
+    try:
+        page = int(context.get("page") or 0)
+    except (TypeError, ValueError):
+        page = 0
+    return (str(context["index"]), str(context.get("form") or ""), str(context["query_id"]),
+            page)
+
+
+def _fixture_rows(fixture: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The recorded answers in a fixture file, oldest first. A file holds one (`{...}`) or, when
+    the same request was made again in one recording, several (`{"responses": [...]}`)."""
+    rows = fixture.get("responses")
+    if isinstance(rows, list) and rows:
+        return [dict(r) for r in rows if isinstance(r, Mapping)]
+    return [dict(fixture)]
+
+
+def _response_from_fixture(row: Mapping[str, Any]) -> HttpResponse:
+    body = base64.b64decode(str(row.get("body_b64") or "")) if row.get("body_b64") else b""
+    retry_after = row.get("retry_after")
+    return HttpResponse(url=str(row.get("url") or ""), status=int(row.get("status") or 0),
+                        outcome=str(row.get("outcome") or "ok"), body=body,
+                        error=str(row.get("error") or ""),
+                        seconds=float(row.get("seconds") or 0.0),
+                        hops=tuple(str(h) for h in (row.get("hops") or ())),
+                        retry_after=float(retry_after) if retry_after is not None else None)
+
+
+def _fixture_row(response: HttpResponse, *, context: Mapping[str, Any] | None,
+                 url: str, params: Mapping[str, Any] | None, body: bool) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "index": str((context or {}).get("index") or ""),
+        "form": str((context or {}).get("form") or ""),
+        "query_id": str((context or {}).get("query_id") or ""),
+        "page": int((context or {}).get("page") or 0),
+        "query_text": str((context or {}).get("query_text") or ""),
+        "request_url": str(url), "params": redact_params(params),
+        "url": response.url, "status": int(response.status), "outcome": response.outcome,
+        "error": response.error, "retry_after": response.retry_after,
+        "seconds": round(float(response.seconds), 3), "hops": list(response.hops),
+        "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    if body:
+        row["body_b64"] = base64.b64encode(response.body).decode("ascii")
+    return row
+
+
+class RecordingTransport:
+    """The real transport, with every answer written down so the next run needs no network.
+
+    Wraps any `SearchTransport` (`inner`) and persists what it returns under `directory`:
+
+    * `get_json` → `<key>.json.gz`, the whole response plus the caller's `context` tuple and the
+      request (with `IDENTITY_PARAMS` removed — a committed fixture must never carry a key or an
+      address). The same key asked twice in one recording (a 429, then the retry) becomes a
+      `responses` list, replayed in order.
+    * `get_bytes` → the outcome into `pdfs.manifest.json` and, when a PDF landed, a copy of it at
+      `pdfs/<key>.pdf` with its sha256 in the manifest. The PDFs are not committed; the manifest
+      is, so a reader without the bytes still knows what was fetched and from where.
+
+    `RecordedTransport.from_dir` reads all of it back. This class does nothing else: no caching,
+    no dedupe, no judgement — the inner transport already made every decision that matters, and
+    this only remembers what it said.
+    """
+
+    def __init__(self, inner: SearchTransport, directory: str | Path) -> None:
+        self.inner = inner
+        self.directory = Path(directory)
+        self.directory.mkdir(parents=True, exist_ok=True)
+        (self.directory / "pdfs").mkdir(exist_ok=True)
+        self._lock = threading.Lock()
+        self.n_recorded = 0
+        self.calls: list[dict[str, Any]] = []
+
+    # the budget is the inner transport's: `searches.py` reads it off the object it built
+    @property
+    def budget(self) -> ByteBudget | None:
+        return getattr(self.inner, "budget", None)
+
+    def _write_json(self, key: str, row: dict[str, Any]) -> None:
+        path = self.directory / f"{key}.json.gz"
+        with self._lock:
+            rows: list[dict[str, Any]] = []
+            if path.is_file():
+                try:
+                    with gzip.open(path, "rt", encoding="utf-8") as handle:
+                        rows = _fixture_rows(json.load(handle))
+                except (OSError, ValueError):
+                    rows = []
+            rows.append(row)
+            payload: dict[str, Any] = {"key": key, "recorded_at": row["recorded_at"]}
+            if len(rows) == 1:
+                payload.update(rows[0])
+            else:
+                payload["responses"] = rows
+            tmp = path.with_suffix(".gz.part")
+            with gzip.open(tmp, "wt", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False)
+            tmp.replace(path)
+            self.n_recorded += 1
+
+    def get_json(self, url: str, *, params: Mapping[str, Any] | None = None,
+                 headers: Mapping[str, str] | None = None, timeout: float = DEFAULT_TIMEOUT,
+                 accept: str = "application/json", max_bytes: float = MAX_JSON_BYTES,
+                 context: Mapping[str, Any] | None = None,
+                 form_data: Mapping[str, Any] | None = None) -> HttpResponse:
+        response = self.inner.get_json(url, params=params, headers=headers, timeout=timeout,
+                                       accept=accept, max_bytes=max_bytes, context=context,
+                                       form_data=form_data)
+        every = {**dict(params or {}), **dict(form_data or {})}
+        key = fixture_key(url, every)
+        self.calls.append({"method": "get_json", "url": url, "key": key,
+                           "context": dict(context or {}), "outcome": response.outcome})
+        row = _fixture_row(response, context=context, url=url, params=every, body=True)
+        if form_data is not None:
+            row["method"] = "POST"
+        self._write_json(key, row)
+        return response
+
+    def get_html(self, url: str, *, headers: Mapping[str, str] | None = None,
+                 timeout: float = DEFAULT_TIMEOUT,
+                 max_bytes: float = MAX_HTML_BYTES) -> HttpResponse:
+        response = self.inner.get_html(url, headers=headers, timeout=timeout, max_bytes=max_bytes)
+        key = html_key(url)
+        self.calls.append({"method": "get_html", "url": url, "key": key,
+                           "outcome": response.outcome})
+        self._write_json(key, _fixture_row(response, context={"form": "html"}, url=url,
+                                           params=None, body=True))
+        return response
+
+    def get_bytes(self, url: str, dest_dir: str | Path, *, filename: str = "download.pdf",
+                  headers: Mapping[str, str] | None = None,
+                  timeout: float = DEFAULT_FETCH_TIMEOUT,
+                  max_bytes: float = DEFAULT_MAX_PDF_BYTES,
+                  accept: str = "application/pdf",
+                  content_types: Iterable[str] = PDF_CONTENT_TYPES,
+                  allow_http_rewrite: bool = True,
+                  probe: Callable[[Path], Mapping[str, Any]] | None = None) -> Download:
+        download = self.inner.get_bytes(url, dest_dir, filename=filename, headers=headers,
+                                        timeout=timeout, max_bytes=max_bytes, accept=accept,
+                                        content_types=content_types,
+                                        allow_http_rewrite=allow_http_rewrite, probe=probe)
+        key = fixture_key(url)
+        self.calls.append({"method": "get_bytes", "url": url, "key": key,
+                           "outcome": download.response.outcome})
+        attempt = _fixture_row(download.response, context=None, url=url, params=None, body=False)
+        attempt["n_bytes"] = int(download.n_bytes)
+        if download.ok and download.path is not None:
+            import hashlib
+            import shutil
+
+            target = self.directory / "pdfs" / f"{key}.pdf"
+            with self._lock:
+                shutil.copyfile(download.path, target)
+            attempt["sha256"] = hashlib.sha256(Path(download.path).read_bytes()).hexdigest()
+            attempt["file"] = f"pdfs/{key}.pdf"
+        manifest = self.directory / "pdfs.manifest.json"
+        with self._lock:
+            rows: dict[str, Any] = {}
+            if manifest.is_file():
+                try:
+                    rows = json.loads(manifest.read_text(encoding="utf-8")) or {}
+                except ValueError:
+                    rows = {}
+            entry = rows.setdefault(key, {"url": str(url), "attempts": []})
+            entry["attempts"].append(attempt)
+            tmp = manifest.with_suffix(".json.part")
+            tmp.write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
+            tmp.replace(manifest)
+            self.n_recorded += 1
+        return download

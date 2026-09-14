@@ -2348,3 +2348,80 @@ def test_the_caption_disputes_a_stated_type_and_rides_conflicts_as_evidence_only
     assert src.error_bar_agreement == "conflict"
     assert conflicts.error_bars[0]["check_type"] is DispersionType.CI95
     assert any("caption states SE" in d for d in disagreements)
+
+
+# --------------------------------------------------- a shared-control marking nothing acts on
+def _marked(index: int, experiment: str, control: str, exposure: str = "first") -> DatasetSpec:
+    from canopy.models import GroupSpec
+
+    return DatasetSpec(dataset_id=f"834f53a347e0:d{index}", cluster_id="834f53a347e0",
+                       shared_control=True, experiment=experiment,
+                       # as the live map records them, and what `rows.own_sample` reads as "its own
+                       # participants": a labelled experiment the mapper called a first exposure
+                       exposure_order=exposure,
+                       group_a=GroupSpec(label=control.replace("-", "+"), n=6),
+                       group_b=GroupSpec(label=control, n=6),
+                       outcomes=[OutcomeSources(outcome_key="late_adaptation")])
+
+
+def test_a_shared_control_marking_nothing_shares_is_flagged():
+    """`shared_control` is a bare bool — no quote, no page, no rule — so a wrong marking used to
+    divide a control arm's n and leave nothing on the record to review.
+
+    Galea 2010 (`834f53a347e0`) is the finding: both datasets marked, each experiment with its own
+    control group of six, and both controls pooled at n=3. `pipeline.rows` no longer divides those
+    arms; this is the other half, which is that the marking itself reaches a person.
+    """
+    from canopy.agents.mapper import _flag_shared_controls
+
+    study = StudyMap(paper_id="b" * 64, eligible=True,
+                     datasets=[_marked(1, "Experiment 1", "Rs-"),
+                               _marked(2, "Experiment 2", "Rg-")])
+    flags: list[str] = []
+    _flag_shared_controls(study, flags)
+    assert len(flags) == 2, flags
+    assert all("needs human" in f and "shared_control" in f for f in flags)
+    assert "'Rs-'" in flags[0] and "'Experiment 1'" in flags[0]
+    assert "834f53a347e0:d2" in flags[1] and "'Rg-'" in flags[1]
+
+
+def test_a_control_two_datasets_really_share_is_not_flagged():
+    """The other side of it: a control group two comparisons really do share is exactly what
+    `shared_control` is for, and flagging it would train a reviewer to ignore the flag.
+
+    Both shapes, because they reach the answer by different signals — two arms of one experiment,
+    and Liddy 2026's (`f84c51677f3b`), where Experiment 2 is compared against Experiment 1's own ST
+    group and the map says so in its notes.
+    """
+    from canopy.agents.mapper import _flag_shared_controls
+
+    for datasets in ([_marked(1, "Experiment 1", "Controls"),
+                      _marked(2, "Experiment 1", "Controls")],
+                     [_marked(1, "Experiment 1 (Exp 1)", "ST"),
+                      _marked(2, "Experiment 2 (Exp 2)", "ST")]):
+        flags: list[str] = []
+        _flag_shared_controls(StudyMap(paper_id="b" * 64, eligible=True, datasets=datasets), flags)
+        assert flags == [], flags
+
+
+def test_control_arms_merged_because_no_sample_can_be_claimed_are_said_out_loud():
+    """The gap the arithmetic cannot close, made reviewable instead of silent.
+
+    `rows._shares_one_arm` merges two marked datasets whenever the map claims no separate
+    participant sample for them — an unlabelled experiment, a repeated exposure, a counterbalanced
+    set — because over-splitting is the conservative error while under-splitting double-counts. But
+    differently-named control arms divided together is a judgement, not a default, so the record
+    says so. It fires on nothing in the corpus today; the day it does, the map is genuinely
+    ambiguous and a person should look.
+    """
+    from canopy.agents.mapper import _flag_shared_controls
+
+    study = StudyMap(paper_id="b" * 64, eligible=True,
+                     datasets=[_marked(1, "Exp 1", "Rs-", "counterbalanced_collapsed"),
+                               _marked(2, "Exp 2", "Rg-", "counterbalanced_collapsed")])
+    flags: list[str] = []
+    _flag_shared_controls(study, flags)
+    assert len(flags) == 1, flags
+    assert "divided by 2" in flags[0] and "DIFFERENT control arms" in flags[0]
+    assert "'Rs-' in 'Exp 1'" in flags[0] and "'Rg-' in 'Exp 2'" in flags[0]
+    assert "needs human" in flags[0]

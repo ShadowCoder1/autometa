@@ -45,7 +45,7 @@ CandidateState = Literal[
 
 #: the ladder the page draws, in order. The names are shared verbatim: two of these rungs used to
 #: differ between the two sides ("query"/"queries", "oa"/"fetch") and never lit.
-PHASES: tuple[str, ...] = ("queries", "index", "dedupe", "screen", "fetch")
+PHASES: tuple[str, ...] = ("queries", "index", "dedupe", "screen", "snowball", "fetch")
 
 #: the PRISMA-ish ladder, and the ONLY count vocabulary. The page renders these keys directly, so
 #: a name changed here is a name changed on screen — which is the point: one word per thing.
@@ -58,7 +58,10 @@ COUNT_KEYS: tuple[str, ...] = (
     "excluded",        # …ruled these out
     "excluded_by_user",      # a PERSON forbade these before anything read them — never a model's
     "not_screened",    # nobody read these (no model, or the cap stopped first)
+    "snowballed",      # found by citation chasing, not by a search string
     "fetched",         # open-access PDFs on disk
+    "unsure_fetched",  # …of which the screener could not decide about: read in the run, at a
+                       # price the record states (`predicted.run_commit`)
     "wanted",          # the screener wants these; the fetch stage has not answered yet
     "paywalled",       # wanted, no OA copy — listed with links
     "uploaded",        # PDFs a human supplied for a paywalled candidate
@@ -113,7 +116,7 @@ class Candidate:
     #: query. NOT `len(found_by)`: that list is unique, so a paper one index returned for five
     #: queries counted once and the top-of-funnel number a reviewer publishes under-counted (a
     #: measured 12 rows were reported as 4). `run.py` fills it in from the raw list the dedupe
-    #: consumed. `0` means nobody counted — an older `search.json`, or a candidate built by hand —
+    #: consumed. `0` means nobody counted — an earlier `search.json`, or a candidate built by hand —
     #: and `counts_of` falls back to `found_by` for those rather than shrinking the funnel.
     n_rows: int = 0
     #: ids the indexes gave it, for the audit trail and for re-finding the record later
@@ -122,6 +125,24 @@ class Candidate:
     #: merge is the one operation here that makes a row disappear, so it leaves a receipt: a
     #: reader of the record can account for every row an index returned.
     merged_from: list[str] = field(default_factory=list)
+    #: the position at which each index form returned it — `{"pubmed:Q1:": 19,
+    #: "openalex:Q1:ta": 89, …}`, best position kept across a merge. This is the number the
+    #: bench grades an index on, and one of the things `relevance` is made of.
+    ranks: dict[str, int] = field(default_factory=dict)
+    #: where it stands before any cap (`rank.py`), and the one line saying why. None until the
+    #: search ranked it; the screening cap cuts this order, never the arrival order.
+    relevance: float | None = None
+    relevance_why: str = ""
+    #: citation chasing (design 03 §6): which round found it (0 = the first pass), how many seeds
+    #: cite or are cited by it, whether it was itself expanded as a seed. Recorded now, filled
+    #: by the snowball step.
+    found_in_round: int = 0
+    cited_by_seeds: int = 0
+    seed: bool = False
+    expanded_as_seed: bool = False
+    #: the screener's per-question answers (`q1`…`q6`, `quote`) once the rubric screener writes
+    #: them; empty under the first-generation screener
+    screen_answers: dict[str, Any] = field(default_factory=dict)
 
     state: CandidateState = "not_screened"
     screen_decision: str = ""          # include | exclude | unknown | "" (never read)
@@ -228,8 +249,18 @@ class SearchRecord:
     #: words, when no model was available). Shown on the page, because it changes what a
     #: reader should expect of the recall.
     query_source: str = "template"
+    #: one row per (query, index, form): `{query_id, index, form, text, why, chars}`, plus
+    #: `skipped: True` for a form the string was too long for
     queries: list[dict[str, Any]] = field(default_factory=list)
     criteria: list[str] = field(default_factory=list)
+    #: the concept blocks the strings were built from, with every variant, every pruned term and
+    #: its hit count, the width measurements and the rubric (`blocks.py`). The reason a word is
+    #: or is not in a string is readable here without re-running anything.
+    plan: dict[str, Any] = field(default_factory=dict)
+    #: citation-chasing rounds (design 03 §6), one row each; empty until that step exists
+    rounds: list[dict[str, Any]] = field(default_factory=list)
+    #: rows asked of each index form per query (Europe PMC three times that)
+    depth: int = 0
     #: per index: what it was asked, what it returned, what it uniquely contributed, and its
     #: error if it had one. `unique_contributed` is why the ordering is a measured fact here
     #: rather than an assumption about which index is best.
@@ -260,6 +291,10 @@ class SearchRecord:
     #: and a user told only "done" would never learn the cap cut their search short.
     stopped_because: str = ""
     cost_usd: float = 0.0
+    #: what this search was predicted to cost, and what beginning it commits the user to:
+    #: `run_commit = {n_read, n_wanted, n_unsure, per_paper_usd, usd, unsure_usd,
+    #: per_paper_source}`. Predicted, never billed — the bills are `cost_usd` and the run's own.
+    predicted: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
@@ -298,7 +333,14 @@ def counts_of(candidates: list[Candidate],
         # search states what it was forbidden to look at.
         "excluded_by_user": sum(1 for c in candidates if c.excluded_by_user),
         "not_screened": states.count("not_screened"),
+        "snowballed": sum(1 for c in candidates if int(c.found_in_round or 0) > 0),
         "fetched": states.count("fetched"),
+        # a fetched unsure paper is in BOTH `unsure` and `fetched`: the screener's verdict is one
+        # fact and the file on disk another. This count says how many are both, because the run
+        # cost that `begin` commits to is dollars per fetched paper and half of those may be
+        # papers nobody was sure about (design 03 §5, m4).
+        "unsure_fetched": sum(1 for c in screened
+                              if c.screen_decision == "unknown" and c.state == "fetched"),
         # `wanted` and `paywalled` are deliberately separate: telling a user a paper is behind
         # a paywall when nothing ever tried to fetch it is a claim about a publisher that
         # nobody checked. Before the fetch stage answers, the honest word is "wanted".

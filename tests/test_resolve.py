@@ -676,6 +676,116 @@ def test_one_comparison_is_not_a_shared_control():
     assert len(rows) == 1 and rows[0].group_b.n == 30 and rows[0].flags == []
 
 
+# ------------------------------------------------------- WHICH rows share one control arm
+# `apply_shared_control` above is told which rows share an arm; these say who decides that, and
+# the review finding is Galea 2010 (paper `834f53a347e0` of `runs/attention`). The grouping key
+# was `(paper, outcome)` alone, so the paper's two experiments — each with its own control group
+# of six, the paper's own t-tests reported at t(10) — were treated as one arm and each control
+# came out at n=3. With an SE route that is not only the weight: SD = SE·√n, so the estimate moved
+# too (g = −11.03 where the split control's n belonged to nobody, −7.24 with n=6).
+def _paper_of_two_experiments(**over):
+    """Galea 2010's shape: two experiments of one paper, a control group each, both marked."""
+    from canopy.models import OutcomeSources
+
+    def spec(index: int, experiment: str, control: str) -> DatasetSpec:
+        return DatasetSpec(
+            dataset_id=f"834f53a347e0:d{index}", cluster_id="834f53a347e0", shared_control=True,
+            experiment=experiment, label=f"{experiment} secondary task vs alone",
+            # as the live map records them: each experiment a first exposure, which is how the
+            # record says "different people" in this tool's vocabulary (`rows.own_sample`)
+            exposure_order="first",
+            group_a=GroupSpec(label=control.replace("-", "+"), n=6),
+            group_b=GroupSpec(label=control, n=6),
+            outcomes=[OutcomeSources(outcome_key="late_adaptation")], **over)
+
+    return [spec(1, "Experiment 1", "Rs-"), spec(2, "Experiment 2", "Rg-")]
+
+
+def _prepared(datasets, *, strategy: str = "split_n"):
+    from canopy.pipeline.rows import prepare_rows
+
+    def verdict(dataset: DatasetSpec, group: str) -> Verdict:
+        arm = dataset.group_a if group == "A" else dataset.group_b
+        return Verdict(dataset_id=dataset.dataset_id, outcome_key="late_adaptation", group=group,
+                       agreement="agree", mean=(12.0 if group == "A" else 8.0),
+                       dispersion_value=4.0, dispersion_type=DispersionType.SD,
+                       n=arm.n, route="text", higher_is_better=False)
+
+    cells = [(d, "late_adaptation", verdict(d, "A"), verdict(d, "B")) for d in datasets]
+    settings = StatsSettings()
+    settings.shared_control_strategy = strategy
+    return prepare_rows(cells, [], settings)
+
+
+def test_two_experiments_of_one_paper_do_not_split_each_others_control():
+    """Galea 2010: Experiment 2 used "six new groups (n=6)", so Rg− is not Rs− under another name.
+
+    The factual claim the pool rests on — every variance, and through SD = SE·√n every estimate on
+    an SE route — so it is asserted on the n itself and on the absence of the flag that says an
+    arm was divided.
+    """
+    rows = _prepared(_paper_of_two_experiments())
+    assert [r.values.group_b.n for r in rows] == [6, 6], "each experiment keeps its own control"
+    assert [r.values.group_a.n for r in rows] == [6, 6]
+    assert all("shared_control_split" not in r.values.flags for r in rows)
+
+
+def test_one_cohort_measured_in_several_sessions_still_shares_its_control():
+    """The guard that makes the rule above safe, and a real paper too: Cornelis 2022
+    (`162e04f33a6d`) labels its three datasets "Rotation adaptation task (session 2)", "Gain
+    adaptation task (session 3)" and "Vertical reversal task (session 1)" — three `experiment`
+    strings over the SAME thirty controls, every one of them arm "Control (C)". The live map calls
+    two of the three a FIRST exposure; all three are written as first exposures here, which is the
+    harder case — every one of them then claims its own `own_sample` key, so the matching arm label
+    is the only thing holding them together, and it has to be enough. Splitting them apart would
+    un-split a real dependence, the anti-conservative direction; Cochrane 16.5.4 still applies and
+    each comparison gets n/3.
+    """
+    from canopy.models import OutcomeSources
+
+    sessions = [DatasetSpec(dataset_id=f"162e04f33a6d:d{i}", cluster_id="162e04f33a6d",
+                            shared_control=True, experiment=name, exposure_order="first",
+                            group_a=GroupSpec(label="Elderly (E)", n=30),
+                            group_b=GroupSpec(label="Control (C)", n=30),
+                            outcomes=[OutcomeSources(outcome_key="late_adaptation")])
+                for i, name in enumerate(("Rotation adaptation task (session 2)",
+                                          "Gain adaptation task (session 3)",
+                                          "Vertical reversal task (session 1)"), start=1)]
+    rows = _prepared(sessions)
+    assert [r.values.group_b.n for r in rows] == [10, 10, 10]
+    assert all("shared_control_split" in r.values.flags for r in rows)
+
+
+def test_the_re_pool_divides_a_control_by_the_same_k_the_run_did():
+    """`shared_control_siblings` (the review layer's path) and `prepare_rows` (the run's) have to
+    name the same `k`, or answering one cell would change a row nobody answered — the byte-identity
+    rule `pipeline.rows` exists to keep. Asserted over a paper that holds both kinds of row at
+    once, and over a chain the pairwise rule alone would get wrong: d3 and d4 are different
+    experiments sharing one arm, so the transitive closure has to hold d2/d3/d4 together.
+    """
+    from canopy.models import OutcomeSources
+    from canopy.pipeline.rows import shared_control_siblings
+
+    def spec(index: int, experiment: str, control: str) -> DatasetSpec:
+        return DatasetSpec(dataset_id=f"p:d{index}", cluster_id="p", shared_control=True,
+                           experiment=experiment, exposure_order="first",
+                           group_a=GroupSpec(label=f"a{index}", n=6),
+                           group_b=GroupSpec(label=control, n=24),
+                           outcomes=[OutcomeSources(outcome_key="late_adaptation")])
+
+    datasets = [spec(1, "Experiment 1", "Rs-"), spec(2, "Experiment 2", "Controls"),
+                spec(3, "Experiment 2", "Rg-"), spec(4, "Experiment 3", "Rg-")]
+    run = {r.dataset.dataset_id: r.values.group_b.n for r in _prepared(datasets)}
+    assert run == {"p:d1": 24, "p:d2": 8, "p:d3": 8, "p:d4": 8}
+
+    for dataset in datasets:
+        siblings = shared_control_siblings(dataset, "late_adaptation", datasets,
+                                           lambda d: d.cluster_id, lambda *_: True)
+        repooled = _prepared([sibling for sibling, _ in siblings])
+        mine = next(r for r in repooled if r.dataset.dataset_id == dataset.dataset_id)
+        assert mine.values.group_b.n == run[dataset.dataset_id], dataset.dataset_id
+
+
 # --------------------------------------------------------------------------- multi-group policy
 def test_two_groups_need_no_multi_group_ruling():
     assert multi_group_flags(dataset(), "closest_to_definition") == []

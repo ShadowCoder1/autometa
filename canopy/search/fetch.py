@@ -21,11 +21,26 @@ so the old rule fetched *nothing at all* and left the user a list of titles they
 could not judge and could not begin a run from. An unscreened paper with an OA route costs
 bandwidth and no money, and a PDF on disk is the difference between a list and a review.
 
-`excluded` and `unsure` are never fetched: the screener read them and had an opinion, and a human
-who disagrees follows the link or uploads the PDF. Every row this stage does not attempt records
-WHY it did not (`NOT_WANTED`, `NO_OA_LOCATION`, `OVER_FETCH_CAP`, `CANCELLED`) — a blank
-`fetch_outcome` reads the same as "we tried and found nothing", and that is the one thing it must
-never be mistaken for.
+Between those two, the papers the screener could NOT decide about (`unsure`) — fetched in
+relevance order and only the first `max_fetch_unsure` of them (design 03 §5). Screening v2 is
+built to answer `unknown` whenever the abstract does not settle the question, so roughly half of
+what it reads lands here; every one of those PDFs is a paper the review will READ, at dollars per
+paper, and a cap on them is the difference between a $5 search and a $700 run. The ones past the
+cap stay `unsure`, stay ticked, and say `over_unsure_cap`. `excluded` is never fetched: the
+screener read it and ruled it out, and a human who disagrees follows the link or uploads the PDF.
+Every row this stage does not attempt records WHY it did not (`NOT_WANTED`, `NO_OA_LOCATION`,
+`OVER_FETCH_CAP`, `OVER_UNSURE_CAP`, `OVER_FETCH_DEADLINE`, `CANCELLED`) — a blank `fetch_outcome`
+reads the same as "we tried and found nothing", and that is the one thing it must never be
+mistaken for.
+
+HOW HARD ONE PAPER IS TRIED (design 03 §7)
+------------------------------------------
+Every route an index offered, up to `MAX_ATTEMPTS`, in `OA_ID_PREFIXES` order. Then, when a route
+served an HTML page instead of a PDF, that page is read ONCE for a `citation_pdf_url` meta tag or
+an `application/pdf` alternate link and the link is fetched (`via: "landing_page"`) — re-vetted by
+the transport like any other URL. Then, when nothing worked and nothing was rate-limited, the
+Internet Archive's copy of the best failed URL is asked for once (`via: "internet_archive"`). A URL
+that already gave a definitive answer is never asked again, on any pass; only a 429 earns a retry.
 
 WHAT A RATE LIMIT IS, AND WHAT IT IS NOT (review §C-BLK1, the blocker this module answers)
 ------------------------------------------------------------------------------------------
@@ -65,10 +80,14 @@ never inferred from the fact that a download worked.
 """
 from __future__ import annotations
 
+import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from html import unescape
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
+from urllib.parse import urljoin
 
 import httpx
 
@@ -77,30 +96,51 @@ from .models import Candidate
 from .transport import DEFAULT_FETCH_TIMEOUT, SearchTransport
 
 __all__ = ["MAX_ATTEMPTS", "MAX_HOST_WORKERS", "RETRYABLE", "NO_OA_LOCATION", "OVER_FETCH_CAP",
-           "CANCELLED", "NOT_WANTED", "FetchSummary", "host_of", "oa_sources", "fetch_candidate",
-           "fetch_candidates", "fetchable", "default_probe"]
+           "OVER_UNSURE_CAP", "OVER_FETCH_DEADLINE", "CANCELLED", "NOT_WANTED", "NO_PDF_LINK",
+           "DEFAULT_MAX_FETCH_UNSURE", "FETCH_DEADLINE_S", "INTERNET_ARCHIVE", "FetchSummary",
+           "host_of", "oa_sources", "pdf_link_in", "fetch_candidate", "fetch_candidates",
+           "fetchable", "unsure_order", "default_probe"]
 
-#: URLs tried per candidate. Three, because the order is quality-sorted: if the index's own copy,
-#: the best OA location and the next location have all failed, the fourth is a landing page and the
-#: minutes are better spent on the next paper.
-MAX_ATTEMPTS = 3
+#: URLs tried per candidate. Eight, because the routes are now the index's copy, the best OA
+#: location, up to five more locations and Unpaywall's, and the four author manuscripts the
+#: first answer key needed were listed only past the third (design 03 §7b).
+MAX_ATTEMPTS = 8
+
+#: how many `unsure` papers may be fetched, best claim first — see the module docstring
+DEFAULT_MAX_FETCH_UNSURE = 100
+
+#: wall-clock seconds the whole fetch stage may take. 500 candidates × up to 8 routes with Europe
+#: PMC at 2 s each is 20–40 minutes; the rows the deadline never reached say so and the cut lands
+#: on the unread tail, because the workload is ordered wanted → unsure → unread.
+FETCH_DEADLINE_S = 1200.0
+
+#: the Wayback Machine's "latest capture" prefix. It answers with a redirect to the timestamped
+#: copy on its own host, which the transport's hop vetting allows, and the `%PDF-` gate and the
+#: probe decide whether what came back is a paper. The licence is never inferred from it.
+INTERNET_ARCHIVE = "https://web.archive.org/web/2/"
 
 #: how many DISTINCT hosts may be fetched from at once. Never two workers on one host — see the
 #: module docstring. Three is the pool the design specified, applied to hosts instead of papers.
 MAX_HOST_WORKERS = 3
 
-#: outcomes worth a second pass, once the other candidates have had their turn. Only the one: a
-#: 403 or a `not_a_pdf` will say the same thing next minute, and retrying it is just noise in the
-#: record and pressure on a host that already answered.
-RETRYABLE = frozenset({"rate_limited"})
+#: outcomes worth a second pass, once the other candidates have had their turn: a 429, and the
+#: three that say nothing about the paper at all — a name that did not resolve, a stalled
+#: download, a dropped connection. A 403 or a `not_a_pdf` will say the same thing next minute,
+#: and retrying it is just noise in the record and pressure on a host that already answered.
+#: None of these four may ever turn a `wanted` paper into `paywalled`: nobody at the publisher
+#: said no.
+RETRYABLE = frozenset({"rate_limited", "dns_error", "timeout", "network_error"})
 
 #: `fetch_outcome` values this module writes that did not come off a wire. They are Canopy's own
 #: reasons, and they are spelled out so a reader never has to guess whether a blank meant
 #: "no attempt" or "attempted and nothing found".
 NO_OA_LOCATION = "no_oa_location"      # tried nothing, because no index offered a URL
 OVER_FETCH_CAP = "over_fetch_cap"      # the search's own cap stopped before this one
+OVER_UNSURE_CAP = "over_unsure_cap"    # an unsure paper past `max_fetch_unsure`; still ticked
+OVER_FETCH_DEADLINE = "over_fetch_deadline"   # the stage's wall clock ran out first
 CANCELLED = "cancelled"                # the user stopped the search
-NOT_WANTED = "not_wanted"              # the screener read it and ruled it out or could not tell
+NOT_WANTED = "not_wanted"              # the screener read it and ruled it out
+NO_PDF_LINK = "no_pdf_link"            # a landing page was read and named no PDF
 
 
 @dataclass
@@ -114,7 +154,13 @@ class FetchSummary:
     #: refused" is two claims, and only the second one was tested here.
     n_no_copy: int = 0
     n_rate_limited: int = 0          # still `wanted`: we were told to slow down, not refused
+    n_unreachable: int = 0           # still `wanted`: a name, a stall, a dropped connection
     n_over_cap: int = 0
+    #: `unsure` papers fetched, and `unsure` papers the cap on them left unfetched — two numbers
+    #: the run-cost line at `begin` is built from
+    n_unsure_fetched: int = 0
+    n_unsure_over_cap: int = 0
+    n_over_deadline: int = 0
     n_attempts: int = 0
     bytes_written: int = 0
     stopped_because: str = ""        # "" | "cancelled"
@@ -181,12 +227,16 @@ def _remembering(probe: Callable[[Path], Mapping[str, Any]] | None,
     return remembering
 
 
-def _attempt(url: str, outcome: str, status: int = 0, error: str = "") -> dict[str, Any]:
-    """One row of `candidate.fetch_attempts`. Four fields the page and the record both read."""
+def _attempt(url: str, outcome: str, status: int = 0, error: str = "",
+             via: str = "") -> dict[str, Any]:
+    """One row of `candidate.fetch_attempts`. Four fields the page and the record both read, and
+    `via` when the URL came from somewhere other than an index's own list."""
     row: dict[str, Any] = {"url": url, "host": host_of(url), "outcome": outcome,
                            "status": int(status or 0)}
     if error:
         row["error"] = str(error)[:300]
+    if via:
+        row["via"] = via
     return row
 
 
@@ -210,6 +260,45 @@ def _record_path(written: Path, dest_dir: Path) -> str:
         return str(written.resolve())
 
 
+#: `<meta …>` / `<link …>` tags and their attributes, read leniently: publisher HTML is not ours
+#: and half of it would not validate. Only two tags are looked at and only two attributes read.
+_TAG_RE = re.compile(r"<(meta|link)\b([^>]*)>", re.IGNORECASE)
+_ATTR_RE = re.compile(r"""([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""")
+
+
+def pdf_link_in(html: str, base: str) -> str:
+    """The PDF a landing page names, absolute, or `""`.
+
+    Two conventions cover nearly every publisher and repository: Google Scholar's
+    `<meta name="citation_pdf_url" content="…">` (usually absolute) and
+    `<link rel="alternate" type="application/pdf" href="…">` (often relative — hence `urljoin`
+    against the page's FINAL URL, after its redirects). Read from at most `MAX_HTML_BYTES` of
+    the page. Nothing else is parsed: a page's `<a>` links are a different, much larger question.
+    """
+    text = str(html or "")
+    for kind, raw in _TAG_RE.findall(text):
+        attrs: dict[str, str] = {}
+        for name, a, b, c in _ATTR_RE.findall(raw):
+            attrs[name.lower()] = unescape(a or b or c or "").strip()
+        href = ""
+        if kind.lower() == "meta":
+            if (attrs.get("name") or attrs.get("property") or "").lower() == "citation_pdf_url":
+                href = attrs.get("content", "")
+        elif ("alternate" in (attrs.get("rel") or "").lower()
+              and (attrs.get("type") or "").lower() == "application/pdf"):
+            href = attrs.get("href", "")
+        if href:
+            joined = urljoin(str(base or ""), href)
+            if joined.lower().startswith(("https://", "http://")):
+                return joined
+    return ""
+
+
+def _already(candidate: Candidate, via: str) -> bool:
+    """Has this candidate already had its one landing-page follow / archive lookup?"""
+    return any(attempt.get("via") == via for attempt in candidate.fetch_attempts)
+
+
 def fetch_candidate(candidate: Candidate, dest_dir: str | Path, *,
                     transport: SearchTransport,
                     probe: Callable[[Path], Mapping[str, Any]] | None = None,
@@ -229,10 +318,15 @@ def fetch_candidate(candidate: Candidate, dest_dir: str | Path, *,
       is `rate_limited`, and the caller retries it later. Calling that a paywall would be blaming a
       publisher for our own request rate.
 
-    Only a candidate that arrived `wanted` can be left `paywalled`. A `not_screened` one keeps its
-    state whatever the fetch did, because `paywalled` in this tool means "the screener wanted it
-    and no open copy exists", and half of that sentence was never established for a paper nobody
-    read. Its `fetch_outcome` still says exactly what happened.
+    Only a candidate that arrived `wanted` can be left `paywalled`. A `not_screened` or `unsure`
+    one keeps its state whatever the fetch did, because `paywalled` in this tool means "the
+    screener wanted it and no open copy exists", and half of that sentence was never established
+    for a paper nobody read or nobody could decide about. Its `fetch_outcome` still says exactly
+    what happened.
+
+    Safe to call again on the same candidate: a URL that already answered definitively is
+    skipped, so a second pass (after Unpaywall found a new route, or after a 429) asks only what
+    is still open.
     """
     was_wanted = candidate.state == "wanted"
     sources = oa_sources(candidate, limit)
@@ -245,22 +339,32 @@ def fetch_candidate(candidate: Candidate, dest_dir: str | Path, *,
             candidate.state = "paywalled"
         return NO_OA_LOCATION
 
+    answered = {a["url"]: a["outcome"] for a in candidate.fetch_attempts
+                if a.get("outcome") not in RETRYABLE}
     rate_limited_host = ""
+    transient_outcome = ""           # a lookup, a stall, a dropped connection: try again later
     last_outcome = ""
-    for _id_key, url in sources:
-        # the probe is wrapped so its page count survives: `get_bytes` uses the probe's verdict and
-        # throws the rest away, but `pdf_pages` is what the page prints under a fetched paper and
-        # re-opening the file to count them again would be a second parse of the same bytes.
+
+    def attempt(url: str, via: str = "") -> bool:
+        """One download, recorded whatever happened. True when a paper landed."""
+        nonlocal rate_limited_host, last_outcome
+        # the probe is wrapped so its page count survives: `get_bytes` uses the probe's verdict
+        # and throws the rest away, but `pdf_pages` is what the page prints under a fetched paper
+        # and re-opening the file to count them again would be a second parse of the same bytes.
         seen: dict[str, Any] = {}
         download = transport.get_bytes(url, dest_dir, filename="paper.pdf", timeout=timeout,
                                        probe=_remembering(probe, seen),
                                        **({"max_bytes": max_bytes} if max_bytes else {}))
         response = download.response
-        # recorded BEFORE the success test, so the winning attempt and the three that failed before
+        # recorded BEFORE the success test, so the winning attempt and the ones that failed before
         # it are one list in the order they happened
         candidate.fetch_attempts.append(_attempt(url, response.outcome, response.status,
-                                                 response.error))
-        last_outcome = response.outcome
+                                                 response.error, via=via))
+        if via != "internet_archive":
+            # the archive's 404 is not the reason there is no PDF; the publisher's answer is.
+            # The archive attempt is on the record, and `fetch_outcome` keeps the real one.
+            last_outcome = response.outcome
+        answered[url] = response.outcome
         if download.ok and download.path is not None:
             candidate.state = "fetched"
             candidate.fetch_outcome = "fetched"
@@ -274,19 +378,68 @@ def fetch_candidate(candidate: Candidate, dest_dir: str | Path, *,
             candidate.pdf_bytes = int(download.n_bytes)
             pages = seen.get("n_pages")
             candidate.pdf_pages = int(pages) if isinstance(pages, int) and pages > 0 else None
-            return "fetched"
+            return True
         if response.outcome == "rate_limited":
             rate_limited_host = host_of(url) or rate_limited_host
+        elif response.outcome in RETRYABLE:
+            transient_outcome = response.outcome
+        return False
+
+    for _id_key, url in sources:
+        if url in answered:
+            continue                     # it already said no, definitively; asking again is noise
+        if attempt(url):
+            return "fetched"
+
+    # one landing-page follow per candidate: the route that served HTML instead of a PDF is read
+    # for the PDF it names, and that link is fetched through the same gate as everything else
+    if not rate_limited_host and not transient_outcome and not _already(candidate,
+                                                                          "landing_page"):
+        page = next((a["url"] for a in candidate.fetch_attempts
+                     if a.get("outcome") == "not_a_pdf" and not a.get("via")), "")
+        if page:
+            link = _follow_landing_page(candidate, page, transport, timeout)
+            if link and link not in answered and attempt(link, via="landing_page"):
+                return "fetched"
+
+    # the last resort, once, and never on top of a 429 or a hiccup: the archive's copy of the
+    # best failed URL
+    if (not rate_limited_host and not transient_outcome
+            and not _already(candidate, "internet_archive")):
+        failed = next((a["url"] for a in candidate.fetch_attempts
+                       if a.get("outcome") not in ("ok", "rate_limited") and not a.get("via")), "")
+        if failed and attempt(INTERNET_ARCHIVE + failed, via="internet_archive"):
+            return "fetched"
 
     if rate_limited_host:
         # `wanted` on purpose: the search will come back to it, and until it does, the honest word
         # is still "wanted".
         candidate.fetch_outcome = "rate_limited"
         return "rate_limited"
+    if transient_outcome:
+        # the same: nothing about the paper was learned, so nothing about a paywall is said
+        candidate.fetch_outcome = transient_outcome
+        return transient_outcome
     if was_wanted:
         candidate.state = "paywalled"
-    candidate.fetch_outcome = last_outcome or NO_OA_LOCATION
+    candidate.fetch_outcome = last_outcome or candidate.fetch_outcome or NO_OA_LOCATION
     return candidate.fetch_outcome
+
+
+def _follow_landing_page(candidate: Candidate, page: str, transport: SearchTransport,
+                         timeout: float) -> str:
+    """Read one landing page for its PDF link. The read itself is recorded as an attempt row
+    (`via: "landing_page"`), so "we looked and the page named no PDF" is on the record too."""
+    response = transport.get_html(page, timeout=timeout)
+    if not response.ok:
+        candidate.fetch_attempts.append(_attempt(page, response.outcome, response.status,
+                                                 response.error, via="landing_page"))
+        return ""
+    link = pdf_link_in(response.body.decode("utf-8", "replace"), response.url or page)
+    if not link:
+        candidate.fetch_attempts.append(_attempt(page, NO_PDF_LINK, response.status,
+                                                 "the page names no PDF", via="landing_page"))
+    return link
 
 
 def _group_by_host(candidates: Sequence[Candidate]) -> list[list[Candidate]]:
@@ -305,16 +458,31 @@ def _group_by_host(candidates: Sequence[Candidate]) -> list[list[Candidate]]:
     return list(groups.values())
 
 
-def fetchable(candidates: Sequence[Candidate]) -> list[Candidate]:
+def unsure_order(candidates: Sequence[Candidate]) -> list[Candidate]:
+    """The `unsure` papers, best claim first: by `relevance` when the search ranked them, else in
+    arrival order — and the cap on them cuts THIS order, so an unsure paper that reached the run
+    is the one the ranking put highest, not the one an index happened to answer with first."""
+    rows = [c for c in candidates if c.state == "unsure"]
+    if any(getattr(c, "relevance", None) is not None for c in rows):
+        rows.sort(key=lambda c: (-float(getattr(c, "relevance", None) or 0.0), c.key))
+    return rows
+
+
+def fetchable(candidates: Sequence[Candidate],
+              max_fetch_unsure: int | None = DEFAULT_MAX_FETCH_UNSURE) -> list[Candidate]:
     """The candidates this stage may fetch, best claim first — see the module docstring.
 
-    Wanted papers first, so a cap that bites cuts the unscreened tail and never a paper the
-    screener asked for. Then the records nobody read that carry an open-access route: with no
-    model NOTHING is wanted, and a stage that fetched only `wanted` fetched nothing at all.
+    Wanted papers first, so a cap that bites cuts the tail and never a paper the screener asked
+    for. Then the first `max_fetch_unsure` of the `unsure` papers by relevance, with a route.
+    Then the records nobody read that carry an open-access route: with no model NOTHING is
+    wanted, and a stage that fetched only `wanted` fetched nothing at all.
     """
     wanted = [c for c in candidates if c.state == "wanted"]
+    unsure = [c for c in unsure_order(candidates) if oa_sources(c)]
+    if max_fetch_unsure is not None:
+        unsure = unsure[:max(0, int(max_fetch_unsure))]
     unread = [c for c in candidates if c.state == "not_screened" and oa_sources(c)]
-    return wanted + unread
+    return wanted + unsure + unread
 
 
 def _record_skips(candidates: Sequence[Candidate], attempting: set[str]) -> None:
@@ -328,10 +496,14 @@ def _record_skips(candidates: Sequence[Candidate], attempting: set[str]) -> None
     for candidate in candidates:
         if candidate.key in attempting or candidate.fetch_outcome or candidate.pdf_path:
             continue                     # attempted below, already answered, or already readable
-        if candidate.state == "not_screened":
+        if candidate.state in ("not_screened", "unsure") and not oa_sources(candidate):
             # it survived `fetchable`'s filter only by having no route at all
             candidate.fetch_outcome = NO_OA_LOCATION
-        elif candidate.state in ("excluded", "unsure"):
+        elif candidate.state == "unsure":
+            # a route exists and the cap on unsure papers stopped before it. Still ticked: the
+            # screener could not rule it out, and the user may raise the cap or upload the PDF
+            candidate.fetch_outcome = OVER_UNSURE_CAP
+        elif candidate.state == "excluded":
             candidate.fetch_outcome = NOT_WANTED
 
 
@@ -339,20 +511,39 @@ def fetch_candidates(candidates: Sequence[Candidate], dest_dir: str | Path, *,
                      transport: SearchTransport,
                      probe: Callable[[Path], Mapping[str, Any]] | None = None,
                      max_fetch: int | None = None,
+                     max_fetch_unsure: int | None = DEFAULT_MAX_FETCH_UNSURE,
                      max_bytes: float | None = None,
                      timeout: float = DEFAULT_FETCH_TIMEOUT,
                      max_workers: int = MAX_HOST_WORKERS,
-                     cancelled: Callable[[], bool] | None = None) -> FetchSummary:
+                     deadline_s: float | None = FETCH_DEADLINE_S,
+                     cancelled: Callable[[], bool] | None = None,
+                     resolve_more: Callable[[Candidate], bool] | None = None,
+                     now: Callable[[], float] = time.monotonic) -> FetchSummary:
     """Fetch every `fetchable` candidate, serial per host, and retry the rate-limited ones at the
     end.
 
     `max_fetch` is a cap on candidates ATTEMPTED, not on candidates fetched, and the ones it cuts
     off are recorded (`over_fetch_cap`) rather than dropped: a user who sees "40 wanted, 20
-    fetched" and no explanation has been told a smaller lie than the truth.
+    fetched" and no explanation has been told a smaller lie than the truth. `max_fetch_unsure`
+    bounds the unsure papers inside that workload (`over_unsure_cap` past it). `deadline_s` is
+    the stage's wall clock, checked between candidates; the rows it never reaches say
+    `over_fetch_deadline`.
+
+    `resolve_more(candidate)` is the seam for the second Unpaywall pass: called once for a
+    candidate whose every route failed definitively, it may add routes to `candidate.ids` and
+    returns True when it did, in which case the candidate is tried once more (only the new
+    routes — a URL that already answered is never asked again).
     """
     summary = FetchSummary()
-    workload = fetchable(candidates)
+    workload = fetchable(candidates, max_fetch_unsure=max_fetch_unsure)
     _record_skips(candidates, {c.key for c in workload})
+    summary.n_unsure_over_cap = sum(1 for c in candidates if c.fetch_outcome == OVER_UNSURE_CAP)
+    if summary.n_unsure_over_cap:
+        summary.notes.append(
+            f"{summary.n_unsure_over_cap} paper(s) the screener could not decide about were not "
+            f"fetched: only the {max_fetch_unsure} most relevant unsure papers are, because each "
+            f"one fetched is a paper the review will read in full — they stay ticked and listed "
+            f"with their links, and raising the unsure cap would fetch them")
     if not workload:
         return summary
 
@@ -370,8 +561,13 @@ def fetch_candidates(candidates: Sequence[Candidate], dest_dir: str | Path, *,
             f"papers were tried — they are listed with their links, and raising the cap would "
             f"fetch them")
 
+    started = now()
+
     def stopped() -> bool:
         return bool(cancelled and cancelled())
+
+    def out_of_time() -> bool:
+        return deadline_s is not None and (now() - started) > float(deadline_s)
 
     def run_group(group: Sequence[Candidate]) -> None:
         for candidate in group:
@@ -379,8 +575,22 @@ def fetch_candidates(candidates: Sequence[Candidate], dest_dir: str | Path, *,
                 # a cancelled search leaves the untouched candidates `wanted`, with the reason
                 candidate.fetch_outcome = candidate.fetch_outcome or CANCELLED
                 continue
-            fetch_candidate(candidate, dest_dir, transport=transport, probe=probe,
-                            max_bytes=max_bytes, timeout=timeout)
+            if out_of_time():
+                candidate.fetch_outcome = candidate.fetch_outcome or OVER_FETCH_DEADLINE
+                continue
+            outcome = fetch_candidate(candidate, dest_dir, transport=transport, probe=probe,
+                                      max_bytes=max_bytes, timeout=timeout)
+            if (resolve_more is not None and candidate.doi and not candidate.pdf_path
+                    and outcome not in ("fetched", "rate_limited", NO_OA_LOCATION)):
+                # every route it had said no. One more source of routes, and one more pass over
+                # whatever is new — the old URLs are remembered and not asked twice.
+                try:
+                    found_more = bool(resolve_more(candidate))
+                except Exception:               # noqa: BLE001 - one candidate's problem
+                    found_more = False
+                if found_more and not stopped() and not out_of_time():
+                    fetch_candidate(candidate, dest_dir, transport=transport, probe=probe,
+                                    max_bytes=max_bytes, timeout=timeout)
 
     groups = _group_by_host(attempted)
     _run_groups(groups, run_group, max_workers)
@@ -391,9 +601,12 @@ def fetch_candidates(candidates: Sequence[Candidate], dest_dir: str | Path, *,
     # slow down keeps `not_screened`, and keying the retry on the state would have quietly
     # dropped exactly the rows the keyless path exists to fetch.
     retry = [c for c in attempted if c.fetch_outcome in RETRYABLE and not c.pdf_path]
-    if retry and not stopped():
+    if retry and not stopped() and not out_of_time():
+        n_slowed = sum(1 for c in retry if c.fetch_outcome == "rate_limited")
         summary.notes.append(
-            f"{len(retry)} paper(s) were rate-limited on the first pass and retried at the end")
+            f"{len(retry)} paper(s) were retried at the end of the pass: {n_slowed} rate-limited, "
+            f"{len(retry) - n_slowed} unreachable (a name that did not resolve, a stalled or "
+            f"dropped connection)")
         _run_groups(_group_by_host(retry), run_group, max_workers)
 
     for candidate in attempted:
@@ -401,13 +614,19 @@ def fetch_candidates(candidates: Sequence[Candidate], dest_dir: str | Path, *,
         summary.bytes_written += int(candidate.pdf_bytes or 0)
         if candidate.state == "fetched":
             summary.n_fetched += 1
+            if candidate.screen_decision == "unknown":
+                summary.n_unsure_fetched += 1
         elif candidate.state == "paywalled":
             summary.n_paywalled += 1
         elif candidate.fetch_attempts and candidate.fetch_outcome not in RETRYABLE:
-            # tried, nothing came back, and nobody had screened it — so it is counted here and
-            # not as a paywall, which would be a claim about a publisher on a paper the screener
-            # never asked for
+            # tried, nothing came back, and nobody had screened it (or nobody could decide) — so
+            # it is counted here and not as a paywall, which would be a claim about a publisher
+            # on a paper the screener never asked for
             summary.n_no_copy += 1
+        if candidate.fetch_outcome == OVER_FETCH_DEADLINE:
+            summary.n_over_deadline += 1
+        if candidate.fetch_outcome in RETRYABLE and candidate.fetch_outcome != "rate_limited":
+            summary.n_unreachable += 1
         if candidate.fetch_outcome == "rate_limited":
             summary.n_rate_limited += 1
             for attempt in candidate.fetch_attempts:
@@ -417,6 +636,16 @@ def fetch_candidates(candidates: Sequence[Candidate], dest_dir: str | Path, *,
                         summary.slowed_hosts.append(host)
     for host in summary.slowed_hosts:
         summary.notes.append(_slow_down_note(host))
+    if summary.n_unreachable:
+        summary.notes.append(
+            f"{summary.n_unreachable} paper(s) could not be reached — the host did not resolve, "
+            f"stalled or dropped the connection, twice — so nothing is said about a paywall; "
+            f"they keep their links and are worth a search again later")
+    if summary.n_over_deadline:
+        summary.notes.append(
+            f"the fetch stage's {int(deadline_s or 0) // 60}-minute deadline ran out before "
+            f"{summary.n_over_deadline} paper(s) were tried — they are listed with their links, "
+            f"and searching again with fewer papers, or uploading them, would get them")
     if stopped():
         summary.stopped_because = "cancelled"
     return summary

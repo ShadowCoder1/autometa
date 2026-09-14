@@ -354,7 +354,7 @@ def _merge(group: Sequence[Candidate]) -> Candidate:
     primary = ordered[0]
 
     # The clean publisher title beats the archive's stamped one: after a merge the user should see
-    # "Aging reduces asymmetries…", not "Author Manuscript Aging reduces asymmetries…".
+    # "Title of a paper", not "Author Manuscript Title of a paper".
     title = next((c.title for c in ordered if c.title.strip() and not _is_wrapped(c.title)),
                  primary.title)
 
@@ -378,6 +378,9 @@ def _merge(group: Sequence[Candidate]) -> Candidate:
         abstract=max((c.abstract for c in ordered), key=len),
         found_by=_union(*[c.found_by for c in group]),
         ids={k: v for c in reversed(ordered) for k, v in c.ids.items()},
+        # the best position each index form gave any of the rows: a paper returned at 12 by one
+        # query and 400 by another entered at 12, and that is the number the ranking reads
+        ranks=_best_ranks(group),
         # every key this row absorbed, including keys those rows had absorbed before: a merge
         # is the only thing here that removes a row, and it may not do so without a receipt
         merged_from=_union(*[[c.key] + c.merged_from for c in ordered])[1:],
@@ -397,6 +400,19 @@ def _merge(group: Sequence[Candidate]) -> Candidate:
         pdf_bytes=with_pdf.pdf_bytes if with_pdf else None,
         upload_filename=with_pdf.upload_filename if with_pdf else "",
     )
+
+
+def _best_ranks(group: Sequence[Candidate]) -> dict[str, int]:
+    best: dict[str, int] = {}
+    for candidate in group:
+        for label, position in (candidate.ranks or {}).items():
+            try:
+                value = int(position)
+            except (TypeError, ValueError):
+                continue
+            if label not in best or value < best[label]:
+                best[label] = value
+    return best
 
 
 def _merge_links(ordered: Sequence[Candidate]) -> list[dict[str, str]]:

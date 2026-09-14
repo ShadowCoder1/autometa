@@ -777,6 +777,61 @@ def _flag_thin_outcomes(study: StudyMap, flags: list[str]) -> None:
                              f"human; quote: {_clip(first.quote, 160)!r}")
 
 
+def _flag_shared_controls(study: StudyMap, flags: list[str]) -> None:
+    """Every `shared_control` marking the Cochrane 16.5.4 split cannot settle from the record.
+
+    `shared_control` is a bare bool with no quote and no page behind it (unlike `included` /
+    `exclusion_rule`), so a wrong marking used to be invisible: it silently divided a control arm's
+    n and nothing on the record said why. Galea 2010 is the review finding — both datasets marked,
+    each experiment with its own control group, and both controls reported at n=3 instead of 6.
+    `pipeline.rows.shared_control_components` is imported rather than re-stated so the flag and the
+    arithmetic cannot drift, and two cases are said out loud rather than resolved silently:
+
+    * a marking the pooling will NOT act on — nothing else in the paper shares this arm, so no n is
+      divided and the bool bought nothing. Either it is wrong (Galea) or two datasets name one
+      control group two different ways. Computed over the whole paper, so a dataset flagged here
+      shares an arm with no sibling under ANY outcome, never merely under one.
+    * the converse — arms the pooling DOES divide together while the datasets name them
+      differently. `rows._shares_one_arm` merges whenever the map cannot claim separate participant
+      samples (an unlabelled experiment, a repeated exposure, a counterbalanced set), because
+      over-splitting is the conservative error; but "different control labels, merged anyway" is
+      precisely the judgement a person should make rather than a default. It fires on nothing in
+      the corpus today, which is the point: the day it fires, the record is genuinely ambiguous.
+    """
+    from ..pipeline.rows import shared_control_components   # locally: `pipeline` imports this
+
+    if study.eligible is False:
+        return
+    marked = [d for d in study.datasets if d.shared_control and d.included]
+    if not marked:
+        return
+    components = shared_control_components(marked)
+    grouped: dict[int, list[DatasetSpec]] = {}
+    for dataset, component in zip(marked, components):
+        grouped.setdefault(component, []).append(dataset)
+
+    def arm(dataset: DatasetSpec) -> str:
+        return dataset.group_b.label or "unlabelled"
+
+    for members in grouped.values():
+        if len(members) == 1:
+            dataset = members[0]
+            flags.append(f"dataset {dataset.dataset_id}: marked shared_control, but nothing else "
+                         f"in this paper shares its control arm ({arm(dataset)!r}, experiment "
+                         f"{dataset.experiment or 'unlabelled'!r}), so that arm's n is NOT "
+                         f"divided — either the marking is wrong or two datasets name one control "
+                         f"group by two different labels — needs human")
+        elif len({arm(d) for d in members}) > 1:
+            said = "; ".join(f"{d.dataset_id} {arm(d)!r} in {d.experiment or 'unlabelled'!r} "
+                             f"({d.exposure_order})" for d in members)
+            flags.append(f"datasets {', '.join(d.dataset_id for d in members)}: pooled as ONE "
+                         f"shared control arm, each n divided by {len(members)}, although they name "
+                         f"DIFFERENT control arms — {said}. Nothing in the map separates their "
+                         f"participant samples, so they are held together as the conservative "
+                         f"reading (over-splitting inflates a variance; under-splitting "
+                         f"double-counts a group) — needs human")
+
+
 def _decisions(paper: PaperRecord, raw_decisions: Any, decided: dict[str, RosterDecision],
                flags: list[str]) -> None:
     """Fold raw `{id, relevant, reason, outcome_keys}` answers into `decided` (page/label in code)."""
@@ -1836,6 +1891,7 @@ def map_study(client: LLMClient, paper: PaperRecord, protocol: Protocol, *,
     _agree_error_bars(study, _roster_determinations(checked), conflicts, disagreements, flags,
                       paper=paper)
     _flag_thin_outcomes(study, flags)
+    _flag_shared_controls(study, flags)       # every marking 16.5.4 cannot settle, said
     _diff_measures(study, conflicts, disagreements)          # C6, before anything is extracted
 
     if conflicts.needs_adjudication:

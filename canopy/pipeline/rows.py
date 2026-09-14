@@ -35,13 +35,15 @@ from ..verify.confidence import SPREAD_TYPE_HOUSE_STYLE
 from ..verify.panels import set_aside_ids
 from ..verify.units import same_unit
 from ..verify.vote import LOCATOR_DROPPED, locator_key, modality
-from .resolve import (GROUP_ROUTES, GroupValues, ReportedValues, ResolvedValues,
-                      StatisticValues, apply_shared_control, available_routes, multi_group_flags)
+from .resolve import (GROUP_ROUTES, SHARED_CONTROL_ARM, GroupValues, ReportedValues,
+                      ResolvedValues, StatisticValues, apply_shared_control, available_routes,
+                      multi_group_flags)
 
 __all__ = ["PreparedRow", "ENSEMBLE", "DISPERSION_APPROXIMATED", "N_FROM_MAP", "cell_candidates",
            "statistic_values", "reported_values", "approximation_flags", "prepare_row_values",
-           "prepare_rows", "shared_control_siblings", "converted_route",
-           "converting_candidate", "reported_candidate", "vote_candidates", "fallback_values"]
+           "prepare_rows", "own_sample", "sample_key", "shared_control_components",
+           "shared_control_siblings", "converted_route", "converting_candidate",
+           "reported_candidate", "vote_candidates", "fallback_values"]
 
 ENSEMBLE = "digitize:ensemble"
 
@@ -491,6 +493,123 @@ def _default_cluster(dataset: DatasetSpec) -> str:
     return dataset.cluster_id or dataset.dataset_id
 
 
+def own_sample(dataset: DatasetSpec) -> str:
+    """The experiment whose PARTICIPANT sample this dataset may claim as its own, or `""`.
+
+    The mapper's contract (`canopy/llm/prompts/mapper.md`) is that a dataset is "one independent
+    participant sample under one condition", that `experiment` is the paper's own label, and that
+    `exposure_order` says whether these data are the participants' FIRST exposure. So a dataset
+    claims its own sample only when the paper labelled the experiment AND the mapper called it a
+    first exposure. Everything else — an unlabelled experiment, a repeated exposure, a
+    counterbalanced set — is `""`, read everywhere as "same people": guessing the other way
+    understates the variance.
+
+    It lives beside the shared-control grouping, and `sample_key` below is built on it, because
+    "are these two rows different participants?" must have ONE answer in this tool. It used to have
+    two: `run.sample_key` asked it of the aggregation, and the Cochrane 16.5.4 grouping asked
+    nothing at all and assumed a paper was one control group (Galea 2010 — `_shares_one_arm`).
+    """
+    experiment = (dataset.experiment or "").strip()
+    if not experiment or str(dataset.exposure_order) != "first":
+        return ""
+    return experiment
+
+
+def sample_key(dataset: DatasetSpec, paper_id: str) -> str:
+    """`own_sample` qualified by the paper, which is what `EffectSizeRecord.sample_id` carries.
+
+    `aggregate.one_row_per_paper` has to know whether a paper's two rows are two samples (combine
+    them as independent) or the same people twice (combine them as dependent, with a correlation),
+    and it reads this off the record.
+    """
+    experiment = own_sample(dataset)
+    return f"{paper_id}|{experiment}" if experiment else ""
+
+
+def _shared_arm_key(dataset: DatasetSpec) -> str:
+    """The label of the arm `apply_shared_control` actually adjusts.
+
+    Read off `resolve.SHARED_CONTROL_ARM` rather than a literal "B", for the reason that name
+    exists at all: which arm the adjustment touches is one fact, written once (review finding 3).
+    Punctuation is kept — Galea 2010's arms are "Rs−" and "Rs+", one character apart, and a
+    normaliser that stripped it would declare a treatment arm and its own control the same group.
+    """
+    group = dataset.group_a if SHARED_CONTROL_ARM == "A" else dataset.group_b
+    return " ".join(group.label.split()).casefold()
+
+
+def _shares_one_arm(one: DatasetSpec, other: DatasetSpec) -> bool:
+    """Do two comparisons of one paper really draw on ONE control group?
+
+    Review finding (Galea 2010, paper `834f53a347e0`): the map marked `shared_control` on both of
+    that paper's datasets and the grouping key was `(paper, outcome)` alone, so Experiment 1's
+    control (Rs−, n=6) and Experiment 2's control (Rg−, n=6) were treated as one arm and each was
+    split to n=3. The paper says Experiment 2 used "six new groups (n=6)" — different people — and
+    reports its own independent t-tests at t(10), i.e. 6+6−2 df. n=3 is a factual error, and since
+    every variance is computed from it, every weight in the pool was wrong.
+
+    Two signals, and a difference in BOTH is required before two rows are called independent:
+
+    * `own_sample` — the tool's ONE test for "different participants", the same one the
+      aggregation's `sample_id` is built from. Two rows that cannot each claim a sample of their
+      own, or that claim the same one, share. Galea's two datasets claim "Experiment 1" and
+      "Experiment 2" as first exposures, which is the record saying in the tool's own vocabulary
+      that they are different people.
+    * the shared arm's own label. This signal can only ever VETO a separation, never cause one, and
+      that asymmetry is the point: `own_sample` is a claim about the A arm's participants as much as
+      the B arm's, and a paper can label two experiments while reusing one control group across
+      them. Cornelis 2022 (`162e04f33a6d`) is the case that proves it is needed — datasets labelled
+      "Rotation adaptation task (session 2)" and "Vertical reversal task (session 1)", both marked
+      first exposures and so both claiming their own sample, are the SAME thirty controls measured
+      twice, and both name arm "Control (C)". Liddy 2026 (`f84c51677f3b`) is the other shape of it,
+      and there the map says so in words: Experiment 2's comparison arm is Experiment 1's ST group,
+      Table 1 row and all ("The comparison arm (ST) is shared with the Exp 1 dataset, so the two
+      datasets are not statistically independent"). Separating either would un-split a real
+      dependence, which is the anti-conservative error this module exists to prevent, so a matching
+      arm label holds them together.
+
+    The default, wherever the record does not positively assert two samples AND two arms, is
+    "shares": no evidence of independence is not evidence of independence, and it is also what
+    keeps every map written before this rule existed grouping exactly as it did.
+    """
+    mine, theirs = own_sample(one), own_sample(other)
+    if not mine or not theirs or mine == theirs:
+        return True
+    return _shared_arm_key(one) == _shared_arm_key(other)
+
+
+def shared_control_components(datasets: Sequence[DatasetSpec]) -> list[int]:
+    """For one `(paper, outcome)` class of `shared_control` rows: which of them share ONE arm.
+
+    Returns a component number per dataset in the order given; rows carrying the same number share
+    a control arm, and their count is the `k` `apply_shared_control` divides that arm's n by.
+
+    `_shares_one_arm` is deliberately not transitive (same sample OR same arm), so the
+    components are its transitive closure. That is not tidiness: `prepare_rows` partitions a whole
+    paper at once while `shared_control_siblings` answers for one focal row, and the two MUST
+    agree, or a row a reviewer answered would rebuild with a different `k` than the run gave it —
+    the byte-identity rule this module exists to keep. A closure is the one grouping both can
+    derive from the same class, and where the two signals conflict it merges, i.e. it errs towards
+    keeping a control split.
+    """
+    parent = list(range(len(datasets)))
+
+    def root(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    for i, one in enumerate(datasets):
+        for j in range(i + 1, len(datasets)):
+            if _shares_one_arm(one, datasets[j]):
+                low, high = sorted((root(i), root(j)))
+                # the LOWEST index wins, so a component's first row is the map's first row:
+                # `keep_first` and `combine_arms` are defined by that order
+                parent[high] = low
+    return [root(i) for i in range(len(datasets))]
+
+
 def prepare_rows(cells: Sequence[tuple[DatasetSpec, str, Verdict, Verdict]],
                  candidates: Sequence[Candidate], settings: StatsSettings, *,
                  cluster_of: Callable[[DatasetSpec], str] = _default_cluster,
@@ -517,19 +636,27 @@ def prepare_rows(cells: Sequence[tuple[DatasetSpec, str, Verdict, Verdict]],
         orientation_source=(verdict_a.orientation_source or verdict_b.orientation_source))
         for dataset, key, verdict_a, verdict_b in cells]
 
-    # rows in one paper that share a control arm are not independent (Cochrane 16.5.4)
+    # rows in one paper that share a control arm are not independent (Cochrane 16.5.4) — and which
+    # rows those are is `shared_control_components`' answer, not the paper's: a paper is not one
+    # control group, and two of its experiments with a control group each keep their own n
+    # (Galea 2010, `_shares_one_arm`).
     shared: dict[tuple[str, str], list[int]] = {}
     for index, row in enumerate(prepared):
         if row.dataset.shared_control:
             shared.setdefault((cluster_of(row.dataset), row.outcome_key), []).append(index)
     for indices in shared.values():
-        if len(indices) < 2:
-            continue
-        adjusted = apply_shared_control([prepared[i].values for i in indices],
-                                        settings.shared_control_strategy)
-        for position, index in enumerate(indices):
-            if position < len(adjusted):
-                prepared[index].values = adjusted[position]
+        arms: dict[int, list[int]] = {}
+        for index, component in zip(
+                indices, shared_control_components([prepared[i].dataset for i in indices])):
+            arms.setdefault(component, []).append(index)
+        for members in arms.values():
+            if len(members) < 2:
+                continue
+            adjusted = apply_shared_control([prepared[i].values for i in members],
+                                            settings.shared_control_strategy)
+            for position, index in enumerate(members):
+                if position < len(adjusted):
+                    prepared[index].values = adjusted[position]
 
     # LAST, after the shared-control adjustment: an alternative takes the row's group sizes from
     # the values above, and those are the split ones (Cochrane 16.5.4). Built before this loop,
@@ -557,11 +684,16 @@ def shared_control_siblings(dataset: DatasetSpec, outcome_key: str,
     membership test is the run's: the same cluster, the same outcome, `shared_control` set, and
     both cells verified — otherwise the re-pool would split a control `k` ways where the run
     split it `k − 1` ways, and change a row nobody answered.
+
+    …and then, within that class, the one component that really shares an arm — the same
+    `shared_control_components` call `prepare_rows` makes over the same members, because the run
+    partitions a paper and this answers for one row, and a `k` that differed between them is the
+    same broken invariant by another route.
     """
     if not dataset.shared_control:
         return [(dataset, outcome_key)]
     cluster = cluster_of(dataset)
-    out: list[tuple[DatasetSpec, str]] = []
+    class_members: list[DatasetSpec] = []
     seen: set[str] = set()
     for other in datasets:
         if not other.shared_control or cluster_of(other) != cluster:
@@ -575,6 +707,17 @@ def shared_control_siblings(dataset: DatasetSpec, outcome_key: str,
                 continue
             if has_cell(other.dataset_id, outcome_key):
                 seen.add(other.dataset_id)
-                out.append((other, outcome_key))
+                class_members.append(other)
             break
-    return out or [(dataset, outcome_key)]
+    if not class_members:
+        return [(dataset, outcome_key)]
+    components = shared_control_components(class_members)
+    mine = next((component for spec, component in zip(class_members, components)
+                 if spec.dataset_id == dataset.dataset_id), None)
+    if mine is None:
+        # the focal row is not in its own class (nothing of it is verified), so there is no
+        # component to read off; the whole class is returned, which is what this function answered
+        # before components existed and is the answer that keeps a control split.
+        return [(spec, outcome_key) for spec in class_members]
+    return [(spec, outcome_key) for spec, component in zip(class_members, components)
+            if component == mine]

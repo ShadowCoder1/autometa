@@ -29,9 +29,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Collection, Iterable, Mapping, Sequence
 
-from ..pipeline.overrides import (GROUP_STATISTICS, MAP_KINDS, ORIENTATION_ANSWERED, ROW_REFUSALS,
+from ..pipeline.overrides import (GROUP_STATISTICS, MAP_KINDS, NO_VERIFICATION,
+                                  ORIENTATION_ANSWERED, ROW_REFUSALS,
                                   HumanLanded, codes_cleared_by_value, consumed_seqs,
-                                  human_landed_values, stale_hold_names, within_read_tolerance)
+                                  human_landed_values, human_mean_landed, stale_hold_names,
+                                  within_read_tolerance)
 from ..models import (HUMAN_DECIDER_NAME, MAP_ADJUDICATOR_NAME, UNREADABLE_SAMPLES,
                       c6_demoted_note)
 from ..pipeline.rows import converted_route
@@ -336,6 +338,14 @@ def questions_for_run(run_dir: str | Path, *,
             verdict = {**verdict, "flags": flags}
             if settled is not None:
                 verdict["higher_is_better"] = settled
+        if verdict and human_mean_landed(landed, dataset_id, outcome_key, group,
+                                         checked_only=True):
+            # …and whether a human's mean has displaced this arm's verification, which the stage
+            # verdict cannot say: `overrides._void_verification` strikes the score in the re-pool's
+            # working copies and nothing writes it back. Carried in from the log's own registry by
+            # the same rule the validator uses, so the card offers `no_verification` exactly when
+            # the analysis is holding the cell by it.
+            verdict = {**verdict, _MEAN_REPLACED: True}
         row = rows.get((dataset_id, outcome_key)) or {}
         question = _question(entry, verdict, candidates, study, dataset, provenance,
                              run, already, pending, answered_value, consumed, overruled,
@@ -1190,7 +1200,14 @@ _SAID: dict[str, str] = {
     "verifier_refuted": "the verifier's refutation",
     "adjudicated": "the adjudicator's ruling",
     "low_score": "a confidence score below the acceptance line",
-    "no_group_values": "that neither group's own numbers were resolved for this cell"}
+    "no_group_values": "that neither group's own numbers were resolved for this cell",
+    NO_VERIFICATION: "that nothing has verified the number now standing here"}
+
+#: set on the verdict MAPPING by `questions_for_run` when the log's registry says a human's mean has
+#: landed on this arm. The stage verdict the page reads cannot show it — `_void_verification` runs on
+#: the re-pool's working copies and is never written back — so the fact is carried in beside the
+#: verdict rather than inferred from it, and `_overrulable` offers the one answer to it.
+_MEAN_REPLACED = "human_mean_landed"
 
 
 def _overrulable(verdict: Mapping[str, Any], overruled: Collection[str] = ()) -> list[str]:
@@ -1202,7 +1219,17 @@ def _overrulable(verdict: Mapping[str, Any], overruled: Collection[str] = ()) ->
         out.append("verifier_refuted")
     if verdict.get("adjudicated"):
         out.append("adjudicated")
-    if (verdict.get("confidence_score") or 0.0) < ACCEPT_WITH_NOTE:
+    if verdict.get(_MEAN_REPLACED):
+        # a human replaced this arm's mean, so the re-pool struck the score that had been computed
+        # on the number that is gone (`overrides._void_verification`). The cell is held by the
+        # ABSENCE of a score, which `low_score` may not overrule — it is the lever for disagreeing
+        # with a score that exists — so the card offers the finding by its own name. Without it the
+        # page would ask a question whose every answer left the cell exactly where it was.
+        out.append(NO_VERIFICATION)
+    elif (verdict.get("confidence_score") or 0.0) < ACCEPT_WITH_NOTE:
+        # …and `low_score` keeps its real purpose: a cell that WAS verified and scored low. `elif`,
+        # because the two are alternatives and never both true of one arm — offering both would ask
+        # a reviewer to disagree with a score and with its absence in the same breath.
         out.append("low_score")
     return [name for name in out if name not in set(overruled)]
 
@@ -1942,8 +1969,13 @@ def _held_because(verdict: Mapping[str, Any], overruled: Collection[str] = ()) -
     """
     said = {"verifier_refuted": "a verifier reading the whole paper says this value is wrong",
             "adjudicated": "an adjudicator had to settle it, so no vote decided it",
-            "low_score": "its confidence score never reached the acceptance line"}
-    reasons = [said[name] for name in _overrulable(verdict, overruled)]
+            "low_score": "its confidence score never reached the acceptance line",
+            NO_VERIFICATION: "a human replaced this arm's value, so nothing in the run has "
+                             "verified the number that now stands here"}
+    # guarded, not indexed: this dictionary and `_overrulable` are two lists of the same findings,
+    # and the fifth one — added to `_overrulable` alone — raised `KeyError` while a reviewer was
+    # reading the page. A missing sentence is a thinner prompt; a `KeyError` is no prompt at all.
+    reasons = [said[name] for name in _overrulable(verdict, overruled) if name in said]
     if verdict.get("agreement") == "single":
         reasons.append("only one route produced it, so nothing independent confirms it")
     score = verdict.get("confidence_score")

@@ -22,7 +22,8 @@ import pytest
 
 from canopy.search.transport import (CHUNK, DEFAULT_HOST_INTERVAL, HOST_INTERVALS, ByteBudget,
                                      HostClock, HttpResponse, HttpxTransport, MissingSearchFixture,
-                                     RecordedTransport, UrlRejected, check_public, fixture_key,
+                                     RecordedTransport, RecordingTransport, UrlRejected,
+                                     check_public, fixture_key, redact_params,
                                      is_public_address, is_safe_public_host, pinned_url)
 
 PUBLIC_IP = "93.184.216.34"
@@ -935,14 +936,16 @@ def test_the_two_transports_accept_the_same_keywords() -> None:
 
     from canopy.search.transport import SearchTransport
 
-    #: every keyword the callers actually pass — `indices.py` (four `get_json` sites) and
-    #: `fetch.py` (the one `get_bytes` site). Named here so that renaming one breaks THIS test.
-    used = {"get_json": {"params", "timeout"},
-            "get_bytes": {"filename", "timeout", "probe", "max_bytes"}}
+    #: every keyword the callers actually pass — `indices.py` (the `get_json` sites, with the
+    #: `context` tuple `search_pages` adds for the recorder) and `fetch.py` (the one `get_bytes`
+    #: site). Named here so that renaming one breaks THIS test.
+    used = {"get_json": {"params", "timeout", "context"},
+            "get_bytes": {"filename", "timeout", "probe", "max_bytes"},
+            "get_html": {"timeout"}}
 
-    for name in ("get_json", "get_bytes"):
+    for name in ("get_json", "get_bytes", "get_html"):
         contract = inspect.signature(getattr(SearchTransport, name)).parameters
-        for implementation in (HttpxTransport, RecordedTransport):
+        for implementation in (HttpxTransport, RecordedTransport, RecordingTransport):
             actual = inspect.signature(getattr(implementation, name)).parameters
             assert set(actual) == set(contract), f"{implementation.__name__}.{name}"
             assert not any(p.kind is p.VAR_KEYWORD for p in actual.values()), implementation
@@ -971,3 +974,259 @@ def test_the_fake_takes_every_keyword_the_real_one_takes(tmp_path: Path) -> None
     fake.record("https://good.example/s", HttpResponse(status=200, outcome="ok", body=b"{}"))
     assert fake.get_json("https://good.example/s", params=None, headers={}, timeout=3.0,
                          accept="application/json", max_bytes=1024).ok
+
+
+# ------------------------------------------------------------------------------ the recorder
+"""`RecordingTransport` writes what the real transport said; `RecordedTransport.from_dir` reads it
+back. The pair is what lets the bench (`validation/search_bench/bench.py`) re-run a whole search
+with no network: one recording, then any number of offline replays with a `query_drift` count
+beside every number taken against a query that has since changed."""
+
+
+def _fake_inner(pdf: Path) -> RecordedTransport:
+    inner = RecordedTransport(payloads={fixture_key("https://pub.example/p.pdf"): pdf})
+    inner.record("https://idx.example/search", HttpResponse(
+        url="https://idx.example/search?q=tremor", status=200, outcome="ok",
+        body=b'{"hitCount": 3}'), {"q": "tremor", "mailto": "me@example.org"})
+    inner.record("https://idx.example/search", HttpResponse(
+        url="https://idx.example/search?q=gait", status=429, outcome="rate_limited",
+        error="slow down", retry_after=7.0), {"q": "gait"})
+    inner.responses[fixture_key("https://pub.example/blocked.pdf")] = HttpResponse(
+        url="https://pub.example/blocked.pdf", status=403, outcome="http_error", error="HTTP 403")
+    return inner
+
+
+def test_the_identity_parameters_are_not_part_of_the_fixture_key() -> None:
+    """A recording made under one person's address must replay for everyone, and an API key
+    must never decide which fixture a request maps to (or be written into one)."""
+    plain = fixture_key("https://x.example/w", {"q": "tremor"})
+    assert fixture_key("https://x.example/w", {"q": "tremor", "mailto": "a@b.c"}) == plain
+    assert fixture_key("https://x.example/w", {"q": "tremor", "api_key": "sk-secret"}) == plain
+    assert fixture_key("https://x.example/w", {"q": "tremor", "email": "a@b.c",
+                                              "tool": "canopy"}) == plain
+    assert fixture_key("https://x.example/w", {"q": "gait"}) != plain
+    assert redact_params({"q": "x", "api_key": "sk", "email": "e", "mailto": "m",
+                          "tool": "t"}) == {"q": "x"}
+
+
+def test_the_recorder_writes_every_answer_and_the_replayer_reads_it_back(tmp_path: Path) -> None:
+    source = tmp_path / "fixture.pdf"
+    source.write_bytes(PDF_BYTES)
+    store = tmp_path / "fixtures"
+    recorder = RecordingTransport(_fake_inner(source), store)
+
+    context = {"index": "idx", "form": "ta", "query_id": "Q1", "page": 1, "query_text": "tremor"}
+    first = recorder.get_json("https://idx.example/search", params={"q": "tremor",
+                                                                   "mailto": "me@example.org"},
+                              context=context)
+    assert first.ok and first.json() == {"hitCount": 3}
+    limited = recorder.get_json("https://idx.example/search", params={"q": "gait"})
+    assert limited.outcome == "rate_limited" and limited.retry_after == 7.0
+    got = recorder.get_bytes("https://pub.example/p.pdf", tmp_path / "staging",
+                             filename="paper.pdf")
+    assert got.ok
+    refused = recorder.get_bytes("https://pub.example/blocked.pdf", tmp_path / "staging",
+                                 filename="paper.pdf")
+    assert refused.response.outcome == "http_error"
+
+    # what is on disk: gzip'd JSON per key, a manifest, and the PDF bytes beside it
+    files = sorted(p.name for p in store.iterdir())
+    assert "pdfs.manifest.json" in files and "pdfs" in files
+    assert sum(1 for name in files if name.endswith(".json.gz")) == 2
+    import gzip
+    import json
+
+    key = fixture_key("https://idx.example/search", {"q": "tremor"})
+    with gzip.open(store / f"{key}.json.gz", "rt") as handle:
+        fixture = json.load(handle)
+    assert fixture["query_id"] == "Q1" and fixture["page"] == 1 and fixture["form"] == "ta"
+    assert fixture["query_text"] == "tremor" and fixture["status"] == 200
+    assert "mailto" not in fixture["params"], "an address never lands in a committed file"
+    manifest = json.loads((store / "pdfs.manifest.json").read_text())
+    assert len(manifest) == 2
+    ok_entry = manifest[fixture_key("https://pub.example/p.pdf")]
+    assert ok_entry["attempts"][0]["outcome"] == "ok" and ok_entry["attempts"][0]["sha256"]
+    assert (store / ok_entry["attempts"][0]["file"]).read_bytes() == PDF_BYTES
+
+    # …and the replay, with no inner transport at all
+    replay = RecordedTransport.from_dir(store)
+    again = replay.get_json("https://idx.example/search", params={"q": "tremor",
+                                                                 "mailto": "someone@else.org"})
+    assert again.ok and again.json() == {"hitCount": 3}
+    assert replay.get_json("https://idx.example/search", params={"q": "gait"}).retry_after == 7.0
+    got = replay.get_bytes("https://pub.example/p.pdf", tmp_path / "replayed",
+                           filename="paper.pdf")
+    assert got.ok and got.path is not None and got.path.read_bytes() == PDF_BYTES
+    assert replay.get_bytes("https://pub.example/blocked.pdf", tmp_path / "replayed",
+                            filename="paper.pdf").response.outcome == "http_error"
+    assert replay.query_drift == 0
+
+
+def test_a_changed_query_replays_by_its_tuple_and_counts_the_drift(tmp_path: Path) -> None:
+    """The reason the tuple exists: iterating on the query builder offline. A query whose text
+    changed is answered with the recording for the same (index, form, query_id, page) — and the
+    replayer says how often that happened, because those numbers carry an asterisk."""
+    source = tmp_path / "fixture.pdf"
+    source.write_bytes(PDF_BYTES)
+    store = tmp_path / "fixtures"
+    recorder = RecordingTransport(_fake_inner(source), store)
+    recorder.get_json("https://idx.example/search", params={"q": "tremor"},
+                      context={"index": "idx", "form": "ta", "query_id": "Q1", "page": 1,
+                               "query_text": "tremor"})
+
+    replay = RecordedTransport.from_dir(store)
+    drifted = replay.get_json("https://idx.example/search", params={"q": "tremor OR shaking"},
+                              context={"index": "idx", "form": "ta", "query_id": "Q1",
+                                       "page": 1, "query_text": "tremor OR shaking"})
+    assert drifted.ok and drifted.json() == {"hitCount": 3}
+    assert replay.query_drift == 1
+    assert replay.drift_log == [{"tuple": ["idx", "ta", "Q1", 1],
+                                 "recorded_key": fixture_key("https://idx.example/search",
+                                                             {"q": "tremor"}),
+                                 "recorded_query": "tremor",
+                                 "asked_query": "tremor OR shaking"}]
+    # a different page of the same query is a different tuple, and stays loud
+    with pytest.raises(MissingSearchFixture):
+        replay.get_json("https://idx.example/search", params={"q": "tremor OR shaking",
+                                                             "page": 2},
+                        context={"index": "idx", "form": "ta", "query_id": "Q1", "page": 2})
+    # …and a request marked `exact` never falls back: a hydration batch for other ids is not
+    # "the same request, drifted", it is a different request
+    with pytest.raises(MissingSearchFixture):
+        replay.get_json("https://idx.example/search", params={"q": "other ids"},
+                        context={"index": "idx", "form": "ta", "query_id": "Q1", "page": 1,
+                                 "exact": True})
+
+
+def test_a_key_asked_twice_in_one_recording_replays_in_order(tmp_path: Path) -> None:
+    """A 429 followed by the retry that worked is two answers to one request, and a replay that
+    served only the last would never reproduce the retry the live run needed."""
+    store = tmp_path / "fixtures"
+
+    class Flaky:
+        n = 0
+
+        def get_json(self, url, *, params=None, headers=None, timeout=0, accept="",
+                     max_bytes=0, context=None, form_data=None):
+            self.n += 1
+            if self.n == 1:
+                return HttpResponse(url=url, status=429, outcome="rate_limited",
+                                    error="slow down", retry_after=2.0)
+            return HttpResponse(url=url, status=200, outcome="ok", body=b'{"n": 1}')
+
+        def get_bytes(self, *a, **k):
+            raise AssertionError("not used")
+
+    recorder = RecordingTransport(Flaky(), store)
+    assert recorder.get_json("https://idx.example/s", params={"q": "x"}).outcome == "rate_limited"
+    assert recorder.get_json("https://idx.example/s", params={"q": "x"}).ok
+
+    replay = RecordedTransport.from_dir(store)
+    assert replay.get_json("https://idx.example/s", params={"q": "x"}).outcome == "rate_limited"
+    assert replay.get_json("https://idx.example/s", params={"q": "x"}).ok
+    assert replay.get_json("https://idx.example/s", params={"q": "x"}).ok, "the last repeats"
+
+
+def test_a_non_strict_replay_turns_a_missing_recording_into_a_refusal(tmp_path: Path) -> None:
+    """For the bench: one unrecorded request costs one row, never the whole fetch stage."""
+    replay = RecordedTransport.from_dir(tmp_path, strict=False)
+    answer = replay.get_json("https://idx.example/s", params={"q": "x"})
+    assert answer.outcome == "refused" and "no recording" in answer.error
+    download = replay.get_bytes("https://pub.example/p.pdf", tmp_path, filename="paper.pdf")
+    assert download.response.outcome == "refused" and download.path is None
+    assert len(replay.unrecorded) == 2
+    # the strict default is still loud
+    with pytest.raises(MissingSearchFixture):
+        RecordedTransport.from_dir(tmp_path).get_json("https://idx.example/s")
+
+
+def test_a_recorded_pdf_whose_bytes_are_gone_replays_as_a_refusal_not_a_paper(
+        tmp_path: Path) -> None:
+    """The PDFs are gitignored and the manifest is not. A clone without the bytes must not
+    invent a fetched paper — and must not crash the replay either."""
+    source = tmp_path / "fixture.pdf"
+    source.write_bytes(PDF_BYTES)
+    store = tmp_path / "fixtures"
+    recorder = RecordingTransport(_fake_inner(source), store)
+    assert recorder.get_bytes("https://pub.example/p.pdf", tmp_path / "s", filename="p.pdf").ok
+    for pdf in (store / "pdfs").glob("*.pdf"):
+        pdf.unlink()
+
+    replay = RecordedTransport.from_dir(store)
+    download = replay.get_bytes("https://pub.example/p.pdf", tmp_path / "r", filename="p.pdf")
+    assert download.response.outcome == "refused" and "not on disk" in download.response.error
+
+
+def test_get_html_goes_through_the_same_hop_vetting_and_is_capped(tmp_path: Path) -> None:
+    """A landing page is somebody else's HTML: every hop re-vetted, the body capped, and a
+    redirect to a private address refused exactly as it is for a PDF."""
+    def page(_request: httpx.Request, _n: int) -> httpx.Response:
+        return httpx.Response(200, headers={"content-type": "text/html"},
+                              content=b"<html><head><meta name='citation_pdf_url' "
+                                      b"content='/p.pdf'></head></html>")
+
+    transport = wire_of(page).transport()
+    response = transport.get_html("https://good.example/article/1")
+    assert response.ok and b"citation_pdf_url" in response.body
+    assert response.url == "https://good.example/article/1"
+    assert transport.get_html("https://good.example/big", max_bytes=10).outcome == "too_large"
+
+    hop = wire_of(redirect_to("https://127.0.0.1/admin")).transport()
+    refused = hop.get_html("https://good.example/article/2")
+    assert refused.outcome == "refused" and "127.0.0.1" in refused.error
+
+
+def test_a_resolved_name_is_reused_within_one_transport(tmp_path: Path) -> None:
+    """One lookup per host per transport, not one per request: the first 500-paper fetch made
+    the local resolver give up (`gaierror`) on Europe PMC. A failed lookup is never cached."""
+    calls: list[str] = []
+
+    def counting(host: str, port: int = 443) -> tuple[str, ...]:
+        calls.append(host)
+        if host == "flaky.example" and calls.count("flaky.example") == 1:
+            raise socket.gaierror(socket.EAI_AGAIN, "temporary failure")
+        return table_resolver(host, port) if host != "flaky.example" else (PUBLIC_IP,)
+
+    wire = wire_of(ok_pdf)
+    client = httpx.Client(transport=httpx.MockTransport(wire), follow_redirects=False,
+                          trust_env=False)
+    transport = HttpxTransport(client=client, resolve=counting, clock=HostClock(default=0.0))
+    for _ in range(3):
+        assert transport.get_json("https://good.example/s").ok
+    assert calls.count("good.example") == 1
+    assert transport.get_json("https://flaky.example/s").outcome == "dns_error"
+    assert transport.get_json("https://flaky.example/s").ok, "asked again, not remembered"
+    assert calls.count("flaky.example") == 2
+
+
+def test_form_data_posts_once_and_keys_the_fixture_with_it(tmp_path: Path) -> None:
+    """PubMed's esearch: thousands of characters, 414 on a GET above ~3,000, POST documented.
+    The body is form-encoded on the first hop, and the recorder keys it like a query string."""
+    seen: list[httpx.Request] = []
+
+    def echo(request: httpx.Request, _n: int) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, headers={"content-type": "application/json"},
+                              content=b'{"ok": true}')
+
+    transport = wire_of(echo).transport()
+    answer = transport.get_json("https://good.example/esearch", params={"db": "x"},
+                                form_data={"term": "a AND b", "retmax": 5})
+    assert answer.ok and seen[0].method == "POST"
+    assert seen[0].headers["content-type"] == "application/x-www-form-urlencoded"
+    assert seen[0].content == b"term=a+AND+b&retmax=5"
+    assert str(seen[0].url).endswith("/esearch?db=x")
+
+    store = tmp_path / "fixtures"
+    inner = RecordedTransport()
+    inner.record("https://good.example/esearch", HttpResponse(status=200, outcome="ok",
+                                                              body=b'{"n": 1}'),
+                 {"db": "x", "term": "a AND b", "retmax": 5})
+    recorder = RecordingTransport(inner, store)
+    assert recorder.get_json("https://good.example/esearch", params={"db": "x"},
+                             form_data={"term": "a AND b", "retmax": 5}).ok
+    replay = RecordedTransport.from_dir(store)
+    assert replay.get_json("https://good.example/esearch", params={"db": "x"},
+                           form_data={"term": "a AND b", "retmax": 5}).json() == {"n": 1}
+    assert replay.get_json("https://good.example/esearch",
+                           params={"db": "x", "term": "a AND b", "retmax": 5}).json() == {"n": 1}

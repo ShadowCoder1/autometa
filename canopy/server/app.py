@@ -35,6 +35,7 @@ label the UI shows comes from the user's own protocol.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -42,7 +43,8 @@ from urllib.parse import quote, urlsplit
 
 import yaml
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTextResponse,
+                               RedirectResponse, StreamingResponse)
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -59,10 +61,10 @@ from .make_run import (MAX_CONCURRENCY, MAX_PROTOCOL_BYTES, PdfSource, RunOption
 from .overrides import (OverrideRejected, append_override, append_overrides,
                         apply_overrides_and_repool,
                         override_summary, read_overrides, repool_lock)
-from .searches import (DEFAULT_MAX_SCREENED, DEFAULT_MAX_USD, SearchJobs, pdf_name,
-                       search_options_from, state_of)
-from .security import (PathRejected, is_attachment, is_loopback, media_type, safe_run_path,
-                       token_matches)
+from .searches import (DEFAULT_MAX_FETCH_UNSURE, DEFAULT_MAX_SCREENED, DEFAULT_MAX_USD,
+                       SearchJobs, pdf_name, search_options_from, state_of)
+from .security import (ACCESS_COOKIE, PathRejected, access_cookie_value, access_granted,
+                       is_attachment, is_loopback, media_type, safe_run_path, token_matches)
 from .uploads import (DEFAULT_MAX_FILES, DEFAULT_MAX_TOTAL_MB, DEFAULT_MAX_UPLOAD_MB,
                       DEFAULT_PROBE_TIMEOUT, UploadRejected, probe_pdf, safe_filename,
                       stream_upload)
@@ -73,6 +75,8 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "examples" / "protocols"
 #: methods that change something — a page on another origin may not use them
 UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+#: the one path a browser without the site's access cookie may reach
+ACCESS_PATH = "/access"
 
 
 # ============================================================================ helpers
@@ -244,6 +248,31 @@ def _file_url(job: Job, path: str | Path) -> str:
 
 
 # ============================================================================ the app
+def _access_page(*, wrong: bool) -> str:
+    """A single field, no framework: the page a visitor sees before anything else loads."""
+    note = ("<p class=\"bad\">That code is not right.</p>" if wrong
+            else "<p>This AutoMeta server is private. Enter the access code you were given.</p>")
+    return (
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        "<title>AutoMeta — access</title><style>"
+        "html{color-scheme:light}body{margin:0;min-height:100vh;display:grid;place-items:center;"
+        "background:#f4f5f7;color:#1b1f24;font:15px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif}"
+        "form{background:#fff;border:1px solid #d9dde3;border-radius:6px;padding:28px 32px;width:min(92vw,380px)}"
+        "h1{font-size:18px;margin:0 0 6px;letter-spacing:.01em}p{margin:0 0 18px;color:#5b6470}"
+        ".bad{color:#a63a2b}label{display:block;font-size:12px;letter-spacing:.06em;"
+        "text-transform:uppercase;color:#5b6470;margin-bottom:6px}"
+        "input{width:100%;box-sizing:border-box;font:inherit;padding:9px 10px;border:1px solid #b6bcc4;border-radius:4px}"
+        "input:focus{outline:2px solid #25344a;outline-offset:1px}"
+        "button{margin-top:14px;width:100%;font:inherit;font-weight:600;padding:10px;border:0;"
+        "border-radius:4px;background:#25344a;color:#fff;cursor:pointer}"
+        "</style></head><body><form method=\"post\" action=\"/access\" autocomplete=\"off\">"
+        "<h1>AutoMeta</h1>" + note +
+        "<label for=\"code\">Access code</label>"
+        "<input id=\"code\" name=\"code\" type=\"password\" autofocus required>"
+        "<button type=\"submit\">Enter</button></form></body></html>")
+
+
 def create_app(runs_dir: str | Path = "runs", *,
                client_factory: Callable[..., Any] | None = None,
                allowed_hosts: Sequence[str] | None = None,
@@ -252,7 +281,8 @@ def create_app(runs_dir: str | Path = "runs", *,
                max_active_runs: int | None = None,
                loopback_only: bool = True,
                searches_dir: str | Path | None = None,
-               search_runner: Callable[..., Any] | None = None) -> FastAPI:
+               search_runner: Callable[..., Any] | None = None,
+               access_code: str | None = None) -> FastAPI:
     """Build the API. `client_factory` is the seam a test fills with a fake or replaying client.
 
     `search_runner` is the same kind of seam for the OTHER pipeline: the whole paper search as one
@@ -286,6 +316,11 @@ def create_app(runs_dir: str | Path = "runs", *,
     app.state.max_total_bytes = max(app.state.max_upload_bytes, DEFAULT_MAX_TOTAL_MB * 1e6)
     app.state.allowed_hosts = [h.lower() for h in (allowed_hosts or [])]
     app.state.loopback_only = bool(loopback_only)
+    # A site-wide access code, for a server that is reachable from the internet. Per-run tokens
+    # keep one visitor's run from another, but nothing else stops a stranger from STARTING a
+    # run — on this key, with this budget. Unset means no gate, so the loopback server is
+    # unchanged; set, every request needs the cookie the code earns, except the form itself.
+    app.state.access_code = (access_code or "").strip() or None
 
     # ------------------------------------------------------------------ middleware
     @app.middleware("http")
@@ -297,6 +332,13 @@ def create_app(runs_dir: str | Path = "runs", *,
             if host not in allowed:
                 return JSONResponse({"detail": f"unexpected Host header {host!r}"},
                                     status_code=400)
+        code = request.app.state.access_code
+        if code and request.url.path != ACCESS_PATH and not access_granted(
+                request.cookies.get(ACCESS_COOKIE), request.headers.get("x-canopy-access"), code):
+            if request.url.path.startswith("/api/"):
+                return JSONResponse({"detail": "this site needs its access code"},
+                                    status_code=401)
+            return RedirectResponse(ACCESS_PATH, status_code=303)
         if request.method in UNSAFE_METHODS and is_cross_site(request):
             return JSONResponse({"detail": "cross-site request refused"}, status_code=403)
         response = await call_next(request)
@@ -341,12 +383,46 @@ def create_app(runs_dir: str | Path = "runs", *,
     if STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+    # ------------------------------------------------------------------ site access code
+    @app.get(ACCESS_PATH, response_class=HTMLResponse)
+    def access_form(request: Request) -> Any:
+        """The one page a browser without the cookie can see."""
+        if not request.app.state.access_code:
+            return RedirectResponse("/", status_code=303)
+        return HTMLResponse(_access_page(wrong=False), headers={"Cache-Control": "no-store"})
+
+    @app.post(ACCESS_PATH)
+    def access_submit(request: Request, code: str = Form(default="")) -> Any:
+        """A right code earns the cookie; the cookie holds a digest of the code, never the code."""
+        expected = request.app.state.access_code
+        if not expected:
+            return RedirectResponse("/", status_code=303)
+        if not token_matches(code.strip(), expected):
+            return HTMLResponse(_access_page(wrong=True), status_code=401,
+                                headers={"Cache-Control": "no-store"})
+        response = RedirectResponse("/", status_code=303)
+        # behind Cloud Run's proxy the app sees http; the browser saw https
+        https = (request.url.scheme == "https"
+                 or (request.headers.get("x-forwarded-proto") or "").lower() == "https")
+        response.set_cookie(ACCESS_COOKIE, access_cookie_value(expected), max_age=30 * 86400,
+                            httponly=True, secure=https, samesite="lax", path="/")
+        return response
+
     @app.get("/", include_in_schema=False)
     def index() -> FileResponse:
         page = STATIC_DIR / "index.html"
         if not page.exists():                              # pragma: no cover - build sanity
             raise HTTPException(status_code=500, detail="the UI files are missing")
         return FileResponse(page, media_type="text/html; charset=utf-8")
+
+    def _run_cost() -> tuple[float, str]:
+        """Dollars per paper the review will bill, from the last completed run when one exists."""
+        try:
+            from ..search.cost import run_cost_per_paper
+
+            return run_cost_per_paper(manager.runs_dir)
+        except Exception:                                  # pragma: no cover - a courtesy number
+            return 7.0, "the default"
 
     # ------------------------------------------------------------------ settings
     @app.get("/api/settings")
@@ -371,6 +447,15 @@ def create_app(runs_dir: str | Path = "runs", *,
             "search_uses_real_models": searches.uses_real_models,
             "search_max_usd": DEFAULT_MAX_USD,
             "search_max_screened": DEFAULT_MAX_SCREENED,
+            # …and two facts the Find panel warns about: Unpaywall needs a real address, and
+            # every unsure PDF a search fetches is a paper the review reads at this price
+            "contact_email_set": bool(os.environ.get("CANOPY_CONTACT_EMAIL", "").strip()),
+            # only whether one is set — never the key. Anonymous OpenAlex throttles any Boolean
+            # search with more than five operators, which every block string is (design 03 §2)
+            "openalex_key_set": bool(os.environ.get("CANOPY_OPENALEX_KEY", "").strip()),
+            "run_cost_per_paper": _run_cost()[0],
+            "run_cost_source": _run_cost()[1],
+            "search_max_fetch_unsure": DEFAULT_MAX_FETCH_UNSURE,
         }
 
     # ------------------------------------------------------------------ protocols
@@ -961,15 +1046,34 @@ def create_app(runs_dir: str | Path = "runs", *,
             raise HTTPException(status_code=404, detail="no such paper in this search")
         return candidate
 
-    def begin_answer(run: Job, skipped: list[dict[str, str]]) -> dict[str, Any]:
-        """EXACTLY the body `POST /api/runs` returns, plus `skipped`.
+    def begin_answer(run: Job, skipped: list[dict[str, str]],
+                     run_commit: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """EXACTLY the body `POST /api/runs` returns, plus `skipped` and `run_commit`.
 
         Same keys in the same shape on purpose: the page's `attach()` already knows how to take a
         run over from that body, and a second door answering in its own dialect would need a
-        second copy of the code that reads it.
+        second copy of the code that reads it. `run_commit` is what the review will read and what
+        that costs — the sentence the page confirms before it navigates.
         """
         return {"run_id": run.run_id, "token": run.token, "n_files": run.n_files,
-                "status": run.status, "title": run.title, "skipped": skipped}
+                "status": run.status, "title": run.title, "skipped": skipped,
+                "run_commit": dict(run_commit or {})}
+
+    @app.get("/api/searches/preview")
+    def search_preview(max_usd: float | None = None, max_fetch_unsure: int | None = None,
+                       snowball: bool = True) -> dict[str, Any]:
+        """What a search with these numbers would spend, and what beginning it could commit —
+        the Find panel's cost line, from the pipeline's own arithmetic (`cost.predict`)."""
+        from ..search.cost import predict
+
+        budget = float(max_usd) if max_usd is not None and max_usd > 0 else DEFAULT_MAX_USD
+        unsure = (int(max_fetch_unsure) if max_fetch_unsure is not None and max_fetch_unsure >= 0
+                  else DEFAULT_MAX_FETCH_UNSURE)
+        per_paper, source = _run_cost()
+        preview = predict(budget, max_fetch_unsure=unsure, per_paper=per_paper,
+                          snowball=bool(snowball))
+        preview["run_commit"]["per_paper_source"] = source
+        return preview
 
     @app.get("/api/searches")
     def list_searches() -> dict[str, Any]:
@@ -1162,7 +1266,8 @@ def create_app(runs_dir: str | Path = "runs", *,
                 raise HTTPException(status_code=409,
                                     detail=f"this search became review {begun}, which is no "
                                            f"longer on disk")
-            return begin_answer(run, searches.skipped_of(job))
+            return begin_answer(run, searches.skipped_of(job),
+                                (searches.load_record(job).predicted or {}).get("run_commit"))
 
         answer = already_begun()
         if answer is not None:
@@ -1239,7 +1344,7 @@ def create_app(runs_dir: str | Path = "runs", *,
             searches.save_record(job, record)
         if chosen.start:
             _start(manager, run)
-        return begin_answer(run, skipped)
+        return begin_answer(run, skipped, (record.predicted or {}).get("run_commit"))
 
     @app.get("/api/health", include_in_schema=False)
     def health() -> PlainTextResponse:
@@ -1304,8 +1409,13 @@ def serve(host: str = "127.0.0.1", port: int = 8000, runs_dir: str | Path = "run
               f"  budget behind them — to every machine that can reach this port.\n"
               f"  AutoMeta has no user accounts: the only secret is a per-run token.\n"
               f"  Use 127.0.0.1 unless you have a reason not to.\n")
+    access_code = os.environ.get("CANOPY_ACCESS_CODE") or None
+    if not loopback and not access_code:
+        print("  Set CANOPY_ACCESS_CODE to put a password on the whole site.\n")
     app = create_app(runs_dir, loopback_only=loopback,
-                     allowed_hosts=["localhost", "127.0.0.1", "::1"] if loopback else None)
+                     allowed_hosts=["localhost", "127.0.0.1", "::1"] if loopback else None,
+                     access_code=access_code)
     print(f"canopy UI on http://{host}:{port}  ·  runs in {Path(runs_dir).resolve()}  ·  "
-          f"API key {'configured' if api_key() else 'NOT configured'}")
+          f"API key {'configured' if api_key() else 'NOT configured'}"
+          + ("" if loopback else f"  ·  access code {'set' if access_code else 'NOT set'}"))
     uvicorn.run(app, host=host, port=port, log_level="warning")

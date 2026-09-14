@@ -23,8 +23,9 @@ from pathlib import Path
 import pytest
 
 from canopy.search.indices import (INDEXES, MAX_ABSTRACT_WORDS, OA_ID_PREFIXES, Crossref,
-                                   EuropePmc, OpenAlex, Unpaywall, links_for, oa_id_urls,
-                                   parse_index_names, reconstruct_abstract, source_record)
+                                   EuropePmc, OpenAlex, PubMed, Unpaywall, depth_for, links_for,
+                                   oa_id_urls, parse_index_names, reconstruct_abstract,
+                                   search_pages, source_record)
 from canopy.search.models import Candidate
 from canopy.search.transport import HttpResponse, MissingSearchFixture, RecordedTransport
 
@@ -36,6 +37,7 @@ def no_contact_email(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unset by default, so a developer's own `CANOPY_CONTACT_EMAIL` cannot change the request
     parameters under the fixtures and turn a green suite red on someone else's machine."""
     monkeypatch.delenv("CANOPY_CONTACT_EMAIL", raising=False)
+    monkeypatch.delenv("CANOPY_OPENALEX_KEY", raising=False)
 
 
 def load(name: str) -> dict:
@@ -433,15 +435,258 @@ def test_source_record_always_has_the_four_fields():
     assert row["n_returned"] == 0 and row["error"] == ""
 
 
-def test_the_index_registry_names_the_discovery_arms_in_order():
+def test_the_index_registry_names_the_discovery_arms_in_the_measured_order():
+    """PubMed, OpenAlex, Europe PMC: by ranking quality measured on the first answer key (design
+    04 §A: 20, 18, 8 of 23 in the top thousand), not by anyone's idea of a field."""
     from canopy.search.indices import DISCOVERY_INDEXES
 
-    assert DISCOVERY_INDEXES == ("europepmc", "openalex")
-    assert set(INDEXES) == {"europepmc", "openalex", "crossref", "unpaywall"}
+    assert DISCOVERY_INDEXES == ("pubmed", "openalex", "europepmc")
+    assert set(INDEXES) == {"pubmed", "europepmc", "openalex", "crossref", "unpaywall"}
     assert INDEXES["unpaywall"].discovery is False
 
 
 def test_parse_index_names_drops_a_typo_instead_of_refusing_to_start():
     assert parse_index_names("europepmc,crossref") == ["europepmc", "crossref"]
     assert parse_index_names("europmc") == [], "a typo narrows the search; it does not crash it"
-    assert parse_index_names("") == list(INDEXES and ("europepmc", "openalex"))
+    assert parse_index_names("") == ["pubmed", "openalex", "europepmc"]
+
+
+# ------------------------------------------------------------------- the author manuscripts (§7a)
+def test_europepmc_offers_the_free_but_not_open_access_routes():
+    """The four NIH author manuscripts of the first answer key: `isOpenAccess: N`, `inEPMC: Y`,
+    `hasPDF: Y`, and an explicit `availabilityCode: F` PDF route. The old rule (`OA` only, render
+    on `isOpenAccess`) offered none of them and the four were reported as fetch failures."""
+    index = EuropePmc()
+    query = "SRC:MED AND (EXT_ID:11 OR EXT_ID:12)"
+    transport = replaying(index, query, "europepmc_author_manuscripts", limit=4)
+    candidates, record = index.search(transport, query, limit=4)
+
+    assert record["n_returned"] == 4
+    for paper in candidates:
+        assert paper.ids["europepmc_oa_flag"] == "N", "the flag is kept: it is a fact"
+        assert paper.ids["europepmc_render"].endswith("?pdf=render")
+        assert paper.ids["europepmc_oa_pdf"].endswith("?pdf=render"), "the F route"
+        assert [url for _, url in oa_id_urls(paper)] == [paper.ids["europepmc_render"]], \
+            "one URL, not the same one twice"
+
+
+# ----------------------------------------------------------------------------- PubMed (§2)
+ESEARCH = {"header": {"type": "esearch", "version": "0.3"},
+           "esearchresult": {"count": "3", "retmax": "3", "retstart": "0",
+                             "idlist": ["41752351", "42378169", "99999999"],
+                             "translationset": [],
+                             "querytranslation": '("dominant"[All Fields] OR "dominance"[All '
+                                                 'Fields]) AND "adaptation"[All Fields]'}}
+
+
+def pubmed_transport(query: str, *, limit: int = 1000) -> RecordedTransport:
+    """esearch answering three ids, two of which Europe PMC holds (the recorded fixture)."""
+    index = PubMed()
+    url, params = index.request(query, limit=limit)
+    transport = RecordedTransport()
+    transport.record(url, HttpResponse(url=url, status=200, outcome="ok",
+                                       body=json.dumps(ESEARCH).encode()), params)
+    hurl, hparams = EuropePmc().hydrate_request(ESEARCH["esearchresult"]["idlist"])
+    transport.record(hurl, HttpResponse(url=hurl, status=200, outcome="ok",
+                                        body=json.dumps(load("europepmc_search")).encode()),
+                     hparams)
+    return transport
+
+
+def test_pubmed_asks_esearch_by_relevance_with_tool_and_email(monkeypatch):
+    url, params = PubMed().request("(a OR b) AND c", limit=1000)
+    assert url.startswith("https://eutils.ncbi.nlm.nih.gov/")
+    assert params["db"] == "pubmed" and params["sort"] == "relevance"
+    assert params["retmax"] == 1000 and params["retstart"] == 0 and params["retmode"] == "json"
+    assert params["tool"] == "canopy-meta" and "email" not in params
+    monkeypatch.setenv("CANOPY_CONTACT_EMAIL", "someone@example.org")
+    assert PubMed().request("x", limit=5)[1]["email"] == "someone@example.org"
+    assert PubMed().request("x", limit=5, cursor="1000")[1]["retstart"] == 1000
+    assert PubMed().request("x", limit=50000)[1]["retmax"] == PubMed.MAX_PAGE
+
+
+def test_pubmed_hydrates_its_ids_through_europe_pmc_in_pubmed_order():
+    """esearch answers ids only. Each page is hydrated in batches of a hundred via
+    `SRC:MED AND (EXT_ID:… OR …)`; the candidates come back in PubMed's order, `found_by`
+    says `pubmed`, and an id Europe PMC does not hold is counted, never invented."""
+    query = "(dominant OR dominance) AND adaptation"
+    transport = pubmed_transport(query)
+    candidates, record = PubMed().search(transport, query, limit=1000)
+
+    assert [c.ids["pmid"] for c in candidates] == ["41752351", "42378169"]
+    assert all(c.found_by == ["pubmed"] for c in candidates)
+    assert candidates[0].abstract and candidates[0].ids["pmcid"] == "PMC12941259"
+    assert record["total_hits"] == 3 and record["n_unhydrated"] == 1
+    assert record["n_hydration_requests"] == 1
+    assert '"dominance"[All Fields]' in record["parsed_as"], "the term mapping is on the record"
+    hydration = [c for c in transport.calls if "EXT_ID" in str(c["params"].get("query", ""))]
+    assert len(hydration) == 1 and hydration[0]["context"]["form"] == "hydrate"
+    assert hydration[0]["context"]["exact"] is True, "a hydration batch never replays by tuple"
+
+
+def test_search_pages_writes_the_entry_position_and_one_source_row():
+    query = "(dominant OR dominance) AND adaptation"
+    transport = pubmed_transport(query)
+    row = {"query_id": "Q1", "index": "pubmed", "form": "", "text": query}
+    candidates, source = search_pages(PubMed(), transport, row, depth=1000)
+
+    assert [c.ranks["pubmed:Q1:"] for c in candidates] == [1, 2]
+    assert source["name"] == "pubmed" and source["query_id"] == "Q1" and source["form"] == ""
+    assert source["pages"] == 1 and source["n_returned"] == 2 and source["total_hits"] == 3
+    assert source["more_available"] is False and source["retry_after_honoured"] is False
+    assert source["n_hydration_requests"] == 1 and source["error"] == ""
+
+
+# ---------------------------------------------------------------------- OpenAlex forms and key
+def test_openalex_forms_cursor_and_key(monkeypatch):
+    """`ta` is the title-and-abstract filter; `ft` is the same string as `search=`; both sorted
+    by relevance and cursor-paged; the key rides as `api_key` only when set — and never into a
+    fixture (`transport.IDENTITY_PARAMS`)."""
+    _, ta = OpenAlex().request("a AND b", limit=200)
+    assert ta["filter"] == "title_and_abstract.search:a AND b,is_retracted:false"
+    assert "search" not in ta and ta["sort"] == "relevance_score:desc" and ta["cursor"] == "*"
+    assert "referenced_works" in ta["select"] and "cited_by_count" in ta["select"]
+    _, ft = OpenAlex().request("a AND b", limit=200, form="ft", cursor="IlsxNDIuNDU3")
+    assert ft["search"] == "a AND b" and ft["filter"] == "is_retracted:false"
+    assert ft["cursor"] == "IlsxNDIuNDU3"
+    assert "api_key" not in ta
+    monkeypatch.setenv("CANOPY_OPENALEX_KEY", "not-a-real-key")
+    _, keyed = OpenAlex().request("a AND b", limit=200)
+    assert keyed["api_key"] == "not-a-real-key"
+    from canopy.search.transport import fixture_key
+
+    assert fixture_key(OpenAlex.URL, keyed) == fixture_key(OpenAlex.URL, ta)
+    _, count = OpenAlex().count_request("a AND b")
+    assert count["per-page"] == 1 and count["select"] == "id" and "cursor" not in count
+    _, ecount = EuropePmc().count_request("a AND b")
+    assert ecount["pageSize"] == 1 and ecount["resultType"] == "lite"
+
+
+def test_openalex_pages_follow_the_cursor_and_stop_when_it_runs_out(monkeypatch):
+    """Ten rows a page: a full page with a cursor is followed, a short page ends the paging,
+    and `depth` stops it first when it is smaller."""
+    monkeypatch.setattr(OpenAlex, "MAX_PAGE", 10)
+    index = OpenAlex()
+    base = load("openalex_works")
+    template = base["results"][0]
+    first = {"meta": {"count": 11, "next_cursor": "cursor-2"},
+             "results": [dict(template, id=f"https://openalex.org/W{i}",
+                              doi=f"https://doi.org/10.1000/w{i}") for i in range(1, 11)]}
+    second = {"meta": {"count": 11, "next_cursor": "cursor-3"},
+              "results": [dict(template, id="https://openalex.org/W11",
+                               doi="https://doi.org/10.1000/w11")]}
+    transport = RecordedTransport()
+    # each page asks for exactly what is still wanted, so the fixtures sit at those keys:
+    # 10 on the first page; 2 on the second when the depth is 12; 5 when the depth is 5
+    for cursor, limit, body in (("*", 10, first), ("cursor-2", 2, second), ("*", 5, first)):
+        url, params = index.request(OA_QUERY, limit=limit, cursor=cursor)
+        transport.record(url, HttpResponse(url=url, status=200, outcome="ok",
+                                           body=json.dumps(body).encode()), params)
+    row = {"query_id": "Q1", "index": "openalex", "form": "ta", "text": OA_QUERY}
+    candidates, source = search_pages(index, transport, row, depth=12)
+
+    assert len(candidates) == 11 and source["pages"] == 2
+    assert [c.ranks["openalex:Q1:ta"] for c in candidates] == list(range(1, 12))
+    assert source["more_available"] is False, "the second page was short: that is the end"
+    assert [c["context"]["page"] for c in transport.calls] == [1, 2]
+    # …and `depth` stops the paging before the cursor does
+    transport.calls.clear()
+    candidates, source = search_pages(index, transport, row, depth=5)
+    assert len(candidates) == 5 and source["pages"] == 1 and source["more_available"] is True
+    candidates, source = search_pages(index, transport, row, depth=10)
+    assert len(candidates) == 10 and source["pages"] == 1 and source["more_available"] is True
+
+
+def test_a_429_with_retry_after_is_honoured_once_per_page():
+    """Sleep what the server asked (at most 30 s), ask again once; the row says it happened."""
+    index = OpenAlex()
+    url, params = index.request(OA_QUERY, limit=5)
+    transport = RecordedTransport()
+    transport.record(url, HttpResponse(url=url, status=200, outcome="ok",
+                                       body=json.dumps(load("openalex_works")).encode()), params)
+    key = next(iter(transport.responses))
+    transport.sequences[key] = [
+        HttpResponse(url=url, status=429, outcome="rate_limited", retry_after=12.0,
+                     error="slow down"),
+        transport.responses[key]]
+    slept: list[float] = []
+    row = {"query_id": "Q1", "index": "openalex", "form": "ta", "text": OA_QUERY}
+    candidates, source = search_pages(index, transport, row, depth=5, sleep=slept.append)
+
+    assert slept == [12.0] and len(candidates) == 5
+    assert source["retry_after_honoured"] is True and source["error"] == ""
+
+    # a second 429 on the same page is the row's error, not a second sleep
+    transport.sequences[key] = [transport.sequences[key][0], transport.sequences[key][0]]
+    transport._cursor.clear()
+    slept.clear()
+    candidates, source = search_pages(index, transport, row, depth=5, sleep=slept.append)
+    assert slept == [12.0] and candidates == [] and source["outcome"] == "rate_limited"
+
+
+def test_the_operator_throttle_is_named_and_the_key_is_the_advice():
+    """Three 429s, three sentences: the anonymous operator limit, a busy cluster, the meter."""
+    operators = ("Your query uses 29 boolean operators (OR/AND/NOT). Broad boolean searches are "
+                 "heavy for our search cluster, so queries with more than 5 operators are limited")
+    note = OpenAlex.degradation_note("rate_limited", 429, operators)
+    assert "five AND/OR operators" in note and "CANOPY_OPENALEX_KEY" in note
+    assert "PubMed and Europe PMC" in note
+    busy = OpenAlex.degradation_note("rate_limited", 429, "Please retry in 12s")
+    assert "retry" in busy.lower() and "CANOPY_OPENALEX_KEY" in busy
+    meter = OpenAlex.degradation_note("rate_limited", 429, "")
+    assert "$0.10" in meter and "midnight UTC" in meter
+
+
+def test_depth_scales_every_index_and_europe_pmc_goes_three_times_deeper():
+    assert (depth_for("pubmed"), depth_for("openalex"), depth_for("europepmc")) == (1000, 1000,
+                                                                                     3000)
+    assert (depth_for("pubmed", 200), depth_for("europepmc", 200)) == (200, 600)
+
+
+def test_a_name_that_does_not_resolve_is_retried_up_the_ladder_and_survives():
+    """The essential-tremor run lost PubMed entirely: `gaierror` on both strings, and the old
+    branch retried only `timeout`/`network_error` — once, after 5 s. A DNS failure or a 5xx
+    is transient like the others, and a WiFi blip of a minute must cost a pause, not an index."""
+    from canopy.search import indices as mod
+
+    class Flaky:
+        name = "pubmed"
+        discovery = True
+        MAX_PAGE = 1000
+
+        def __init__(self, failures):
+            self.answers = list(failures)
+
+        def page(self, transport, text, *, limit, cursor, form, timeout, context):
+            if self.answers:
+                outcome = self.answers.pop(0)
+                status = 503 if outcome == "http_error" else None
+                return [], {"outcome": outcome, "status": status, "error": outcome}
+            cand = Candidate(key="c1", title="found after the blip", authors=[], year=2020)
+            return [cand], {"outcome": "ok", "status": 200, "next_cursor": None}
+
+    slept: list[float] = []
+    row = {"query_id": "Q1", "index": "pubmed", "form": "", "text": "x"}
+
+    # two DNS failures then a 5xx, then success: three pauses up the ladder, index kept
+    index = Flaky(["dns_error", "dns_error", "http_error"])
+    candidates, source = search_pages(index, RecordedTransport(), row, depth=10,
+                                      sleep=slept.append)
+    assert [c.title for c in candidates] == ["found after the blip"]
+    assert source["retried"] == 3 and slept == list(mod.TRANSIENT_PAUSES_S)
+    assert not source.get("error")
+
+    # four failures exhaust the ladder: the row records the failure and does not loop forever
+    slept.clear()
+    index = Flaky(["dns_error"] * 4)
+    candidates, source = search_pages(index, RecordedTransport(), row, depth=10,
+                                      sleep=slept.append)
+    assert candidates == [] and source["retried"] == 3 and source["error"] == "dns_error"
+
+    # a failure the query caused (a 4xx) is not retried at all
+    slept.clear()
+    index = Flaky(["http_error"])
+    index.page = lambda *a, **k: ([], {"outcome": "http_error", "status": 400, "error": "bad"})
+    candidates, source = search_pages(index, RecordedTransport(), row, depth=10,
+                                      sleep=slept.append)
+    assert source["retried"] == 0 and slept == []

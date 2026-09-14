@@ -236,7 +236,29 @@
       // the search's two caps are pre-filled with the numbers this server will actually hold it
       // to, so the form shows the truth rather than a hopeful default of its own
       $("f-max-usd").value = settings.search_max_usd;
-      $("f-max-screened").value = settings.search_max_screened;
+      // left blank on purpose: the cap on abstracts is derived from the budget (70 % of it at
+      // $0.003 a record) and ranked, unless a person types a number here — a prefilled 200
+      // would be that person's number without their having chosen it
+      $("f-max-screened").value = "";
+      $("f-max-screened").placeholder = "from the budget";
+      $("f-max-fetch-unsure").value = settings.search_max_fetch_unsure;
+      // the number BLOCKER-3 said must be visible before the button: a search costs cents a
+      // record, the review it starts costs dollars a PAPER, and half of what a careful screener
+      // reads is "unsure" — and now fetched, and now read
+      runCostPerPaper = Number(settings.run_cost_per_paper) || 0;
+      previewSearchCost();
+      var emailNote = $("find-email-note");
+      emailNote.textContent = "No contact address is set (CANOPY_CONTACT_EMAIL), so Unpaywall "
+        + "will not be asked for the open-access copies the indexes do not list — fewer PDFs "
+        + "will be fetched than could be.";
+      show(emailNote, !settings.contact_email_set);
+      // anonymous OpenAlex throttles any Boolean search with more than five operators, which
+      // every block string is: without the (free) key that arm answers nothing
+      var oaNote = $("find-openalex-note");
+      oaNote.textContent = "No OpenAlex key is set (CANOPY_OPENALEX_KEY, free). OpenAlex "
+        + "throttles anonymous searches with more than five AND/OR operators, so this search "
+        + "will run on PubMed and Europe PMC alone and OpenAlex's rows will be missing.";
+      show(oaNote, !settings.openalex_key_set);
       // A search with no model still runs AND still fetches — template queries, nothing screened,
       // every open-access copy on disk — so this is a warning about what the list will and will
       // not have been sorted by, never a locked door.
@@ -2269,8 +2291,8 @@
   // COUNT_KEYS, verbatim. The label on screen is the key with its underscores opened out — one
   // word per thing, and a name changed on the server is a name changed here and nowhere else.
   var COUNT_KEYS = ["records", "after_dedupe", "screened", "included", "unsure", "excluded",
-                    "excluded_by_user", "not_screened", "fetched", "wanted", "paywalled",
-                    "uploaded", "extra", "possible_duplicates"];
+                    "excluded_by_user", "not_screened", "snowballed", "fetched", "unsure_fetched",
+                    "wanted", "paywalled", "uploaded", "extra", "possible_duplicates"];
   // …and these five are on the strip even at zero: a ladder that grows rungs as it goes hides
   // from the reader what is still to come.
   var COUNTS_ALWAYS = ["records", "after_dedupe", "screened", "included", "fetched"];
@@ -2280,6 +2302,7 @@
                        ["index", "indexes"],
                        ["dedupe", "duplicates"],
                        ["screen", "screening"],
+                       ["snowball", "citation chasing"],
                        ["fetch", "open copies"]];
 
   // every `CandidateState` lands in exactly one of these. `unscreened` is last on purpose: it is
@@ -2298,6 +2321,8 @@
      started and nothing on any screen would say which. NOTE: the server records the list in
      `job.options` and not in `search.json`, so this survives a navigation and not a reload. */
   var skippedAtBegin = [];
+  // dollars per paper the review bills, from /api/settings — the Find panel's cost line
+  var runCostPerPaper = 0;
   var beginning = false;        // a `begin` request is in flight: nothing may re-enable the button
   var settledShown = false;     // focus is handed to the title once per search, not on every poll
 
@@ -2381,11 +2406,50 @@
     startSearch();
   });
 
+  /* The cost line, from the server's own arithmetic (`/api/searches/preview`): what the budget
+     buys in screened records, what citation chasing adds, the worst case, and what beginning
+     the review could commit to if every unsure paper under the cap is fetched. Re-asked when a
+     number changes, so the sentence is about the numbers on the form. */
+  var previewTimer = null;
+  function previewSearchCost() {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(function () {
+      var query = "max_usd=" + encodeURIComponent($("f-max-usd").value || "")
+        + "&max_fetch_unsure=" + encodeURIComponent($("f-max-fetch-unsure").value || "")
+        + "&snowball=" + ($("f-snowball").checked ? "true" : "false");
+      api("/api/searches/preview?" + query).then(function (p) {
+        var commit = p.run_commit || {};
+        var note = $("find-cost-note");
+        note.textContent = "Screens about " + plural(p.cap || 0, "record") + " (" + money(p.screen_usd)
+          + ")" + (p.snowball_records ? " plus up to " + plural(p.snowball_records, "record")
+                   + " from citation chasing (" + money(p.snowball_usd) + ")" : "")
+          + "; worst case " + money(p.worst_case_usd) + ". Up to "
+          + plural(commit.n_unsure || 0, "unsure paper") + " may be fetched; reading each in the "
+          + "review costs about " + money(commit.per_paper_usd) + " (" + (commit.per_paper_source || "")
+          + "), so begin may commit about " + money(commit.usd) + " — lower the unsure number to bound that.";
+        show(note, true);
+      }).catch(function () { /* the line is a courtesy; the search does not depend on it */ });
+    }, 250);
+  }
+  ["f-max-usd", "f-max-fetch-unsure", "f-snowball"].forEach(function (id) {
+    var el = $(id);
+    if (el) { el.addEventListener("input", previewSearchCost); el.addEventListener("change", previewSearchCost); }
+  });
+
   // exactly the fields `SearchOptions` has: it forbids extras, so a fourth would 422 the search
   function searchOptions() {
     var options = {};
     if ($("f-max-usd").value) { options.max_usd = Number($("f-max-usd").value); }
     if ($("f-max-screened").value) { options.max_screened = Number($("f-max-screened").value); }
+    if ($("f-max-fetch-unsure").value !== "") {
+      options.max_fetch_unsure = Number($("f-max-fetch-unsure").value);
+    }
+    if ($("f-depth").value) { options.depth = Number($("f-depth").value); }
+    options.snowball = !!$("f-snowball").checked;
+    var seeds = ($("f-seeds").value || "").split("\n").map(function (line) {
+      return line.trim();
+    }).filter(function (line) { return line.length > 0; });
+    if (seeds.length) { options.seed_dois = seeds; }
     // one entry per line, blanks dropped, spelling untouched: the server reports each line back
     // verbatim, and a line this page tidied would be a line the user never wrote
     var exclude = ($("f-exclude").value || "").split("\n").map(function (line) {
@@ -2557,15 +2621,37 @@
     ]));
   }
 
-  function renderFlow(counts, nSources, exclusions) {
+  function renderFlow(counts, nSources, exclusions, predicted) {
+    // "wanted or unsure → fetched": a fetched paper the screener could not decide about is
+    // counted in both `unsure` and `fetched`, so "wanted → fetched" would show more fetched
+    // than wanted and read as a contradiction (design 03 §5, m4)
     var text = plural(counts.records || 0, "record") + " from " + plural(nSources, "source")
       + " → " + plural(counts.after_dedupe || 0, "unique paper")
       + " → " + plural(counts.screened || 0, "abstract") + " read"
-      + " → " + plural(counts.included || 0, "paper") + " wanted"
-      + " → " + plural(counts.fetched || 0, "PDF") + " fetched, "
+      + " → " + plural(counts.included || 0, "paper") + " wanted or "
+      + plural(counts.unsure || 0, "paper") + " unsure"
+      + " → " + plural(counts.fetched || 0, "PDF") + " fetched"
+      + (counts.unsure_fetched ? " (" + counts.unsure_fetched + " of them unsure)" : "") + ", "
       + plural(counts.paywalled || 0, "paper") + " behind a paywall.";
+    var commit = (predicted || {}).run_commit;
+    if (commit && commit.n_read) {
+      text += " Beginning the review as it stands reads " + plural(commit.n_read, "paper")
+        + " at about " + money(commit.per_paper_usd) + " each — about " + money(commit.usd)
+        + (commit.n_unsure ? ", " + money(commit.unsure_usd) + " of it on the "
+           + plural(commit.n_unsure, "unsure paper") : "") + ".";
+    }
     if (counts.not_screened) {
       text += " " + plural(counts.not_screened, "record") + " nobody read.";
+    }
+    var rounds = (state.search && state.search.rounds) || [];
+    var real = rounds.filter(function (r) { return r.n_seeds; });
+    if (real.length) {
+      var newOnes = 0, included = 0;
+      real.forEach(function (r) { newOnes += r.n_new || 0; included += r.n_included || 0; });
+      text += " Citation chasing: " + plural(real.length, "round") + ", " + plural(newOnes, "new paper")
+        + ", " + included + " included.";
+    } else if (counts.snowballed) {
+      text += " " + plural(counts.snowballed, "paper") + " came from citation chasing.";
     }
     if (counts.possible_duplicates) {
       text += " " + plural(counts.possible_duplicates, "pair")
@@ -2685,10 +2771,53 @@
       : "built from your own words — no model was used to write them";
     var list = $("search-queries");
     clear(list);
-    (search.queries || []).forEach(function (query) {
+    // the concept blocks the strings were built from, above the strings: every term, its
+    // variants, and the terms width control pruned with the hit count that condemned each
+    var plan = search.plan || {};
+    (plan.blocks || []).forEach(function (block) {
+      if (!(block.terms || []).length) { return; }
+      var variants = [];
+      Object.keys(block.expanded || {}).forEach(function (term) {
+        (block.expanded[term] || []).forEach(function (v) { variants.push(v); });
+      });
+      var pruned = (block.pruned || []).map(function (p) {
+        return p.term + " (" + Number(p.hits || 0).toLocaleString() + ")";
+      });
       list.appendChild(h("li", { cls: "cand" }, [
         h("span", { cls: "cand-main" }, [
-          h("span", { cls: "cand-meta", text: query.text || "" }),
+          h("strong", { text: "block " + block.name + ": " + (block.terms || []).join(", ") }),
+          h("span", { cls: "cand-why", text: (block.why || "")
+              + (variants.length ? " Variants: " + variants.join(", ") + "." : "")
+              + (pruned.length ? " Pruned by width control: " + pruned.join(", ") + "." : "") })
+        ])
+      ]));
+    });
+    Object.keys(plan.width || {}).forEach(function (q) {
+      var w = plan.width[q];
+      if (!w || typeof w !== "object" || !("epmc_hits_before" in w)) { return; }
+      list.appendChild(h("li", { cls: "cand" }, [h("span", { cls: "cand-why",
+        text: q + ": " + Number(w.epmc_hits_before || 0).toLocaleString() + " Europe PMC hits before "
+          + "width control, " + Number(w.epmc_hits_after || 0).toLocaleString() + " after ("
+          + (w.iterations || 0) + " drop(s))" })]));
+    });
+    (plan.seed_check || []).forEach(function (row) {
+      list.appendChild(h("li", { cls: "cand" }, [h("span", { cls: "cand-why",
+        text: "seed " + row.doi + ": " + (row.reached_by && row.reached_by.length
+          ? "reached by " + row.reached_by.join(", ") : "reached by no string")
+          + ((row.restored || []).length ? "; restored " + row.restored.join(", ") : "")
+          + (row.rewritten ? "; the blocks were rewritten for it" : "")
+          + (row.injected ? "; added as a candidate found by you" : "") })]));
+    });
+    // one row per (query, index, form) now: the same string reaches each index in its own
+    // form, and a form the string was too long for is a row that says so rather than a
+    // missing one. The blocks the strings were built from render in a later step (design §9).
+    (search.queries || []).forEach(function (query) {
+      var label = [query.query_id, query.index, query.form].filter(Boolean).join(" · ");
+      list.appendChild(h("li", { cls: "cand" }, [
+        h("span", { cls: "cand-main" }, [
+          h("span", { cls: "cand-meta", text: (label ? label + ": " : "")
+              + (query.skipped ? "(not sent)" : (query.text || ""))
+              + (query.chars ? " [" + query.chars + " chars]" : "") }),
           h("span", { cls: "cand-why", text: query.why || "" })
         ])
       ]));
@@ -2749,6 +2878,11 @@
   var FETCH_WORDS = {
     no_oa_location: "No index offered an open-access copy.",
     over_fetch_cap: "The fetch cap stopped this search before this one was tried.",
+    over_unsure_cap: "The screener could not decide about it, and only the most relevant unsure "
+      + "papers are fetched — each one fetched is a paper the review reads in full. It stays "
+      + "ticked; raise the unsure cap, or attach the PDF, to read it.",
+    over_fetch_deadline: "The fetch stage ran out of time before this one was tried.",
+    no_pdf_link: "The page we were sent to named no PDF.",
     cancelled: "You stopped the search before this one was tried.",
     not_wanted: "The screener read it and did not want it, so no copy was fetched.",
     rate_limited: "An index asked us to slow down — that is our request rate, not a paywall.",
@@ -3180,7 +3314,8 @@
     var counts = search.counts || {};
     renderPhases(search.phases || []);
     renderCounts(counts, search.cost_usd);
-    renderFlow(counts, sourceNames(search.sources).length, search.exclusions);
+    renderFlow(counts, sourceNames(search.sources).length, search.exclusions,
+               search.predicted);
     renderQueries(search);
     renderNotes(search);
     renderDuplicates(search);
@@ -3282,6 +3417,18 @@
       return;
     }
     button.classList.remove("pending");
+    // the commitment, said before it is made: how many papers the review will read, how many of
+    // them nobody was sure about, and what that costs. A confirm and not a toast, because a
+    // toast is read after the money is spent.
+    var commit = ((state.search || {}).predicted || {}).run_commit;
+    if (commit && commit.n_unsure > 0 && !window.confirm(
+          plural(commit.n_read, "paper") + " will be read: " + commit.n_wanted + " the screener "
+          + "wanted and " + commit.n_unsure + " it could not decide about, at about "
+          + money(commit.per_paper_usd) + " each (≈ " + money(commit.usd) + " in all, "
+          + money(commit.unsure_usd) + " of it on the unsure ones). Untick any you do not want, "
+          + "or begin now?")) {
+      return;
+    }
     beginning = true;
     button.disabled = true;      // begin re-reads every staged PDF; two clicks would be two runs
     var options = runOptions();

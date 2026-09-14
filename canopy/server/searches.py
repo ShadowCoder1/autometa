@@ -58,10 +58,11 @@ from ..search.models import (KEY_RE, PHASES, Candidate, SearchRecord, counts_of,
 from .jobs import Job, JobManager
 from .uploads import DEFAULT_INGEST_TIMEOUT, DEFAULT_MAX_TOTAL_MB, safe_filename
 
-__all__ = ["DEFAULT_MAX_SCREENED", "DEFAULT_MAX_USD", "MAX_EXCLUSIONS", "MAX_EXCLUSION_CHARS",
+__all__ = ["DEFAULT_MAX_FETCH_UNSURE", "DEFAULT_MAX_SCREENED", "DEFAULT_MAX_USD",
+           "MAX_EXCLUSIONS", "MAX_EXCLUSION_CHARS", "MAX_SEED_DOIS",
            "SEARCH_BYTE_BUDGET", "SearchJobs", "SearchOptions", "candidate_from_json",
            "default_search_runner", "pdf_name", "phase_rows", "record_from_json",
-           "search_options_from", "skipped_of", "state_of"]
+           "search_options_from", "skipped_of", "state_of", "recording_dir", "RECORD_ROOT"]
 
 #: what a search costs at most, and how many abstracts it reads at most, when the page does not
 #: say. Both are caps a *person* should be able to raise, so they are environment-tunable like
@@ -72,6 +73,10 @@ __all__ = ["DEFAULT_MAX_SCREENED", "DEFAULT_MAX_USD", "MAX_EXCLUSIONS", "MAX_EXC
 #: that must agree is a smell — the pin is `test_the_default_cap_agrees_with_the_pipeline`.
 DEFAULT_MAX_USD = float(os.environ.get("CANOPY_SEARCH_MAX_USD", "2") or 2)
 DEFAULT_MAX_SCREENED = int(os.environ.get("CANOPY_SEARCH_MAX_SCREENED", "200") or 200)
+#: 100 is `canopy.search.fetch.DEFAULT_MAX_FETCH_UNSURE`, repeated for the same reason as the
+#: line above and pinned by the same test. Shown by `/api/settings` so the Find panel can price
+#: what a search may commit the review to.
+DEFAULT_MAX_FETCH_UNSURE = int(os.environ.get("CANOPY_SEARCH_MAX_FETCH_UNSURE", "100") or 100)
 
 #: how many papers one search may be forbidden, and how long each entry may be.
 #: A person naming their own prior work, a review they are validating against and a handful of
@@ -80,6 +85,7 @@ DEFAULT_MAX_SCREENED = int(os.environ.get("CANOPY_SEARCH_MAX_SCREENED", "200") o
 #: buys nobody anything a second search would not.
 MAX_EXCLUSIONS = 50
 MAX_EXCLUSION_CHARS = 300
+MAX_SEED_DOIS = 20
 
 #: how many bytes one search may KEEP on disk, in total, across every PDF it fetches.
 #: Deliberately the SAME number the upload door enforces — same disk, same person, and a search
@@ -114,10 +120,36 @@ class SearchOptions(BaseModel):
 
     max_usd: float | None = Field(default=None, gt=0)
     max_screened: int | None = Field(default=None, ge=1)
+    #: how many papers the fetch stage may try, and how many of the papers the screener could
+    #: not decide about are among them. The second is the one that prices the review: every
+    #: unsure PDF fetched is a paper `begin` sends to be read at dollars a paper.
+    max_fetch: int | None = Field(default=None, ge=0)
+    max_fetch_unsure: int | None = Field(default=None, ge=0)
+    #: rows asked of each index form per string (Europe PMC three times that); 200 / 1,000 /
+    #: 3,000 on the page
+    depth: int | None = Field(default=None, ge=50, le=5000)
+    #: DOIs the user says must be found: checked against the strings at abstract level, a
+    #: pruned term restored for them, one rewrite call, and injected as a last resort
+    seed_dois: list[str] | None = Field(default=None, max_length=MAX_SEED_DOIS)
+    #: citation chasing on (the default) or off
+    snowball: bool | None = None
     #: DOIs and title fragments this search may never propose — the user's own decision, recorded
     #: as theirs. Bounded like every other list this server accepts: a body is not a place to put
     #: an unbounded amount of anything, and a page that can send 50 lines can send 50,000.
     exclude: list[str] | None = Field(default=None, max_length=MAX_EXCLUSIONS)
+
+    @field_validator("seed_dois")
+    @classmethod
+    def _seed_entries(cls, entries: list[str] | None) -> list[str] | None:
+        """Blank lines dropped; each entry must at least look like a DOI."""
+        if entries is None:
+            return None
+        cleaned = [str(entry).strip() for entry in entries]
+        cleaned = [entry for entry in cleaned if entry]
+        for entry in cleaned:
+            if len(entry) > MAX_EXCLUSION_CHARS or "10." not in entry:
+                raise ValueError(f"a seed must be a DOI (10.xxxx/…): {entry[:60]!r} is not one")
+        return cleaned
 
     @field_validator("exclude")
     @classmethod
@@ -150,9 +182,21 @@ class SearchOptions(BaseModel):
         nothing would be a fact about nothing, and `job.json` is read by people.
         """
         chosen: dict[str, Any] = {
-            "max_usd": DEFAULT_MAX_USD if self.max_usd is None else float(self.max_usd),
-            "max_screened": (DEFAULT_MAX_SCREENED if self.max_screened is None
-                             else int(self.max_screened))}
+            "max_usd": DEFAULT_MAX_USD if self.max_usd is None else float(self.max_usd)}
+        # `max_screened` is an OVERRIDE (design 03 §3): absent, the pipeline screens what 70 %
+        # of `max_usd` buys at $0.003 a record, ranked; present, exactly this many
+        if self.max_screened is not None:
+            chosen["max_screened"] = int(self.max_screened)
+        if self.max_fetch is not None:
+            chosen["max_fetch"] = int(self.max_fetch)
+        if self.max_fetch_unsure is not None:
+            chosen["max_fetch_unsure"] = int(self.max_fetch_unsure)
+        if self.depth is not None:
+            chosen["depth"] = int(self.depth)
+        if self.snowball is not None:
+            chosen["snowball"] = bool(self.snowball)
+        if self.seed_dois:
+            chosen["seed_dois"] = list(self.seed_dois)
         if self.exclude:
             chosen["exclude"] = list(self.exclude)
         return chosen
@@ -289,6 +333,13 @@ def state_of(job: Job, record: SearchRecord) -> dict[str, Any]:
         "notes": list(record.notes),
         "possible_duplicates": [dict(d) for d in record.possible_duplicates
                                 if isinstance(d, Mapping)],
+        # what beginning this search would cost, in papers and dollars (`run_commit`), beside the
+        # predicted search cost: the number BLOCKER-3 said had to be visible before the button
+        "predicted": dict(record.predicted or {}),
+        # the concept blocks, width measurements and seed check behind the strings, and the
+        # citation-chasing rounds: the page draws them above the strings and in the flow line
+        "plan": dict(record.plan or {}),
+        "rounds": [dict(r) for r in (record.rounds or []) if isinstance(r, Mapping)],
         # what the USER forbade, one row per entry, including the entries that caught nothing.
         # Sent on every poll like the counts are: an exclusion the page never mentions is one the
         # user has to take on faith, and a mistyped DOI they would take on faith wrongly.
@@ -369,19 +420,54 @@ def default_search_runner(record: SearchRecord, *, search_dir: Path, options: Ma
     # deployment's cap), not the transport's — and what is already staged is subtracted, so a
     # search that a person has attached PDFs to cannot fetch its way past the total.
     budget = ByteBudget(max(0.0, SEARCH_BYTE_BUDGET - _staged_bytes(Path(search_dir) / "staging")))
+    transport: Any = HttpxTransport(budget=budget)
+    record_dir = recording_dir(record.search_id)
+    if record_dir is not None:
+        # every index answer and every fetch written down, so the bench can replay this search
+        # with no network. Opt-in by environment and never on by default: a fixture directory
+        # grows by megabytes per search.
+        from ..search.transport import RecordingTransport
+
+        transport = RecordingTransport(transport, record_dir)
+        record.notes.append(f"every index response of this search was recorded under "
+                            f"{record_dir} (CANOPY_SEARCH_RECORD)")
 
     # `run_search` builds and returns its OWN record — including the phases it just reported —
     # and `SearchJobs._run` saves whatever comes back, so the live copy above is replaced by the
     # finished one rather than merged with it.
     return run_search(
         question=record.question, protocol=_protocol_or_none(search_dir),
-        transport=HttpxTransport(budget=budget), client=client, model_roles=dict(MODELS),
+        transport=transport, client=client, model_roles=dict(MODELS),
         budget_usd=budget_usd,
-        max_screened=int(options.get("max_screened") or DEFAULT_MAX_SCREENED),
+        max_screened=(int(options["max_screened"]) if options.get("max_screened") else None),
         # already validated and length-capped by `SearchOptions`; absent means nothing was forbidden
         exclude=[str(entry) for entry in (options.get("exclude") or ())],
         staging_dir=search_dir / "staging", on_phase=on_phase, cancelled=cancel.is_set,
-        search_id=record.search_id)
+        search_id=record.search_id,
+        # the fetch caps, the depth, the seeds and the snowball switch only when the page set
+        # them; the pipeline's own defaults otherwise
+        **{name: int(options[name]) for name in ("max_fetch", "max_fetch_unsure", "depth")
+           if options.get(name) is not None},
+        **({"seed_dois": [str(d) for d in options["seed_dois"]]} if options.get("seed_dois")
+           else {}),
+        **({"chase_citations": bool(options["snowball"])} if options.get("snowball") is not None
+           else {}))
+
+
+#: where `CANOPY_SEARCH_RECORD=1` puts a search's recordings: the bench's fixture tree, one
+#: directory per search id. Any other value is taken as a directory of its own.
+RECORD_ROOT = Path(__file__).resolve().parents[2] / "validation" / "search_bench" / "fixtures"
+
+
+def recording_dir(search_id: str) -> Path | None:
+    """The directory this search's index answers are recorded under, or None when recording is
+    off. Read per call, not at import, so a test can set and unset it."""
+    raw = os.environ.get("CANOPY_SEARCH_RECORD", "").strip()
+    if not raw or raw.lower() in ("0", "false", "no"):
+        return None
+    if raw in ("1", "true", "yes"):
+        return RECORD_ROOT / safe_filename(str(search_id or "search"))
+    return Path(raw)
 
 
 def _staged_bytes(staging: Path) -> int:

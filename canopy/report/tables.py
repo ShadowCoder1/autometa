@@ -7,7 +7,8 @@ this module selects rows, names the analysis, and writes files.
 * `extraction_table` — one row per dataset × outcome with every raw value, the route, the
   conversion chain, the confidence bucket, the flags and the provenance (page, quote, crop). It is
   the artefact a reviewer checks the review with, so it holds what was read, not only what was
-  computed.
+  computed — and an arm whose value a human replaced says THAT instead of borrowing the page and
+  the quote of the reading it replaced, which is a claim about the wrong number.
 * `exclusions_table` — what was dropped, at which stage, why (a closed reason list), on whose
   say-so, with the quote.
 * `leave_one_out_table` — the pooled estimate without each study in turn.
@@ -35,7 +36,8 @@ from ..stats.meta import (EggerResult, MetaResult, egger_test, funnel_data, leav
 from . import theme
 from .theme import ACCENT, ACCENT_SOFT, AXIS, GRID, INK, INK_SECONDARY, MARK, MUTED, figure_style
 
-__all__ = ["extraction_table", "EXTRACTION_COLUMNS", "exclusions_table", "EXCLUSION_REASONS",
+__all__ = ["extraction_table", "EXTRACTION_COLUMNS", "HUMAN_PROVENANCE", "exclusions_table",
+           "EXCLUSION_REASONS",
            "leave_one_out_table", "leave_one_out_rows", "sensitivity_analyses",
            "sensitivity_outputs",
            "SENSITIVITY_ANALYSES", "funnel_plot", "prisma_flow", "PRISMA_CHAIN", "pool_rows",
@@ -213,10 +215,20 @@ EXTRACTION_COLUMNS: tuple[str, ...] = (
     # so a reviewer reads them next to the row's own value rather than past its moderators.
     "in_best_guess", "best_guess_rule", "best_guess_reason", "best_guess_es", "best_guess_se")
 
+#: what the quote column says when the value beside it is a human's rather than a reading's. The
+#: same words `overrides._rebuild_row` writes into the row's `notes`, so the two artefacts of one
+#: override read alike.
+HUMAN_PROVENANCE = "human override"
+
 
 def _group_provenance(record: EffectSizeRecord, group: str, verdicts: Mapping[tuple, Verdict],
                       candidates: Mapping[str, Candidate]) -> dict[str, Any]:
-    """Everything known about ONE group of one cell: verified values first, then where they came from."""
+    """Everything known about ONE group of one cell: verified values first, then where they came from.
+
+    "Where from" is a candidate's page, quote, crop and overlay — except on an arm a human
+    answered, which says so instead of borrowing them (the comment below says why that is not
+    merely tidier).
+    """
     key = (record.dataset_id, record.outcome_key, group)
     verdict = verdicts.get(key)
     suffix = group.lower()
@@ -232,6 +244,34 @@ def _group_provenance(record: EffectSizeRecord, group: str, verdicts: Mapping[tu
             f"route_{suffix}": verdict.route,
             f"sigma_{suffix}": verdict.sigma,
         })
+        if verdict.overridden_by_human:
+            # The back-fill below would print this arm's page, verbatim quote, crop and overlay from
+            # `candidate_ids` — and those still name the candidates behind the number a human
+            # REPLACED. A `value` override carries no quote, page or crop of its own, so the slot
+            # was empty and was filled from the overruled reading: a reviewer's corrected number
+            # beside another number's evidence. That is wrong provenance, not missing provenance,
+            # and it is strictly worse — a reader who checks the quote concludes the NUMBER is
+            # wrong when it is the quote that does not belong. Two real rows of `runs/et_with_dbs` printed exactly
+            # that: `mean_b = 35.4` next to the sentence printing 27.1 for the other arm, and a
+            # reviewer's swapped series next to the digitiser's overlay of the box it overruled.
+            #
+            # `overridden_by_human` is the mark on the CELL — `overrides._apply_value` sets it on
+            # the arm it answers and on no other — which is what this function needs, because the
+            # other arm of the same row must keep the provenance of the reading it still comes
+            # from. The record's `human_override` flag is a ROW-level mark that every override kind
+            # writes (including ones that touched neither arm's value), so it cannot say which arm
+            # to blank; and a verdict's route is "human" only for a cell the run never read, which
+            # has no candidate to be wrong about in the first place.
+            #
+            # The cost, accepted: a direction-only answer also sets this, and such an arm loses a
+            # quote that was still true of its mean. Nothing on the verdict records WHICH fields a
+            # human replaced, and any heuristic (an orientation source, a value that still matches a
+            # candidate) goes wrong on a cell that has been answered twice — wrong in the direction
+            # of printing the stale quote again. The justification below says what happened either
+            # way, and the untouched readings are all still in the paper's `extract.json`.
+            out[f"quote_{suffix}"] = (f"{HUMAN_PROVENANCE}: {verdict.override_justification}"
+                                      if verdict.override_justification else HUMAN_PROVENANCE)
+            return out
         for cid in verdict.candidate_ids:
             cand = candidates.get(cid)
             if cand is None:

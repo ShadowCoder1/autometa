@@ -6,20 +6,28 @@ DATA — a dict with its name, the query it was asked, how many rows came back a
 never an exception. A search that dies because one index had a bad afternoon is a search that
 cannot be trusted to have looked, and the user would have no way to tell the two apart.
 
-WHO IS HERE, AND WHY IN THIS ORDER
-----------------------------------
-* **Europe PMC** — first, and the reason is REQUEST ECONOMY, not subject matter. It is unmetered
-  and keyless, so asking it costs nothing and cannot exhaust anything. It is deliberately *not*
-  called "the primary spine because it is the right index for medicine": Canopy's own product rule
-  is that nothing here knows a research field (`server/app.py`), and hard-coding a field's index as
-  the spine would break it. Which index actually earned its place is a MEASURED fact — the record
-  carries `unique_contributed` per index, and a reader can see for their own question whether the
-  ordering paid off (review §C4).
-* **OpenAlex** — second, and metered since February 2026: $0.10 of budget a day anonymously and
-  $0.001 per `.search` request, so roughly 100 requests a day (review §C1, verified live). It is
-  the cross-domain recall arm, and it must DEGRADE: when the budget is gone, or the service is
-  down, the adapter returns no candidates and a note that says so in words, and the search carries
-  on with what Europe PMC found.
+WHO IS HERE, AND WHY IN THIS ORDER (design 03 §2)
+--------------------------------------------------
+The order is by MEASURED ranking quality on the first answer key, string B at depth 1,000
+(design 04 §A): PubMed 20 of 23 papers in its top thousand, OpenAlex title-and-abstract 18,
+OpenAlex full text 16, Europe PMC 8 (11 at 3,000). Not by subject matter: Canopy's own product
+rule is that nothing here knows a research field (`server/app.py`), and which index actually
+earned its place on a given question is still a measured fact — the record carries
+`unique_contributed` per index and the entry position of every candidate per index form.
+
+* **PubMed** — first. `esearch … sort=relevance` was the best ranker measured, its automatic term
+  mapping reaches a paper that says a noun with a string that says its adjective, and it is
+  free (3 requests a second without a key, `tool`/`email` sent as NCBI asks). It returns ids only,
+  so every page is hydrated through Europe PMC in batches of a hundred.
+* **OpenAlex** — second, title and abstract, and the same string against full text last, only
+  when it fits the 1,500-character limit of `search=`. Metered since February 2026: $0.001 per
+  search request and, anonymously, throttled for any Boolean string with more than five
+  operators — which every block string is — so `CANOPY_OPENALEX_KEY` (free) is what makes this
+  arm reliable. It must DEGRADE: a 429 is no candidates and a note that names the key, and the
+  search carries on with PubMed and Europe PMC.
+* **Europe PMC** — third, unmetered and keyless, asked three pages deep (3,000) because its
+  relevance order puts the key's papers late; it is also where every hit count for width control
+  comes from and where PubMed's ids are hydrated.
 * **Crossref** — metadata and DOI fill, never discovery. Its abstracts are raw JATS, present for
   about a quarter of works, and carry a copyright warning; using it to screen would be using the
   wrong tool badly. `discovery = False` says so in code, and `run.py` reads that flag.
@@ -56,16 +64,20 @@ THE TWO TRAPS THIS MODULE EXISTS TO NOT FALL INTO
 from __future__ import annotations
 
 import os
-from typing import Any, Mapping, Sequence
+import time
+from typing import Any, Callable, Mapping, Sequence
 
 from .dedupe import key_for, normalise_doi
 from .models import Candidate
 from .transport import DEFAULT_TIMEOUT, SearchTransport
 
 __all__ = [
-    "EuropePmc", "OpenAlex", "Crossref", "Unpaywall", "INDEXES", "DISCOVERY_INDEXES",
-    "OA_ID_PREFIXES", "MAX_ABSTRACT_WORDS", "contact_email", "reconstruct_abstract",
-    "links_for", "source_record", "oa_id_urls", "parse_index_names",
+    "EuropePmc", "OpenAlex", "PubMed", "Crossref", "Unpaywall", "INDEXES", "DISCOVERY_INDEXES",
+    "OA_ID_PREFIXES", "MAX_ABSTRACT_WORDS", "FREE_AVAILABILITY_CODES", "DEPTH_FACTORS",
+    "DEFAULT_DEPTH", "MAX_RETRY_AFTER_S", "PAGE_TIMEOUT", "TRANSIENT_PAUSE_S", "contact_email",
+    "openalex_key", "depth_for",
+    "reconstruct_abstract", "links_for", "source_record", "oa_id_urls", "parse_index_names",
+    "search_pages",
 ]
 
 #: the OA URL id-keys `fetch.py` reads, BEST FIRST — this tuple *is* the fetch order of §3.5, and
@@ -87,9 +99,16 @@ OA_ID_PREFIXES: tuple[str, ...] = (
 #: anyway, and a record with a million positions should cost one long abstract, not the machine.
 MAX_ABSTRACT_WORDS = 4000
 
-#: how many `locations[].pdf_url` entries are worth carrying. `MAX_ATTEMPTS` in `fetch.py` is 3, so
-#: carrying twenty would be twenty rows of `search.json` that can never be tried.
-MAX_LOCATION_PDFS = 3
+#: how many `locations[].pdf_url` entries are worth carrying. `MAX_ATTEMPTS` in `fetch.py` is 8,
+#: so carrying twenty would be rows of `search.json` that can never be tried.
+MAX_LOCATION_PDFS = 5
+
+#: Europe PMC `fullTextUrlList` availability codes that name a copy this server may fetch. `OA`
+#: is the open-access subset; `F` is a free full text that is NOT in that subset — the NIH author
+#: manuscripts carry an explicit `F` + `pdf` route, and reading only `OA` offered none of the
+#: first answer key's four author manuscripts (design 04 m1). The code is the URL's, not a licence: the
+#: licence field is still copied verbatim and never inferred from a download that worked.
+FREE_AVAILABILITY_CODES = frozenset({"OA", "F"})
 
 
 def contact_email() -> str:
@@ -99,6 +118,23 @@ def contact_email() -> str:
     server that gains the variable does not need restarting to become polite.
     """
     return os.environ.get("CANOPY_CONTACT_EMAIL", "").strip()
+
+
+def openalex_key() -> str:
+    """The OpenAlex API key, or `""`. Never logged, never written into a record or a fixture
+    (`transport.IDENTITY_PARAMS` strips it); `/api/settings` says only whether one is set."""
+    return os.environ.get("CANOPY_OPENALEX_KEY", "").strip()
+
+
+#: how deep each index form is read per query, at the default depth of 1,000 (design 03 §2:
+#: PubMed and OpenAlex 1,000, Europe PMC 3,000 because its relevance order puts the key's
+#: papers late — 8 in the top 1,000, 11 at 3,000). `depth` scales all of them proportionally.
+DEPTH_FACTORS: dict[str, float] = {"pubmed": 1.0, "openalex": 1.0, "europepmc": 3.0}
+DEFAULT_DEPTH = 1000
+
+
+def depth_for(index_name: str, depth: int = DEFAULT_DEPTH) -> int:
+    return max(1, int(round(int(depth) * DEPTH_FACTORS.get(index_name, 1.0))))
 
 
 # --------------------------------------------------------------------------------- small helpers
@@ -240,40 +276,78 @@ class EuropePmc:
     URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
     MAX_PAGE = 1000                       # the API's own maximum
 
-    def request(self, query: str, *, limit: int) -> tuple[str, dict[str, Any]]:
+    def request(self, query: str, *, limit: int, cursor: str = "*",
+                form: str = "") -> tuple[str, dict[str, Any]]:
         """The URL and params for one call. Exposed so a test can record a fixture at exactly the
-        key the adapter will ask for, rather than at a key a test author guessed."""
+        key the adapter will ask for, rather than at a key a test author guessed. `form` is
+        accepted for the shared paging loop and means nothing here."""
+        del form
         return self.URL, {
             "query": query,
             "format": "json",
             "pageSize": max(1, min(int(limit), self.MAX_PAGE)),
             "resultType": "core",
-            # offset paging was removed in 2016; `cursorMark=*` is the only first page there is
-            "cursorMark": "*",
+            # offset paging was removed in 2016; `cursorMark=*` is the first page and the API's
+            # `nextCursorMark` the next
+            "cursorMark": cursor or "*",
         }
+
+    def count_request(self, query: str) -> tuple[str, dict[str, Any]]:
+        """One row, `lite`: the cheapest way to ask how many records a string matches — width
+        control's whole instrument (`width.py`)."""
+        return self.URL, {"query": query, "format": "json", "pageSize": 1,
+                          "resultType": "lite", "cursorMark": "*"}
+
+    CITATIONS_URL = "https://www.ebi.ac.uk/europepmc/webservices/rest/MED/{pmid}/{kind}"
+
+    def citations_request(self, pmid: str, kind: str = "citations", *, page: int = 1,
+                          limit: int = 100) -> tuple[str, dict[str, Any]]:
+        """`/MED/<pmid>/citations` or `/references`: the citation-chasing fallback when OpenAlex
+        will not answer. Answers ids (`id`, `source`), which `hydrate_request` turns into
+        records."""
+        return (self.CITATIONS_URL.format(pmid=pmid, kind=kind),
+                {"page": max(1, int(page)), "pageSize": max(1, min(int(limit), 1000)),
+                 "format": "json"})
+
+    def hydrate_request(self, pmids: Sequence[str], *, limit: int = 100
+                        ) -> tuple[str, dict[str, Any]]:
+        """`SRC:MED AND (EXT_ID:… OR …)`: PubMed ids into full records, a hundred at a time
+        (≈ 1,900 characters a batch, verified)."""
+        ids = " OR ".join(f"EXT_ID:{p}" for p in pmids)
+        return self.request(f"SRC:MED AND ({ids})", limit=limit)
 
     def search(self, transport: SearchTransport, query: str, *, limit: int = 200,
                timeout: float = DEFAULT_TIMEOUT) -> tuple[list[Candidate], dict[str, Any]]:
-        url, params = self.request(query, limit=limit)
-        response = transport.get_json(url, params=params, timeout=timeout)
+        """One page. `search_pages` is the deep form; this stays for the callers and tests that
+        want a single request."""
+        candidates, info = self.page(transport, query, limit=limit, timeout=timeout)
+        return candidates, source_record(self.name, query, n_returned=len(candidates),
+                                         **{k: v for k, v in info.items() if k != "next_cursor"})
+
+    def page(self, transport: SearchTransport, query: str, *, limit: int, cursor: str = "*",
+             form: str = "", timeout: float = DEFAULT_TIMEOUT,
+             context: Mapping[str, Any] | None = None) -> tuple[list[Candidate], dict[str, Any]]:
+        """One page of results and what the index said about it: `{next_cursor, total_hits,
+        more_available, outcome, status, seconds, error, retry_after}`."""
+        url, params = self.request(query, limit=limit, cursor=cursor, form=form)
+        response = transport.get_json(url, params=params, timeout=timeout, context=context)
+        base = {"outcome": response.outcome, "status": response.status,
+                "seconds": round(response.seconds, 3), "retry_after": response.retry_after,
+                "next_cursor": "", "more_available": False}
         if not response.ok:
-            return [], source_record(self.name, query, error=response.error or response.outcome,
-                                     outcome=response.outcome, status=response.status,
-                                     seconds=round(response.seconds, 3))
+            return [], {**base, "error": response.error or response.outcome}
         payload = response.json()
         if not isinstance(payload, dict):
-            return [], source_record(self.name, query,
-                                     error="Europe PMC answered with something that was not JSON",
-                                     outcome="unreadable", status=response.status)
+            return [], {**base, "outcome": "unreadable",
+                        "error": "Europe PMC answered with something that was not JSON"}
         rows = ((payload.get("resultList") or {}).get("result") or [])
         candidates = [self.parse(row) for row in rows if isinstance(row, dict)]
-        return candidates, source_record(
-            self.name, query, n_returned=len(candidates), outcome=response.outcome,
-            status=response.status, seconds=round(response.seconds, 3),
-            total_hits=payload.get("hitCount"),
-            # a cursor left over means we asked for fewer rows than exist. Recorded so "we found 40"
-            # is never mistaken for "there are 40".
-            more_available=bool(payload.get("nextCursorMark") and len(rows) >= params["pageSize"]))
+        next_cursor = _text(payload.get("nextCursorMark"), 200)
+        # a cursor left over means we asked for fewer rows than exist. Recorded so "we found 40"
+        # is never mistaken for "there are 40".
+        more = bool(next_cursor and next_cursor != cursor and len(rows) >= params["pageSize"])
+        return candidates, {**base, "error": "", "total_hits": payload.get("hitCount"),
+                            "next_cursor": next_cursor if more else "", "more_available": more}
 
     def parse(self, row: Mapping[str, Any]) -> Candidate:
         doi = normalise_doi(row.get("doi"))
@@ -286,21 +360,27 @@ class EuropePmc:
             if value:
                 ids[key] = value
 
-        # the OA routes, in the order §3.5 tries them. The rule is the index's own, and the same
-        # one `validation/papers_oa/fetch_oa_papers.py:397` already uses: availabilityCode "OA"
-        # AND documentStyle "pdf". `availability` ("Open access") is prose and is not parsed.
+        # the free routes, in the order §3.5 tries them. The rule is the index's own:
+        # availabilityCode in `FREE_AVAILABILITY_CODES` AND documentStyle "pdf". `availability`
+        # ("Open access") is prose and is not parsed.
         n_pdf = 0
         for entry in ((row.get("fullTextUrlList") or {}).get("fullTextUrl") or []):
             if not isinstance(entry, dict):
                 continue
-            if (str(entry.get("availabilityCode") or "").upper() == "OA"
+            if (str(entry.get("availabilityCode") or "").upper() in FREE_AVAILABILITY_CODES
                     and str(entry.get("documentStyle") or "").lower() == "pdf"):
                 url = _text(entry.get("url"), 600)
                 if url.startswith("http"):
                     n_pdf += 1
                     ids["europepmc_oa_pdf" + (f"_{n_pdf}" if n_pdf > 1 else "")] = url
-        # the render route, from the flags — and `_is_yes`, because these are the strings "Y"/"N"
-        if pmcid and _is_yes(row.get("isOpenAccess")) and _is_yes(row.get("hasPDF")):
+        # the render route, from the flags — and `_is_yes`, because these are the strings "Y"/"N".
+        # `inEPMC` ∧ `hasPDF`, NOT `isOpenAccess`: the render endpoint serves any PDF Europe PMC
+        # holds, and the OA flag only says whether the copy is in the licensed subset. The four
+        # author manuscripts the first answer key needed were `isOpenAccess: N, hasPDF: Y, inEPMC: Y`
+        # and were never tried (design 03 §7a). The flag itself is kept, because it is a fact.
+        if _is_yes(row.get("isOpenAccess")) or str(row.get("isOpenAccess") or "").strip():
+            ids["europepmc_oa_flag"] = "Y" if _is_yes(row.get("isOpenAccess")) else "N"
+        if pmcid and _is_yes(row.get("inEPMC")) and _is_yes(row.get("hasPDF")):
             ids["europepmc_render"] = f"https://europepmc.org/articles/{pmcid}?pdf=render"
 
         landing = ""
@@ -369,70 +449,154 @@ class OpenAlex:
     #: top-level only — `best_oa_location.pdf_url` in `select` is REJECTED by the API; you select
     #: the whole object. (`filter` does take dotted paths, which is the confusing part.)
     SELECT = ("id,doi,ids,display_name,publication_year,type,language,open_access,"
-              "best_oa_location,locations,primary_location,abstract_inverted_index,authorships")
+              "best_oa_location,locations,primary_location,abstract_inverted_index,authorships,"
+              "referenced_works,cited_by_count")
 
-    def request(self, query: str, *, limit: int) -> tuple[str, dict[str, Any]]:
+    def request(self, query: str, *, limit: int, cursor: str = "*",
+                form: str = "ta") -> tuple[str, dict[str, Any]]:
+        """`form="ta"`: the string against `filter=title_and_abstract.search:` (stemmed, measured
+        as the second-best ranker); `form="ft"`: the same string as `search=`, full text, which
+        the caller only sends under 1,400 characters. Both sorted by relevance, cursor-paged,
+        keyed when `CANOPY_OPENALEX_KEY` is set."""
         params: dict[str, Any] = {
-            # `title_and_abstract.search`, not `search`: the latter searches FULL TEXT, which
-            # measured ~7× the hits and would be ~7× the screening bill for passing mentions.
-            # `is_retracted:false` is a filter, not a search term, and costs nothing extra.
-            "filter": f"title_and_abstract.search:{query},is_retracted:false",
             "per-page": max(1, min(int(limit), self.MAX_PAGE)),
             "select": self.SELECT,
-            "cursor": "*",
+            "sort": "relevance_score:desc",
+            "cursor": cursor or "*",
         }
+        if form == "ft":
+            params["search"] = query
+            params["filter"] = "is_retracted:false"
+        else:
+            # `is_retracted:false` is a filter, not a search term, and costs nothing extra.
+            params["filter"] = f"title_and_abstract.search:{query},is_retracted:false"
         email = contact_email()
         if email:
             # etiquette rather than economy: since Feb 2026 `mailto` no longer buys a separate
             # quota, it decrements the same counter. It still tells them who to shout at.
             params["mailto"] = email
+        key = openalex_key()
+        if key:
+            params["api_key"] = key
         return self.URL, params
+
+    def filter_request(self, filter_expr: str, *, limit: int = MAX_PAGE, cursor: str = "*",
+                       select: str | None = None) -> tuple[str, dict[str, Any]]:
+        """A pure `filter=` request — `cites:W…`, `doi:a|b`, `openalex_id:W1|W2`,
+        `authorships.author.id:A…` — the citation-chasing requests (design 03 §6). No search
+        term, so $0.0001 rather than $0.001, and no Boolean operators for the anonymous throttle
+        to count. Relevance sort is meaningless here; OpenAlex's default order is used."""
+        params: dict[str, Any] = {"filter": filter_expr,
+                                  "per-page": max(1, min(int(limit), self.MAX_PAGE)),
+                                  "select": select or self.SELECT, "cursor": cursor or "*"}
+        email = contact_email()
+        if email:
+            params["mailto"] = email
+        key = openalex_key()
+        if key:
+            params["api_key"] = key
+        return self.URL, params
+
+    def filter_page(self, transport: SearchTransport, filter_expr: str, *, limit: int = MAX_PAGE,
+                    cursor: str = "*", select: str | None = None,
+                    timeout: float = DEFAULT_TIMEOUT,
+                    context: Mapping[str, Any] | None = None
+                    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """One page of RAW works for a filter, plus `{next_cursor, total_hits, outcome, status,
+        error, retry_after}`. Raw rows rather than candidates, because the snowball reads
+        `referenced_works` and `authorships` off them before it decides what to hydrate."""
+        url, params = self.filter_request(filter_expr, limit=limit, cursor=cursor, select=select)
+        response = transport.get_json(url, params=params, timeout=timeout, context=context)
+        base = {"outcome": response.outcome, "status": response.status,
+                "retry_after": response.retry_after, "next_cursor": "", "total_hits": None}
+        if not response.ok:
+            body = response.body.decode("utf-8", "replace")[:400] if response.body else ""
+            return [], {**base, "error": response.error or response.outcome,
+                        "note": self.degradation_note(response.outcome, response.status, body)}
+        payload = response.json()
+        if not isinstance(payload, dict):
+            return [], {**base, "outcome": "unreadable", "error": "OpenAlex answered with "
+                                                                  "something that was not JSON"}
+        meta = payload.get("meta") or {}
+        rows = [r for r in (payload.get("results") or []) if isinstance(r, dict)]
+        next_cursor = _text(meta.get("next_cursor"), 400)
+        return rows, {**base, "error": "", "total_hits": meta.get("count"),
+                      "next_cursor": next_cursor if next_cursor and len(rows) >= params["per-page"]
+                      else ""}
+
+    def count_request(self, query: str, *, form: str = "ta") -> tuple[str, dict[str, Any]]:
+        """`meta.count` for one string, one row, ids only — width control's OpenAlex check
+        ($0.001 a request, so at most ten per string)."""
+        url, params = self.request(query, limit=1, form=form)
+        params["select"] = "id"
+        params.pop("cursor", None)
+        return url, params
 
     def search(self, transport: SearchTransport, query: str, *, limit: int = 200,
                timeout: float = DEFAULT_TIMEOUT) -> tuple[list[Candidate], dict[str, Any]]:
-        url, params = self.request(query, limit=limit)
-        response = transport.get_json(url, params=params, timeout=timeout)
+        candidates, info = self.page(transport, query, limit=limit, timeout=timeout)
+        return candidates, source_record(self.name, query, n_returned=len(candidates),
+                                         **{k: v for k, v in info.items() if k != "next_cursor"})
+
+    def page(self, transport: SearchTransport, query: str, *, limit: int, cursor: str = "*",
+             form: str = "ta", timeout: float = DEFAULT_TIMEOUT,
+             context: Mapping[str, Any] | None = None) -> tuple[list[Candidate], dict[str, Any]]:
+        url, params = self.request(query, limit=limit, cursor=cursor, form=form)
+        response = transport.get_json(url, params=params, timeout=timeout, context=context)
+        base = {"outcome": response.outcome, "status": response.status,
+                "seconds": round(response.seconds, 3), "retry_after": response.retry_after,
+                "next_cursor": "", "more_available": False}
         if not response.ok:
-            return [], source_record(self.name, query, error=response.error or response.outcome,
-                                     outcome=response.outcome, status=response.status,
-                                     seconds=round(response.seconds, 3),
-                                     note=self.degradation_note(response.outcome, response.status))
+            body = response.body.decode("utf-8", "replace")[:400] if response.body else ""
+            return [], {**base, "error": response.error or response.outcome,
+                        "note": self.degradation_note(response.outcome, response.status, body)}
         payload = response.json()
         if not isinstance(payload, dict):
-            return [], source_record(
-                self.name, query, error="OpenAlex answered with something that was not JSON",
-                outcome="unreadable", status=response.status,
-                note="OpenAlex could not be read this time, so this query's results are Europe "
-                     "PMC's alone")
+            return [], {**base, "outcome": "unreadable",
+                        "error": "OpenAlex answered with something that was not JSON",
+                        "note": "OpenAlex could not be read this time, so this query's results "
+                                "are the other indexes' alone"}
         meta = payload.get("meta") or {}
         rows = payload.get("results") or []
         candidates = [self.parse(row) for row in rows if isinstance(row, dict)]
-        return candidates, source_record(
-            self.name, query, n_returned=len(candidates), outcome=response.outcome,
-            status=response.status, seconds=round(response.seconds, 3),
-            total_hits=meta.get("count"),
-            # free, machine-readable proof that the query the user is shown is the query that ran.
-            # A silent misparse (a stray parenthesis turning AND into OR) is otherwise invisible.
-            parsed_as=_text((meta.get("x_query") or {}).get("oql"), 1000),
-            cost_usd=meta.get("cost_usd"))
+        next_cursor = _text(meta.get("next_cursor"), 400)
+        more = bool(next_cursor and len(rows) >= params["per-page"])
+        return candidates, {**base, "error": "", "total_hits": meta.get("count"),
+                            # free, machine-readable proof that the query the user is shown is
+                            # the query that ran. A silent misparse (a stray parenthesis turning
+                            # AND into OR) is otherwise invisible.
+                            "parsed_as": _text((meta.get("x_query") or {}).get("oql"), 1000),
+                            "cost_usd": meta.get("cost_usd"),
+                            "next_cursor": next_cursor if more else "", "more_available": more}
 
     @staticmethod
-    def degradation_note(outcome: str, status: int = 0) -> str:
+    def degradation_note(outcome: str, status: int = 0, body: str = "") -> str:
         """The sentence a user reads when OpenAlex did not answer. Never a stack trace.
 
-        The 429 wording is the one that matters: OpenAlex's meter and OpenAlex being busy look
-        identical from here, so the note says both and names the thing the user can act on.
+        Three 429s look alike from here and want three different things of the user: the
+        operator throttle (a Boolean string with more than five operators, anonymous) wants
+        the free key; the daily $0.10 meter wants tomorrow or the key; a busy cluster wants a
+        minute. The body says which when it says anything, and the note names it.
         """
+        text = str(body or "").lower()
         if outcome == "rate_limited" or status == 429:
+            if "operator" in text:
+                return ("OpenAlex limits anonymous searches with more than five AND/OR operators "
+                        "— set CANOPY_OPENALEX_KEY (free) to run this string; this search used "
+                        "PubMed and Europe PMC for it")
+            if "retry" in text or "load" in text:
+                return ("OpenAlex is under load and asked us to retry in a moment; this string "
+                        "was answered by PubMed and Europe PMC, and CANOPY_OPENALEX_KEY (free) "
+                        "puts a search ahead of the anonymous queue")
             return ("OpenAlex would not answer any more requests today — its free daily budget is "
                     "$0.10, about 100 searches, and it resets at midnight UTC. This search used "
-                    "Europe PMC alone; running it again tomorrow, or setting an OpenAlex API key, "
-                    "would widen it")
+                    "PubMed and Europe PMC for it; running it again tomorrow, or setting "
+                    "CANOPY_OPENALEX_KEY (free), would widen it")
         if outcome in ("timeout", "network_error", "dns_error"):
-            return ("OpenAlex could not be reached, so this search is Europe PMC's results alone "
-                    "— it is narrower than it would have been, not wrong")
+            return ("OpenAlex could not be reached, so this search is the other indexes' results "
+                    "alone — it is narrower than it would have been, not wrong")
         return ("OpenAlex did not answer this query, so its results are missing from this search; "
-                "Europe PMC's are not")
+                "the other indexes' are not")
 
     def parse(self, row: Mapping[str, Any]) -> Candidate:
         raw_ids = row.get("ids") if isinstance(row.get("ids"), dict) else {}
@@ -499,6 +663,128 @@ def _openalex_authors(row: Mapping[str, Any]) -> list[str]:
             authors.append(f"{parts[-1]}, {' '.join(parts[:-1])}" if len(parts) > 1 else name)
     return authors[:60]
 
+
+
+# ----------------------------------------------------------------------------------------- PubMed
+class PubMed:
+    """MEDLINE through NCBI eutils — the best ranker measured, and an index of IDS.
+
+    `esearch.fcgi … sort=relevance` returned 20 of the first answer key's 23 papers in its top
+    thousand for string B (design 04 §A), including the one paper no literal index reaches,
+    because PubMed's automatic term mapping stems and MeSH-maps a bare word. It answers with
+    PMIDs and a `querytranslation` saying what it made of the string — kept as `parsed_as`, so a
+    reader can see the mapping — and nothing else, so every page is HYDRATED through Europe PMC
+    (`SRC:MED AND (EXT_ID:… OR …)`, a hundred ids a request, `resultType=core`), which is what
+    gives the candidate its abstract and its open-access routes. `found_by` says `pubmed` and
+    the entry position is PubMed's.
+
+    `tool` and `email` are sent as NCBI asks; the host clock keeps to 3 requests a second.
+    """
+
+    name = "pubmed"
+    discovery = True
+    URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+    MAX_PAGE = 10000                      # esearch's own `retmax` ceiling
+    HYDRATE_BATCH = 100
+    TOOL = "canopy-meta"
+
+    def request(self, query: str, *, limit: int, cursor: str = "*",
+                form: str = "") -> tuple[str, dict[str, Any]]:
+        """One esearch page. `cursor` is the `retstart` offset as a string (`"*"` = 0)."""
+        del form
+        try:
+            start = 0 if cursor in ("", "*") else int(cursor)
+        except ValueError:
+            start = 0
+        params: dict[str, Any] = {
+            "db": "pubmed", "term": query, "sort": "relevance", "retmode": "json",
+            "retmax": max(1, min(int(limit), self.MAX_PAGE)), "retstart": start,
+            "tool": self.TOOL,
+        }
+        email = contact_email()
+        if email:
+            params["email"] = email
+        return self.URL, params
+
+    def search(self, transport: SearchTransport, query: str, *, limit: int = 200,
+               timeout: float = DEFAULT_TIMEOUT) -> tuple[list[Candidate], dict[str, Any]]:
+        candidates, info = self.page(transport, query, limit=limit, timeout=timeout)
+        return candidates, source_record(self.name, query, n_returned=len(candidates),
+                                         **{k: v for k, v in info.items() if k != "next_cursor"})
+
+    def page(self, transport: SearchTransport, query: str, *, limit: int, cursor: str = "*",
+             form: str = "", timeout: float = DEFAULT_TIMEOUT,
+             context: Mapping[str, Any] | None = None) -> tuple[list[Candidate], dict[str, Any]]:
+        url, params = self.request(query, limit=limit, cursor=cursor, form=form)
+        # POSTed, every parameter in the body: a block string is thousands of characters and
+        # eutils answers 414 to a GET above ~3,000 (measured), while NCBI documents POST for
+        # long terms. The fixture key is the same either way.
+        response = transport.get_json(url, params={}, form_data=params, timeout=timeout,
+                                      context=context)
+        base = {"outcome": response.outcome, "status": response.status,
+                "seconds": round(response.seconds, 3), "retry_after": response.retry_after,
+                "next_cursor": "", "more_available": False, "n_hydration_requests": 0}
+        if not response.ok:
+            return [], {**base, "error": response.error or response.outcome,
+                        "note": f"PubMed did not answer ({response.error or response.outcome}); "
+                                f"this string was answered by the other indexes"}
+        payload = response.json()
+        result = payload.get("esearchresult") if isinstance(payload, dict) else None
+        if not isinstance(result, dict):
+            return [], {**base, "outcome": "unreadable",
+                        "error": "PubMed answered with something that was not an esearch result"}
+        if result.get("ERROR"):
+            return [], {**base, "outcome": "http_error", "error": _text(result.get("ERROR"), 300),
+                        "parsed_as": _text(result.get("querytranslation"), 1000)}
+        ids = [_text(i, 32) for i in (result.get("idlist") or []) if _text(i, 32)]
+        try:
+            total = int(result.get("count") or 0)
+        except (TypeError, ValueError):
+            total = None
+        candidates, n_requests, n_missing = self.hydrate(transport, ids, timeout=timeout,
+                                                          context=context)
+        start = int(params["retstart"]) + len(ids)
+        more = bool(ids) and total is not None and start < total
+        return candidates, {**base, "error": "", "total_hits": total,
+                            "parsed_as": _text(result.get("querytranslation"), 1000),
+                            "n_hydration_requests": n_requests, "n_unhydrated": n_missing,
+                            "next_cursor": str(start) if more else "", "more_available": more}
+
+    def hydrate(self, transport: SearchTransport, pmids: Sequence[str], *,
+                timeout: float = DEFAULT_TIMEOUT,
+                context: Mapping[str, Any] | None = None) -> tuple[list[Candidate], int, int]:
+        """PMIDs → candidates in PMID order, through Europe PMC. Returns `(candidates,
+        requests made, ids Europe PMC did not know)`. An id it does not hold (a record too new
+        for its mirror, a withdrawn one) is counted, never invented."""
+        epmc = EuropePmc()
+        by_pmid: dict[str, Candidate] = {}
+        n_requests = 0
+        for start in range(0, len(pmids), self.HYDRATE_BATCH):
+            batch = list(pmids[start:start + self.HYDRATE_BATCH])
+            url, params = epmc.hydrate_request(batch, limit=self.HYDRATE_BATCH)
+            n_requests += 1
+            response = transport.get_json(
+                url, params=params, timeout=timeout,
+                context={**dict(context or {}), "index": "europepmc", "form": "hydrate",
+                         "query_id": str((context or {}).get("query_id") or ""),
+                         "page": n_requests, "query_text": params["query"], "exact": True})
+            payload = response.json() if response.ok else None
+            rows = ((payload.get("resultList") or {}).get("result") or []) \
+                if isinstance(payload, dict) else []
+            for row in rows:
+                if isinstance(row, dict):
+                    candidate = epmc.parse(row)
+                    pmid = candidate.ids.get("pmid") or _text(row.get("pmid"), 32)
+                    if pmid and pmid not in by_pmid:
+                        by_pmid[pmid] = candidate
+        out: list[Candidate] = []
+        for pmid in pmids:
+            candidate = by_pmid.get(pmid)
+            if candidate is None:
+                continue
+            candidate.found_by = [self.name]
+            out.append(candidate)
+        return out, n_requests, len(pmids) - len(out)
 
 # --------------------------------------------------------------------------------------- Crossref
 class Crossref:
@@ -665,13 +951,112 @@ class Unpaywall:
 #: every adapter, by name — `run.py` and the config read this rather than importing classes, so
 #: `CANOPY_SEARCH_INDICES` can name one in a string.
 INDEXES: dict[str, Any] = {index.name: index for index in
-                           (EuropePmc(), OpenAlex(), Crossref(), Unpaywall())}
+                           (PubMed(), OpenAlex(), EuropePmc(), Crossref(), Unpaywall())}
 
-#: the ones that may propose a paper, in the order they are asked. Europe PMC first because it is
-#: unmetered — a request economy, not a claim about which field the user is in.
+#: the ones that may propose a paper, in the order they are first asked: by measured ranking
+#: quality (module docstring), with OpenAlex's full-text form sent last of all by `run.py`.
 DISCOVERY_INDEXES: tuple[str, ...] = tuple(
-    name for name in ("europepmc", "openalex", "crossref")
+    name for name in ("pubmed", "openalex", "europepmc", "crossref")
     if getattr(INDEXES[name], "discovery", False))
+
+
+#: how long `search_pages` will wait on a 429 that names its own `Retry-After`, once per page
+MAX_RETRY_AFTER_S = 30.0
+#: one deep page (a thousand `core` records is ~3 MB) against `DEFAULT_TIMEOUT` = 20 s for a
+#: count; the first block string's Europe PMC page timed out at 20 s and lost its 6,876 hits
+PAGE_TIMEOUT = 90.0
+#: the pauses before each retry of a page that failed transiently — a name that did not resolve,
+#: a dropped connection, a timeout, or a 5xx from the index. Escalating, so a WiFi blip of a
+#: minute is ridden out rather than costing the whole index: one run lost PubMed entirely to a
+#: `gaierror` that the old single 5 s retry (which did not even cover DNS) could not survive.
+TRANSIENT_PAUSES_S = (5.0, 15.0, 45.0)
+#: kept for callers that import it; the first pause of the ladder
+TRANSIENT_PAUSE_S = TRANSIENT_PAUSES_S[0]
+
+_TRANSIENT_OUTCOMES = frozenset({"timeout", "network_error", "dns_error"})
+
+
+def _transient(info: dict[str, Any]) -> bool:
+    """A failure worth retrying: nothing about the query caused it."""
+    outcome = info.get("outcome")
+    if outcome in _TRANSIENT_OUTCOMES:
+        return True
+    status = info.get("status")
+    return outcome == "http_error" and isinstance(status, int) and 500 <= status < 600
+
+
+def search_pages(index: Any, transport: SearchTransport, row: Mapping[str, Any], *, depth: int,
+                 timeout: float = PAGE_TIMEOUT,
+                 sleep: Callable[[float], Any] = time.sleep,
+                 ) -> tuple[list[Candidate], dict[str, Any]]:
+    """Every page of one query row on one index, up to `depth` rows, as ONE `sources` row.
+
+    `row` is a `record.queries` entry (`query_id`, `index`, `form`, `text`). Each candidate gets
+    `ranks["<index>:<query_id>:<form>"] = position` (1-based, across pages) — the entry position
+    the bench grades on and the ranking reads. A 429 carrying `Retry-After` is honoured ONCE per
+    page (sleep at most `MAX_RETRY_AFTER_S`, then the same request again), and a timeout or a
+    dropped connection is retried ONCE per page after `TRANSIENT_PAUSE_S`; the row records both.
+    Any other failure ends the paging and is the row's error, with the pages that did arrive
+    kept.
+    """
+    query_id = str(row.get("query_id") or "")
+    form = str(row.get("form") or "")
+    text = str(row.get("text") or "")
+    label = f"{index.name}:{query_id}:{form}"
+    found: list[Candidate] = []
+    source: dict[str, Any] = source_record(
+        index.name, text, query_id=query_id, form=form, pages=0, total_hits=None,
+        more_available=False, retry_after_honoured=False, retried=0, n_hydration_requests=0,
+        error="")
+    cursor = "*"
+    page_no = 0
+    per_page = min(int(depth), int(getattr(index, "MAX_PAGE", 200)))
+    if index.name == "pubmed":
+        per_page = min(int(depth), index.MAX_PAGE)
+    while len(found) < depth:
+        page_no += 1
+        want = min(per_page, depth - len(found))
+        context = {"index": index.name, "form": form, "query_id": query_id, "page": page_no,
+                   "query_text": text}
+        candidates, info = index.page(transport, text, limit=want, cursor=cursor, form=form,
+                                      timeout=timeout, context=context)
+        if (info.get("outcome") == "rate_limited" and info.get("retry_after") is not None
+                and not source["retry_after_honoured"]):
+            source["retry_after_honoured"] = True
+            sleep(min(float(info["retry_after"]), MAX_RETRY_AFTER_S))
+            candidates, info = index.page(transport, text, limit=want, cursor=cursor,
+                                          form=form, timeout=timeout, context=context)
+        else:
+            for pause in TRANSIENT_PAUSES_S:
+                if not _transient(info):
+                    break
+                source["retried"] += 1
+                sleep(pause)
+                candidates, info = index.page(transport, text, limit=want, cursor=cursor,
+                                              form=form, timeout=timeout, context=context)
+        source["pages"] = page_no
+        source["status"] = info.get("status")
+        source["outcome"] = info.get("outcome")
+        source["seconds"] = round(float(source.get("seconds") or 0.0)
+                                  + float(info.get("seconds") or 0.0), 3)
+        source["n_hydration_requests"] += int(info.get("n_hydration_requests") or 0)
+        for key in ("total_hits", "parsed_as", "cost_usd", "n_unhydrated"):
+            if info.get(key) is not None:
+                source[key] = info[key]
+        if info.get("error"):
+            source["error"] = str(info["error"])
+            if info.get("note"):
+                source["note"] = str(info["note"])
+            break
+        for candidate in candidates[:want]:      # never more than was asked, whatever came back
+            candidate.ranks[label] = len(found) + 1
+            found.append(candidate)
+        source["more_available"] = bool(info.get("more_available")) or len(candidates) > want
+        cursor = str(info.get("next_cursor") or "")
+        if not cursor or not candidates:
+            break
+    source["n_returned"] = len(found)
+    return found, source
 
 
 def parse_index_names(raw: str | None = None,

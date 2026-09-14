@@ -79,7 +79,7 @@ from .overrides import (HUMAN_OVERRIDE, OVERRIDES_FILE, HumanLanded, apply_overr
 from .resolve import resolve_effect_with_fallback
 from .rows import (DISPERSION_APPROXIMATED, approximation_flags, cell_candidates,
                    house_spread_type, prepare_rows,
-                   reported_values, statistic_values, vote_candidates)
+                   reported_values, sample_key, statistic_values, vote_candidates)
 from .state import (PaperBudgetExceeded, PaperClient, emit, load_manifest, paper_dir,
                     read_stage, review_entry, save_manifest, sha12, sort_review_queue,
                     stage_done, write_stage)
@@ -2264,27 +2264,6 @@ def cells_for_review(verdicts: Sequence[Verdict], held: Sequence[EffectSizeRecor
 _approximation_flags = approximation_flags
 
 
-def sample_key(dataset: DatasetSpec, paper_id: str) -> str:
-    """Which PARTICIPANT sample this dataset came from — or `""` when none can be claimed.
-
-    `one_row_per_paper` has to know whether a paper's two rows are two samples (combine them as
-    independent) or the same people twice (combine them as dependent, with a correlation). The
-    only honest source for that is the mapper's own description of the dataset, and its contract
-    (`canopy/llm/prompts/mapper.md`) is exactly this: a dataset is "one independent participant
-    sample under one condition", `experiment` is the paper's own label, and `exposure_order` says
-    whether these data are the participants' FIRST exposure.
-
-    So a dataset claims its own sample only when the paper labelled the experiment it belongs to
-    and the mapper called it a first exposure. Everything else — an unlabelled experiment, a
-    repeated exposure, a counterbalanced set — returns `""`, which the aggregation reads as "same
-    people, treat as dependent". Guessing the other way would understate the variance.
-    """
-    experiment = (dataset.experiment or "").strip()
-    if not experiment or str(dataset.exposure_order) != "first":
-        return ""
-    return f"{paper_id}|{experiment}"
-
-
 _statistic_values = statistic_values
 _reported_values = reported_values
 
@@ -2695,6 +2674,24 @@ def run_pipeline(papers_dir: str | Path, protocol_path: str | Path, out_dir: str
         # amendment I: this run has just rebuilt every artefact from the stage files, so a
         # reviewer's decisions would be undone by it. The log outlives what it changes — it is
         # re-applied here, which is what makes an override survive `canopy run --resume`.
+        #
+        # What it re-applies is the review layer's own `apply_overrides_and_repool`, and that
+        # function rewrites DERIVED artefacts only (`overrides._rewrite`: "No stage file is
+        # touched"). So after this line `papers/<id>/resolve.json` still says what the model-driven
+        # run resolved BEFORE any human touched it, and it is held that way deliberately:
+        # `overrides._row_of` reads it as the one fixed baseline an answer's admissibility is judged
+        # against, and an admissibility test that moved with the last re-pool would be no test.
+        # The consequence is worth saying out loud, because a reviewer auditing a number will open
+        # the per-paper file first and be misled: **what was pooled is in `results/`**
+        # (`extraction_table_all.json`, `<outcome>/extraction_table.json`, `<outcome>/pooled.json`),
+        # never in a stage file. Investigated in full after two agents read the same row off the two
+        # files and reported different numbers — both were right, and `--resume` applies an override
+        # exactly as the review layer does because it IS the review layer.
+        #
+        # The one real hazard in the ordering: `_write_outputs` above has already written a pooled
+        # result from the stale stage files (k=1 where the log makes it k=2), and this call
+        # overwrites it. A crash in that window leaves an under-pooled `results/` on disk — the
+        # same window `has_log` already disables the best-guess tier for, below.
         summary = apply_overrides_and_repool(out)
         emit(progress, "review", "", "done", cost_so_far=manifest.cost_usd,
              message=f"{summary['applied']} override(s) re-applied from {OVERRIDES_FILE}")
