@@ -35,10 +35,23 @@ echo "project $PROJECT · region $REGION · service $SERVICE"
 
 # ----------------------------------------------------------------------------- APIs
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
-    secretmanager.googleapis.com storage.googleapis.com --quiet
+    secretmanager.googleapis.com storage.googleapis.com compute.googleapis.com --quiet
 
 NUMBER="$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')"
 SA="${NUMBER}-compute@developer.gserviceaccount.com"
+
+# The default compute service account is what both Cloud Build and the deployed service run as.
+# A project created today gives it no roles at all, so the build cannot write its logs or push
+# the image and the service cannot read its secrets. Grant exactly what each step needs; a
+# re-run finds the bindings already there and changes nothing.
+for i in 1 2 3 4 5 6; do
+    gcloud iam service-accounts describe "$SA" >/dev/null 2>&1 && break
+    sleep 5                                          # the SA appears a few seconds after enabling compute
+done
+for role in roles/cloudbuild.builds.builder roles/artifactregistry.writer roles/logging.logWriter; do
+    gcloud projects add-iam-policy-binding "$PROJECT" --member="serviceAccount:$SA" --role="$role" \
+        --quiet >/dev/null
+done
 
 # ----------------------------------------------------------------------------- bucket
 BUCKET="${SERVICE}-runs-${PROJECT}"
@@ -53,14 +66,34 @@ gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
 # Read silently, from the terminal, never from an argument: an argument lands in shell history
 # and `ps`. An existing secret is kept — delete it in the console to rotate.
 secret() {
-    local name="$1" prompt="$2" optional="${3:-}" value
+    local name="$1" prompt="$2" optional="${3:-}" value=""
     if gcloud secrets describe "$name" >/dev/null 2>&1; then
         echo "  $name: already stored, keeping it"
     else
-        read -r -s -p "  $prompt" value; echo
+        # 1. the local .env, read silently — the key is already on this machine, and this way it
+        #    never touches a command line, a prompt, or a chat window
+        if [ -f "$ENV_FILE" ]; then
+            value="$(grep -E "^${name}=" "$ENV_FILE" | head -1 | cut -d= -f2- \
+                     | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")"
+            [ -n "$value" ] && echo "  $name: read from $ENV_FILE"
+        fi
+        # 2. the environment:  CANOPY_ACCESS_CODE=word deploy/cloudrun.sh
+        if [ -z "$value" ] && [ -n "${!name:-}" ]; then
+            value="${!name}"; echo "  $name: from the environment"
+        fi
+        # 3. a silent prompt, when there is a terminal to prompt on
+        if [ -z "$value" ] && [ -t 0 ]; then
+            read -r -s -p "  $prompt" value; echo
+        fi
+        # 4. an access code can be minted on the spot; a key cannot
+        if [ -z "$value" ] && [ "$name" = CANOPY_ACCESS_CODE ]; then
+            value="$(openssl rand -base64 24 | tr -dc 'a-z0-9' | cut -c1-14)"
+            GENERATED_CODE="$value"; echo "  $name: generated — shown once at the end"
+        fi
         if [ -z "$value" ]; then
             [ -n "$optional" ] && { echo "  $name: skipped"; return 0; }
-            echo "  $name is required" >&2; exit 1
+            echo "  $name is required: put it in $ENV_FILE, export it, or run this in a terminal" >&2
+            exit 1
         fi
         printf '%s' "$value" | gcloud secrets create "$name" --data-file=- --quiet
         value=""
@@ -70,7 +103,8 @@ secret() {
     SECRETS="${SECRETS:+$SECRETS,}$name=$name:latest"
 }
 SECRETS=""
-echo "secrets (paste from the clipboard; nothing is shown):"
+GENERATED_CODE=""
+echo "secrets (read from $ENV_FILE where present; nothing is ever shown):"
 secret ANTHROPIC_API_KEY "API key — the OpenRouter key if ANTHROPIC_BASE_URL points there: "
 secret CANOPY_ACCESS_CODE "Access code visitors will type to open the site: "
 secret CANOPY_OPENALEX_KEY "OpenAlex key (Enter to skip): " optional
@@ -118,6 +152,10 @@ URL="$(gcloud run services describe "$SERVICE" --region "$REGION" --format='valu
 echo
 echo "  $URL"
 echo
+if [ -n "${GENERATED_CODE:-}" ]; then
+    echo "  Access code (generated, shown once — it is also in Secret Manager): $GENERATED_CODE"
+    echo
+fi
 echo "  Open it, enter the access code, and you are on the same UI as localhost:8000."
 echo "  Runs persist in gs://$BUCKET. Always-on at 2 vCPU / 4 GiB is roughly \$100/month;"
 echo "  --cpu 1 --memory 2Gi halves that at the cost of slower PDF ingest."
