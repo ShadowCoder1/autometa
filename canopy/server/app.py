@@ -339,7 +339,11 @@ def create_app(runs_dir: str | Path = "runs", *,
                 return JSONResponse({"detail": "this site needs its access code"},
                                     status_code=401)
             return RedirectResponse(ACCESS_PATH, status_code=303)
-        if request.method in UNSAFE_METHODS and is_cross_site(request):
+        # The access form is exempt: the code IS the check, and a browser inside a sandboxed
+        # embed (a chat app's in-app browser, a preview pane) sends `Origin: null` for its
+        # own form. A forged submission with the wrong code still gets 401.
+        if (request.method in UNSAFE_METHODS and request.url.path != ACCESS_PATH
+                and is_cross_site(request)):
             return JSONResponse({"detail": "cross-site request refused"}, status_code=403)
         response = await call_next(request)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")

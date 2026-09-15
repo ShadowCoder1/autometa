@@ -2357,3 +2357,13 @@ def test_access_cookie_is_a_digest_and_constant_time():
     assert not access_granted("", "", "open-sesame")
     assert access_granted(None, None, None)                        # no code: no gate
     assert access_granted(None, "open-sesame", "open-sesame")
+
+
+def test_access_form_works_from_an_embedded_browser(make_app):
+    """A page inside a sandboxed embed posts its own form with `Origin: null`; the code is the
+    check there, so the cross-site guard stands aside for that one path and nowhere else."""
+    api = make_app(access_code="open-sesame", loopback_only=False)
+    null = {"Origin": "null"}
+    assert api.post("/access", data={"code": "wrong"}, headers=null, follow_redirects=False).status_code == 401
+    assert api.post("/access", data={"code": "open-sesame"}, headers=null, follow_redirects=False).status_code == 303
+    assert api.post("/api/runs/nope/repool", headers=null).status_code == 403   # still guarded
